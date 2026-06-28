@@ -1,0 +1,24 @@
+# Layout Customization
+
+The web UI uses a modular **widget shell** from `@repo/ui`.
+
+## Layout model
+
+Preferences are stored on the server and synced across devices:
+
+```json
+{
+  "sidebarPosition": "left",
+  "panels": {
+    "left": ["now-playing", "queue"],
+    "right": ["discover"]
+  },
+  "collapsed": { "left": false, "right": true }
+}
+```
+
+Update via `PATCH /api/v1/preferences`.
+
+## Adding widgets
+
+Register new widget IDs in `packages/ui/src/widgets/registry.tsx`. Domain widgets ship in future modular monolith modules.

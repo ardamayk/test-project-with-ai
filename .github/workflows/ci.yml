@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Install JS deps
+        run: pnpm install
+
+      - name: Generate OpenAPI
+        run: pnpm generate
+
+      - name: Check codegen drift
+        run: git diff --exit-code
+
+      - name: Lint web
+        run: pnpm --filter web check
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Go test
+        working-directory: server
+        run: go test ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          working-directory: server
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm install
+      - run: pnpm generate
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Install Playwright
+        run: pnpm --filter web exec playwright install chromium --with-deps
+      - name: E2E tests
+        run: pnpm test:e2e

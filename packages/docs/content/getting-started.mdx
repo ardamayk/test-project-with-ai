@@ -1,0 +1,26 @@
+# Getting Started
+
+## Prerequisites
+
+- Go 1.23+
+- Node 22+ and pnpm
+- [mise](https://mise.jdx.dev/) (recommended)
+
+## Development
+
+```bash
+pnpm install
+mise run dev
+```
+
+- API: http://localhost:8090
+- Web dev server: http://localhost:3000 (proxies `/api` to Go)
+
+## Production build
+
+```bash
+mise run build
+./bin/server
+```
+
+Single binary serves the SPA, MDX docs, and API.

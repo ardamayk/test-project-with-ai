@@ -1,0 +1,37 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite"
+)
+
+func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir string) (*sql.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(databasePath), 0o755); err != nil {
+		return nil, fmt.Errorf("create database directory: %w", err)
+	}
+
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)", databasePath)
+	sqlDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+
+	goose.SetDialect("sqlite")
+	if err := goose.Up(sqlDB, migrationsDir); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+
+	return sqlDB, nil
+}

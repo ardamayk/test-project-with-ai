@@ -1,0 +1,11 @@
+**/*.md
+**/*.mdx
+**/*.html
+AGENTS.md
+contracts.md
+graphify-out/
+server/internal/staticassets/web/assets/**
+server/internal/staticassets/docs/assets/**
+web/dist/**
+packages/docs/dist/**
+node_modules/**

@@ -1,0 +1,39 @@
+[tools]
+go = "1.26"
+node = "24"
+pnpm = "latest"
+golangci-lint = "2.12.2"
+
+[tasks.dev]
+description = "Run Go API and Vite dev server in parallel"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'kill 0' EXIT
+(cd server && go run ./cmd/server) &
+pnpm --dir web dev &
+wait
+"""
+
+[tasks.build]
+description = "Build web SPA and Go server binary"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+pnpm build
+chmod +x scripts/sync-static.sh
+./scripts/sync-static.sh
+cd server && go build -o ../bin/server ./cmd/server
+"""
+
+[tasks.generate]
+description = "Regenerate OpenAPI clients"
+run = "pnpm generate"
+
+[tasks.test]
+description = "Run all unit tests"
+run = "pnpm test"
+
+[tasks."test:e2e"]
+description = "Run Playwright e2e tests"
+run = "pnpm test:e2e"

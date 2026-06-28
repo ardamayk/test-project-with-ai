@@ -1,0 +1,14 @@
+services:
+  server:
+    build: .
+    ports:
+      - "8090:8090"
+    environment:
+      SERVER_ADDR: ":8090"
+      DATABASE_PATH: /data/app.db
+    volumes:
+      - app-data:/data
+      - ${MUSIC_PATH:-./music}:/music:ro
+
+volumes:
+  app-data:

@@ -1,0 +1,174 @@
+openapi: 3.0.3
+info:
+  title: Navidrome Replacement API
+  version: 0.1.0
+  description: Self-hosted music server API
+servers:
+  - url: http://localhost:8090
+    description: Local development
+tags:
+  - name: system
+  - name: user
+  - name: preferences
+paths:
+  /api/v1/health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v1/me:
+    get:
+      tags: [user]
+      operationId: getMe
+      summary: Current user profile (stub)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/preferences:
+    get:
+      tags: [preferences]
+      operationId: getPreferences
+      summary: Get user preferences including layout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [preferences]
+      operationId: patchPreferences
+      summary: Update user preferences
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPreferencesPatch"
+      responses:
+        "200":
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPreferences"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+    User:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+    LayoutPreferences:
+      type: object
+      required: [sidebarPosition, panels, collapsed]
+      properties:
+        sidebarPosition:
+          type: string
+          enum: [left, right]
+        panels:
+          type: object
+          required: [left, right]
+          properties:
+            left:
+              type: array
+              items:
+                type: string
+            right:
+              type: array
+              items:
+                type: string
+        collapsed:
+          type: object
+          required: [left, right]
+          properties:
+            left:
+              type: boolean
+            right:
+              type: boolean
+    UserPreferences:
+      type: object
+      required: [theme, layout]
+      properties:
+        theme:
+          type: string
+          enum: [light, dark, system]
+        layout:
+          $ref: "#/components/schemas/LayoutPreferences"
+    UserPreferencesPatch:
+      type: object
+      properties:
+        theme:
+          type: string
+          enum: [light, dark, system]
+        layout:
+          $ref: "#/components/schemas/LayoutPreferences"
+    ErrorResponse:
+      type: object
+      required: [error, code, message]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
