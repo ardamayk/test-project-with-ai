@@ -41,7 +41,21 @@ HTTP status codes follow standard semantics (400, 401, 404, 500).
 
 - Security scheme: Bearer JWT (`bearerAuth`)
 - v1 scaffold uses a fixed default user; real auth comes in a later plan
-- Protected routes: `GET /api/v1/me`, `GET/PATCH /api/v1/preferences`
+- Protected routes: `GET /api/v1/me`, `GET/PATCH /api/v1/preferences`, playback queue endpoints
+
+## Library (v1)
+
+- Source: local filesystem paths from `MUSIC_PATHS` env (comma-separated)
+- Scan: `POST /api/v1/library/scan` (async; poll `GET /api/v1/library/scan/status`)
+- Browse: artists, albums, tracks list/detail endpoints under `/api/v1/library/`
+- Supported formats: mp3, flac, ogg, m4a, opus, wav
+- Missing files after scan are soft-deleted (`missing_at` flag)
+
+## Playback (v1)
+
+- Queue persisted in SQLite per stub user (`playback_queue` table)
+- Stream: `GET /api/v1/tracks/{trackId}/stream` with HTTP Range (`206 Partial Content`)
+- No transcoding in v1 — direct file serve
 
 ## Preferences / layout contract
 

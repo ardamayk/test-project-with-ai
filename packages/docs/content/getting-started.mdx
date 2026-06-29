@@ -16,6 +16,16 @@ mise run dev
 - API: http://localhost:8090
 - Web dev server: http://localhost:3000 (proxies `/api` to Go)
 
+### Music library
+
+Point the server at one or more local folders (comma-separated):
+
+```bash
+export MUSIC_PATHS=/path/to/music,./music
+```
+
+Then open **Library** in the web UI and click **Scan library** to index audio files (mp3, flac, ogg, m4a, opus, wav).
+
 ## Production build
 
 ```bash

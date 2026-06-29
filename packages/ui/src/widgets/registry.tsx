@@ -1,24 +1,109 @@
 import type { ComponentType } from 'react'
+import { usePlayback } from '../playback/PlaybackProvider'
 import type { WidgetDefinition } from './types'
 
-function PlaceholderWidget({ title }: { title: string }) {
+function formatDuration(ms: number): string {
+  if (!ms || ms < 0) return '0:00'
+  const total = Math.floor(ms / 1000)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function NowPlayingWidget() {
+  const { currentTrack, isPlaying, currentTime, duration, togglePlay } =
+    usePlayback()
+
+  if (!currentTrack) {
+    return (
+      <div className="rounded-lg border border-border p-4 text-muted-foreground text-sm">
+        Nothing playing
+      </div>
+    )
+  }
+
+  const progress =
+    duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0
+
   return (
-    <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-      {title} (placeholder)
+    <div className="space-y-2 rounded-lg border border-border p-4">
+      <p className="font-medium text-sm">{currentTrack.title}</p>
+      <p className="text-muted-foreground text-xs">{currentTrack.artistName}</p>
+      <div className="h-1 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full bg-primary transition-all"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <div className="flex items-center justify-between text-muted-foreground text-xs">
+        <span>{formatDuration(currentTime * 1000)}</span>
+        <button
+          type="button"
+          className="rounded px-2 py-1 hover:bg-muted"
+          onClick={togglePlay}
+        >
+          {isPlaying ? 'Pause' : 'Play'}
+        </button>
+        <span>{formatDuration(duration * 1000)}</span>
+      </div>
     </div>
   )
 }
 
-function NowPlayingWidget() {
-  return <PlaceholderWidget title="Now Playing" />
-}
-
 function QueueWidget() {
-  return <PlaceholderWidget title="Queue" />
+  const { queue, currentTrack, playQueueIndex, removeFromQueue } = usePlayback()
+
+  if (queue.length === 0) {
+    return (
+      <div className="rounded-lg border border-border p-4 text-muted-foreground text-sm">
+        Queue is empty
+      </div>
+    )
+  }
+
+  return (
+    <ul className="max-h-64 space-y-1 overflow-y-auto rounded-lg border border-border p-2 text-sm">
+      {queue.map((item, index) => (
+        <li
+          key={item.id}
+          className="flex items-center gap-2 rounded px-2 py-1 hover:bg-muted"
+        >
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-left"
+            onClick={() => void playQueueIndex(index)}
+          >
+            <span
+              className={
+                item.track.id === currentTrack?.id ? 'font-medium' : undefined
+              }
+            >
+              {item.track.title}
+            </span>
+            <span className="block truncate text-muted-foreground text-xs">
+              {item.track.artistName}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="shrink-0 text-muted-foreground text-xs hover:text-foreground"
+            onClick={() => void removeFromQueue(item.id)}
+            aria-label="Remove from queue"
+          >
+            ×
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 function DiscoverWidget() {
-  return <PlaceholderWidget title="Discover" />
+  return (
+    <div className="rounded-lg border border-dashed border-border p-4 text-muted-foreground text-sm">
+      Discover (coming soon)
+    </div>
+  )
 }
 
 const widgetComponents: Record<string, ComponentType> = {

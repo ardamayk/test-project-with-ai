@@ -1,11 +1,30 @@
 import { expect, test } from '@playwright/test'
 
-test('home page loads with app title', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Navidrome Replacement' })).toBeVisible()
+test('albums page loads', async ({ page }) => {
+  await page.goto('/library/albums')
+  await expect(page.getByRole('heading', { name: 'Albums' })).toBeVisible()
+  await expect(page.getByText('Earthly Audio')).toBeVisible()
 })
 
-test('widget placeholders render', async ({ page }) => {
+test('navigation links render', async ({ page }) => {
+  await page.goto('/library/albums')
+  await expect(page.getByRole('link', { name: 'Albums' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Queue' })).toBeVisible()
+})
+
+test('now playing widget shows empty state', async ({ page }) => {
+  await page.goto('/library/albums')
+  await expect(page.getByText('Nothing playing').first()).toBeVisible()
+})
+
+test('root redirects to albums', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByText('Now Playing (placeholder)')).toBeVisible()
+  await expect(page).toHaveURL(/\/library\/albums/)
+})
+
+test('settings theme preset buttons', async ({ page }) => {
+  await page.goto('/settings')
+  await expect(page.getByRole('button', { name: 'Earthly' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Tokyo Night' })).toBeVisible()
 })

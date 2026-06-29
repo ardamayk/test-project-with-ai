@@ -10,6 +10,8 @@ tags:
   - name: system
   - name: user
   - name: preferences
+  - name: library
+  - name: playback
 paths:
   /api/v1/health:
     get:
@@ -78,6 +80,242 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/v1/library/scan:
+    post:
+      tags: [library]
+      operationId: triggerLibraryScan
+      summary: Trigger library scan
+      responses:
+        "202":
+          description: Scan started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanStatus"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/library/scan/status:
+    get:
+      tags: [library]
+      operationId: getLibraryScanStatus
+      summary: Get current or latest scan status
+      responses:
+        "200":
+          description: Scan status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanStatus"
+  /api/v1/library/artists:
+    get:
+      tags: [library]
+      operationId: listArtists
+      summary: List artists
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search by name
+      responses:
+        "200":
+          description: Artist list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtistList"
+  /api/v1/library/albums:
+    get:
+      tags: [library]
+      operationId: listAlbums
+      summary: List albums
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: artistId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search by title
+      responses:
+        "200":
+          description: Album list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumList"
+  /api/v1/library/albums/{albumId}:
+    get:
+      tags: [library]
+      operationId: getAlbum
+      summary: Get album with tracks
+      parameters:
+        - $ref: "#/components/parameters/albumId"
+      responses:
+        "200":
+          description: Album detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/library/tracks:
+    get:
+      tags: [library]
+      operationId: listTracks
+      summary: List or search tracks
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search by title or artist
+      responses:
+        "200":
+          description: Track list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackList"
+  /api/v1/library/tracks/{trackId}:
+    get:
+      tags: [library]
+      operationId: getTrack
+      summary: Get track metadata
+      parameters:
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "200":
+          description: Track metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Track"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/playback/queue:
+    get:
+      tags: [playback]
+      operationId: getPlaybackQueue
+      summary: Get playback queue
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queue"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [playback]
+      operationId: replacePlaybackQueue
+      summary: Replace playback queue
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueReplace"
+      responses:
+        "200":
+          description: Updated queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/playback/queue/items:
+    post:
+      tags: [playback]
+      operationId: appendPlaybackQueueItem
+      summary: Append track to queue
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueItemAppend"
+      responses:
+        "200":
+          description: Updated queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/playback/queue/items/{itemId}:
+    delete:
+      tags: [playback]
+      operationId: removePlaybackQueueItem
+      summary: Remove item from queue
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/queueItemId"
+      responses:
+        "200":
+          description: Updated queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queue"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/tracks/{trackId}/stream:
+    get:
+      tags: [playback]
+      operationId: streamTrack
+      summary: Stream track audio with HTTP Range support
+      parameters:
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "200":
+          description: Full audio stream
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content (Range request)
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "416":
+          $ref: "#/components/responses/RangeNotSatisfiable"
 components:
   securitySchemes:
     bearerAuth:
@@ -97,6 +335,61 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RangeNotSatisfiable:
+      description: Range not satisfiable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  parameters:
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    albumId:
+      name: albumId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    trackId:
+      name: trackId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    queueItemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   schemas:
     HealthResponse:
       type: object
@@ -145,21 +438,36 @@ components:
               type: boolean
             right:
               type: boolean
+        sizes:
+          type: array
+          items:
+            type: number
+          minItems: 3
+          maxItems: 3
+          description: Panel widths as percentages [left, main, right]
+    ThemePreferences:
+      type: object
+      required: [mode, preset]
+      properties:
+        mode:
+          type: string
+          enum: [light, dark, system]
+        preset:
+          type: string
+          enum: [earthly, tokyo-night]
     UserPreferences:
       type: object
       required: [theme, layout]
       properties:
         theme:
-          type: string
-          enum: [light, dark, system]
+          $ref: "#/components/schemas/ThemePreferences"
         layout:
           $ref: "#/components/schemas/LayoutPreferences"
     UserPreferencesPatch:
       type: object
       properties:
         theme:
-          type: string
-          enum: [light, dark, system]
+          $ref: "#/components/schemas/ThemePreferences"
         layout:
           $ref: "#/components/schemas/LayoutPreferences"
     ErrorResponse:
@@ -172,3 +480,157 @@ components:
           type: string
         message:
           type: string
+    Artist:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        albumCount:
+          type: integer
+    ArtistList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Artist"
+        total:
+          type: integer
+    Album:
+      type: object
+      required: [id, title, artistId, artistName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        artistId:
+          type: string
+          format: uuid
+        artistName:
+          type: string
+        year:
+          type: integer
+        trackCount:
+          type: integer
+    AlbumList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Album"
+        total:
+          type: integer
+    AlbumDetail:
+      allOf:
+        - $ref: "#/components/schemas/Album"
+        - type: object
+          required: [tracks]
+          properties:
+            tracks:
+              type: array
+              items:
+                $ref: "#/components/schemas/Track"
+    Track:
+      type: object
+      required: [id, title, artistName, albumId, durationMs, format]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        artistName:
+          type: string
+        albumId:
+          type: string
+          format: uuid
+        albumTitle:
+          type: string
+        trackNo:
+          type: integer
+        durationMs:
+          type: integer
+        format:
+          type: string
+        sizeBytes:
+          type: integer
+    TrackList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Track"
+        total:
+          type: integer
+    ScanStatus:
+      type: object
+      required: [status, scanned, added, updated, removed]
+      properties:
+        status:
+          type: string
+          enum: [idle, running, completed, failed]
+        scanned:
+          type: integer
+        added:
+          type: integer
+        updated:
+          type: integer
+        removed:
+          type: integer
+        error:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+    QueueItem:
+      type: object
+      required: [id, trackId, position, track]
+      properties:
+        id:
+          type: string
+          format: uuid
+        trackId:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        track:
+          $ref: "#/components/schemas/Track"
+    Queue:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueItem"
+    QueueReplace:
+      type: object
+      required: [trackIds]
+      properties:
+        trackIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+    QueueItemAppend:
+      type: object
+      required: [trackId]
+      properties:
+        trackId:
+          type: string
+          format: uuid

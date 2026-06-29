@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -31,19 +32,66 @@ const (
 	Right LayoutPreferencesSidebarPosition = "right"
 )
 
-// Defines values for UserPreferencesTheme.
+// Defines values for ScanStatusStatus.
 const (
-	UserPreferencesThemeDark   UserPreferencesTheme = "dark"
-	UserPreferencesThemeLight  UserPreferencesTheme = "light"
-	UserPreferencesThemeSystem UserPreferencesTheme = "system"
+	Completed ScanStatusStatus = "completed"
+	Failed    ScanStatusStatus = "failed"
+	Idle      ScanStatusStatus = "idle"
+	Running   ScanStatusStatus = "running"
 )
 
-// Defines values for UserPreferencesPatchTheme.
+// Defines values for ThemePreferencesMode.
 const (
-	UserPreferencesPatchThemeDark   UserPreferencesPatchTheme = "dark"
-	UserPreferencesPatchThemeLight  UserPreferencesPatchTheme = "light"
-	UserPreferencesPatchThemeSystem UserPreferencesPatchTheme = "system"
+	Dark   ThemePreferencesMode = "dark"
+	Light  ThemePreferencesMode = "light"
+	System ThemePreferencesMode = "system"
 )
+
+// Defines values for ThemePreferencesPreset.
+const (
+	Earthly    ThemePreferencesPreset = "earthly"
+	TokyoNight ThemePreferencesPreset = "tokyo-night"
+)
+
+// Album defines model for Album.
+type Album struct {
+	ArtistId   openapi_types.UUID `json:"artistId"`
+	ArtistName string             `json:"artistName"`
+	Id         openapi_types.UUID `json:"id"`
+	Title      string             `json:"title"`
+	TrackCount *int               `json:"trackCount,omitempty"`
+	Year       *int               `json:"year,omitempty"`
+}
+
+// AlbumDetail defines model for AlbumDetail.
+type AlbumDetail struct {
+	ArtistId   openapi_types.UUID `json:"artistId"`
+	ArtistName string             `json:"artistName"`
+	Id         openapi_types.UUID `json:"id"`
+	Title      string             `json:"title"`
+	TrackCount *int               `json:"trackCount,omitempty"`
+	Tracks     []Track            `json:"tracks"`
+	Year       *int               `json:"year,omitempty"`
+}
+
+// AlbumList defines model for AlbumList.
+type AlbumList struct {
+	Items []Album `json:"items"`
+	Total int     `json:"total"`
+}
+
+// Artist defines model for Artist.
+type Artist struct {
+	AlbumCount *int               `json:"albumCount,omitempty"`
+	Id         openapi_types.UUID `json:"id"`
+	Name       string             `json:"name"`
+}
+
+// ArtistList defines model for ArtistList.
+type ArtistList struct {
+	Items []Artist `json:"items"`
+	Total int      `json:"total"`
+}
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
@@ -72,10 +120,82 @@ type LayoutPreferences struct {
 		Right []string `json:"right"`
 	} `json:"panels"`
 	SidebarPosition LayoutPreferencesSidebarPosition `json:"sidebarPosition"`
+
+	// Sizes Panel widths as percentages [left, main, right]
+	Sizes *[]float32 `json:"sizes,omitempty"`
 }
 
 // LayoutPreferencesSidebarPosition defines model for LayoutPreferences.SidebarPosition.
 type LayoutPreferencesSidebarPosition string
+
+// Queue defines model for Queue.
+type Queue struct {
+	Items []QueueItem `json:"items"`
+}
+
+// QueueItem defines model for QueueItem.
+type QueueItem struct {
+	Id       openapi_types.UUID `json:"id"`
+	Position int                `json:"position"`
+	Track    Track              `json:"track"`
+	TrackId  openapi_types.UUID `json:"trackId"`
+}
+
+// QueueItemAppend defines model for QueueItemAppend.
+type QueueItemAppend struct {
+	TrackId openapi_types.UUID `json:"trackId"`
+}
+
+// QueueReplace defines model for QueueReplace.
+type QueueReplace struct {
+	TrackIds []openapi_types.UUID `json:"trackIds"`
+}
+
+// ScanStatus defines model for ScanStatus.
+type ScanStatus struct {
+	Added      int              `json:"added"`
+	Error      *string          `json:"error,omitempty"`
+	FinishedAt *time.Time       `json:"finishedAt,omitempty"`
+	Removed    int              `json:"removed"`
+	Scanned    int              `json:"scanned"`
+	StartedAt  *time.Time       `json:"startedAt,omitempty"`
+	Status     ScanStatusStatus `json:"status"`
+	Updated    int              `json:"updated"`
+}
+
+// ScanStatusStatus defines model for ScanStatus.Status.
+type ScanStatusStatus string
+
+// ThemePreferences defines model for ThemePreferences.
+type ThemePreferences struct {
+	Mode   ThemePreferencesMode   `json:"mode"`
+	Preset ThemePreferencesPreset `json:"preset"`
+}
+
+// ThemePreferencesMode defines model for ThemePreferences.Mode.
+type ThemePreferencesMode string
+
+// ThemePreferencesPreset defines model for ThemePreferences.Preset.
+type ThemePreferencesPreset string
+
+// Track defines model for Track.
+type Track struct {
+	AlbumId    openapi_types.UUID `json:"albumId"`
+	AlbumTitle *string            `json:"albumTitle,omitempty"`
+	ArtistName string             `json:"artistName"`
+	DurationMs int                `json:"durationMs"`
+	Format     string             `json:"format"`
+	Id         openapi_types.UUID `json:"id"`
+	SizeBytes  *int               `json:"sizeBytes,omitempty"`
+	Title      string             `json:"title"`
+	TrackNo    *int               `json:"trackNo,omitempty"`
+}
+
+// TrackList defines model for TrackList.
+type TrackList struct {
+	Items []Track `json:"items"`
+	Total int     `json:"total"`
+}
 
 // User defines model for User.
 type User struct {
@@ -86,27 +206,79 @@ type User struct {
 
 // UserPreferences defines model for UserPreferences.
 type UserPreferences struct {
-	Layout LayoutPreferences    `json:"layout"`
-	Theme  UserPreferencesTheme `json:"theme"`
+	Layout LayoutPreferences `json:"layout"`
+	Theme  ThemePreferences  `json:"theme"`
 }
-
-// UserPreferencesTheme defines model for UserPreferences.Theme.
-type UserPreferencesTheme string
 
 // UserPreferencesPatch defines model for UserPreferencesPatch.
 type UserPreferencesPatch struct {
-	Layout *LayoutPreferences         `json:"layout,omitempty"`
-	Theme  *UserPreferencesPatchTheme `json:"theme,omitempty"`
+	Layout *LayoutPreferences `json:"layout,omitempty"`
+	Theme  *ThemePreferences  `json:"theme,omitempty"`
 }
 
-// UserPreferencesPatchTheme defines model for UserPreferencesPatch.Theme.
-type UserPreferencesPatchTheme string
+// AlbumId defines model for albumId.
+type AlbumId = openapi_types.UUID
+
+// Limit defines model for limit.
+type Limit = int
+
+// Offset defines model for offset.
+type Offset = int
+
+// QueueItemId defines model for queueItemId.
+type QueueItemId = openapi_types.UUID
+
+// TrackId defines model for trackId.
+type TrackId = openapi_types.UUID
 
 // BadRequest defines model for BadRequest.
 type BadRequest = ErrorResponse
 
+// Conflict defines model for Conflict.
+type Conflict = ErrorResponse
+
+// NotFound defines model for NotFound.
+type NotFound = ErrorResponse
+
+// RangeNotSatisfiable defines model for RangeNotSatisfiable.
+type RangeNotSatisfiable = ErrorResponse
+
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse
+
+// ListAlbumsParams defines parameters for ListAlbums.
+type ListAlbumsParams struct {
+	Limit    *Limit              `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset   *Offset             `form:"offset,omitempty" json:"offset,omitempty"`
+	ArtistId *openapi_types.UUID `form:"artistId,omitempty" json:"artistId,omitempty"`
+
+	// Q Search by title
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// ListArtistsParams defines parameters for ListArtists.
+type ListArtistsParams struct {
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Q Search by name
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// ListTracksParams defines parameters for ListTracks.
+type ListTracksParams struct {
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Q Search by title or artist
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// ReplacePlaybackQueueJSONRequestBody defines body for ReplacePlaybackQueue for application/json ContentType.
+type ReplacePlaybackQueueJSONRequestBody = QueueReplace
+
+// AppendPlaybackQueueItemJSONRequestBody defines body for AppendPlaybackQueueItem for application/json ContentType.
+type AppendPlaybackQueueItemJSONRequestBody = QueueItemAppend
 
 // PatchPreferencesJSONRequestBody defines body for PatchPreferences for application/json ContentType.
 type PatchPreferencesJSONRequestBody = UserPreferencesPatch
@@ -114,21 +286,43 @@ type PatchPreferencesJSONRequestBody = UserPreferencesPatch
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"bAVvrpr/BQAA//8xsULM5DAAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

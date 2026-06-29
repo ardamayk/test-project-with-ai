@@ -14,6 +14,8 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/db"
 	"github.com/ardam/navidrome-replacement/server/internal/modules"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/preferences"
 	"github.com/ardam/navidrome-replacement/server/internal/staticassets"
 	"github.com/go-chi/chi/v5"
@@ -27,6 +29,12 @@ func main() {
 
 	cfg := config.Load()
 	ctx := context.Background()
+
+	if len(cfg.MusicPaths) == 0 {
+		slog.Warn("MUSIC_PATHS is empty; library scan will fail until configured")
+	} else {
+		slog.Info("music paths configured", "paths", cfg.MusicPaths)
+	}
 
 	migrationsDir := filepath.Join("migrations")
 	if _, err := os.Stat(migrationsDir); os.IsNotExist(err) {
@@ -42,9 +50,11 @@ func main() {
 
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
+	libModule := library.NewModule(sqlDB, cfg)
+	playModule := playback.NewModule(sqlDB, libModule.Service(), libModule.Store())
 	apiHandler := api.NewHandler(cfg)
 
-	registry := modules.NewRegistry(prefModule)
+	registry := modules.NewRegistry(libModule, playModule, prefModule)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -54,7 +64,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Range"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))

@@ -1,8 +1,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap');
 @import 'tailwindcss';
+@source '../../packages/ui/src';
 @plugin '@tailwindcss/typography';
 
 @import 'tw-animate-css';
+@import './themes/earthly.css';
+@import './themes/tokyo-night.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -159,21 +162,39 @@
 
 html,
 body,
+#root {
+  height: 100dvh;
+  min-height: 100dvh;
+  width: 100%;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
 #app {
-  min-height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+#app > * {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
 }
 
 body {
   margin: 0;
-  color: var(--sea-ink);
   font-family: var(--font-sans);
-  background-color: var(--bg-base);
-  background:
-    radial-gradient(1100px 620px at -8% -10%, var(--hero-a), transparent 58%),
-    radial-gradient(1050px 620px at 112% -12%, var(--hero-b), transparent 62%),
-    radial-gradient(720px 380px at 50% 115%, rgba(79, 184, 178, 0.1), transparent 68%),
-    linear-gradient(180deg, color-mix(in oklab, var(--sand) 68%, white) 0%, var(--foam) 44%, var(--bg-base) 100%);
-  overflow-x: hidden;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -343,5 +364,8 @@ a {
   body {
     background-color: var(--background);
     color: var(--foreground);
+    background-image:
+      radial-gradient(900px 500px at -5% -5%, var(--hero-a), transparent 55%),
+      radial-gradient(800px 480px at 105% -5%, var(--hero-b), transparent 55%);
   }
 }

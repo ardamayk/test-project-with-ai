@@ -56,6 +56,194 @@ export interface paths {
         patch: operations["patchPreferences"];
         trace?: never;
     };
+    "/api/v1/library/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger library scan */
+        post: operations["triggerLibraryScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/scan/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current or latest scan status */
+        get: operations["getLibraryScanStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/artists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List artists */
+        get: operations["listArtists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List albums */
+        get: operations["listAlbums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{albumId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get album with tracks */
+        get: operations["getAlbum"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List or search tracks */
+        get: operations["listTracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/tracks/{trackId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get track metadata */
+        get: operations["getTrack"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playback/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get playback queue */
+        get: operations["getPlaybackQueue"];
+        /** Replace playback queue */
+        put: operations["replacePlaybackQueue"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playback/queue/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append track to queue */
+        post: operations["appendPlaybackQueueItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playback/queue/items/{itemId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove item from queue */
+        delete: operations["removePlaybackQueueItem"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tracks/{trackId}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream track audio with HTTP Range support */
+        get: operations["streamTrack"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -82,21 +270,102 @@ export interface components {
                 left: boolean;
                 right: boolean;
             };
+            /** @description Panel widths as percentages [left, main, right] */
+            sizes?: number[];
+        };
+        ThemePreferences: {
+            /** @enum {string} */
+            mode: "light" | "dark" | "system";
+            /** @enum {string} */
+            preset: "earthly" | "tokyo-night";
         };
         UserPreferences: {
-            /** @enum {string} */
-            theme: "light" | "dark" | "system";
+            theme: components["schemas"]["ThemePreferences"];
             layout: components["schemas"]["LayoutPreferences"];
         };
         UserPreferencesPatch: {
-            /** @enum {string} */
-            theme?: "light" | "dark" | "system";
+            theme?: components["schemas"]["ThemePreferences"];
             layout?: components["schemas"]["LayoutPreferences"];
         };
         ErrorResponse: {
             error: string;
             code: string;
             message: string;
+        };
+        Artist: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            albumCount?: number;
+        };
+        ArtistList: {
+            items: components["schemas"]["Artist"][];
+            total: number;
+        };
+        Album: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            /** Format: uuid */
+            artistId: string;
+            artistName: string;
+            year?: number;
+            trackCount?: number;
+        };
+        AlbumList: {
+            items: components["schemas"]["Album"][];
+            total: number;
+        };
+        AlbumDetail: components["schemas"]["Album"] & {
+            tracks: components["schemas"]["Track"][];
+        };
+        Track: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            artistName: string;
+            /** Format: uuid */
+            albumId: string;
+            albumTitle?: string;
+            trackNo?: number;
+            durationMs: number;
+            format: string;
+            sizeBytes?: number;
+        };
+        TrackList: {
+            items: components["schemas"]["Track"][];
+            total: number;
+        };
+        ScanStatus: {
+            /** @enum {string} */
+            status: "idle" | "running" | "completed" | "failed";
+            scanned: number;
+            added: number;
+            updated: number;
+            removed: number;
+            error?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            finishedAt?: string;
+        };
+        QueueItem: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            trackId: string;
+            position: number;
+            track: components["schemas"]["Track"];
+        };
+        Queue: {
+            items: components["schemas"]["QueueItem"][];
+        };
+        QueueReplace: {
+            trackIds: string[];
+        };
+        QueueItemAppend: {
+            /** Format: uuid */
+            trackId: string;
         };
     };
     responses: {
@@ -118,8 +387,41 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description Not found */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Conflict */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Range not satisfiable */
+        RangeNotSatisfiable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
     };
-    parameters: never;
+    parameters: {
+        limit: number;
+        offset: number;
+        albumId: string;
+        trackId: string;
+        queueItemId: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -212,6 +514,301 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    triggerLibraryScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanStatus"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getLibraryScanStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanStatus"];
+                };
+            };
+        };
+    };
+    listArtists: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["limit"];
+                offset?: components["parameters"]["offset"];
+                /** @description Search by name */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Artist list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistList"];
+                };
+            };
+        };
+    };
+    listAlbums: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["limit"];
+                offset?: components["parameters"]["offset"];
+                artistId?: string;
+                /** @description Search by title */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumList"];
+                };
+            };
+        };
+    };
+    getAlbum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                albumId: components["parameters"]["albumId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listTracks: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["limit"];
+                offset?: components["parameters"]["offset"];
+                /** @description Search by title or artist */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackList"];
+                };
+            };
+        };
+    };
+    getTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Track"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getPlaybackQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current queue */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Queue"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    replacePlaybackQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueReplace"];
+            };
+        };
+        responses: {
+            /** @description Updated queue */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Queue"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    appendPlaybackQueueItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueItemAppend"];
+            };
+        };
+        responses: {
+            /** @description Updated queue */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Queue"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    removePlaybackQueueItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["queueItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated queue */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Queue"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    streamTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full audio stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                };
+            };
+            /** @description Partial content (Range request) */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+            416: components["responses"]["RangeNotSatisfiable"];
         };
     };
 }

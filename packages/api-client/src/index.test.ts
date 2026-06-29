@@ -6,5 +6,10 @@ describe('createApiClient', () => {
     const client = createApiClient({ baseUrl: 'http://localhost:8080' })
     expect(client.getHealth).toBeTypeOf('function')
     expect(client.getPreferences).toBeTypeOf('function')
+    expect(client.listAlbums).toBeTypeOf('function')
+    expect(client.getPlaybackQueue).toBeTypeOf('function')
+    expect(client.getTrackStreamUrl('abc')).toBe(
+      'http://localhost:8080/api/v1/tracks/abc/stream',
+    )
   })
 })
