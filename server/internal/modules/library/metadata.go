@@ -21,10 +21,12 @@ type FileMetadata struct {
 	Album       string
 	TrackNo     int
 	Year        int
-	DurationMs  int
-	Genre       string
-	CoverMime   string
-	CoverData   []byte
+	DurationMs   int
+	Genre        string
+	SampleRateHz int
+	BitDepth     int
+	CoverMime    string
+	CoverData    []byte
 }
 
 func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadata, error) {
@@ -67,6 +69,7 @@ func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadat
 	if genres := splitGenres(m.Genre()); len(genres) > 0 {
 		meta.Genre = genres[0]
 	}
+	applyAudioFormat(&meta)
 	if pic := m.Picture(); pic != nil && len(pic.Data) > 0 {
 		meta.CoverMime = pic.MIMEType
 		if meta.CoverMime == "" {

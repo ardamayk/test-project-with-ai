@@ -74,6 +74,9 @@ export type Track = {
   durationMs: number
   format: string
   genre?: string
+  sampleRateHz?: number
+  bitDepth?: number
+  bitrateKbps?: number
   sizeBytes?: number
 }
 

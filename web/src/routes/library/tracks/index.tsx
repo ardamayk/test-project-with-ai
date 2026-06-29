@@ -39,7 +39,7 @@ function TracksPage() {
       ) : tracks.isError ? (
         <p className="text-destructive text-sm">Failed to load tracks</p>
       ) : (
-        <TrackList tracks={tracks.data?.items ?? []} />
+        <TrackList tracks={tracks.data?.items ?? []} showMeta />
       )}
     </div>
   )

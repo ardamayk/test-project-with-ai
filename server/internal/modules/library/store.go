@@ -33,10 +33,13 @@ type Track struct {
 	AlbumTitle string `json:"albumTitle,omitempty"`
 	TrackNo    *int   `json:"trackNo,omitempty"`
 	DurationMs int    `json:"durationMs"`
-	Format     string `json:"format"`
-	SizeBytes  int64  `json:"sizeBytes,omitempty"`
-	Genre      string `json:"genre,omitempty"`
-	FilePath   string `json:"-"`
+	Format       string `json:"format"`
+	SizeBytes    int64  `json:"sizeBytes,omitempty"`
+	Genre        string `json:"genre,omitempty"`
+	SampleRateHz int    `json:"sampleRateHz,omitempty"`
+	BitDepth     int    `json:"bitDepth,omitempty"`
+	BitrateKbps  int    `json:"bitrateKbps,omitempty"`
+	FilePath     string `json:"-"`
 }
 
 type AlbumDetail struct {
@@ -198,7 +201,8 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 	a.Genres = scanAlbumGenres(genresRaw)
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, artist_name, album_id, track_no, duration_ms, format, size_bytes, COALESCE(genre, '')
+		SELECT id, title, artist_name, album_id, track_no, duration_ms, format, size_bytes, COALESCE(genre, ''),
+			COALESCE(sample_rate_hz, 0), COALESCE(bit_depth, 0)
 		FROM tracks
 		WHERE album_id = ? AND missing_at IS NULL
 		ORDER BY COALESCE(track_no, 9999), title_sort`, albumID)
@@ -231,7 +235,8 @@ func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (Tr
 		return TrackList{}, err
 	}
 
-	query := `SELECT t.id, t.title, t.artist_name, t.album_id, al.title, t.track_no, t.duration_ms, t.format, t.size_bytes, COALESCE(t.genre, '')
+	query := `SELECT t.id, t.title, t.artist_name, t.album_id, al.title, t.track_no, t.duration_ms, t.format, t.size_bytes, COALESCE(t.genre, ''),
+		COALESCE(t.sample_rate_hz, 0), COALESCE(t.bit_depth, 0)
 		FROM tracks t
 		INNER JOIN albums al ON al.id = t.album_id
 		` + where + `
@@ -258,7 +263,8 @@ func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (Tr
 
 func (s *Store) GetTrack(ctx context.Context, trackID string) (Track, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.title, t.artist_name, t.album_id, al.title, t.track_no, t.duration_ms, t.format, t.size_bytes, COALESCE(t.genre, ''), t.file_path
+		SELECT t.id, t.title, t.artist_name, t.album_id, al.title, t.track_no, t.duration_ms, t.format, t.size_bytes, COALESCE(t.genre, ''), t.file_path,
+			COALESCE(t.sample_rate_hz, 0), COALESCE(t.bit_depth, 0)
 		FROM tracks t
 		INNER JOIN albums al ON al.id = t.album_id
 		WHERE t.id = ? AND t.missing_at IS NULL`, trackID)
@@ -266,7 +272,7 @@ func (s *Store) GetTrack(ctx context.Context, trackID string) (Track, error) {
 	var t Track
 	var trackNo sql.NullInt64
 	var albumTitle string
-	err := row.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &albumTitle, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre, &t.FilePath)
+	err := row.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &albumTitle, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre, &t.FilePath, &t.SampleRateHz, &t.BitDepth)
 	if err == sql.ErrNoRows {
 		return Track{}, ErrNotFound
 	}
@@ -278,6 +284,7 @@ func (s *Store) GetTrack(ctx context.Context, trackID string) (Track, error) {
 		n := int(trackNo.Int64)
 		t.TrackNo = &n
 	}
+	enrichTrackBitrate(&t)
 	return t, nil
 }
 
@@ -326,6 +333,7 @@ func (s *Store) UpsertFromScan(ctx context.Context, meta FileMetadata) (added, u
 			if meta.DurationMs > 0 {
 				_ = s.updateTrackDurationIfZero(ctx, existingID, meta.DurationMs)
 			}
+			_ = s.updateTrackAudioFormatIfZero(ctx, existingID, meta)
 			if err := s.reconcileTrackAlbum(ctx, existingID, meta); err != nil {
 				return false, false, fmt.Errorf("reconcile track album: %w", err)
 			}
@@ -372,10 +380,12 @@ func (s *Store) insertTrack(ctx context.Context, meta FileMetadata, mtime int64)
 	if meta.Genre != "" {
 		genreVal = meta.Genre
 	}
+	sampleRateVal := nullableInt(meta.SampleRateHz)
+	bitDepthVal := nullableInt(meta.BitDepth)
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO tracks (id, album_id, title, title_sort, artist_name, track_no, duration_ms, format, size_bytes, file_path, file_mtime, genre)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		trackID, albumID, meta.Title, sortKey(meta.Title), meta.Artist, trackNo, meta.DurationMs, meta.Format, meta.SizeBytes, meta.Path, mtime, genreVal,
+		INSERT INTO tracks (id, album_id, title, title_sort, artist_name, track_no, duration_ms, format, size_bytes, file_path, file_mtime, genre, sample_rate_hz, bit_depth)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		trackID, albumID, meta.Title, sortKey(meta.Title), meta.Artist, trackNo, meta.DurationMs, meta.Format, meta.SizeBytes, meta.Path, mtime, genreVal, sampleRateVal, bitDepthVal,
 	)
 	if err != nil {
 		return err
@@ -404,11 +414,13 @@ func (s *Store) updateTrack(ctx context.Context, trackID string, meta FileMetada
 	if meta.Genre != "" {
 		genreVal = meta.Genre
 	}
+	sampleRateVal := nullableInt(meta.SampleRateHz)
+	bitDepthVal := nullableInt(meta.BitDepth)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE tracks SET album_id = ?, title = ?, title_sort = ?, artist_name = ?, track_no = ?,
-			duration_ms = ?, format = ?, size_bytes = ?, file_mtime = ?, genre = ?, missing_at = NULL, updated_at = CURRENT_TIMESTAMP
+			duration_ms = ?, format = ?, size_bytes = ?, file_mtime = ?, genre = ?, sample_rate_hz = ?, bit_depth = ?, missing_at = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		albumID, meta.Title, sortKey(meta.Title), meta.Artist, trackNo, meta.DurationMs, meta.Format, meta.SizeBytes, mtime, genreVal, trackID,
+		albumID, meta.Title, sortKey(meta.Title), meta.Artist, trackNo, meta.DurationMs, meta.Format, meta.SizeBytes, mtime, genreVal, sampleRateVal, bitDepthVal, trackID,
 	)
 	if err != nil {
 		return err
@@ -446,11 +458,13 @@ func (s *Store) reconcileTrackAlbum(ctx context.Context, trackID string, meta Fi
 	if meta.Genre != "" {
 		genreVal = meta.Genre
 	}
+	sampleRateVal := nullableInt(meta.SampleRateHz)
+	bitDepthVal := nullableInt(meta.BitDepth)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE tracks SET album_id = ?, title = ?, title_sort = ?, artist_name = ?, track_no = ?,
-			genre = COALESCE(?, genre), updated_at = CURRENT_TIMESTAMP
+			genre = COALESCE(?, genre), sample_rate_hz = COALESCE(?, sample_rate_hz), bit_depth = COALESCE(?, bit_depth), updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		albumID, meta.Title, sortKey(meta.Title), meta.Artist, trackNo, genreVal, trackID,
+		albumID, meta.Title, sortKey(meta.Title), meta.Artist, trackNo, genreVal, sampleRateVal, bitDepthVal, trackID,
 	)
 	if err != nil {
 		return err
@@ -544,6 +558,23 @@ func (s *Store) updateTrackDurationIfZero(ctx context.Context, trackID string, d
 		UPDATE tracks SET duration_ms = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND duration_ms = 0`,
 		durationMs, trackID,
+	)
+	return err
+}
+
+func (s *Store) updateTrackAudioFormatIfZero(ctx context.Context, trackID string, meta FileMetadata) error {
+	sampleRateVal := nullableInt(meta.SampleRateHz)
+	bitDepthVal := nullableInt(meta.BitDepth)
+	if sampleRateVal == nil && bitDepthVal == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE tracks SET
+			sample_rate_hz = COALESCE(?, sample_rate_hz),
+			bit_depth = COALESCE(?, bit_depth),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND (sample_rate_hz IS NULL OR sample_rate_hz = 0 OR bit_depth IS NULL OR bit_depth = 0)`,
+		sampleRateVal, bitDepthVal, trackID,
 	)
 	return err
 }
@@ -679,7 +710,7 @@ func (s *Store) GetScanStatus(ctx context.Context) (ScanStatus, error) {
 func scanTrackRow(rows *sql.Rows, albumTitle string) (Track, error) {
 	var t Track
 	var trackNo sql.NullInt64
-	err := rows.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre)
+	err := rows.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre, &t.SampleRateHz, &t.BitDepth)
 	if err != nil {
 		return Track{}, err
 	}
@@ -688,13 +719,14 @@ func scanTrackRow(rows *sql.Rows, albumTitle string) (Track, error) {
 		n := int(trackNo.Int64)
 		t.TrackNo = &n
 	}
+	enrichTrackBitrate(&t)
 	return t, nil
 }
 
 func scanTrackRowWithAlbum(rows *sql.Rows) (Track, error) {
 	var t Track
 	var trackNo sql.NullInt64
-	err := rows.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre)
+	err := rows.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre, &t.SampleRateHz, &t.BitDepth)
 	if err != nil {
 		return Track{}, err
 	}
@@ -702,6 +734,7 @@ func scanTrackRowWithAlbum(rows *sql.Rows) (Track, error) {
 		n := int(trackNo.Int64)
 		t.TrackNo = &n
 	}
+	enrichTrackBitrate(&t)
 	return t, nil
 }
 

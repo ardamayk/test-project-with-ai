@@ -49,8 +49,14 @@ function AlbumDetailPage() {
 
       <AlbumDetailHeader album={data} onPlayAlbum={handlePlayAlbum} />
 
-      <section className="mt-8">
-        <TrackList tracks={data.tracks} albumId={data.id} showFavorite showGenre />
+      <section className="mt-6">
+        <TrackList
+          tracks={data.tracks}
+          albumId={data.id}
+          showFavorite
+          showMeta
+          compact
+        />
       </section>
 
       <MoreFromArtist

@@ -187,16 +187,19 @@ type ThemePreferencesPreset string
 
 // Track defines model for Track.
 type Track struct {
-	AlbumId    openapi_types.UUID `json:"albumId"`
-	AlbumTitle *string            `json:"albumTitle,omitempty"`
-	ArtistName string             `json:"artistName"`
-	DurationMs int                `json:"durationMs"`
-	Format     string             `json:"format"`
-	Genre      *string            `json:"genre,omitempty"`
-	Id         openapi_types.UUID `json:"id"`
-	SizeBytes  *int               `json:"sizeBytes,omitempty"`
-	Title      string             `json:"title"`
-	TrackNo    *int               `json:"trackNo,omitempty"`
+	AlbumId      openapi_types.UUID `json:"albumId"`
+	AlbumTitle   *string            `json:"albumTitle,omitempty"`
+	ArtistName   string             `json:"artistName"`
+	BitDepth     *int               `json:"bitDepth,omitempty"`
+	BitrateKbps  *int               `json:"bitrateKbps,omitempty"`
+	DurationMs   int                `json:"durationMs"`
+	Format       string             `json:"format"`
+	Genre        *string            `json:"genre,omitempty"`
+	Id           openapi_types.UUID `json:"id"`
+	SampleRateHz *int               `json:"sampleRateHz,omitempty"`
+	SizeBytes    *int               `json:"sizeBytes,omitempty"`
+	Title        string             `json:"title"`
+	TrackNo      *int               `json:"trackNo,omitempty"`
 }
 
 // TrackList defines model for TrackList.

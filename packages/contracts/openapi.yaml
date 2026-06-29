@@ -625,6 +625,12 @@ components:
           type: string
         genre:
           type: string
+        sampleRateHz:
+          type: integer
+        bitDepth:
+          type: integer
+        bitrateKbps:
+          type: integer
         sizeBytes:
           type: integer
     TrackList:

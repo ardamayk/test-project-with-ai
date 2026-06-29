@@ -38,7 +38,7 @@ export function MoreFromArtist({
 
   if (albums.isLoading) {
     return (
-      <section className="mt-10">
+      <section className="mt-6">
         <h2 className="mb-4 font-semibold text-heading text-xl">
           More from {artistName}
         </h2>
@@ -58,7 +58,7 @@ export function MoreFromArtist({
   }
 
   return (
-    <section className="mt-10">
+    <section className="mt-6">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="font-semibold text-heading text-xl">
           More from {artistName}
