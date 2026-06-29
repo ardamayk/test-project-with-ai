@@ -30,3 +30,21 @@ func TestSplitGenres(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeGenresDedupesCaseInsensitive(t *testing.T) {
+	got := mergeGenres([]string{"Pop", "pop"}, []string{"Rock"})
+	if len(got) != 2 {
+		t.Fatalf("merge = %#v, want 2 genres", got)
+	}
+}
+
+func TestDecodeGenresLegacyString(t *testing.T) {
+	got := decodeGenres("Synthpop; Pop")
+	if len(got) != 2 {
+		t.Fatalf("decode legacy = %#v, want 2 genres", got)
+	}
+	seen := map[string]bool{got[0]: true, got[1]: true}
+	if !seen["Pop"] || !seen["Synthpop"] {
+		t.Fatalf("decode legacy = %#v", got)
+	}
+}
