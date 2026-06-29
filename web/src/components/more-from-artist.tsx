@@ -6,15 +6,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRef } from 'react'
 import { Button } from '#/components/ui/button'
 import { apiClient } from '#/lib/api'
-
-function sortAlbumsByYear(albums: Album[]): Album[] {
-  return [...albums].sort((a, b) => {
-    const yearA = a.year ?? -1
-    const yearB = b.year ?? -1
-    if (yearA !== yearB) return yearB - yearA
-    return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
-  })
-}
+import { sortAlbumsByYear } from '#/lib/sort-albums'
 
 export function MoreFromArtist({
   artistId,

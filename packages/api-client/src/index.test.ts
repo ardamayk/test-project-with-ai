@@ -8,6 +8,8 @@ describe('createApiClient', () => {
     expect(client.getPreferences).toBeTypeOf('function')
     expect(client.listAlbums).toBeTypeOf('function')
     expect(client.getPlaybackQueue).toBeTypeOf('function')
+    expect(client.deleteAlbum).toBeTypeOf('function')
+    expect(client.deleteTrack).toBeTypeOf('function')
     expect(client.getTrackStreamUrl('abc')).toBe(
       'http://localhost:8080/api/v1/tracks/abc/stream',
     )
