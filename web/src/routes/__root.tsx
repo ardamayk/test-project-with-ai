@@ -12,6 +12,7 @@ import {
 } from '@repo/ui'
 import { apiClient } from '#/lib/api'
 import { ThemeSync } from '#/components/theme-sync'
+import { useLibraryScanSync } from '#/hooks/use-library-scan-sync'
 
 const playbackApi: PlaybackApi = {
   getQueue: () => apiClient.getPlaybackQueue(),
@@ -19,6 +20,7 @@ const playbackApi: PlaybackApi = {
   appendQueueItem: (trackId) => apiClient.appendPlaybackQueueItem(trackId),
   removeQueueItem: (itemId) => apiClient.removePlaybackQueueItem(itemId),
   getStreamUrl: (trackId) => apiClient.getTrackStreamUrl(trackId),
+  getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
@@ -27,6 +29,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootLayout() {
   const queryClient = useQueryClient()
+  useLibraryScanSync()
   const preferences = useQuery({
     queryKey: ['preferences'],
     queryFn: () => apiClient.getPreferences(),

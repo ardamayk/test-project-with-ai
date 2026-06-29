@@ -16,6 +16,7 @@ export type PlaybackApi = {
   appendQueueItem: (trackId: string) => Promise<Queue>
   removeQueueItem: (itemId: string) => Promise<Queue>
   getStreamUrl: (trackId: string) => string
+  getAlbumCoverUrl: (albumId: string) => string
 }
 
 type PlaybackContextValue = {
@@ -33,6 +34,7 @@ type PlaybackContextValue = {
   removeFromQueue: (itemId: string) => Promise<void>
   clearQueue: () => Promise<void>
   refreshQueue: () => Promise<void>
+  getAlbumCoverUrl: (albumId: string) => string
 }
 
 const PlaybackContext = createContext<PlaybackContextValue | null>(null)
@@ -71,6 +73,9 @@ export function PlaybackProvider({
     )
     if (item) {
       setCurrentTrack(item.track)
+      if (item.track.durationMs > 0) {
+        setDuration(item.track.durationMs / 1000)
+      }
     }
 
     const audio = audioRef.current
@@ -92,7 +97,13 @@ export function PlaybackProvider({
     audioRef.current = audio
 
     const onTimeUpdate = () => setCurrentTime(audio.currentTime)
-    const onDurationChange = () => setDuration(audio.duration || 0)
+    const onDurationChange = () => {
+      const next = audio.duration
+      if (Number.isFinite(next) && next > 0) {
+        setDuration(next)
+      }
+    }
+    const onLoadedMetadata = () => onDurationChange()
     const onPlay = () => setIsPlaying(true)
     const onPause = () => setIsPlaying(false)
     const onEnded = () => {
@@ -107,6 +118,7 @@ export function PlaybackProvider({
 
     audio.addEventListener('timeupdate', onTimeUpdate)
     audio.addEventListener('durationchange', onDurationChange)
+    audio.addEventListener('loadedmetadata', onLoadedMetadata)
     audio.addEventListener('ended', onEnded)
     audio.addEventListener('play', onPlay)
     audio.addEventListener('pause', onPause)
@@ -117,6 +129,7 @@ export function PlaybackProvider({
       audio.pause()
       audio.removeEventListener('timeupdate', onTimeUpdate)
       audio.removeEventListener('durationchange', onDurationChange)
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata)
       audio.removeEventListener('ended', onEnded)
       audio.removeEventListener('play', onPlay)
       audio.removeEventListener('pause', onPause)
@@ -208,6 +221,7 @@ export function PlaybackProvider({
       removeFromQueue,
       clearQueue,
       refreshQueue,
+      getAlbumCoverUrl: (albumId: string) => apiRef.current.getAlbumCoverUrl(albumId),
     }),
     [
       queue,

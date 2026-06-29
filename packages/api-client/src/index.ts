@@ -56,6 +56,7 @@ export type Album = {
   artistName: string
   year?: number
   trackCount?: number
+  genres?: string[]
 }
 
 export type AlbumList = {
@@ -72,6 +73,7 @@ export type Track = {
   trackNo?: number
   durationMs: number
   format: string
+  genre?: string
   sizeBytes?: number
 }
 
@@ -93,6 +95,10 @@ export type ScanStatus = {
   error?: string
   startedAt?: string
   finishedAt?: string
+}
+
+export type DeleteResult = {
+  deletedFiles: number
 }
 
 export type QueueItem = {
@@ -198,10 +204,18 @@ export function createApiClient(config: ApiClientConfig) {
       request<AlbumList>(`/api/v1/library/albums${buildQuery(params)}`),
     getAlbum: (albumId: string) =>
       request<AlbumDetail>(`/api/v1/library/albums/${albumId}`),
+    deleteAlbum: (albumId: string) =>
+      request<DeleteResult>(`/api/v1/library/albums/${albumId}`, {
+        method: 'DELETE',
+      }),
     listTracks: (params?: ListParams) =>
       request<TrackList>(`/api/v1/library/tracks${buildQuery(params)}`),
     getTrack: (trackId: string) =>
       request<Track>(`/api/v1/library/tracks/${trackId}`),
+    deleteTrack: (trackId: string) =>
+      request<DeleteResult>(`/api/v1/library/tracks/${trackId}`, {
+        method: 'DELETE',
+      }),
 
     getPlaybackQueue: () => request<Queue>('/api/v1/playback/queue'),
     replacePlaybackQueue: (trackIds: string[]) =>
@@ -220,6 +234,8 @@ export function createApiClient(config: ApiClientConfig) {
       }),
     getTrackStreamUrl: (trackId: string) =>
       `${baseUrl}/api/v1/tracks/${trackId}/stream`,
+    getAlbumCoverUrl: (albumId: string) =>
+      `${baseUrl}/api/v1/library/albums/${albumId}/cover`,
   }
 }
 

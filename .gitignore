@@ -11,3 +11,4 @@ graphify-out/
 coverage/
 playwright-report/
 test-results/
+server/music/

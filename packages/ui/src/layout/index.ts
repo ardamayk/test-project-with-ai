@@ -1,3 +1,4 @@
+export { AlbumArt } from './AlbumArt'
 export { AppShell } from './AppShell'
 export { AppBrand } from './AppBrand'
 export { LayoutProvider, useLayout } from './LayoutProvider'

@@ -11,16 +11,20 @@ import (
 )
 
 type FileMetadata struct {
-	Path       string
-	Format     string
-	SizeBytes  int64
-	ModTime    time.Time
-	Title      string
-	Artist     string
-	Album      string
-	TrackNo    int
-	Year       int
-	DurationMs int
+	Path        string
+	Format      string
+	SizeBytes   int64
+	ModTime     time.Time
+	Title       string
+	Artist      string
+	AlbumArtist string
+	Album       string
+	TrackNo     int
+	Year        int
+	DurationMs  int
+	Genre       string
+	CoverMime   string
+	CoverData   []byte
 }
 
 func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadata, error) {
@@ -48,11 +52,27 @@ func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadat
 	meta.Title = sanitizeName(m.Title(), meta.Title)
 	meta.Artist = sanitizeName(m.Artist(), meta.Artist)
 	meta.Album = sanitizeName(m.Album(), meta.Album)
+	albumArtist := sanitizeName(m.AlbumArtist(), "")
+	if albumArtist == "" {
+		albumArtist = meta.Artist
+	}
+	meta.AlbumArtist = albumArtist
 	if track, _ := m.Track(); track > 0 {
 		meta.TrackNo = track
 	}
 	if year := m.Year(); year > 0 {
 		meta.Year = year
+	}
+	meta.DurationMs = durationMsFromFile(path, format, m)
+	if genres := splitGenres(m.Genre()); len(genres) > 0 {
+		meta.Genre = genres[0]
+	}
+	if pic := m.Picture(); pic != nil && len(pic.Data) > 0 {
+		meta.CoverMime = pic.MIMEType
+		if meta.CoverMime == "" {
+			meta.CoverMime = "image/jpeg"
+		}
+		meta.CoverData = pic.Data
 	}
 
 	return meta, nil

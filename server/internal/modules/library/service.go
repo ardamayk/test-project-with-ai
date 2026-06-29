@@ -84,6 +84,9 @@ func (s *Service) runScan(jobID string) {
 	}
 
 	_ = s.store.UpdateScanProgress(ctx, jobID, scanned, added, updated, removed)
+	if err := s.store.RecomputeAllAlbumGenres(ctx); err != nil {
+		slog.Error("library scan recompute album genres failed", "error", err, "jobId", jobID)
+	}
 	_ = s.store.FinishScan(ctx, jobID, "completed", "", scanned, added, updated, removed)
 	slog.Info("library scan completed", "jobId", jobID, "scanned", scanned, "added", added, "updated", updated, "removed", removed)
 }
@@ -108,10 +111,26 @@ func (s *Service) ListTracks(ctx context.Context, limit, offset int, q string) (
 	return s.store.ListTracks(ctx, limit, offset, q)
 }
 
+func (s *Service) GetAlbumCover(ctx context.Context, albumID string) (string, []byte, error) {
+	return s.store.GetAlbumCover(ctx, albumID)
+}
+
 func (s *Service) GetTrack(ctx context.Context, trackID string) (Track, error) {
 	return s.store.GetTrack(ctx, trackID)
 }
 
 func (s *Service) GetTrackFilePath(ctx context.Context, trackID string) (string, error) {
 	return s.store.GetTrackFilePath(ctx, trackID)
+}
+
+func (s *Service) DeleteTrack(ctx context.Context, trackID string) (DeleteResult, error) {
+	return s.store.DeleteTrack(ctx, trackID, func(path string) error {
+		return removeMusicFile(path, s.musicPaths)
+	})
+}
+
+func (s *Service) DeleteAlbum(ctx context.Context, albumID string) (DeleteResult, error) {
+	return s.store.DeleteAlbum(ctx, albumID, func(path string) error {
+		return removeMusicFile(path, s.musicPaths)
+	})
 }

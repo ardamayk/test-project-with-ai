@@ -49,14 +49,20 @@ const (
 
 // Defines values for ThemePreferencesPreset.
 const (
-	Earthly    ThemePreferencesPreset = "earthly"
-	TokyoNight ThemePreferencesPreset = "tokyo-night"
+	CoastalMist   ThemePreferencesPreset = "coastal-mist"
+	DustyEarth    ThemePreferencesPreset = "dusty-earth"
+	Earthly       ThemePreferencesPreset = "earthly"
+	NightEmber    ThemePreferencesPreset = "night-ember"
+	SageHearth    ThemePreferencesPreset = "sage-hearth"
+	TokyoNight    ThemePreferencesPreset = "tokyo-night"
+	VintageHarbor ThemePreferencesPreset = "vintage-harbor"
 )
 
 // Album defines model for Album.
 type Album struct {
 	ArtistId   openapi_types.UUID `json:"artistId"`
 	ArtistName string             `json:"artistName"`
+	Genres     *[]string          `json:"genres,omitempty"`
 	Id         openapi_types.UUID `json:"id"`
 	Title      string             `json:"title"`
 	TrackCount *int               `json:"trackCount,omitempty"`
@@ -67,6 +73,7 @@ type Album struct {
 type AlbumDetail struct {
 	ArtistId   openapi_types.UUID `json:"artistId"`
 	ArtistName string             `json:"artistName"`
+	Genres     *[]string          `json:"genres,omitempty"`
 	Id         openapi_types.UUID `json:"id"`
 	Title      string             `json:"title"`
 	TrackCount *int               `json:"trackCount,omitempty"`
@@ -185,6 +192,7 @@ type Track struct {
 	ArtistName string             `json:"artistName"`
 	DurationMs int                `json:"durationMs"`
 	Format     string             `json:"format"`
+	Genre      *string            `json:"genre,omitempty"`
 	Id         openapi_types.UUID `json:"id"`
 	SizeBytes  *int               `json:"sizeBytes,omitempty"`
 	Title      string             `json:"title"`

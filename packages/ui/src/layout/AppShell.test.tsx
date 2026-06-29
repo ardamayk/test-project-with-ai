@@ -14,6 +14,7 @@ const mockPlaybackApi = {
   removeQueueItem: async () => ({ items: [] }),
   clearQueue: async () => ({ items: [] }),
   getStreamUrl: (id: string) => `/stream/${id}`,
+  getAlbumCoverUrl: (id: string) => `/cover/${id}`,
 }
 
 describe('AppShell', () => {

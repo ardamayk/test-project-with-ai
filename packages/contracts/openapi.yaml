@@ -169,6 +169,42 @@ paths:
                 $ref: "#/components/schemas/AlbumDetail"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [library]
+      operationId: deleteAlbum
+      summary: Delete album, its tracks, and music files
+      parameters:
+        - $ref: "#/components/parameters/albumId"
+      responses:
+        "200":
+          description: Album deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/library/albums/{albumId}/cover:
+    get:
+      tags: [library]
+      operationId: getAlbumCover
+      summary: Get album cover image
+      parameters:
+        - $ref: "#/components/parameters/albumId"
+      responses:
+        "200":
+          description: Cover image
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/library/tracks:
     get:
       tags: [library]
@@ -203,6 +239,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Track"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [library]
+      operationId: deleteTrack
+      summary: Delete track and its music file
+      parameters:
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "200":
+          description: Track deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
   /api/v1/playback/queue:
@@ -526,6 +577,10 @@ components:
           type: integer
         trackCount:
           type: integer
+        genres:
+          type: array
+          items:
+            type: string
     AlbumList:
       type: object
       required: [items, total]
@@ -568,6 +623,8 @@ components:
           type: integer
         format:
           type: string
+        genre:
+          type: string
         sizeBytes:
           type: integer
     TrackList:
@@ -579,6 +636,12 @@ components:
           items:
             $ref: "#/components/schemas/Track"
         total:
+          type: integer
+    DeleteResult:
+      type: object
+      required: [deletedFiles]
+      properties:
+        deletedFiles:
           type: integer
     ScanStatus:
       type: object

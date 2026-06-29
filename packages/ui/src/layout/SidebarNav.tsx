@@ -8,6 +8,8 @@ import {
   Radio,
   Settings,
   SquareLibrary,
+  Tags,
+  Users,
 } from 'lucide-react'
 import { AppBrand } from './AppBrand'
 import { PanelCollapseButton } from './PanelCollapseButton'
@@ -18,6 +20,8 @@ import { cn } from '../lib/utils'
 const libraryNav = [
   { to: '/favorites', label: 'Favorites', icon: Heart },
   { to: '/library/albums', label: 'Albums', icon: SquareLibrary },
+  { to: '/library/artists', label: 'Artists', icon: Users },
+  { to: '/library/genres', label: 'Genres', icon: Tags },
   { to: '/folders', label: 'Folders', icon: Folder },
   { to: '/radio', label: 'Radio Stations', icon: Radio },
   { to: '/library/tracks', label: 'Tracks', icon: Music2 },
