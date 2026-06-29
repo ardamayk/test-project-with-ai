@@ -67,7 +67,7 @@ export function AppShell({
   )
 
   const queueColumn = (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-queue text-queue-foreground">
       <div className="min-h-0 flex-[2] overflow-hidden">
         <QueuePanel />
       </div>

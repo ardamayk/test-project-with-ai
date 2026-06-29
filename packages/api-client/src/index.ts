@@ -10,7 +10,14 @@ export type HealthResponse = {
 
 export type ThemePreferences = {
   mode: 'light' | 'dark' | 'system'
-  preset: 'earthly' | 'tokyo-night'
+  preset:
+    | 'earthly'
+    | 'tokyo-night'
+    | 'vintage-harbor'
+    | 'night-ember'
+    | 'dusty-earth'
+    | 'coastal-mist'
+    | 'sage-hearth'
 }
 
 export type LayoutPreferences = {

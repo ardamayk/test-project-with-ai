@@ -70,7 +70,7 @@ function SortableWidget({
       <div className="flex items-center gap-1 border-border border-b px-2 py-1">
         <button
           type="button"
-          className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          className="cursor-grab text-caption hover:text-foreground active:cursor-grabbing"
           aria-label={`Drag ${title}`}
           {...attributes}
           {...listeners}
@@ -92,7 +92,7 @@ export function WidgetDock({ panel }: { panel: PanelSide }) {
 
   if (widgetIds.length === 0) {
     return (
-      <p className="px-2 py-3 text-muted-foreground text-xs">
+      <p className="px-2 py-3 text-caption text-xs">
         Drop widgets here
       </p>
     )

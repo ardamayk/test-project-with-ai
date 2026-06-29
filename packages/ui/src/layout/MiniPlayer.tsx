@@ -18,14 +18,14 @@ export function MiniPlayer() {
         {currentTrack?.title?.slice(0, 1) ?? '♪'}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-sm">
+        <p className="truncate font-medium text-heading text-sm">
           {currentTrack?.title ?? 'Nothing playing'}
         </p>
-        <p className="truncate text-muted-foreground text-xs">
+        <p className="truncate text-foreground text-xs">
           {currentTrack?.artistName ?? 'Select a track'}
         </p>
       </div>
-      <span className="text-muted-foreground text-xs">
+      <span className="text-caption text-xs">
         {isPlaying ? '❚❚' : '▶'}
       </span>
     </button>

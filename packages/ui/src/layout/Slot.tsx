@@ -66,7 +66,7 @@ export function Panel({
         <button
           type="button"
           onClick={onToggle}
-          className="text-muted-foreground text-xs hover:text-foreground"
+          className="text-caption text-xs hover:text-foreground"
           aria-label={`Collapse ${side} panel`}
         >
           {side === 'left' ? '‹' : '›'}

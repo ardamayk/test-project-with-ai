@@ -277,7 +277,14 @@ export interface components {
             /** @enum {string} */
             mode: "light" | "dark" | "system";
             /** @enum {string} */
-            preset: "earthly" | "tokyo-night";
+            preset:
+              | "earthly"
+              | "tokyo-night"
+              | "vintage-harbor"
+              | "night-ember"
+              | "dusty-earth"
+              | "coastal-mist"
+              | "sage-hearth";
         };
         UserPreferences: {
             theme: components["schemas"]["ThemePreferences"];

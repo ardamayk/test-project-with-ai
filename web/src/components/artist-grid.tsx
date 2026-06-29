@@ -3,7 +3,7 @@ import type { Artist } from '@repo/api-client'
 export function ArtistGrid({ artists }: { artists: Artist[] }) {
   if (artists.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm">
+      <p className="text-foreground text-sm">
         No artists yet. Scan your library to get started.
       </p>
     )
@@ -19,11 +19,11 @@ export function ArtistGrid({ artists }: { artists: Artist[] }) {
           <div className="mb-3 flex aspect-square items-center justify-center rounded-md bg-muted font-semibold text-2xl uppercase">
             {artist.name.slice(0, 1)}
           </div>
-          <p className="truncate font-medium text-sm group-hover:underline">
+          <p className="truncate font-medium text-heading text-sm group-hover:underline">
             {artist.name}
           </p>
           {artist.albumCount != null ? (
-            <p className="text-muted-foreground text-xs">
+            <p className="text-foreground text-xs">
               {artist.albumCount} albums
             </p>
           ) : null}

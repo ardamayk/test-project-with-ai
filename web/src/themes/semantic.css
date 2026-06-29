@@ -1,0 +1,5 @@
+/**
+ * Per-preset semantic overrides (imported after layers.css).
+ * Add `@import './semantic/{preset-id}.css';` when registry entry has semanticOverride.
+ */
+@import './semantic/coastal-mist.css';

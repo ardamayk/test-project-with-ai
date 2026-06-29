@@ -16,7 +16,7 @@ function NowPlayingWidget() {
 
   if (!currentTrack) {
     return (
-      <div className="rounded-lg border border-border p-4 text-muted-foreground text-sm">
+      <div className="rounded-lg border border-border p-4 text-foreground text-sm">
         Nothing playing
       </div>
     )
@@ -27,15 +27,15 @@ function NowPlayingWidget() {
 
   return (
     <div className="space-y-2 rounded-lg border border-border p-4">
-      <p className="font-medium text-sm">{currentTrack.title}</p>
-      <p className="text-muted-foreground text-xs">{currentTrack.artistName}</p>
+      <p className="font-medium text-heading text-sm">{currentTrack.title}</p>
+      <p className="text-foreground text-xs">{currentTrack.artistName}</p>
       <div className="h-1 overflow-hidden rounded-full bg-muted">
         <div
           className="h-full bg-primary transition-all"
           style={{ width: `${progress}%` }}
         />
       </div>
-      <div className="flex items-center justify-between text-muted-foreground text-xs">
+      <div className="flex items-center justify-between text-caption text-xs">
         <span>{formatDuration(currentTime * 1000)}</span>
         <button
           type="button"
@@ -55,7 +55,7 @@ function QueueWidget() {
 
   if (queue.length === 0) {
     return (
-      <div className="rounded-lg border border-border p-4 text-muted-foreground text-sm">
+      <div className="rounded-lg border border-border p-4 text-foreground text-sm">
         Queue is empty
       </div>
     )
@@ -75,18 +75,20 @@ function QueueWidget() {
           >
             <span
               className={
-                item.track.id === currentTrack?.id ? 'font-medium' : undefined
+                item.track.id === currentTrack?.id
+                  ? 'font-medium text-heading'
+                  : 'text-foreground'
               }
             >
               {item.track.title}
             </span>
-            <span className="block truncate text-muted-foreground text-xs">
+            <span className="block truncate text-foreground text-xs">
               {item.track.artistName}
             </span>
           </button>
           <button
             type="button"
-            className="shrink-0 text-muted-foreground text-xs hover:text-foreground"
+            className="shrink-0 text-caption text-xs hover:text-foreground"
             onClick={() => void removeFromQueue(item.id)}
             aria-label="Remove from queue"
           >
@@ -100,7 +102,7 @@ function QueueWidget() {
 
 function DiscoverWidget() {
   return (
-    <div className="rounded-lg border border-dashed border-border p-4 text-muted-foreground text-sm">
+    <div className="rounded-lg border border-dashed border-border p-4 text-caption text-sm">
       Discover (coming soon)
     </div>
   )

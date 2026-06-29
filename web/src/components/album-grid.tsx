@@ -1,10 +1,12 @@
 import type { Album } from '@repo/api-client'
+import { AlbumArt } from '@repo/ui'
 import { Link } from '@tanstack/react-router'
+import { apiClient } from '#/lib/api'
 
 export function AlbumGrid({ albums }: { albums: Album[] }) {
   if (albums.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm">
+      <p className="text-foreground text-sm">
         No albums yet. Scan your library to get started.
       </p>
     )
@@ -19,13 +21,15 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
           params={{ albumId: album.id }}
           className="group rounded-lg border border-border p-3 transition hover:bg-muted/50"
         >
-          <div className="mb-3 flex aspect-square items-center justify-center rounded-md bg-muted font-semibold text-2xl uppercase">
-            {album.title.slice(0, 1)}
-          </div>
-          <p className="truncate font-medium text-sm group-hover:underline">
+          <AlbumArt
+            coverUrl={apiClient.getAlbumCoverUrl(album.id)}
+            title={album.title}
+            className="mb-3 aspect-square w-full rounded-md text-2xl"
+          />
+          <p className="truncate font-medium text-heading text-sm group-hover:underline">
             {album.title}
           </p>
-          <p className="truncate text-muted-foreground text-xs">
+          <p className="truncate text-foreground text-xs">
             {album.artistName}
             {album.trackCount != null ? ` · ${album.trackCount} tracks` : ''}
           </p>

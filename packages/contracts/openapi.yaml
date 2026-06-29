@@ -454,7 +454,14 @@ components:
           enum: [light, dark, system]
         preset:
           type: string
-          enum: [earthly, tokyo-night]
+          enum:
+            - earthly
+            - tokyo-night
+            - vintage-harbor
+            - night-ember
+            - dusty-earth
+            - coastal-mist
+            - sage-hearth
     UserPreferences:
       type: object
       required: [theme, layout]

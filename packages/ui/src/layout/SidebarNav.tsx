@@ -10,7 +10,6 @@ import {
   SquareLibrary,
 } from 'lucide-react'
 import { AppBrand } from './AppBrand'
-import { MiniPlayer } from './MiniPlayer'
 import { PanelCollapseButton } from './PanelCollapseButton'
 import { useLayout } from './LayoutProvider'
 import { getNavPanel } from '../widgets/layout-utils'
@@ -43,7 +42,7 @@ function NavLink({
       <Link
         to={to}
         title={label}
-        className="flex size-9 items-center justify-center rounded-md border-l-2 border-transparent text-sidebar-foreground/85 transition hover:bg-sidebar-accent hover:text-sidebar-foreground [&.active]:border-primary [&.active]:bg-sidebar-accent [&.active]:text-primary"
+        className="flex size-9 items-center justify-center rounded-md border-l-2 border-transparent text-sidebar-foreground transition hover:bg-sidebar-accent hover:text-sidebar-heading [&_svg]:text-current [&.active]:border-primary [&.active]:bg-sidebar-accent [&.active]:text-sidebar-heading"
       >
         <Icon className="size-4 shrink-0" />
       </Link>
@@ -53,7 +52,7 @@ function NavLink({
   return (
     <Link
       to={to}
-      className="flex items-center gap-2.5 whitespace-nowrap rounded-md border-l-2 border-transparent px-3 py-2.5 text-[0.9375rem] text-sidebar-foreground/85 transition hover:bg-sidebar-accent hover:text-sidebar-foreground [&.active]:border-primary [&.active]:bg-sidebar-accent [&.active]:font-medium [&.active]:text-primary"
+      className="flex items-center gap-2.5 whitespace-nowrap rounded-md border-l-2 border-transparent px-3 py-2.5 text-[0.9375rem] text-sidebar-foreground transition hover:bg-sidebar-accent hover:text-sidebar-heading [&_svg]:text-current [&.active]:border-primary [&.active]:bg-sidebar-accent [&.active]:font-medium [&.active]:text-sidebar-heading"
     >
       <Icon className="size-4 shrink-0" />
       {label}
@@ -116,11 +115,10 @@ export function SidebarNav() {
         ))}
       </nav>
       <div className="mt-auto border-sidebar-border border-t p-3">
-        <MiniPlayer />
         <button
           type="button"
           disabled
-          className="mt-2 flex w-full items-center gap-2 px-2 py-1 text-muted-foreground text-xs"
+          className="mt-2 flex w-full items-center gap-2 px-2 py-1 text-caption text-xs"
         >
           <HelpCircle className="size-3.5" />
           Help (soon)

@@ -2,6 +2,7 @@ import { ListMusic } from 'lucide-react'
 import { usePlayback } from '../playback/PlaybackProvider'
 import { useLayout } from './LayoutProvider'
 import { PanelCollapseButton } from './PanelCollapseButton'
+import { AlbumArt } from './AlbumArt'
 import { getQueuePanel } from '../widgets/layout-utils'
 import { cn } from '../lib/utils'
 
@@ -18,12 +19,12 @@ export function QueuePanel() {
   const panelSide = getQueuePanel(preferences.layout.sidebarPosition)
   const isCollapsed = preferences.layout.collapsed[panelSide]
 
-  const { queue, currentTrack, playQueueIndex, removeFromQueue, clearQueue } =
+  const { queue, currentTrack, playQueueIndex, removeFromQueue, clearQueue, getAlbumCoverUrl } =
     usePlayback()
 
   if (isCollapsed) {
     return (
-      <div className="flex h-full flex-col items-center bg-background text-foreground">
+      <div className="flex h-full flex-col items-center bg-queue text-queue-foreground">
         <div className="flex w-full justify-center px-1 pt-2">
           <PanelCollapseButton
             edge={panelSide}
@@ -32,7 +33,7 @@ export function QueuePanel() {
           />
         </div>
         <div
-          className="relative mt-3 flex size-9 items-center justify-center rounded-md text-muted-foreground"
+          className="relative mt-3 flex size-9 items-center justify-center rounded-md text-caption"
           title={`Queue${queue.length > 0 ? ` (${queue.length})` : ''}`}
         >
           <ListMusic className="size-4" />
@@ -59,7 +60,7 @@ export function QueuePanel() {
           {queue.length > 0 ? (
             <button
               type="button"
-              className="text-muted-foreground text-xs hover:text-foreground"
+              className="text-caption text-xs hover:text-foreground"
               onClick={() => void clearQueue()}
             >
               Clear all
@@ -74,7 +75,7 @@ export function QueuePanel() {
       </div>
       <div className="flex-1 overflow-y-auto p-3">
         {queue.length === 0 ? (
-          <p className="text-foreground/70 text-sm">Queue is empty</p>
+          <p className="text-foreground text-sm">Queue is empty</p>
         ) : (
           <ul className="flex flex-col gap-1">
             {queue.map((item, index) => (
@@ -82,9 +83,11 @@ export function QueuePanel() {
                 key={item.id}
                 className="flex items-center gap-2 rounded-md px-2 py-2 hover:bg-muted/50"
               >
-                <div className="flex size-8 shrink-0 items-center justify-center rounded bg-muted font-semibold text-xs uppercase">
-                  {item.track.title.slice(0, 1)}
-                </div>
+                <AlbumArt
+                  coverUrl={getAlbumCoverUrl(item.track.albumId)}
+                  title={item.track.title}
+                  className="size-8 shrink-0 rounded text-xs"
+                />
                 <button
                   type="button"
                   className="min-w-0 flex-1 text-left"
@@ -93,22 +96,22 @@ export function QueuePanel() {
                   <p
                     className={
                       item.track.id === currentTrack?.id
-                        ? 'truncate font-medium text-primary text-sm'
-                        : 'truncate text-sm'
+                        ? 'truncate font-medium text-heading text-sm'
+                        : 'truncate text-foreground text-sm'
                     }
                   >
                     {item.track.title}
                   </p>
-                  <p className="truncate text-muted-foreground text-xs">
+                  <p className="truncate text-foreground text-xs">
                     {item.track.artistName}
                   </p>
                 </button>
-                <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+                <span className="shrink-0 text-caption text-xs tabular-nums">
                   {formatDuration(item.track.durationMs)}
                 </span>
                 <button
                   type="button"
-                  className="shrink-0 text-muted-foreground text-xs hover:text-foreground"
+                  className="shrink-0 text-caption text-xs hover:text-foreground"
                   onClick={() => void removeFromQueue(item.id)}
                   aria-label="Remove from queue"
                 >
@@ -121,8 +124,8 @@ export function QueuePanel() {
       </div>
       <div className="border-border border-t p-3">
         <div className="rounded-lg border border-dashed border-border bg-muted/30 p-3">
-          <p className="font-medium text-xs">Smart suggestion</p>
-          <p className="mt-1 text-muted-foreground text-xs">
+          <p className="font-medium text-heading text-xs">Smart suggestion</p>
+          <p className="mt-1 text-caption text-xs">
             Based on your listening — coming soon.
           </p>
         </div>

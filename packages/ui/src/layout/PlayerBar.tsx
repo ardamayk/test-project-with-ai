@@ -14,6 +14,7 @@ import {
 import { usePlayback } from '../playback/PlaybackProvider'
 import { useLayout } from './LayoutProvider'
 import { getQueuePanel } from '../widgets/layout-utils'
+import { AlbumArt } from './AlbumArt'
 import { cn } from '../lib/utils'
 
 function formatTime(seconds: number): string {
@@ -37,36 +38,48 @@ export function PlayerBar() {
     setVolume,
     playQueueIndex,
     queue,
+    getAlbumCoverUrl,
   } = usePlayback()
 
   const currentIndex = queue.findIndex(
     (item) => item.track.id === currentTrack?.id,
   )
 
+  const effectiveDuration =
+    duration > 0
+      ? duration
+      : currentTrack?.durationMs
+        ? currentTrack.durationMs / 1000
+        : 0
+
   const handleSeek = (value: number) => {
-    if (duration > 0) {
-      seek(value * duration)
+    if (effectiveDuration > 0) {
+      seek(value * effectiveDuration)
     }
   }
 
   return (
-    <footer className="border-border border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <footer className="border-border border-t bg-player text-player-foreground backdrop-blur supports-[backdrop-filter]:bg-player/95">
       <div className="mx-auto flex max-w-screen-2xl items-center gap-4 px-4 py-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted font-semibold text-sm uppercase">
-            {currentTrack?.title?.slice(0, 1) ?? '♪'}
-          </div>
+          <AlbumArt
+            coverUrl={
+              currentTrack ? getAlbumCoverUrl(currentTrack.albumId) : null
+            }
+            title={currentTrack?.title ?? '♪'}
+            className="size-12 shrink-0 rounded-md text-sm"
+          />
           <div className="min-w-0">
-            <p className="truncate font-medium text-sm">
+            <p className="truncate font-medium text-heading text-sm">
               {currentTrack?.title ?? 'Nothing playing'}
             </p>
-            <p className="truncate text-muted-foreground text-xs">
+            <p className="truncate text-foreground text-xs">
               {currentTrack?.artistName ?? 'Select a track'}
             </p>
           </div>
           <button
             type="button"
-            className="text-muted-foreground hover:text-primary"
+            className="text-caption hover:text-heading"
             aria-label="Favorite"
             disabled={!currentTrack}
           >
@@ -78,7 +91,7 @@ export function PlayerBar() {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              className="inline-flex size-8 items-center justify-center rounded-full text-caption hover:bg-muted hover:text-foreground disabled:opacity-40"
               aria-label="Shuffle"
               disabled={!currentTrack}
             >
@@ -127,7 +140,7 @@ export function PlayerBar() {
             </button>
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              className="inline-flex size-8 items-center justify-center rounded-full text-caption hover:bg-muted hover:text-foreground disabled:opacity-40"
               aria-label="Repeat"
               disabled={!currentTrack}
             >
@@ -141,26 +154,28 @@ export function PlayerBar() {
               min={0}
               max={1}
               step={0.001}
-              value={duration > 0 ? currentTime / duration : 0}
+              value={
+                effectiveDuration > 0 ? currentTime / effectiveDuration : 0
+              }
               onChange={(e) => handleSeek(Number(e.target.value))}
               className="w-40 accent-primary"
               disabled={!currentTrack}
               aria-label="Seek"
             />
-            <span>{formatTime(duration)}</span>
+            <span>{formatTime(effectiveDuration)}</span>
           </div>
         </div>
 
         <div className="flex flex-1 items-center justify-end gap-2">
           <button
             type="button"
-            className="text-muted-foreground hover:text-foreground"
+            className="text-caption hover:text-foreground"
             onClick={() => togglePanel(queuePanelSide)}
             aria-label="Toggle queue panel"
           >
             <ListMusic className="size-4" />
           </button>
-          <Volume2 className="size-4 text-muted-foreground" />
+          <Volume2 className="size-4 text-caption" />
           <input
             type="range"
             min={0}
