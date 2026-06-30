@@ -135,7 +135,7 @@ export function PlaybackProvider({
       audio.removeEventListener('pause', onPause)
       audioRef.current = null
     }
-  }, [playTrackInternal, refreshQueue, volume])
+  }, [playTrackInternal, refreshQueue])
 
   const playTrack = useCallback(
     async (trackId: string, queueTrackIds?: string[]) => {

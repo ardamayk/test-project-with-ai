@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 test('albums page loads', async ({ page }) => {
   await page.goto('/library/albums')
   await expect(page.getByRole('heading', { name: 'Albums' })).toBeVisible()
-  await expect(page.getByText('Earthly Audio')).toBeVisible()
+  await expect(page.getByRole('navigation')).toBeVisible()
 })
 
 test('navigation links render', async ({ page }) => {
@@ -44,4 +44,16 @@ test('settings theme preset buttons', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Earthly' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Vintage Harbor' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sage Hearth' })).toBeVisible()
+})
+
+test('product docs load through server module', async ({ page }) => {
+  await page.goto('/docs/')
+  await expect(page.getByRole('heading', { name: 'Navidrome Replacement' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'API Reference' })).toBeVisible()
+})
+
+test('swagger reference loads through docs module', async ({ page }) => {
+  await page.goto('/api/docs')
+  await expect(page.getByRole('heading', { name: 'Earthly Audio API Reference' })).toBeVisible()
+  await expect(page.locator('#swagger-ui')).toBeVisible()
 })

@@ -1,0 +1,72 @@
+# Architecture
+
+Navidrome Replacement is a modular monolith with separate web, docs, contracts, and server packages.
+
+## Source flow
+
+```text
+packages/contracts/openapi.yaml
+  -> server/internal/api/gen
+  -> packages/api-client/src/generated/schema.ts
+  -> packages/api-client/src/index.ts type aliases
+
+packages/docs/content/*.mdx
+  -> packages/docs/dist
+  -> server/internal/staticassets/docs
+
+web/src
+  -> web/dist
+  -> server/internal/staticassets/web
+```
+
+## Server modules
+
+Domain routes are registered through `server/internal/modules`.
+
+- `library`: scan, artists, albums, tracks, covers, deletes
+- `playback`: queue and range streaming
+- `preferences`: theme and layout preferences
+- `docs`: MDX docs, Swagger UI, OpenAPI YAML
+
+Each module implements:
+
+```go
+type Module interface {
+    Name() string
+    RegisterRoutes(r chi.Router)
+}
+```
+
+`cmd/server` wires module dependencies, registers shared middleware, then calls the registry.
+
+## Shared server utilities
+
+HTTP JSON responses use `server/internal/api/respond`.
+
+Use it for module handlers instead of local `writeJSON` or `writeError` helpers so the error envelope stays consistent:
+
+```json
+{
+  "error": "bad_request",
+  "code": "bad_request",
+  "message": "Human-readable description"
+}
+```
+
+## API client
+
+`@repo/api-client` exports a stable `createApiClient` wrapper for web/UI code.
+
+Domain types exported from `@repo/api-client` are aliases to generated OpenAPI schemas. Do not hand-copy schema fields into the wrapper.
+
+## Static assets
+
+Production server embeds built assets with `go:embed`.
+
+After build, sync only the changed static target:
+
+```bash
+./scripts/sync-static.sh all   # web + docs
+./scripts/sync-static.sh web   # SPA only
+./scripts/sync-static.sh docs  # MDX docs only
+```

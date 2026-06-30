@@ -10,10 +10,11 @@ Preferences are stored on the server and synced across devices:
 {
   "sidebarPosition": "left",
   "panels": {
-    "left": ["now-playing", "queue"],
+    "left": ["now-playing"],
     "right": ["discover"]
   },
-  "collapsed": { "left": false, "right": true }
+  "collapsed": { "left": false, "right": false },
+  "sizes": [22, 50, 28]
 }
 ```
 
@@ -21,4 +22,6 @@ Update via `PATCH /api/v1/preferences`.
 
 ## Adding widgets
 
-Register new widget IDs in `packages/ui/src/widgets/registry.tsx`. Domain widgets ship in future modular monolith modules.
+Register widget IDs in `packages/ui/src/widgets/registry.tsx`.
+
+Domain widgets should stay near their owning feature. Shared shell primitives stay in `packages/ui/src/layout/`.

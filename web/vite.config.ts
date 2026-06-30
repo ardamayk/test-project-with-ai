@@ -17,6 +17,10 @@ const config = defineConfig({
         target: 'http://localhost:8090',
         changeOrigin: true,
       },
+      '/docs': {
+        target: 'http://localhost:8090',
+        changeOrigin: true,
+      },
     },
   },
   plugins: [

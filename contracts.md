@@ -89,6 +89,8 @@ pnpm generate
 | Go types | oapi-codegen | `server/internal/api/gen/types.gen.go` |
 | TS schema | openapi-typescript | `packages/api-client/src/generated/schema.ts` |
 
+`packages/api-client/src/index.ts` may define convenience wrappers, but exported domain types should alias generated schemas rather than re-declaring fields.
+
 ## CI drift check
 
 Generated files are committed. CI runs:
@@ -106,3 +108,9 @@ git diff --exit-code
 ## Product documentation
 
 Human-readable docs live in `packages/docs/content/*.mdx` and are served at `/docs/`. API reference stays in Swagger; do not duplicate endpoint lists in MDX.
+
+After building docs only, run:
+
+```bash
+./scripts/sync-static.sh docs
+```

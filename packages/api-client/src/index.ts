@@ -1,125 +1,32 @@
+import type { components, operations } from './generated/schema'
+
 export type ApiClientConfig = {
   baseUrl: string
   getToken?: () => string | undefined
 }
 
-export type HealthResponse = {
-  status: 'ok'
-  version: string
-}
+type Schemas = components['schemas']
 
-export type ThemePreferences = {
-  mode: 'light' | 'dark' | 'system'
-  preset:
-    | 'earthly'
-    | 'tokyo-night'
-    | 'vintage-harbor'
-    | 'night-ember'
-    | 'dusty-earth'
-    | 'coastal-mist'
-    | 'sage-hearth'
-}
-
-export type LayoutPreferences = {
-  sidebarPosition: 'left' | 'right'
-  panels: { left: string[]; right: string[] }
-  collapsed: { left: boolean; right: boolean }
-  sizes?: [number, number, number]
-}
-
-export type UserPreferences = {
-  theme: ThemePreferences
-  layout: LayoutPreferences
-}
-
-export type User = {
-  id: string
-  username: string
-  displayName?: string
-}
-
-export type Artist = {
-  id: string
-  name: string
-  albumCount?: number
-}
-
-export type ArtistList = {
-  items: Artist[]
-  total: number
-}
-
-export type Album = {
-  id: string
-  title: string
-  artistId: string
-  artistName: string
-  year?: number
-  trackCount?: number
-  genres?: string[]
-}
-
-export type AlbumList = {
-  items: Album[]
-  total: number
-}
-
-export type Track = {
-  id: string
-  title: string
-  artistName: string
-  albumId: string
-  albumTitle?: string
-  trackNo?: number
-  durationMs: number
-  format: string
-  genre?: string
-  sampleRateHz?: number
-  bitDepth?: number
-  bitrateKbps?: number
-  sizeBytes?: number
-}
-
-export type AlbumDetail = Album & {
-  tracks: Track[]
-}
-
-export type TrackList = {
-  items: Track[]
-  total: number
-}
-
-export type ScanStatus = {
-  status: 'idle' | 'running' | 'completed' | 'failed'
-  scanned: number
-  added: number
-  updated: number
-  removed: number
-  error?: string
-  startedAt?: string
-  finishedAt?: string
-}
-
-export type DeleteResult = {
-  deletedFiles: number
-}
-
-export type QueueItem = {
-  id: string
-  trackId: string
-  position: number
-  track: Track
-}
-
-export type Queue = {
-  items: QueueItem[]
-}
-
-export type ErrorResponse = {
-  error: string
-  code: string
-  message: string
-}
+export type HealthResponse = Schemas['HealthResponse']
+export type ThemePreferences = Schemas['ThemePreferences']
+export type LayoutPreferences = Schemas['LayoutPreferences']
+export type UserPreferences = Schemas['UserPreferences']
+export type UserPreferencesPatch = Schemas['UserPreferencesPatch']
+export type User = Schemas['User']
+export type Artist = Schemas['Artist']
+export type ArtistList = Schemas['ArtistList']
+export type Album = Schemas['Album']
+export type AlbumList = Schemas['AlbumList']
+export type AlbumDetail = Schemas['AlbumDetail']
+export type Track = Schemas['Track']
+export type TrackList = Schemas['TrackList']
+export type ScanStatus = Schemas['ScanStatus']
+export type DeleteResult = Schemas['DeleteResult']
+export type QueueItem = Schemas['QueueItem']
+export type Queue = Schemas['Queue']
+export type ErrorResponse = Schemas['ErrorResponse']
+export type QueueReplace = Schemas['QueueReplace']
+export type QueueItemAppend = Schemas['QueueItemAppend']
 
 export class ApiError extends Error {
   constructor(
@@ -131,12 +38,9 @@ export class ApiError extends Error {
   }
 }
 
-export type ListParams = {
-  limit?: number
-  offset?: number
-  q?: string
-  artistId?: string
-}
+export type ListParams = NonNullable<
+  operations['listAlbums']['parameters']['query']
+>
 
 function buildQuery(params?: ListParams): string {
   if (!params) return ''
@@ -191,7 +95,7 @@ export function createApiClient(config: ApiClientConfig) {
     getHealth: () => request<HealthResponse>('/api/v1/health'),
     getMe: () => request<User>('/api/v1/me'),
     getPreferences: () => request<UserPreferences>('/api/v1/preferences'),
-    patchPreferences: (body: Partial<UserPreferences>) =>
+    patchPreferences: (body: UserPreferencesPatch) =>
       request<UserPreferences>('/api/v1/preferences', {
         method: 'PATCH',
         body: JSON.stringify(body),

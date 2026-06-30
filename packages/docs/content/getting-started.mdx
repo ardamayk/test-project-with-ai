@@ -29,8 +29,15 @@ Then open **Library** in the web UI and click **Scan library** to index audio fi
 ## Production build
 
 ```bash
-mise run build
+pnpm build
+./scripts/sync-static.sh
+cd server && go build -o ../bin/server ./cmd/server
 ./bin/server
 ```
 
-Single binary serves the SPA, MDX docs, and API.
+Single binary serves:
+
+- React SPA at `/`
+- MDX product docs at `/docs/`
+- Swagger UI at `/api/docs`
+- OpenAPI YAML at `/api/openapi.yaml`

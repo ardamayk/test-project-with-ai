@@ -14,6 +14,7 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/db"
 	"github.com/ardam/navidrome-replacement/server/internal/modules"
+	docsmodule "github.com/ardam/navidrome-replacement/server/internal/modules/docs"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/preferences"
@@ -52,9 +53,10 @@ func main() {
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB, cfg)
 	playModule := playback.NewModule(sqlDB, libModule.Service(), libModule.Store())
+	docsModule := docsmodule.NewModule(docsmodule.DefaultOpenAPIPath())
 	apiHandler := api.NewHandler(cfg)
 
-	registry := modules.NewRegistry(libModule, playModule, prefModule)
+	registry := modules.NewRegistry(libModule, playModule, prefModule, docsModule)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -73,16 +75,6 @@ func main() {
 	r.Get("/api/v1/me", apiHandler.GetMe)
 	registry.RegisterAll(r)
 
-	openAPIPath := filepath.Join("..", "packages", "contracts", "openapi.yaml")
-	if _, err := os.Stat(openAPIPath); os.IsNotExist(err) {
-		openAPIPath = filepath.Join("packages", "contracts", "openapi.yaml")
-	}
-	r.Get("/api/openapi.yaml", func(w http.ResponseWriter, req *http.Request) {
-		http.ServeFile(w, req, openAPIPath)
-	})
-	r.Get("/api/docs", api.SwaggerUIHandler())
-
-	r.Handle("/docs/*", staticassets.DocsHandler())
 	r.Mount("/", staticassets.WebHandler())
 
 	server := &http.Server{

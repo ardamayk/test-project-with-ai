@@ -135,6 +135,24 @@ export interface paths {
         get: operations["getAlbum"];
         put?: never;
         post?: never;
+        /** Delete album, its tracks, and music files */
+        delete: operations["deleteAlbum"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{albumId}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get album cover image */
+        get: operations["getAlbumCover"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -169,7 +187,8 @@ export interface paths {
         get: operations["getTrack"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete track and its music file */
+        delete: operations["deleteTrack"];
         options?: never;
         head?: never;
         patch?: never;
@@ -277,14 +296,7 @@ export interface components {
             /** @enum {string} */
             mode: "light" | "dark" | "system";
             /** @enum {string} */
-            preset:
-              | "earthly"
-              | "tokyo-night"
-              | "vintage-harbor"
-              | "night-ember"
-              | "dusty-earth"
-              | "coastal-mist"
-              | "sage-hearth";
+            preset: "earthly" | "tokyo-night" | "vintage-harbor" | "night-ember" | "dusty-earth" | "coastal-mist" | "sage-hearth";
         };
         UserPreferences: {
             theme: components["schemas"]["ThemePreferences"];
@@ -318,6 +330,7 @@ export interface components {
             artistName: string;
             year?: number;
             trackCount?: number;
+            genres?: string[];
         };
         AlbumList: {
             items: components["schemas"]["Album"][];
@@ -337,11 +350,18 @@ export interface components {
             trackNo?: number;
             durationMs: number;
             format: string;
+            genre?: string;
+            sampleRateHz?: number;
+            bitDepth?: number;
+            bitrateKbps?: number;
             sizeBytes?: number;
         };
         TrackList: {
             items: components["schemas"]["Track"][];
             total: number;
+        };
+        DeleteResult: {
+            deletedFiles: number;
         };
         ScanStatus: {
             /** @enum {string} */
@@ -639,6 +659,53 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteAlbum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                albumId: components["parameters"]["albumId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAlbumCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                albumId: components["parameters"]["albumId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cover image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                    "image/png": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     listTracks: {
         parameters: {
             query?: {
@@ -682,6 +749,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Track"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteResult"];
                 };
             };
             404: components["responses"]["NotFound"];

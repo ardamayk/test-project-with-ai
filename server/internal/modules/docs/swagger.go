@@ -1,4 +1,4 @@
-package api
+package docs
 
 import (
 	_ "embed"

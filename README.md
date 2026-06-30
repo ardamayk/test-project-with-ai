@@ -44,7 +44,7 @@ Open http://localhost:3000/library → **Scan library** to index files.
 
 ```bash
 pnpm build
-./scripts/sync-static.sh
+./scripts/sync-static.sh all
 cd server && go build -o ../bin/server ./cmd/server
 ```
 

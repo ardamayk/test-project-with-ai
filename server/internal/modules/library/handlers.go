@@ -1,11 +1,11 @@
 package library
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/ardam/navidrome-replacement/server/internal/api/respond"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -19,29 +19,29 @@ func NewHandlers(service *Service) *Handlers {
 
 func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
 	if !h.service.MusicPathsConfigured() {
-		writeError(w, http.StatusBadRequest, "bad_request", "MUSIC_PATHS is not configured")
+		respond.Error(w, http.StatusBadRequest, "bad_request", "MUSIC_PATHS is not configured")
 		return
 	}
 
 	st, err := h.service.TriggerScan(r.Context())
 	if errors.Is(err, ErrScanRunning) {
-		writeError(w, http.StatusConflict, "conflict", "scan already running")
+		respond.Error(w, http.StatusConflict, "conflict", "scan already running")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, st)
+	respond.JSON(w, http.StatusAccepted, st)
 }
 
 func (h *Handlers) GetScanStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := h.service.GetScanStatus(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, st)
+	respond.JSON(w, http.StatusOK, st)
 }
 
 func (h *Handlers) ListArtists(w http.ResponseWriter, r *http.Request) {
@@ -49,10 +49,10 @@ func (h *Handlers) ListArtists(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	result, err := h.service.ListArtists(r.Context(), limit, offset, q)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handlers) ListAlbums(w http.ResponseWriter, r *http.Request) {
@@ -61,21 +61,21 @@ func (h *Handlers) ListAlbums(w http.ResponseWriter, r *http.Request) {
 	artistID := r.URL.Query().Get("artistId")
 	result, err := h.service.ListAlbums(r.Context(), limit, offset, artistID, q)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handlers) GetAlbumCover(w http.ResponseWriter, r *http.Request) {
 	albumID := chi.URLParam(r, "albumId")
 	mime, data, err := h.service.GetAlbumCover(r.Context(), albumID)
 	if errors.Is(err, ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "album cover not found")
+		respond.Error(w, http.StatusNotFound, "not_found", "album cover not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", mime)
@@ -88,14 +88,14 @@ func (h *Handlers) GetAlbum(w http.ResponseWriter, r *http.Request) {
 	albumID := chi.URLParam(r, "albumId")
 	result, err := h.service.GetAlbum(r.Context(), albumID)
 	if errors.Is(err, ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "album not found")
+		respond.Error(w, http.StatusNotFound, "not_found", "album not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handlers) ListTracks(w http.ResponseWriter, r *http.Request) {
@@ -103,52 +103,52 @@ func (h *Handlers) ListTracks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	result, err := h.service.ListTracks(r.Context(), limit, offset, q)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handlers) GetTrack(w http.ResponseWriter, r *http.Request) {
 	trackID := chi.URLParam(r, "trackId")
 	result, err := h.service.GetTrack(r.Context(), trackID)
 	if errors.Is(err, ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "track not found")
+		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handlers) DeleteAlbum(w http.ResponseWriter, r *http.Request) {
 	albumID := chi.URLParam(r, "albumId")
 	result, err := h.service.DeleteAlbum(r.Context(), albumID)
 	if errors.Is(err, ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "album not found")
+		respond.Error(w, http.StatusNotFound, "not_found", "album not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handlers) DeleteTrack(w http.ResponseWriter, r *http.Request) {
 	trackID := chi.URLParam(r, "trackId")
 	result, err := h.service.DeleteTrack(r.Context(), trackID)
 	if errors.Is(err, ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "track not found")
+		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	respond.JSON(w, http.StatusOK, result)
 }
 
 func pagination(r *http.Request) (limit, offset int) {
@@ -165,18 +165,4 @@ func pagination(r *http.Request) (limit, offset int) {
 		}
 	}
 	return limit, offset
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{
-		"error":   code,
-		"code":    code,
-		"message": message,
-	})
 }
