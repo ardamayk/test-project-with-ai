@@ -1,79 +1,82 @@
-import { useCallback, useSyncExternalStore } from 'react'
+import { useCallback, useMemo } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { apiClient } from '#/lib/api'
 
-const STORAGE_KEY = 'earthly-favorite-tracks'
-
-let cachedRaw: string | null = null
-let cachedSnapshot: readonly string[] = []
-
-function parseFavorites(raw: string): readonly string[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed)
-      ? parsed.filter((id): id is string => typeof id === 'string')
-      : []
-  } catch {
-    return []
-  }
-}
-
-function favoritesEqual(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((id, index) => id === b[index])
-}
-
-function getFavoritesSnapshot(): readonly string[] {
-  const raw = localStorage.getItem(STORAGE_KEY) ?? ''
-  if (raw === cachedRaw) {
-    return cachedSnapshot
-  }
-
-  const next = parseFavorites(raw)
-  if (favoritesEqual(next, cachedSnapshot)) {
-    cachedRaw = raw
-    return cachedSnapshot
-  }
-
-  cachedRaw = raw
-  cachedSnapshot = next
-  return cachedSnapshot
-}
-
-function writeFavorites(ids: string[]) {
-  const raw = JSON.stringify(ids)
-  localStorage.setItem(STORAGE_KEY, raw)
-  cachedRaw = raw
-  cachedSnapshot = ids
-  window.dispatchEvent(new Event('earthly-favorites-changed'))
-}
-
-function subscribe(onChange: () => void) {
-  const handler = () => onChange()
-  window.addEventListener('earthly-favorites-changed', handler)
-  window.addEventListener('storage', handler)
-  return () => {
-    window.removeEventListener('earthly-favorites-changed', handler)
-    window.removeEventListener('storage', handler)
-  }
-}
+const playlistsKey = ['playlists'] as const
+const playlistKey = (playlistId: string) => ['playlist', playlistId] as const
 
 export function useFavoriteTracks() {
-  const favorites = useSyncExternalStore(
-    subscribe,
-    getFavoritesSnapshot,
-    () => [],
+  const queryClient = useQueryClient()
+  const playlists = useQuery({
+    queryKey: playlistsKey,
+    queryFn: () => apiClient.listPlaylists(),
+  })
+
+  const favoritesPlaylist = playlists.data?.items.find(
+    (playlist) => playlist.isDefault && playlist.name === 'Favorites',
   )
+
+  const favoritesDetail = useQuery({
+    queryKey: favoritesPlaylist ? playlistKey(favoritesPlaylist.id) : ['playlist', 'favorites'],
+    queryFn: () => apiClient.getPlaylist(favoritesPlaylist?.id ?? ''),
+    enabled: Boolean(favoritesPlaylist),
+  })
+
+  const favorites = useMemo(
+    () => favoritesDetail.data?.tracks.map((track) => track.id) ?? [],
+    [favoritesDetail.data?.tracks],
+  )
+
+  const invalidateFavorites = async (playlistId: string) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: playlistsKey }),
+      queryClient.invalidateQueries({ queryKey: playlistKey(playlistId) }),
+    ])
+  }
+
+  const addFavorite = useMutation({
+    mutationFn: ({
+      playlistId,
+      trackId,
+    }: {
+      playlistId: string
+      trackId: string
+    }) => apiClient.addPlaylistTrack(playlistId, trackId),
+    onSuccess: async (_data, vars) => {
+      await invalidateFavorites(vars.playlistId)
+    },
+  })
+
+  const removeFavorite = useMutation({
+    mutationFn: ({
+      playlistId,
+      trackId,
+    }: {
+      playlistId: string
+      trackId: string
+    }) => apiClient.removePlaylistTrack(playlistId, trackId),
+    onSuccess: async (_data, vars) => {
+      await invalidateFavorites(vars.playlistId)
+    },
+  })
 
   const isFavorite = useCallback(
     (trackId: string) => favorites.includes(trackId),
     [favorites],
   )
 
-  const toggleFavorite = useCallback((trackId: string) => {
-    const current = [...getFavoritesSnapshot()]
-    const next = current.includes(trackId)
-      ? current.filter((id) => id !== trackId)
-      : [...current, trackId]
-    writeFavorites(next)
-  }, [])
+  const toggleFavorite = useCallback(
+    (trackId: string) => {
+      if (!favoritesPlaylist) return
+      const vars = { playlistId: favoritesPlaylist.id, trackId }
+      if (favorites.includes(trackId)) {
+        removeFavorite.mutate(vars)
+      } else {
+        addFavorite.mutate(vars)
+      }
+    },
+    [addFavorite, favorites, favoritesPlaylist, removeFavorite],
+  )
 
   return { favorites, isFavorite, toggleFavorite }
 }

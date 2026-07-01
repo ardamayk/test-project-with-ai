@@ -8,6 +8,10 @@ describe('createApiClient', () => {
     expect(client.getPreferences).toBeTypeOf('function')
     expect(client.listAlbums).toBeTypeOf('function')
     expect(client.getPlaybackQueue).toBeTypeOf('function')
+    expect(client.listPlaylists).toBeTypeOf('function')
+    expect(client.createPlaylist).toBeTypeOf('function')
+    expect(client.addPlaylistTrack).toBeTypeOf('function')
+    expect(client.removePlaylistTrack).toBeTypeOf('function')
     expect(client.deleteAlbum).toBeTypeOf('function')
     expect(client.deleteTrack).toBeTypeOf('function')
     expect(client.getTrackStreamUrl('abc')).toBe(

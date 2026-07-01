@@ -9,6 +9,9 @@ import {
   type ReactNode,
 } from 'react'
 import type { Queue, QueueItem, Track } from '@repo/api-client'
+import type { Playlist, PlaylistDetail, PlaylistList } from '@repo/api-client'
+
+export type RepeatMode = 'off' | 'once' | 'loop'
 
 export type PlaybackApi = {
   getQueue: () => Promise<Queue>
@@ -17,6 +20,11 @@ export type PlaybackApi = {
   removeQueueItem: (itemId: string) => Promise<Queue>
   getStreamUrl: (trackId: string) => string
   getAlbumCoverUrl: (albumId: string) => string
+  listPlaylists: () => Promise<PlaylistList>
+  getPlaylist: (playlistId: string) => Promise<PlaylistDetail>
+  createPlaylist: (name: string) => Promise<Playlist>
+  addPlaylistTrack: (playlistId: string, trackId: string) => Promise<PlaylistDetail>
+  removePlaylistTrack: (playlistId: string, trackId: string) => Promise<PlaylistDetail>
 }
 
 type PlaybackContextValue = {
@@ -26,15 +34,26 @@ type PlaybackContextValue = {
   currentTime: number
   duration: number
   volume: number
+  shuffleEnabled: boolean
+  repeatMode: RepeatMode
   playTrack: (trackId: string, queueTrackIds?: string[]) => Promise<void>
+  queueTracks: (trackIds: string[]) => Promise<void>
   playQueueIndex: (index: number) => Promise<void>
+  playNext: (trackId: string) => Promise<void>
   togglePlay: () => void
+  toggleShuffle: () => void
+  cycleRepeatMode: () => void
   seek: (seconds: number) => void
   setVolume: (value: number) => void
   removeFromQueue: (itemId: string) => Promise<void>
   clearQueue: () => Promise<void>
   refreshQueue: () => Promise<void>
   getAlbumCoverUrl: (albumId: string) => string
+  listPlaylists: () => Promise<PlaylistList>
+  getPlaylist: (playlistId: string) => Promise<PlaylistDetail>
+  createPlaylist: (name: string) => Promise<Playlist>
+  addPlaylistTrack: (playlistId: string, trackId: string) => Promise<PlaylistDetail>
+  removePlaylistTrack: (playlistId: string, trackId: string) => Promise<PlaylistDetail>
 }
 
 const PlaybackContext = createContext<PlaybackContextValue | null>(null)
@@ -49,6 +68,7 @@ export function PlaybackProvider({
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const queueRef = useRef<QueueItem[]>([])
   const currentTrackRef = useRef<Track | null>(null)
+  const repeatModeRef = useRef<RepeatMode>('off')
   const apiRef = useRef(api)
   apiRef.current = api
 
@@ -58,38 +78,45 @@ export function PlaybackProvider({
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolumeState] = useState(0.8)
+  const [shuffleEnabled, setShuffleEnabled] = useState(false)
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>('off')
 
   queueRef.current = queue
   currentTrackRef.current = currentTrack
+  repeatModeRef.current = repeatMode
 
   const refreshQueue = useCallback(async () => {
     const data = await apiRef.current.getQueue()
     setQueue(data.items)
   }, [])
 
-  const playTrackInternal = useCallback(async (trackId: string) => {
-    const item = queueRef.current.find(
-      (entry) => entry.track.id === trackId || entry.trackId === trackId,
-    )
-    if (item) {
-      setCurrentTrack(item.track)
-      if (item.track.durationMs > 0) {
-        setDuration(item.track.durationMs / 1000)
+  const playTrackInternal = useCallback(
+    async (trackId: string, queueOverride?: QueueItem[]) => {
+      const items = queueOverride ?? queueRef.current
+      const item = items.find(
+        (entry) => entry.track.id === trackId || entry.trackId === trackId,
+      )
+      if (item) {
+        setCurrentTrack(item.track)
+        setDuration(
+          item.track.durationMs > 0 ? item.track.durationMs / 1000 : 0,
+        )
       }
-    }
 
-    const audio = audioRef.current
-    if (!audio) return
+      const audio = audioRef.current
+      if (!audio) return
 
-    audio.src = apiRef.current.getStreamUrl(trackId)
-    setCurrentTime(0)
-    try {
-      await audio.play()
-      setIsPlaying(true)
-    } catch {
-      setIsPlaying(false)
-    }
-  }, [])
+      audio.src = apiRef.current.getStreamUrl(trackId)
+      setCurrentTime(0)
+      try {
+        await audio.play()
+        setIsPlaying(true)
+      } catch {
+        setIsPlaying(false)
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     const audio = new Audio()
@@ -108,6 +135,18 @@ export function PlaybackProvider({
     const onPause = () => setIsPlaying(false)
     const onEnded = () => {
       setIsPlaying(false)
+      const mode = repeatModeRef.current
+      if (mode === 'once' || mode === 'loop') {
+        audio.currentTime = 0
+        setCurrentTime(0)
+        if (mode === 'once') {
+          repeatModeRef.current = 'off'
+          setRepeatMode('off')
+        }
+        void audio.play()
+        return
+      }
+
       const items = queueRef.current
       const playing = currentTrackRef.current
       const idx = items.findIndex((item) => item.track.id === playing?.id)
@@ -148,12 +187,22 @@ export function PlaybackProvider({
       const trackInQueue = nextQueue.some((item) => item.track.id === trackId)
       if (!trackInQueue) {
         const data = await apiRef.current.appendQueueItem(trackId)
+        nextQueue = data.items
         setQueue(data.items)
       }
-      await playTrackInternal(trackId)
+      await playTrackInternal(trackId, nextQueue)
     },
     [playTrackInternal],
   )
+
+  const queueTracks = useCallback(async (trackIds: string[]) => {
+    let nextQueue = queueRef.current
+    for (const trackId of trackIds) {
+      const data = await apiRef.current.appendQueueItem(trackId)
+      nextQueue = data.items
+    }
+    setQueue(nextQueue)
+  }, [])
 
   const playQueueIndex = useCallback(
     async (index: number) => {
@@ -164,6 +213,21 @@ export function PlaybackProvider({
     [playTrackInternal],
   )
 
+  const playNext = useCallback(async (trackId: string) => {
+    const items = queueRef.current
+    const playing = currentTrackRef.current
+    const trackIds = items
+      .map((item) => item.track.id)
+      .filter((id) => id !== trackId)
+    const currentIndex = playing
+      ? items.findIndex((item) => item.track.id === playing.id)
+      : -1
+    const insertAt = currentIndex >= 0 ? currentIndex + 1 : trackIds.length
+    trackIds.splice(insertAt, 0, trackId)
+    const data = await apiRef.current.replaceQueue(trackIds)
+    setQueue(data.items)
+  }, [])
+
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
@@ -172,6 +236,18 @@ export function PlaybackProvider({
     } else {
       audio.pause()
     }
+  }, [])
+
+  const toggleShuffle = useCallback(() => {
+    setShuffleEnabled((enabled) => !enabled)
+  }, [])
+
+  const cycleRepeatMode = useCallback(() => {
+    setRepeatMode((mode) => {
+      if (mode === 'off') return 'once'
+      if (mode === 'once') return 'loop'
+      return 'off'
+    })
   }, [])
 
   const seek = useCallback((seconds: number) => {
@@ -213,15 +289,28 @@ export function PlaybackProvider({
       currentTime,
       duration,
       volume,
+      shuffleEnabled,
+      repeatMode,
       playTrack,
+      queueTracks,
       playQueueIndex,
+      playNext,
       togglePlay,
+      toggleShuffle,
+      cycleRepeatMode,
       seek,
       setVolume,
       removeFromQueue,
       clearQueue,
       refreshQueue,
       getAlbumCoverUrl: (albumId: string) => apiRef.current.getAlbumCoverUrl(albumId),
+      listPlaylists: () => apiRef.current.listPlaylists(),
+      getPlaylist: (playlistId: string) => apiRef.current.getPlaylist(playlistId),
+      createPlaylist: (name: string) => apiRef.current.createPlaylist(name),
+      addPlaylistTrack: (playlistId: string, trackId: string) =>
+        apiRef.current.addPlaylistTrack(playlistId, trackId),
+      removePlaylistTrack: (playlistId: string, trackId: string) =>
+        apiRef.current.removePlaylistTrack(playlistId, trackId),
     }),
     [
       queue,
@@ -230,9 +319,15 @@ export function PlaybackProvider({
       currentTime,
       duration,
       volume,
+      shuffleEnabled,
+      repeatMode,
       playTrack,
+      queueTracks,
       playQueueIndex,
+      playNext,
       togglePlay,
+      toggleShuffle,
+      cycleRepeatMode,
       seek,
       setVolume,
       removeFromQueue,

@@ -113,11 +113,23 @@ func (s *Store) deleteTracksByIDs(ctx context.Context, trackIDs []string) error 
 		return fmt.Errorf("delete queue items: %w", err)
 	}
 
+	query = fmt.Sprintf(
+		`DELETE FROM playlist_tracks WHERE track_id IN (%s)`,
+		strings.Join(placeholders, ", "),
+	)
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil && !isMissingTableError(err) {
+		return fmt.Errorf("delete playlist tracks: %w", err)
+	}
+
 	query = fmt.Sprintf(`DELETE FROM tracks WHERE id IN (%s)`, strings.Join(placeholders, ", "))
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("delete tracks: %w", err)
 	}
 	return nil
+}
+
+func isMissingTableError(err error) bool {
+	return strings.Contains(err.Error(), "no such table")
 }
 
 func (s *Store) cleanupAlbumIfEmpty(ctx context.Context, albumID string) error {

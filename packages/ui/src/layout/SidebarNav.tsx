@@ -1,7 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import {
   Folder,
-  Heart,
   HelpCircle,
   ListMusic,
   Music2,
@@ -18,7 +17,6 @@ import { getNavPanel } from '../widgets/layout-utils'
 import { cn } from '../lib/utils'
 
 const libraryNav = [
-  { to: '/favorites', label: 'Favorites', icon: Heart },
   { to: '/library/albums', label: 'Albums', icon: SquareLibrary },
   { to: '/library/artists', label: 'Artists', icon: Users },
   { to: '/library/genres', label: 'Genres', icon: Tags },
@@ -38,7 +36,7 @@ function NavLink({
 }: {
   to: string
   label: string
-  icon: typeof Heart
+  icon: typeof ListMusic
   compact?: boolean
 }) {
   if (compact) {

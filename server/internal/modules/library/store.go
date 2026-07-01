@@ -16,23 +16,23 @@ type Artist struct {
 }
 
 type Album struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	ArtistID   string `json:"artistId"`
-	ArtistName string `json:"artistName"`
-	Year       *int   `json:"year,omitempty"`
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	ArtistID   string   `json:"artistId"`
+	ArtistName string   `json:"artistName"`
+	Year       *int     `json:"year,omitempty"`
 	TrackCount int      `json:"trackCount,omitempty"`
 	Genres     []string `json:"genres,omitempty"`
 }
 
 type Track struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	ArtistName string `json:"artistName"`
-	AlbumID    string `json:"albumId"`
-	AlbumTitle string `json:"albumTitle,omitempty"`
-	TrackNo    *int   `json:"trackNo,omitempty"`
-	DurationMs int    `json:"durationMs"`
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	ArtistName   string `json:"artistName"`
+	AlbumID      string `json:"albumId"`
+	AlbumTitle   string `json:"albumTitle,omitempty"`
+	TrackNo      *int   `json:"trackNo,omitempty"`
+	DurationMs   int    `json:"durationMs"`
 	Format       string `json:"format"`
 	SizeBytes    int64  `json:"sizeBytes,omitempty"`
 	Genre        string `json:"genre,omitempty"`
@@ -418,7 +418,7 @@ func (s *Store) updateTrack(ctx context.Context, trackID string, meta FileMetada
 	bitDepthVal := nullableInt(meta.BitDepth)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE tracks SET album_id = ?, title = ?, title_sort = ?, artist_name = ?, track_no = ?,
-			duration_ms = ?, format = ?, size_bytes = ?, file_mtime = ?, genre = ?, sample_rate_hz = ?, bit_depth = ?, missing_at = NULL, updated_at = CURRENT_TIMESTAMP
+			duration_ms = ?, format = ?, size_bytes = ?, file_mtime = ?, genre = COALESCE(?, genre), sample_rate_hz = ?, bit_depth = ?, missing_at = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		albumID, meta.Title, sortKey(meta.Title), meta.Artist, trackNo, meta.DurationMs, meta.Format, meta.SizeBytes, mtime, genreVal, sampleRateVal, bitDepthVal, trackID,
 	)

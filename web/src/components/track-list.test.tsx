@@ -1,6 +1,9 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TrackList } from './track-list'
+
+const toggleFavorite = vi.fn()
+let favorite = false
 
 vi.mock('@repo/ui', () => ({
   usePlayback: () => ({
@@ -11,8 +14,8 @@ vi.mock('@repo/ui', () => ({
 
 vi.mock('#/hooks/use-favorite-tracks', () => ({
   useFavoriteTracks: () => ({
-    isFavorite: () => false,
-    toggleFavorite: vi.fn(),
+    isFavorite: () => favorite,
+    toggleFavorite,
   }),
 }))
 
@@ -34,11 +37,38 @@ const sampleTrack = {
 }
 
 describe('TrackList', () => {
+  beforeEach(() => {
+    favorite = false
+    toggleFavorite.mockClear()
+  })
+
   it('renders compact metadata line', () => {
     render(
       <TrackList tracks={[sampleTrack]} albumId="a1" showMeta compact />,
     )
     expect(screen.getByText('Welcome to New York')).toBeTruthy()
     expect(screen.getByText('Pop · FLAC · 24-bit · 96 kHz')).toBeTruthy()
+  })
+
+  it('toggles favorites through the server-backed favorites hook', () => {
+    render(
+      <TrackList tracks={[sampleTrack]} albumId="a1" showFavorite compact />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to favorites' }))
+
+    expect(toggleFavorite).toHaveBeenCalledWith(sampleTrack.id)
+  })
+
+  it('renders filled favorite state', () => {
+    favorite = true
+
+    render(
+      <TrackList tracks={[sampleTrack]} albumId="a1" showFavorite compact />,
+    )
+
+    expect(
+      screen.getByRole('button', { name: 'Remove from favorites' }),
+    ).toBeTruthy()
   })
 })

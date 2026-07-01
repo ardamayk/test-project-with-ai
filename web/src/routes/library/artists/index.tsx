@@ -1,17 +1,24 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { z } from 'zod'
 import { Search } from 'lucide-react'
 import { ArtistGrid } from '#/components/artist-grid'
 import { Input } from '#/components/ui/input'
 import { apiClient } from '#/lib/api'
 
+const artistsSearchSchema = z.object({
+  q: z.string().optional(),
+})
+
 export const Route = createFileRoute('/library/artists/')({
+  validateSearch: artistsSearchSchema,
   component: ArtistsPage,
 })
 
 function ArtistsPage() {
-  const [search, setSearch] = useState('')
+  const { q } = Route.useSearch()
+  const [search, setSearch] = useState(q ?? '')
   const artists = useQuery({
     queryKey: ['library', 'artists', search],
     queryFn: () => apiClient.listArtists({ limit: 100, q: search || undefined }),

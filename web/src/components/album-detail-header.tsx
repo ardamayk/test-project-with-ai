@@ -43,9 +43,11 @@ function uniqueFormats(tracks: AlbumDetail['tracks']): string[] {
 export function AlbumDetailHeader({
   album,
   onPlayAlbum,
+  onQueueAlbum,
 }: {
   album: AlbumDetail
   onPlayAlbum: () => void
+  onQueueAlbum: () => void
 }) {
   const totalDurationMs = album.tracks.reduce(
     (sum, track) => sum + (track.durationMs ?? 0),
@@ -110,11 +112,16 @@ export function AlbumDetailHeader({
               <Play className="size-4" />
               Play
             </Button>
-            <Button type="button" variant="outline" disabled>
+            <Button type="button" variant="outline" onClick={onQueueAlbum}>
               <SkipForward className="size-4" />
               Queue album
             </Button>
-            <Button type="button" variant="outline" disabled>
+            <Button
+              type="button"
+              variant="outline"
+              disabled
+              title="Album radio will build a station from similar album, artist, and genre tracks when recommendations exist."
+            >
               <Disc3 className="size-4" />
               Album radio
             </Button>

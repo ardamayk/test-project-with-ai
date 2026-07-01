@@ -12,6 +12,46 @@ const track = {
   format: 'flac',
 }
 
+const track2 = {
+  id: 'track-2',
+  title: 'Track 2',
+  artistName: 'Artist',
+  albumId: 'album-1',
+  durationMs: 180000,
+  format: 'flac',
+}
+
+const playlistApi = {
+  listPlaylists: vi.fn(async () => ({ items: [], total: 0 })),
+  getPlaylist: vi.fn(async (playlistId: string) => ({
+    id: playlistId,
+    name: 'Playlist',
+    isDefault: false,
+    trackCount: 0,
+    tracks: [],
+  })),
+  createPlaylist: vi.fn(async (name: string) => ({
+    id: 'playlist-1',
+    name,
+    isDefault: false,
+    trackCount: 0,
+  })),
+  addPlaylistTrack: vi.fn(async () => ({
+    id: 'playlist-1',
+    name: 'Playlist',
+    isDefault: false,
+    trackCount: 1,
+    tracks: [track],
+  })),
+  removePlaylistTrack: vi.fn(async () => ({
+    id: 'playlist-1',
+    name: 'Playlist',
+    isDefault: false,
+    trackCount: 0,
+    tracks: [],
+  })),
+}
+
 class AudioMock extends EventTarget {
   static instances: AudioMock[] = []
 
@@ -54,6 +94,79 @@ function createApi(): PlaybackApi {
     removeQueueItem: vi.fn(async () => ({ items: [] })),
     getStreamUrl: (trackId) => `/stream/${trackId}`,
     getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...playlistApi,
+  }
+}
+
+function createEmptyQueueApi(): PlaybackApi {
+  return {
+    getQueue: vi.fn(async () => ({ items: [] })),
+    replaceQueue: vi.fn(async () => ({
+      items: [
+        { id: 'item-1', trackId: track.id, position: 0, track },
+        { id: 'item-2', trackId: track2.id, position: 1, track: track2 },
+      ],
+    })),
+    appendQueueItem: vi.fn(async () => ({
+      items: [{ id: 'item-1', trackId: track.id, position: 0, track }],
+    })),
+    removeQueueItem: vi.fn(async () => ({ items: [] })),
+    getStreamUrl: (trackId) => `/stream/${trackId}`,
+    getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...playlistApi,
+  }
+}
+
+function createAppendAlbumApi(): PlaybackApi {
+  let items = [{ id: 'item-1', trackId: track.id, position: 0, track }]
+
+  return {
+    getQueue: vi.fn(async () => ({ items })),
+    replaceQueue: vi.fn(async () => ({ items })),
+    appendQueueItem: vi.fn(async (trackId) => {
+      const nextTrack = trackId === track2.id ? track2 : track
+      items = [
+        ...items,
+        {
+          id: `item-${items.length + 1}`,
+          trackId,
+          position: items.length,
+          track: nextTrack,
+        },
+      ]
+      return { items }
+    }),
+    removeQueueItem: vi.fn(async () => ({ items: [] })),
+    getStreamUrl: (trackId) => `/stream/${trackId}`,
+    getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...playlistApi,
+  }
+}
+
+function createPlayNextApi(): PlaybackApi {
+  const items = [
+    { id: 'item-1', trackId: track.id, position: 0, track },
+    { id: 'item-2', trackId: track2.id, position: 1, track: track2 },
+  ]
+
+  return {
+    getQueue: vi.fn(async () => ({ items })),
+    replaceQueue: vi.fn(async (trackIds: string[]) => ({
+      items: trackIds.map((trackId, index) => {
+        const nextTrack = trackId === track2.id ? track2 : track
+        return {
+          id: `item-${index + 1}`,
+          trackId,
+          position: index,
+          track: nextTrack,
+        }
+      }),
+    })),
+    appendQueueItem: vi.fn(async () => ({ items })),
+    removeQueueItem: vi.fn(async () => ({ items: [] })),
+    getStreamUrl: (trackId) => `/stream/${trackId}`,
+    getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...playlistApi,
   }
 }
 
@@ -63,11 +176,42 @@ function Harness({ children }: { children?: ReactNode }) {
     <div>
       <span data-testid="volume">{playback.volume}</span>
       <span data-testid="playing">{String(playback.isPlaying)}</span>
+      <span data-testid="current-track">
+        {playback.currentTrack?.title ?? ''}
+      </span>
+      <span data-testid="repeat-mode">{playback.repeatMode}</span>
+      <span data-testid="shuffle-enabled">
+        {String(playback.shuffleEnabled)}
+      </span>
       <button type="button" onClick={() => playback.setVolume(0.3)}>
         Set volume
       </button>
       <button type="button" onClick={() => void playback.playTrack(track.id)}>
         Play
+      </button>
+      <button
+        type="button"
+        onClick={() => void playback.playTrack(track.id, [track.id, track2.id])}
+      >
+        Play album
+      </button>
+      <button
+        type="button"
+        onClick={() => void playback.queueTracks([track2.id])}
+      >
+        Queue album
+      </button>
+      <button type="button" onClick={playback.cycleRepeatMode}>
+        Repeat
+      </button>
+      <button type="button" onClick={playback.toggleShuffle}>
+        Shuffle
+      </button>
+      <button
+        type="button"
+        onClick={() => void playback.playNext(track2.id)}
+      >
+        Play next
       </button>
       {children}
     </div>
@@ -120,5 +264,128 @@ describe('PlaybackProvider', () => {
     expect(AudioMock.instances[0]?.src).toBe('/stream/track-1')
     expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce()
     expect(screen.getByTestId('playing').textContent).toBe('true')
+  })
+
+  it('sets the current track when replacing the queue before playback', async () => {
+    render(
+      <PlaybackProvider api={createEmptyQueueApi()}>
+        <Harness />
+      </PlaybackProvider>,
+    )
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Play album' }).click()
+    })
+
+    expect(screen.getByTestId('current-track').textContent).toBe('Track 1')
+    expect(AudioMock.instances[0]?.src).toBe('/stream/track-1')
+  })
+
+  it('appends album tracks without changing the current track', async () => {
+    const api = createAppendAlbumApi()
+    render(
+      <PlaybackProvider api={api}>
+        <Harness />
+      </PlaybackProvider>,
+    )
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Play' }).click()
+    })
+    await act(async () => {
+      screen.getByRole('button', { name: 'Queue album' }).click()
+    })
+
+    expect(api.appendQueueItem).toHaveBeenCalledWith(track2.id)
+    expect(screen.getByTestId('current-track').textContent).toBe('Track 1')
+    expect(AudioMock.instances[0]?.src).toBe('/stream/track-1')
+  })
+
+  it('cycles repeat modes and toggles shuffle state', async () => {
+    render(
+      <PlaybackProvider api={createApi()}>
+        <Harness />
+      </PlaybackProvider>,
+    )
+
+    expect(screen.getByTestId('repeat-mode').textContent).toBe('off')
+    expect(screen.getByTestId('shuffle-enabled').textContent).toBe('false')
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Repeat' }).click()
+    })
+    expect(screen.getByTestId('repeat-mode').textContent).toBe('once')
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Repeat' }).click()
+    })
+    expect(screen.getByTestId('repeat-mode').textContent).toBe('loop')
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Repeat' }).click()
+      screen.getByRole('button', { name: 'Shuffle' }).click()
+    })
+    expect(screen.getByTestId('repeat-mode').textContent).toBe('off')
+    expect(screen.getByTestId('shuffle-enabled').textContent).toBe('true')
+  })
+
+  it('replays once then clears repeat once mode', async () => {
+    render(
+      <PlaybackProvider api={createApi()}>
+        <Harness />
+      </PlaybackProvider>,
+    )
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Play' }).click()
+      screen.getByRole('button', { name: 'Repeat' }).click()
+    })
+
+    await act(async () => {
+      AudioMock.instances[0]?.dispatchEvent(new Event('ended'))
+    })
+
+    expect(AudioMock.instances[0]?.play).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('repeat-mode').textContent).toBe('off')
+  })
+
+  it('keeps replaying in repeat loop mode', async () => {
+    render(
+      <PlaybackProvider api={createApi()}>
+        <Harness />
+      </PlaybackProvider>,
+    )
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Play' }).click()
+      screen.getByRole('button', { name: 'Repeat' }).click()
+      screen.getByRole('button', { name: 'Repeat' }).click()
+    })
+
+    await act(async () => {
+      AudioMock.instances[0]?.dispatchEvent(new Event('ended'))
+      AudioMock.instances[0]?.dispatchEvent(new Event('ended'))
+    })
+
+    expect(AudioMock.instances[0]?.play).toHaveBeenCalledTimes(3)
+    expect(screen.getByTestId('repeat-mode').textContent).toBe('loop')
+  })
+
+  it('inserts a track after the current queue position via playNext', async () => {
+    const api = createPlayNextApi()
+    render(
+      <PlaybackProvider api={api}>
+        <Harness />
+      </PlaybackProvider>,
+    )
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Play' }).click()
+    })
+    await act(async () => {
+      screen.getByRole('button', { name: 'Play next' }).click()
+    })
+
+    expect(api.replaceQueue).toHaveBeenCalledWith([track.id, track2.id])
   })
 })

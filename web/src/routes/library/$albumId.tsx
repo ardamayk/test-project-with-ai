@@ -12,7 +12,7 @@ export const Route = createFileRoute('/library/$albumId')({
 
 function AlbumDetailPage() {
   const { albumId } = Route.useParams()
-  const { playTrack } = usePlayback()
+  const { playTrack, queueTracks } = usePlayback()
   const album = useQuery({
     queryKey: ['library', 'album', albumId],
     queryFn: () => apiClient.getAlbum(albumId),
@@ -38,6 +38,10 @@ function AlbumDetailPage() {
     )
   }
 
+  const handleQueueAlbum = () => {
+    void queueTracks(data.tracks.map((track) => track.id))
+  }
+
   return (
     <div className="p-6">
       <Link
@@ -47,7 +51,11 @@ function AlbumDetailPage() {
         ← Back to library
       </Link>
 
-      <AlbumDetailHeader album={data} onPlayAlbum={handlePlayAlbum} />
+      <AlbumDetailHeader
+        album={data}
+        onPlayAlbum={handlePlayAlbum}
+        onQueueAlbum={handleQueueAlbum}
+      />
 
       <section className="mt-6">
         <TrackList

@@ -12,6 +12,7 @@ tags:
   - name: preferences
   - name: library
   - name: playback
+  - name: playlists
 paths:
   /api/v1/health:
     get:
@@ -367,6 +368,94 @@ paths:
           $ref: "#/components/responses/NotFound"
         "416":
           $ref: "#/components/responses/RangeNotSatisfiable"
+  /api/v1/playlists:
+    get:
+      tags: [playlists]
+      operationId: listPlaylists
+      summary: List playlists
+      responses:
+        "200":
+          description: Playlist list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistList"
+    post:
+      tags: [playlists]
+      operationId: createPlaylist
+      summary: Create playlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaylistCreate"
+      responses:
+        "201":
+          description: Created playlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Playlist"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/playlists/{playlistId}:
+    get:
+      tags: [playlists]
+      operationId: getPlaylist
+      summary: Get playlist with tracks
+      parameters:
+        - $ref: "#/components/parameters/playlistId"
+      responses:
+        "200":
+          description: Playlist detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/playlists/{playlistId}/tracks:
+    post:
+      tags: [playlists]
+      operationId: addPlaylistTrack
+      summary: Add track to playlist
+      parameters:
+        - $ref: "#/components/parameters/playlistId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaylistTrackAdd"
+      responses:
+        "200":
+          description: Updated playlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/playlists/{playlistId}/tracks/{trackId}:
+    delete:
+      tags: [playlists]
+      operationId: removePlaylistTrack
+      summary: Remove track from playlist
+      parameters:
+        - $ref: "#/components/parameters/playlistId"
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "200":
+          description: Updated playlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     bearerAuth:
@@ -436,6 +525,13 @@ components:
         format: uuid
     queueItemId:
       name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    playlistId:
+      name: playlistId
       in: path
       required: true
       schema:
@@ -643,6 +739,52 @@ components:
             $ref: "#/components/schemas/Track"
         total:
           type: integer
+    Playlist:
+      type: object
+      required: [id, name, isDefault, trackCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        trackCount:
+          type: integer
+    PlaylistList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Playlist"
+        total:
+          type: integer
+    PlaylistDetail:
+      allOf:
+        - $ref: "#/components/schemas/Playlist"
+        - type: object
+          required: [tracks]
+          properties:
+            tracks:
+              type: array
+              items:
+                $ref: "#/components/schemas/Track"
+    PlaylistCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+    PlaylistTrackAdd:
+      type: object
+      required: [trackId]
+      properties:
+        trackId:
+          type: string
+          format: uuid
     DeleteResult:
       type: object
       required: [deletedFiles]

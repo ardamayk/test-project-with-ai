@@ -20,6 +20,11 @@ export type AlbumList = Schemas['AlbumList']
 export type AlbumDetail = Schemas['AlbumDetail']
 export type Track = Schemas['Track']
 export type TrackList = Schemas['TrackList']
+export type Playlist = Schemas['Playlist']
+export type PlaylistList = Schemas['PlaylistList']
+export type PlaylistDetail = Schemas['PlaylistDetail']
+export type PlaylistCreate = Schemas['PlaylistCreate']
+export type PlaylistTrackAdd = Schemas['PlaylistTrackAdd']
 export type ScanStatus = Schemas['ScanStatus']
 export type DeleteResult = Schemas['DeleteResult']
 export type QueueItem = Schemas['QueueItem']
@@ -137,6 +142,23 @@ export function createApiClient(config: ApiClientConfig) {
       }),
     removePlaybackQueueItem: (itemId: string) =>
       request<Queue>(`/api/v1/playback/queue/items/${itemId}`, {
+        method: 'DELETE',
+      }),
+    listPlaylists: () => request<PlaylistList>('/api/v1/playlists'),
+    createPlaylist: (body: PlaylistCreate) =>
+      request<Playlist>('/api/v1/playlists', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    getPlaylist: (playlistId: string) =>
+      request<PlaylistDetail>(`/api/v1/playlists/${playlistId}`),
+    addPlaylistTrack: (playlistId: string, trackId: string) =>
+      request<PlaylistDetail>(`/api/v1/playlists/${playlistId}/tracks`, {
+        method: 'POST',
+        body: JSON.stringify({ trackId }),
+      }),
+    removePlaylistTrack: (playlistId: string, trackId: string) =>
+      request<PlaylistDetail>(`/api/v1/playlists/${playlistId}/tracks/${trackId}`, {
         method: 'DELETE',
       }),
     getTrackStreamUrl: (trackId: string) =>

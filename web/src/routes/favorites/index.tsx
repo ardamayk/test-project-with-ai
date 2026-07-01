@@ -1,6 +1,7 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { ComingSoonPage } from '#/components/coming-soon-page'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/favorites/')({
-  component: () => <ComingSoonPage title="Favorites" />,
+  beforeLoad: () => {
+    throw redirect({ to: '/playlists' })
+  },
 })

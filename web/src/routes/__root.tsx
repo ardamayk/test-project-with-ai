@@ -21,11 +21,29 @@ const playbackApi: PlaybackApi = {
   removeQueueItem: (itemId) => apiClient.removePlaybackQueueItem(itemId),
   getStreamUrl: (trackId) => apiClient.getTrackStreamUrl(trackId),
   getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
+  listPlaylists: () => apiClient.listPlaylists(),
+  getPlaylist: (playlistId) => apiClient.getPlaylist(playlistId),
+  createPlaylist: (name) => apiClient.createPlaylist({ name }),
+  addPlaylistTrack: (playlistId, trackId) =>
+    apiClient.addPlaylistTrack(playlistId, trackId),
+  removePlaylistTrack: (playlistId, trackId) =>
+    apiClient.removePlaylistTrack(playlistId, trackId),
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: RootLayout,
 })
+
+function PlayerBarWithSync() {
+  const queryClient = useQueryClient()
+  return (
+    <PlayerBar
+      onPlaylistMutated={() => {
+        void queryClient.invalidateQueries({ queryKey: ['playlists'] })
+      }}
+    />
+  )
+}
 
 function RootLayout() {
   const queryClient = useQueryClient()
@@ -58,7 +76,7 @@ function RootLayout() {
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         <ThemeSync />
         <PlaybackProvider api={playbackApi}>
-          <AppShell sidebar={<SidebarNav />} bottom={<PlayerBar />}>
+          <AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
             <Outlet />
           </AppShell>
         </PlaybackProvider>

@@ -17,6 +17,7 @@ import (
 	docsmodule "github.com/ardam/navidrome-replacement/server/internal/modules/docs"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/playlists"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/preferences"
 	"github.com/ardam/navidrome-replacement/server/internal/staticassets"
 	"github.com/go-chi/chi/v5"
@@ -53,10 +54,11 @@ func main() {
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB, cfg)
 	playModule := playback.NewModule(sqlDB, libModule.Service(), libModule.Store())
+	playlistModule := playlists.NewModule(sqlDB, libModule.Store())
 	docsModule := docsmodule.NewModule(docsmodule.DefaultOpenAPIPath())
 	apiHandler := api.NewHandler(cfg)
 
-	registry := modules.NewRegistry(libModule, playModule, prefModule, docsModule)
+	registry := modules.NewRegistry(libModule, playModule, playlistModule, prefModule, docsModule)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
