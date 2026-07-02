@@ -93,6 +93,40 @@ describe('AppShell', () => {
     expect(container.querySelectorAll('[data-slot="resizable-handle"]')).toHaveLength(1)
   })
 
+  it('sizes the primary nav column to its content instead of saved panel width', () => {
+    const { container } = render(
+      <LayoutProvider initialPreferences={defaultPreferences}>
+        <PlaybackProvider api={mockPlaybackApi}>
+          <AppShell>
+            <div>Main content</div>
+          </AppShell>
+        </PlaybackProvider>
+      </LayoutProvider>,
+    )
+
+    const navColumn = container.querySelector('aside')
+    expect(navColumn?.className).toContain('w-fit')
+    expect((navColumn as HTMLElement | null)?.style.width).toBe('')
+  })
+
+  it('keeps widget content from changing the primary nav column width', () => {
+    const { container } = render(
+      <LayoutProvider initialPreferences={defaultPreferences}>
+        <PlaybackProvider api={mockPlaybackApi}>
+          <AppShell>
+            <div>Main content</div>
+          </AppShell>
+        </PlaybackProvider>
+      </LayoutProvider>,
+    )
+
+    const widgetDock = container.querySelector('[data-widget-dock]')
+    expect(widgetDock).toBeTruthy()
+    const className = (widgetDock as HTMLElement | null)?.className ?? ''
+    expect(className).toContain('[contain:inline-size]')
+    expect(className).toContain('min-w-0')
+  })
+
   it('hides the queue column when the queue panel is collapsed', () => {
     const collapsedQueuePreferences = {
       ...defaultPreferences,

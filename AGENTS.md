@@ -166,6 +166,20 @@ graphify . --wiki
 - `.claude/skills/playwright-cli/SKILL.md` — browser automation for E2E debugging
 - Always use caveman skill and adjust caveman skill level according to task. lite, full or ultra modes allowed.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues using the `gh` CLI; external PRs are not a triage surface for now. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the default five-label triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: repo-root `CONTEXT.md` plus `docs/adr/` for ADRs. See `docs/agents/domain.md`.
+
 ## UI: Earthly Audio shell
 
 | Area | Location |

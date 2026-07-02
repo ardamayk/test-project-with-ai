@@ -46,6 +46,7 @@ export function AppShell({
   const navCollapsed = layout.collapsed[navPanel]
   const queueCollapsed = layout.collapsed[queuePanel]
   const hideQueuePanel = queueCollapsed
+  const fixedNavSize = panelLayout[navPanel]
 
   const navWidgetPanel = navPanel === 'left' ? 'left' : 'right'
   const queueWidgetPanel = queuePanel === 'left' ? 'left' : 'right'
@@ -61,7 +62,9 @@ export function AppShell({
     </div>
   )
   const fixedNavColumn = (
-    <aside className="h-full w-max shrink-0 overflow-hidden">{navColumn}</aside>
+    <aside className="h-full w-fit min-w-max max-w-[min(22rem,45vw)] shrink-0 overflow-hidden">
+      {navColumn}
+    </aside>
   )
 
   const queueColumn = (
@@ -100,7 +103,6 @@ export function AppShell({
 
   const leftVisible = !(hideQueuePanel && queuePanel === 'left') && navPanel !== 'left'
   const rightVisible = !(hideQueuePanel && queuePanel === 'right') && navPanel !== 'right'
-  const fixedNavSize = panelLayout[navPanel]
   const resizableTotal = 100 - fixedNavSize
   const fromResizablePct = (size: number | undefined, fallback: number): number =>
     size === undefined ? fallback : Math.round((size / 100) * resizableTotal * 10) / 10

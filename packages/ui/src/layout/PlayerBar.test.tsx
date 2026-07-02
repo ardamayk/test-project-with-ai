@@ -166,6 +166,26 @@ describe('PlayerBar', () => {
     expect(screen.getByText('Album 1')).toBeTruthy()
   })
 
+  it('keeps the now-playing region at a stable width independent of title length', async () => {
+    renderPlayerBar()
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Start track' }).click()
+    })
+
+    const nowPlaying = screen.getByLabelText('Now playing')
+    expect(nowPlaying.className).toContain('max-w-[18rem]')
+    expect(nowPlaying.className).toContain('w-full')
+  })
+
+  it('keeps playback controls centered in the full player bar', async () => {
+    renderPlayerBar()
+
+    const controls = screen.getByLabelText('Playback controls')
+    expect(controls.parentElement?.className).toContain('grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]')
+    expect(controls.className).toContain('justify-self-center')
+  })
+
   it('keeps volume slider usable', async () => {
     renderPlayerBar()
 

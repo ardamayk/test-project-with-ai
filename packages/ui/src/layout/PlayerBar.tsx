@@ -377,10 +377,10 @@ export function PlayerBar({
 
   return (
     <footer className="border-border border-t bg-player text-player-foreground backdrop-blur supports-[backdrop-filter]:bg-player/95">
-      <div className="flex w-full min-w-0 items-center gap-2 px-3 py-2 sm:gap-4 sm:px-4 sm:py-3">
+      <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-2 sm:gap-4 sm:px-4 sm:py-3">
         <section
           aria-label="Now playing"
-          className="flex min-w-0 flex-1 basis-0 items-center gap-2 sm:gap-3"
+          className="flex w-full max-w-[18rem] min-w-0 items-center gap-2 justify-self-start sm:gap-3"
         >
           <AlbumArt
             coverUrl={
@@ -489,7 +489,7 @@ export function PlayerBar({
 
         <section
           aria-label="Playback controls"
-          className="flex w-[min(100%,20rem)] shrink-0 flex-col items-center gap-1.5 sm:w-[min(100%,24rem)] md:w-[min(100%,30rem)]"
+          className="flex w-[min(100%,20rem)] shrink-0 flex-col items-center gap-1.5 justify-self-center sm:w-[min(100%,24rem)] md:w-[min(100%,30rem)]"
         >
           <div className="flex items-center gap-0.5 sm:gap-1">
             <button
@@ -603,7 +603,7 @@ export function PlayerBar({
 
         <section
           aria-label="Volume and queue"
-          className="flex min-w-0 flex-1 basis-0 items-center justify-end gap-1 sm:gap-2"
+          className="flex min-w-0 items-center justify-end gap-1 justify-self-end sm:gap-2"
         >
           <button
             type="button"
