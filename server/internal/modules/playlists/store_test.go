@@ -14,6 +14,26 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type fakeTrackAccess struct {
+	tracks map[string]library.Track
+}
+
+func (f fakeTrackAccess) GetTrack(_ context.Context, trackID string) (library.Track, error) {
+	track, ok := f.tracks[trackID]
+	if !ok {
+		return library.Track{}, library.ErrNotFound
+	}
+	return track, nil
+}
+
+func (f fakeTrackAccess) GetTrackFilePath(_ context.Context, trackID string) (string, error) {
+	track, ok := f.tracks[trackID]
+	if !ok {
+		return "", library.ErrNotFound
+	}
+	return track.FilePath, nil
+}
+
 func setupPlaylistStore(t *testing.T) (*Store, *library.Store, *sql.DB, string) {
 	t.Helper()
 	musicRoot := t.TempDir()
@@ -34,6 +54,24 @@ func setupPlaylistStore(t *testing.T) (*Store, *library.Store, *sql.DB, string) 
 	}
 	libStore := library.NewStore(db)
 	return NewStore(db, libStore), libStore, db, musicRoot
+}
+
+func setupPlaylistStoreWithTrackAccess(t *testing.T, tracks map[string]library.Track) *Store {
+	t.Helper()
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE playlists (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name));
+		CREATE TABLE playlist_tracks (playlist_id TEXT NOT NULL, track_id TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (playlist_id, track_id));
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return NewStore(db, fakeTrackAccess{tracks: tracks})
 }
 
 func seedPlaylistTrack(t *testing.T, db *sql.DB, libStore *library.Store, musicRoot string) string {
@@ -136,5 +174,28 @@ func TestCreatePlaylistAndListWithFavoritesPinned(t *testing.T) {
 	}
 	if playlists.Items[0].Name != DefaultFavoritesName || playlists.Items[1].Name != "Road" {
 		t.Fatalf("order = %+v", playlists.Items)
+	}
+}
+
+func TestStoreUsesTrackAccessInterface(t *testing.T) {
+	trackID := "track-1"
+	store := setupPlaylistStoreWithTrackAccess(t, map[string]library.Track{
+		trackID: {ID: trackID, Title: "Song"},
+	})
+
+	favorites, err := store.GetDefaultFavorites(context.Background(), "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(detail.Tracks) != 1 {
+		t.Fatalf("tracks = %d, want 1", len(detail.Tracks))
+	}
+	if detail.Tracks[0].Title != "Song" {
+		t.Fatalf("track = %+v", detail.Tracks[0])
 	}
 }

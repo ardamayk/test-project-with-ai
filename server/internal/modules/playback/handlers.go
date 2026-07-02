@@ -12,12 +12,12 @@ import (
 )
 
 type Handlers struct {
-	store   *Store
-	library *library.Service
+	store  *Store
+	tracks library.TrackAccess
 }
 
-func NewHandlers(store *Store, libService *library.Service) *Handlers {
-	return &Handlers{store: store, library: libService}
+func NewHandlers(store *Store, tracks library.TrackAccess) *Handlers {
+	return &Handlers{store: store, tracks: tracks}
 }
 
 func (h *Handlers) GetQueue(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +91,7 @@ func (h *Handlers) RemoveItem(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) StreamTrack(w http.ResponseWriter, r *http.Request) {
 	trackID := chi.URLParam(r, "trackId")
-	filePath, err := h.library.GetTrackFilePath(r.Context(), trackID)
+	filePath, err := h.tracks.GetTrackFilePath(r.Context(), trackID)
 	if errors.Is(err, library.ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
 		return

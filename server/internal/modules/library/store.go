@@ -223,15 +223,18 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 }
 
 func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (TrackList, error) {
-	where := "WHERE missing_at IS NULL"
+	where := "WHERE t.missing_at IS NULL"
 	args := []any{}
 	if q != "" {
-		where += " AND (title LIKE ? OR artist_name LIKE ?)"
-		args = append(args, "%"+q+"%", "%"+q+"%")
+		where += " AND (t.title LIKE ? OR t.artist_name LIKE ? OR al.title LIKE ? OR t.genre LIKE ?)"
+		args = append(args, "%"+q+"%", "%"+q+"%", "%"+q+"%", "%"+q+"%")
 	}
 
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tracks "+where, args...).Scan(&total); err != nil {
+	countQuery := `SELECT COUNT(*) FROM tracks t
+		INNER JOIN albums al ON al.id = t.album_id
+		` + where
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return TrackList{}, err
 	}
 

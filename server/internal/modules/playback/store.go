@@ -10,10 +10,10 @@ import (
 )
 
 type QueueItem struct {
-	ID       string         `json:"id"`
-	TrackID  string         `json:"trackId"`
-	Position int            `json:"position"`
-	Track    library.Track  `json:"track"`
+	ID       string        `json:"id"`
+	TrackID  string        `json:"trackId"`
+	Position int           `json:"position"`
+	Track    library.Track `json:"track"`
 }
 
 type Queue struct {
@@ -21,12 +21,12 @@ type Queue struct {
 }
 
 type Store struct {
-	db      *sql.DB
-	library *library.Store
+	db     *sql.DB
+	tracks library.TrackReader
 }
 
-func NewStore(db *sql.DB, libStore *library.Store) *Store {
-	return &Store{db: db, library: libStore}
+func NewStore(db *sql.DB, tracks library.TrackReader) *Store {
+	return &Store{db: db, tracks: tracks}
 }
 
 func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
@@ -46,7 +46,7 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 		if err := rows.Scan(&item.ID, &item.TrackID, &item.Position); err != nil {
 			return Queue{}, err
 		}
-		track, err := s.library.GetTrack(ctx, item.TrackID)
+		track, err := s.tracks.GetTrack(ctx, item.TrackID)
 		if err != nil {
 			continue
 		}
@@ -68,7 +68,7 @@ func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []stri
 	}
 
 	for i, trackID := range trackIDs {
-		if _, err := s.library.GetTrack(ctx, trackID); err != nil {
+		if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
 			return Queue{}, library.ErrNotFound
 		}
 		itemID := uuid.NewString()
@@ -87,7 +87,7 @@ func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []stri
 }
 
 func (s *Store) AppendItem(ctx context.Context, userID, trackID string) (Queue, error) {
-	if _, err := s.library.GetTrack(ctx, trackID); err != nil {
+	if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
 		return Queue{}, library.ErrNotFound
 	}
 

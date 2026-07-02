@@ -11,9 +11,9 @@ type Module struct {
 	handlers *Handlers
 }
 
-func NewModule(db *sql.DB, libService *library.Service, libStore *library.Store) *Module {
-	store := NewStore(db, libStore)
-	return &Module{handlers: NewHandlers(store, libService)}
+func NewModule(db *sql.DB, tracks library.TrackAccess) *Module {
+	store := NewStore(db, tracks)
+	return &Module{handlers: NewHandlers(store, tracks)}
 }
 
 func (m *Module) Name() string {

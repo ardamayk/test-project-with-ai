@@ -33,12 +33,12 @@ type PlaylistDetail struct {
 }
 
 type Store struct {
-	db      *sql.DB
-	library *library.Store
+	db     *sql.DB
+	tracks library.TrackReader
 }
 
-func NewStore(db *sql.DB, libStore *library.Store) *Store {
-	return &Store{db: db, library: libStore}
+func NewStore(db *sql.DB, tracks library.TrackReader) *Store {
+	return &Store{db: db, tracks: tracks}
 }
 
 func (s *Store) ensureDefaultFavorites(ctx context.Context, userID string) (Playlist, error) {
@@ -133,7 +133,7 @@ func (s *Store) GetPlaylist(ctx context.Context, userID, playlistID string) (Pla
 		if err := rows.Scan(&trackID); err != nil {
 			return PlaylistDetail{}, err
 		}
-		track, err := s.library.GetTrack(ctx, trackID)
+		track, err := s.tracks.GetTrack(ctx, trackID)
 		if err != nil {
 			continue
 		}
@@ -146,7 +146,7 @@ func (s *Store) AddTrack(ctx context.Context, userID, playlistID, trackID string
 	if _, err := s.GetPlaylist(ctx, userID, playlistID); err != nil {
 		return PlaylistDetail{}, err
 	}
-	if _, err := s.library.GetTrack(ctx, trackID); err != nil {
+	if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
 		return PlaylistDetail{}, library.ErrNotFound
 	}
 

@@ -40,10 +40,6 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/v1/library/tracks/{trackId}", m.handlers.DeleteTrack)
 }
 
-func (m *Module) Service() *Service {
+func (m *Module) TrackAccess() TrackAccess {
 	return m.service
-}
-
-func (m *Module) Store() *Store {
-	return m.store
 }

@@ -83,3 +83,59 @@ func TestServiceDeleteTrackRespectsMusicRoots(t *testing.T) {
 		t.Fatal("track file should be removed")
 	}
 }
+
+func TestServiceListTracksSearchesAlbumAndGenre(t *testing.T) {
+	svc, store, db, musicRoot := setupServiceDB(t)
+	defer db.Close()
+
+	now := time.Now()
+	metas := []FileMetadata{
+		{
+			Path:        filepath.Join(musicRoot, "blue-monday.flac"),
+			Format:      "flac",
+			SizeBytes:   10,
+			ModTime:     now,
+			Title:       "Blue Monday",
+			Artist:      "New Order",
+			AlbumArtist: "New Order",
+			Album:       "Low-Life",
+			TrackNo:     1,
+			DurationMs:  180_000,
+			Genre:       "Synthpop",
+		},
+		{
+			Path:        filepath.Join(musicRoot, "age-of-consent.flac"),
+			Format:      "flac",
+			SizeBytes:   10,
+			ModTime:     now,
+			Title:       "Age of Consent",
+			Artist:      "New Order",
+			AlbumArtist: "New Order",
+			Album:       "Power Corruption and Lies",
+			TrackNo:     1,
+			DurationMs:  300_000,
+			Genre:       "Rock",
+		},
+	}
+	for _, meta := range metas {
+		if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	byAlbum, err := svc.ListTracks(context.Background(), 10, 0, "Low-Life")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byAlbum.Items) != 1 || byAlbum.Items[0].Title != "Blue Monday" {
+		t.Fatalf("album search items = %#v, want Blue Monday", byAlbum.Items)
+	}
+
+	byGenre, err := svc.ListTracks(context.Background(), 10, 0, "Synthpop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byGenre.Items) != 1 || byGenre.Items[0].Title != "Blue Monday" {
+		t.Fatalf("genre search items = %#v, want Blue Monday", byGenre.Items)
+	}
+}

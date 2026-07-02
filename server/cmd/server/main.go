@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -53,8 +54,9 @@ func main() {
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB, cfg)
-	playModule := playback.NewModule(sqlDB, libModule.Service(), libModule.Store())
-	playlistModule := playlists.NewModule(sqlDB, libModule.Store())
+	trackAccess := libModule.TrackAccess()
+	playModule := playback.NewModule(sqlDB, trackAccess)
+	playlistModule := playlists.NewModule(sqlDB, trackAccess)
 	docsModule := docsmodule.NewModule(docsmodule.DefaultOpenAPIPath())
 	apiHandler := api.NewHandler(cfg)
 
@@ -64,7 +66,7 @@ func main() {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(streamAwareTimeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
@@ -79,13 +81,7 @@ func main() {
 
 	r.Mount("/", staticassets.WebHandler())
 
-	server := &http.Server{
-		Addr:         cfg.Addr,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
+	server := newHTTPServer(cfg.Addr, r)
 
 	go func() {
 		slog.Info("server listening", "addr", cfg.Addr, "modules", registry.Names())
@@ -103,5 +99,34 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown error", "error", err)
+	}
+}
+
+func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
+	timeoutMiddleware := middleware.Timeout(timeout)
+	return func(next http.Handler) http.Handler {
+		timed := timeoutMiddleware(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isTrackStreamPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			timed.ServeHTTP(w, r)
+		})
+	}
+}
+
+func isTrackStreamPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/tracks/") && strings.HasSuffix(path, "/stream")
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:        addr,
+		Handler:     handler,
+		ReadTimeout: 15 * time.Second,
+		// Streaming audio responses can run for the full track duration.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
 	}
 }
