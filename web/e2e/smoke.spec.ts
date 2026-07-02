@@ -12,7 +12,11 @@ test('navigation links render', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Artists' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Genres' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Queue' })).toBeVisible()
+  const queueHeading = page.getByRole('heading', { name: 'Queue' })
+  if (!(await queueHeading.isVisible())) {
+    await page.getByRole('button', { name: 'Toggle queue panel' }).click()
+  }
+  await expect(queueHeading).toBeVisible()
 })
 
 test('albums page shows filters and scan', async ({ page }) => {

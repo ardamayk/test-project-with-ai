@@ -1,0 +1,181 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GenreDetailContent } from "./$genre";
+import { GenresPage } from "./index";
+
+const mocks = vi.hoisted(() => ({
+	listTracks: vi.fn(),
+	playTrack: vi.fn(),
+	queueTracks: vi.fn(),
+}));
+
+vi.mock("@tanstack/react-router", async () => {
+	const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
+		"@tanstack/react-router",
+	);
+	return {
+		...actual,
+		Link: ({
+			children,
+			to,
+			params,
+			...props
+		}: {
+			children: React.ReactNode;
+			to: string;
+			params?: Record<string, string>;
+		}) => (
+			<a href={params ? to.replace("$genre", params.genre) : to} {...props}>
+				{children}
+			</a>
+		),
+	};
+});
+
+vi.mock("#/lib/api", () => ({
+	apiClient: {
+		listTracks: mocks.listTracks,
+		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
+	},
+}));
+
+vi.mock("@repo/ui", () => ({
+	AlbumArt: ({
+		coverUrl,
+		className,
+	}: {
+		coverUrl?: string | null;
+		className?: string;
+	}) => (coverUrl ? <img alt="" src={coverUrl} className={className} /> : null),
+	usePlayback: () => ({
+		playTrack: mocks.playTrack,
+		queueTracks: mocks.queueTracks,
+		currentTrack: null,
+	}),
+}));
+
+const tracks = [
+	{
+		id: "t1",
+		title: "Blue Monday",
+		artistName: "New Order",
+		albumId: "a1",
+		durationMs: 180_000,
+		format: "flac",
+		genre: "Synthpop",
+	},
+	{
+		id: "t2",
+		title: "Bizarre Love Triangle",
+		artistName: "New Order",
+		albumId: "a2",
+		durationMs: 240_000,
+		format: "flac",
+		genre: "Synthpop; Dance",
+	},
+	{
+		id: "t3",
+		title: "Age of Consent",
+		artistName: "New Order",
+		albumId: "a3",
+		durationMs: 315_000,
+		format: "flac",
+		genre: "Synthpop",
+	},
+	{
+		id: "t4",
+		title: "Temptation",
+		artistName: "New Order",
+		albumId: "a4",
+		durationMs: 300_000,
+		format: "flac",
+		genre: "Synthpop",
+	},
+];
+
+function renderWithQuery(ui: React.ReactElement) {
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	return render(
+		<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+	);
+}
+
+describe("genre routes", () => {
+	beforeEach(() => {
+		mocks.listTracks.mockResolvedValue({ items: tracks });
+		mocks.playTrack.mockClear();
+		mocks.queueTracks.mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it("renders genre cards derived from track metadata", async () => {
+		const { container } = renderWithQuery(<GenresPage />);
+
+		const synthpop = await screen.findByRole("link", {
+			name: /Synthpop 4 tracks/,
+		});
+		const dance = screen.getByRole("link", { name: /Dance 1 track/ });
+
+		expect(synthpop.getAttribute("href")).toBe("/library/genres/Synthpop");
+		expect(dance.getAttribute("href")).toBe("/library/genres/Dance");
+		await waitFor(() => {
+			expect(container.querySelectorAll("img").length).toBeGreaterThanOrEqual(
+				4,
+			);
+		});
+	});
+
+	it("scopes detail playback actions to matching genre tracks", async () => {
+		renderWithQuery(<GenreDetailContent genre="Synthpop" />);
+
+		await screen.findByRole("heading", { name: "Synthpop" });
+
+		fireEvent.click(screen.getByRole("button", { name: "Play" }));
+		expect(mocks.playTrack).toHaveBeenCalledWith("t1", [
+			"t1",
+			"t2",
+			"t3",
+			"t4",
+		]);
+
+		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+		expect(mocks.queueTracks).toHaveBeenCalledWith(["t1", "t2", "t3", "t4"]);
+
+		expect(screen.getByText("Blue Monday")).toBeTruthy();
+		expect(screen.getByText("Bizarre Love Triangle")).toBeTruthy();
+	});
+
+	it("filters genre detail actions to the visible tracks", async () => {
+		const { container } = renderWithQuery(
+			<GenreDetailContent genre="Synthpop" />,
+		);
+
+		await screen.findByRole("heading", { name: "Synthpop" });
+		expect(container.querySelectorAll("img")).toHaveLength(4);
+
+		fireEvent.change(screen.getByPlaceholderText("Search Synthpop…"), {
+			target: { value: "bizarre" },
+		});
+
+		expect(screen.queryByText("Blue Monday")).toBeNull();
+		expect(screen.getByText("Bizarre Love Triangle")).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "Play" }));
+		expect(mocks.playTrack).toHaveBeenCalledWith("t2", ["t2"]);
+
+		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+		expect(mocks.queueTracks).toHaveBeenCalledWith(["t2"]);
+	});
+});

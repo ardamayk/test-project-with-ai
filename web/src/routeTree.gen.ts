@@ -16,11 +16,13 @@ import { Route as PlaylistsIndexRouteImport } from './routes/playlists/index'
 import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as FoldersIndexRouteImport } from './routes/folders/index'
 import { Route as FavoritesIndexRouteImport } from './routes/favorites/index'
+import { Route as PlaylistsPlaylistIdRouteImport } from './routes/playlists/$playlistId'
 import { Route as LibraryAlbumIdRouteImport } from './routes/library/$albumId'
 import { Route as LibraryTracksIndexRouteImport } from './routes/library/tracks/index'
 import { Route as LibraryGenresIndexRouteImport } from './routes/library/genres/index'
 import { Route as LibraryArtistsIndexRouteImport } from './routes/library/artists/index'
 import { Route as LibraryAlbumsIndexRouteImport } from './routes/library/albums/index'
+import { Route as LibraryGenresGenreRouteImport } from './routes/library/genres/$genre'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -57,6 +59,11 @@ const FavoritesIndexRoute = FavoritesIndexRouteImport.update({
   path: '/favorites/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlaylistsPlaylistIdRoute = PlaylistsPlaylistIdRouteImport.update({
+  id: '/playlists/$playlistId',
+  path: '/playlists/$playlistId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LibraryAlbumIdRoute = LibraryAlbumIdRouteImport.update({
   id: '/library/$albumId',
   path: '/library/$albumId',
@@ -82,16 +89,23 @@ const LibraryAlbumsIndexRoute = LibraryAlbumsIndexRouteImport.update({
   path: '/library/albums/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibraryGenresGenreRoute = LibraryGenresGenreRouteImport.update({
+  id: '/library/genres/$genre',
+  path: '/library/genres/$genre',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
+  '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/favorites/': typeof FavoritesIndexRoute
   '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/playlists/': typeof PlaylistsIndexRoute
   '/radio/': typeof RadioIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/library/genres/$genre': typeof LibraryGenresGenreRoute
   '/library/albums/': typeof LibraryAlbumsIndexRoute
   '/library/artists/': typeof LibraryArtistsIndexRoute
   '/library/genres/': typeof LibraryGenresIndexRoute
@@ -100,12 +114,14 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
+  '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/favorites': typeof FavoritesIndexRoute
   '/folders': typeof FoldersIndexRoute
   '/library': typeof LibraryIndexRoute
   '/playlists': typeof PlaylistsIndexRoute
   '/radio': typeof RadioIndexRoute
   '/settings': typeof SettingsIndexRoute
+  '/library/genres/$genre': typeof LibraryGenresGenreRoute
   '/library/albums': typeof LibraryAlbumsIndexRoute
   '/library/artists': typeof LibraryArtistsIndexRoute
   '/library/genres': typeof LibraryGenresIndexRoute
@@ -115,12 +131,14 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
+  '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/favorites/': typeof FavoritesIndexRoute
   '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/playlists/': typeof PlaylistsIndexRoute
   '/radio/': typeof RadioIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/library/genres/$genre': typeof LibraryGenresGenreRoute
   '/library/albums/': typeof LibraryAlbumsIndexRoute
   '/library/artists/': typeof LibraryArtistsIndexRoute
   '/library/genres/': typeof LibraryGenresIndexRoute
@@ -131,12 +149,14 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/library/$albumId'
+    | '/playlists/$playlistId'
     | '/favorites/'
     | '/folders/'
     | '/library/'
     | '/playlists/'
     | '/radio/'
     | '/settings/'
+    | '/library/genres/$genre'
     | '/library/albums/'
     | '/library/artists/'
     | '/library/genres/'
@@ -145,12 +165,14 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/library/$albumId'
+    | '/playlists/$playlistId'
     | '/favorites'
     | '/folders'
     | '/library'
     | '/playlists'
     | '/radio'
     | '/settings'
+    | '/library/genres/$genre'
     | '/library/albums'
     | '/library/artists'
     | '/library/genres'
@@ -159,12 +181,14 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/library/$albumId'
+    | '/playlists/$playlistId'
     | '/favorites/'
     | '/folders/'
     | '/library/'
     | '/playlists/'
     | '/radio/'
     | '/settings/'
+    | '/library/genres/$genre'
     | '/library/albums/'
     | '/library/artists/'
     | '/library/genres/'
@@ -174,12 +198,14 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LibraryAlbumIdRoute: typeof LibraryAlbumIdRoute
+  PlaylistsPlaylistIdRoute: typeof PlaylistsPlaylistIdRoute
   FavoritesIndexRoute: typeof FavoritesIndexRoute
   FoldersIndexRoute: typeof FoldersIndexRoute
   LibraryIndexRoute: typeof LibraryIndexRoute
   PlaylistsIndexRoute: typeof PlaylistsIndexRoute
   RadioIndexRoute: typeof RadioIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
+  LibraryGenresGenreRoute: typeof LibraryGenresGenreRoute
   LibraryAlbumsIndexRoute: typeof LibraryAlbumsIndexRoute
   LibraryArtistsIndexRoute: typeof LibraryArtistsIndexRoute
   LibraryGenresIndexRoute: typeof LibraryGenresIndexRoute
@@ -237,6 +263,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FavoritesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/playlists/$playlistId': {
+      id: '/playlists/$playlistId'
+      path: '/playlists/$playlistId'
+      fullPath: '/playlists/$playlistId'
+      preLoaderRoute: typeof PlaylistsPlaylistIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/library/$albumId': {
       id: '/library/$albumId'
       path: '/library/$albumId'
@@ -272,18 +305,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LibraryAlbumsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/library/genres/$genre': {
+      id: '/library/genres/$genre'
+      path: '/library/genres/$genre'
+      fullPath: '/library/genres/$genre'
+      preLoaderRoute: typeof LibraryGenresGenreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LibraryAlbumIdRoute: LibraryAlbumIdRoute,
+  PlaylistsPlaylistIdRoute: PlaylistsPlaylistIdRoute,
   FavoritesIndexRoute: FavoritesIndexRoute,
   FoldersIndexRoute: FoldersIndexRoute,
   LibraryIndexRoute: LibraryIndexRoute,
   PlaylistsIndexRoute: PlaylistsIndexRoute,
   RadioIndexRoute: RadioIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
+  LibraryGenresGenreRoute: LibraryGenresGenreRoute,
   LibraryAlbumsIndexRoute: LibraryAlbumsIndexRoute,
   LibraryArtistsIndexRoute: LibraryArtistsIndexRoute,
   LibraryGenresIndexRoute: LibraryGenresIndexRoute,
