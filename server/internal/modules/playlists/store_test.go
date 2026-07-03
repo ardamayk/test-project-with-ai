@@ -3,15 +3,13 @@ package playlists
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	_ "modernc.org/sqlite"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
 
 type fakeTrackAccess struct {
@@ -37,40 +35,17 @@ func (f fakeTrackAccess) GetTrackFilePath(_ context.Context, trackID string) (st
 func setupPlaylistStore(t *testing.T) (*Store, *library.Store, *sql.DB, string) {
 	t.Helper()
 	musicRoot := t.TempDir()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT, name_sort TEXT, created_at TEXT, updated_at TEXT);
-		CREATE TABLE albums (id TEXT PRIMARY KEY, artist_id TEXT, title TEXT, title_sort TEXT, year INTEGER, genres TEXT NOT NULL DEFAULT '[]', cover_mime TEXT, cover_data BLOB, created_at TEXT, updated_at TEXT);
-		CREATE TABLE tracks (id TEXT PRIMARY KEY, album_id TEXT, title TEXT, title_sort TEXT, artist_name TEXT, track_no INTEGER, duration_ms INTEGER, format TEXT, size_bytes INTEGER, file_path TEXT UNIQUE, file_mtime INTEGER, missing_at TEXT, genre TEXT, sample_rate_hz INTEGER, bit_depth INTEGER, created_at TEXT, updated_at TEXT);
-		CREATE TABLE playlists (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name));
-		CREATE TABLE playlist_tracks (playlist_id TEXT NOT NULL, track_id TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (playlist_id, track_id));
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testutil.OpenMigratedDB(t)
 	libStore := library.NewStore(db)
 	return NewStore(db, libStore), libStore, db, musicRoot
 }
 
 func setupPlaylistStoreWithTrackAccess(t *testing.T, tracks map[string]library.Track) *Store {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
+	db := testutil.OpenMigratedDB(t)
+	for trackID := range tracks {
+		testutil.InsertTrack(t, db, trackID)
 	}
-	_, err = db.Exec(`
-		CREATE TABLE playlists (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name));
-		CREATE TABLE playlist_tracks (playlist_id TEXT NOT NULL, track_id TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (playlist_id, track_id));
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
 	return NewStore(db, fakeTrackAccess{tracks: tracks})
 }
 

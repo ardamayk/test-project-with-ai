@@ -20,6 +20,7 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playlists"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/preferences"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/radio"
 	"github.com/ardam/navidrome-replacement/server/internal/staticassets"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -57,10 +58,11 @@ func main() {
 	trackAccess := libModule.TrackAccess()
 	playModule := playback.NewModule(sqlDB, trackAccess)
 	playlistModule := playlists.NewModule(sqlDB, trackAccess)
-	docsModule := docsmodule.NewModule(docsmodule.DefaultOpenAPIPath())
+	radioModule := radio.NewModule(sqlDB, cfg)
+	docsModule := docsmodule.NewModule()
 	apiHandler := api.NewHandler(cfg)
 
-	registry := modules.NewRegistry(libModule, playModule, playlistModule, prefModule, docsModule)
+	registry := modules.NewRegistry(libModule, playModule, playlistModule, radioModule, prefModule, docsModule)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -107,7 +109,7 @@ func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		timed := timeoutMiddleware(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isTrackStreamPath(r.URL.Path) {
+			if isStreamPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -116,8 +118,9 @@ func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
-func isTrackStreamPath(path string) bool {
-	return strings.HasPrefix(path, "/api/v1/tracks/") && strings.HasSuffix(path, "/stream")
+func isStreamPath(path string) bool {
+	return strings.HasSuffix(path, "/stream") &&
+		(strings.HasPrefix(path, "/api/v1/tracks/") || strings.HasPrefix(path, "/api/v1/radio/stations/"))
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

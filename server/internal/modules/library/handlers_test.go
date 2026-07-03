@@ -20,16 +20,6 @@ func setupHandlerFixture(t *testing.T) (*Handlers, *sql.DB, string) {
 	t.Helper()
 	musicRoot := t.TempDir()
 	db := openMemoryDB(t)
-	_, err := db.Exec(`
-		CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT, name_sort TEXT, created_at TEXT, updated_at TEXT);
-		CREATE TABLE albums (id TEXT PRIMARY KEY, artist_id TEXT, title TEXT, title_sort TEXT, year INTEGER, genres TEXT NOT NULL DEFAULT '[]', cover_mime TEXT, cover_data BLOB, created_at TEXT, updated_at TEXT);
-		CREATE TABLE tracks (id TEXT PRIMARY KEY, album_id TEXT, title TEXT, title_sort TEXT, artist_name TEXT, track_no INTEGER, duration_ms INTEGER, format TEXT, size_bytes INTEGER, file_path TEXT UNIQUE, file_mtime INTEGER, missing_at TEXT, genre TEXT, sample_rate_hz INTEGER, bit_depth INTEGER, created_at TEXT, updated_at TEXT);
-		CREATE TABLE playback_queue (id TEXT PRIMARY KEY, user_id TEXT, position INTEGER, track_id TEXT, UNIQUE(user_id, position));
-		CREATE TABLE scan_jobs (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', started_at TEXT, finished_at TEXT, scanned INTEGER NOT NULL DEFAULT 0, added INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0, error_message TEXT);
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	store := NewStore(db)
 	svc := NewService(store, config.Config{MusicPaths: []string{musicRoot}})
@@ -126,6 +116,58 @@ func TestHandlersGetAlbumReturnsGenresAndAudioFormat(t *testing.T) {
 	}
 }
 
+func TestHandlersGetAlbumDeduplicatesRepeatedTracks(t *testing.T) {
+	h, db, musicRoot := setupHandlerFixture(t)
+	store := NewStore(db)
+	albumID, _ := seedTrack(t, db, store, musicRoot)
+
+	duplicatePath := filepath.Join(musicRoot, "song-copy.flac")
+	if err := os.WriteFile(duplicatePath, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	meta := FileMetadata{
+		Path:         duplicatePath,
+		Format:       "flac",
+		SizeBytes:    10,
+		ModTime:      time.Now(),
+		Title:        "Song",
+		Artist:       "Artist",
+		AlbumArtist:  "Artist",
+		Album:        "Album",
+		TrackNo:      1,
+		Year:         2024,
+		DurationMs:   1000,
+		Genre:        "Pop",
+		SampleRateHz: 96000,
+		BitDepth:     24,
+	}
+	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("albumId", albumID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	h.GetAlbum(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var body AlbumDetail
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Tracks) != 1 {
+		t.Fatalf("tracks = %d, want 1", len(body.Tracks))
+	}
+	if body.TrackCount != 1 {
+		t.Fatalf("trackCount = %d, want 1", body.TrackCount)
+	}
+}
+
 func TestHandlersDeleteAlbum(t *testing.T) {
 	h, db, musicRoot := setupHandlerFixture(t)
 	store := NewStore(db)
@@ -168,10 +210,6 @@ func TestHandlersDeleteTrackNotFound(t *testing.T) {
 func TestHandlersTriggerScanWithoutMusicPaths(t *testing.T) {
 	db := openMemoryDB(t)
 	defer db.Close()
-	_, err := db.Exec(`CREATE TABLE scan_jobs (id TEXT PRIMARY KEY, status TEXT, started_at TEXT, finished_at TEXT, scanned INTEGER, added INTEGER, updated INTEGER, removed INTEGER, error_message TEXT)`)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	store := NewStore(db)
 	svc := NewService(store, config.Config{})

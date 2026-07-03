@@ -13,7 +13,7 @@ var contentTypes = map[string]string{
 	".flac": "audio/flac",
 	".ogg":  "audio/ogg",
 	".m4a":  "audio/mp4",
-	".opus": "audio/opus",
+	".opus": "audio/ogg",
 	".wav":  "audio/wav",
 }
 

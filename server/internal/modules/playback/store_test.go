@@ -2,13 +2,10 @@ package playback
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	_ "modernc.org/sqlite"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
 
 type fakeTrackAccess struct {
@@ -31,26 +28,18 @@ func (f fakeTrackAccess) GetTrackFilePath(_ context.Context, trackID string) (st
 	return track.FilePath, nil
 }
 
-func setupPlaybackStore(t *testing.T, tracks map[string]library.Track) (*Store, *sql.DB) {
+func setupPlaybackStore(t *testing.T, tracks map[string]library.Track) *Store {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
+	db := testutil.OpenMigratedDB(t)
+	for trackID := range tracks {
+		testutil.InsertTrack(t, db, trackID)
 	}
-	_, err = db.Exec(`
-		CREATE TABLE playback_queue (id TEXT PRIMARY KEY, user_id TEXT, position INTEGER, track_id TEXT, UNIQUE(user_id, position));
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return NewStore(db, fakeTrackAccess{tracks: tracks}), db
+	return NewStore(db, fakeTrackAccess{tracks: tracks})
 }
 
 func TestStoreUsesTrackAccessInterface(t *testing.T) {
 	trackID := "track-1"
-	store, _ := setupPlaybackStore(t, map[string]library.Track{
+	store := setupPlaybackStore(t, map[string]library.Track{
 		trackID: {ID: trackID, Title: "Song"},
 	})
 

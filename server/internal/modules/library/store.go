@@ -219,7 +219,34 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 		}
 		a.Tracks = append(a.Tracks, t)
 	}
-	return a, rows.Err()
+	if err := rows.Err(); err != nil {
+		return AlbumDetail{}, err
+	}
+	a.Tracks = dedupeAlbumTracks(a.Tracks)
+	a.TrackCount = len(a.Tracks)
+	return a, nil
+}
+
+func dedupeAlbumTracks(tracks []Track) []Track {
+	seen := make(map[string]struct{}, len(tracks))
+	result := make([]Track, 0, len(tracks))
+	for _, track := range tracks {
+		key := albumTrackDedupeKey(track)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, track)
+	}
+	return result
+}
+
+func albumTrackDedupeKey(track Track) string {
+	trackNo := ""
+	if track.TrackNo != nil {
+		trackNo = fmt.Sprintf("%d", *track.TrackNo)
+	}
+	return fmt.Sprintf("%s|%s|%d|%s", trackNo, sortKey(track.Title), track.DurationMs, track.Format)
 }
 
 func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (TrackList, error) {

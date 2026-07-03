@@ -8,18 +8,24 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { Queue, QueueItem, Track } from '@repo/api-client'
+import type { Queue, QueueItem, RadioNowPlaying, RadioStation, Track } from '@repo/api-client'
 import type { Playlist, PlaylistDetail, PlaylistList } from '@repo/api-client'
 
 export type RepeatMode = 'off' | 'once' | 'loop'
 
-export type PlaybackApi = {
+export type PlaybackQueueApi = {
   getQueue: () => Promise<Queue>
   replaceQueue: (trackIds: string[]) => Promise<Queue>
   appendQueueItem: (trackId: string) => Promise<Queue>
   removeQueueItem: (itemId: string) => Promise<Queue>
+}
+
+export type PlaybackAssetApi = {
   getStreamUrl: (trackId: string) => string
   getAlbumCoverUrl: (albumId: string) => string
+}
+
+export type PlaylistLibraryApi = {
   listPlaylists: () => Promise<PlaylistList>
   getPlaylist: (playlistId: string) => Promise<PlaylistDetail>
   createPlaylist: (name: string) => Promise<Playlist>
@@ -27,9 +33,21 @@ export type PlaybackApi = {
   removePlaylistTrack: (playlistId: string, trackId: string) => Promise<PlaylistDetail>
 }
 
+export type RadioPlaybackApi = {
+  getRadioStationStreamUrl: (stationId: string) => string
+  getRadioNowPlaying: (stationId: string) => Promise<RadioNowPlaying>
+}
+
+export type PlaybackApi = PlaybackQueueApi &
+  PlaybackAssetApi &
+  PlaylistLibraryApi &
+  RadioPlaybackApi
+
 type PlaybackContextValue = {
   queue: QueueItem[]
   currentTrack: Track | null
+  currentRadioStation: RadioStation | null
+  radioNowPlaying: RadioNowPlaying | null
   isPlaying: boolean
   currentTime: number
   duration: number
@@ -37,6 +55,7 @@ type PlaybackContextValue = {
   shuffleEnabled: boolean
   repeatMode: RepeatMode
   playTrack: (trackId: string, queueTrackIds?: string[]) => Promise<void>
+  playRadioStation: (station: RadioStation) => Promise<void>
   queueTracks: (trackIds: string[]) => Promise<void>
   playQueueIndex: (index: number) => Promise<void>
   playNext: (trackId: string) => Promise<void>
@@ -49,14 +68,10 @@ type PlaybackContextValue = {
   clearQueue: () => Promise<void>
   refreshQueue: () => Promise<void>
   getAlbumCoverUrl: (albumId: string) => string
-  listPlaylists: () => Promise<PlaylistList>
-  getPlaylist: (playlistId: string) => Promise<PlaylistDetail>
-  createPlaylist: (name: string) => Promise<Playlist>
-  addPlaylistTrack: (playlistId: string, trackId: string) => Promise<PlaylistDetail>
-  removePlaylistTrack: (playlistId: string, trackId: string) => Promise<PlaylistDetail>
 }
 
 const PlaybackContext = createContext<PlaybackContextValue | null>(null)
+const PlaylistLibraryContext = createContext<PlaylistLibraryApi | null>(null)
 
 export function PlaybackProvider({
   children,
@@ -68,12 +83,17 @@ export function PlaybackProvider({
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const queueRef = useRef<QueueItem[]>([])
   const currentTrackRef = useRef<Track | null>(null)
+  const currentRadioStationRef = useRef<RadioStation | null>(null)
   const repeatModeRef = useRef<RepeatMode>('off')
   const apiRef = useRef(api)
   apiRef.current = api
 
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null)
+  const [currentRadioStation, setCurrentRadioStation] =
+    useState<RadioStation | null>(null)
+  const [radioNowPlaying, setRadioNowPlaying] =
+    useState<RadioNowPlaying | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -83,6 +103,7 @@ export function PlaybackProvider({
 
   queueRef.current = queue
   currentTrackRef.current = currentTrack
+  currentRadioStationRef.current = currentRadioStation
   repeatModeRef.current = repeatMode
 
   const refreshQueue = useCallback(async () => {
@@ -98,6 +119,9 @@ export function PlaybackProvider({
       )
       if (item) {
         setCurrentTrack(item.track)
+        currentRadioStationRef.current = null
+        setCurrentRadioStation(null)
+        setRadioNowPlaying(null)
         setDuration(
           item.track.durationMs > 0 ? item.track.durationMs / 1000 : 0,
         )
@@ -118,6 +142,20 @@ export function PlaybackProvider({
     [],
   )
 
+  const refreshRadioNowPlaying = useCallback(async () => {
+    const station = currentRadioStationRef.current
+    if (!station) return
+    try {
+      const data = await apiRef.current.getRadioNowPlaying(station.id)
+      setRadioNowPlaying(data)
+    } catch (error) {
+      console.warn('Failed to refresh radio now playing', {
+        stationId: station.id,
+        error,
+      })
+    }
+  }, [])
+
   useEffect(() => {
     const audio = new Audio()
     audio.volume = volume
@@ -135,6 +173,9 @@ export function PlaybackProvider({
     const onPause = () => setIsPlaying(false)
     const onEnded = () => {
       setIsPlaying(false)
+      if (currentRadioStationRef.current) {
+        return
+      }
       const mode = repeatModeRef.current
       if (mode === 'once' || mode === 'loop') {
         audio.currentTime = 0
@@ -176,6 +217,15 @@ export function PlaybackProvider({
     }
   }, [playTrackInternal, refreshQueue])
 
+  useEffect(() => {
+    if (!currentRadioStation) return undefined
+    void refreshRadioNowPlaying()
+    const intervalId = window.setInterval(() => {
+      void refreshRadioNowPlaying()
+    }, 10000)
+    return () => window.clearInterval(intervalId)
+  }, [currentRadioStation, refreshRadioNowPlaying])
+
   const playTrack = useCallback(
     async (trackId: string, queueTrackIds?: string[]) => {
       let nextQueue = queueRef.current
@@ -193,6 +243,35 @@ export function PlaybackProvider({
       await playTrackInternal(trackId, nextQueue)
     },
     [playTrackInternal],
+  )
+
+  const playRadioStation = useCallback(
+    async (station: RadioStation) => {
+      const audio = audioRef.current
+      if (!audio) return
+
+      setCurrentTrack(null)
+      currentRadioStationRef.current = station
+      setCurrentRadioStation(station)
+      setRadioNowPlaying(station.lastNowPlaying ?? null)
+      setCurrentTime(0)
+      setDuration(0)
+
+      audio.src = apiRef.current.getRadioStationStreamUrl(station.id)
+      try {
+        await audio.play()
+        setIsPlaying(true)
+      } catch (error) {
+        console.warn('Failed to start radio station playback', {
+          stationId: station.id,
+          error,
+        })
+        setIsPlaying(false)
+      }
+
+      await refreshRadioNowPlaying()
+    },
+    [refreshRadioNowPlaying],
   )
 
   const queueTracks = useCallback(async (trackIds: string[]) => {
@@ -274,6 +353,9 @@ export function PlaybackProvider({
     const data = await apiRef.current.replaceQueue([])
     setQueue(data.items)
     setCurrentTrack(null)
+    currentRadioStationRef.current = null
+    setCurrentRadioStation(null)
+    setRadioNowPlaying(null)
     setIsPlaying(false)
     if (audioRef.current) {
       audioRef.current.pause()
@@ -285,6 +367,8 @@ export function PlaybackProvider({
     () => ({
       queue,
       currentTrack,
+      currentRadioStation,
+      radioNowPlaying,
       isPlaying,
       currentTime,
       duration,
@@ -292,6 +376,7 @@ export function PlaybackProvider({
       shuffleEnabled,
       repeatMode,
       playTrack,
+      playRadioStation,
       queueTracks,
       playQueueIndex,
       playNext,
@@ -304,17 +389,12 @@ export function PlaybackProvider({
       clearQueue,
       refreshQueue,
       getAlbumCoverUrl: (albumId: string) => apiRef.current.getAlbumCoverUrl(albumId),
-      listPlaylists: () => apiRef.current.listPlaylists(),
-      getPlaylist: (playlistId: string) => apiRef.current.getPlaylist(playlistId),
-      createPlaylist: (name: string) => apiRef.current.createPlaylist(name),
-      addPlaylistTrack: (playlistId: string, trackId: string) =>
-        apiRef.current.addPlaylistTrack(playlistId, trackId),
-      removePlaylistTrack: (playlistId: string, trackId: string) =>
-        apiRef.current.removePlaylistTrack(playlistId, trackId),
     }),
     [
       queue,
       currentTrack,
+      currentRadioStation,
+      radioNowPlaying,
       isPlaying,
       currentTime,
       duration,
@@ -322,6 +402,7 @@ export function PlaybackProvider({
       shuffleEnabled,
       repeatMode,
       playTrack,
+      playRadioStation,
       queueTracks,
       playQueueIndex,
       playNext,
@@ -336,8 +417,25 @@ export function PlaybackProvider({
     ],
   )
 
+  const playlistLibrary = useMemo<PlaylistLibraryApi>(
+    () => ({
+      listPlaylists: () => apiRef.current.listPlaylists(),
+      getPlaylist: (playlistId: string) => apiRef.current.getPlaylist(playlistId),
+      createPlaylist: (name: string) => apiRef.current.createPlaylist(name),
+      addPlaylistTrack: (playlistId: string, trackId: string) =>
+        apiRef.current.addPlaylistTrack(playlistId, trackId),
+      removePlaylistTrack: (playlistId: string, trackId: string) =>
+        apiRef.current.removePlaylistTrack(playlistId, trackId),
+    }),
+    [],
+  )
+
   return (
-    <PlaybackContext.Provider value={value}>{children}</PlaybackContext.Provider>
+    <PlaybackContext.Provider value={value}>
+      <PlaylistLibraryContext.Provider value={playlistLibrary}>
+        {children}
+      </PlaylistLibraryContext.Provider>
+    </PlaybackContext.Provider>
   )
 }
 
@@ -345,6 +443,14 @@ export function usePlayback() {
   const ctx = useContext(PlaybackContext)
   if (!ctx) {
     throw new Error('usePlayback must be used within PlaybackProvider')
+  }
+  return ctx
+}
+
+export function usePlaylistLibrary() {
+  const ctx = useContext(PlaylistLibraryContext)
+  if (!ctx) {
+    throw new Error('usePlaylistLibrary must be used within PlaybackProvider')
   }
   return ctx
 }

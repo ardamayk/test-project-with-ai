@@ -1,0 +1,77 @@
+<h2>Sidebar + playerbar direction</h2>
+<p class="subtitle">Goal: match supplied refs, keep existing app shell behavior, fix radio time copy.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Left sidebar target</div>
+    <div class="mockup-body" style="padding:0;background:#0f1f2d;color:#d8d0c8;min-height:560px;">
+      <div style="width:280px;min-height:560px;background:#102131;border-left:3px solid #7b61ff;border-top:3px solid #7b61ff;border-radius:20px 0 0 0;padding:38px 16px 18px 28px;display:flex;flex-direction:column;">
+        <div style="margin-bottom:46px;">
+          <div style="font-size:28px;font-weight:800;color:#efc7a4;line-height:1.1;">Earthly Audio</div>
+          <div style="margin-top:12px;font-size:14px;font-weight:700;letter-spacing:.06em;color:#d8d0c8;">Premium Account</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px;font-size:19px;">
+          <div style="display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:8px 12px;color:#d8d0c8;"><span style="font-size:20px;">◎</span><span>Albums</span></div>
+          <div style="display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:8px 12px;color:#d8d0c8;"><span style="font-size:20px;">♙</span><span>Artists</span></div>
+          <div style="display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:8px 12px;color:#d8d0c8;"><span style="font-size:20px;">▣</span><span>Genres</span></div>
+          <div style="display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:8px 12px;color:#d8d0c8;"><span style="font-size:20px;">□</span><span>Folders</span></div>
+          <div style="display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:10px 12px;color:#efc7a4;background:#1c3145;border-left:2px solid #efc7a4;border-radius:6px;font-weight:800;"><span style="font-size:20px;">▰</span><span>Radio Stations</span></div>
+          <div style="display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:8px 12px;color:#d8d0c8;"><span style="font-size:20px;">♪</span><span>Tracks</span></div>
+          <div style="display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:8px 12px;color:#d8d0c8;"><span style="font-size:20px;">≡♪</span><span>Playlists</span></div>
+        </div>
+        <div style="margin-top:auto;display:grid;grid-template-columns:36px 1fr;align-items:center;gap:12px;padding:8px 12px;font-size:19px;color:#d8d0c8;"><span style="font-size:20px;">⚙</span><span>Settings</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Playerbar target</div>
+    <div class="mockup-body" style="padding:0;background:#0f1f2d;color:#d8d0c8;min-height:560px;display:flex;align-items:flex-end;">
+      <div style="height:112px;width:100%;border-top:1px solid #b18256;background:#102131;display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,460px) minmax(260px,1fr);align-items:center;gap:22px;padding:12px 24px;">
+        <div style="display:flex;align-items:center;gap:14px;min-width:0;">
+          <div style="width:72px;height:72px;border-radius:8px;background:#303b49;display:flex;align-items:center;justify-content:center;color:#efe6d6;font-weight:700;">R</div>
+          <div style="min-width:0;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="font-size:17px;font-weight:800;color:#efe6d6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Radio Paradise</div>
+              <div style="color:#7f8791;">⋮</div>
+            </div>
+            <div style="margin-top:6px;color:#d8d0c8;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Live radio</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+          <div style="display:flex;align-items:center;gap:18px;color:#667383;">
+            <span>⌘</span><span>◁</span><span style="width:54px;height:54px;border-radius:50%;background:#40536a;color:#102131;display:flex;align-items:center;justify-content:center;font-size:25px;">▷</span><span>▷</span><span>↻</span>
+          </div>
+          <div style="display:grid;grid-template-columns:48px 1fr 48px;align-items:center;gap:8px;width:100%;font-size:15px;color:#e4dbcf;">
+            <span style="text-align:right;">Live</span>
+            <div style="height:8px;border-radius:999px;background:#4d6074;position:relative;"><div style="position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:999px;background:#6f7d8d;opacity:.45;"></div><div style="position:absolute;left:50%;top:50%;width:18px;height:18px;border-radius:50%;background:#718091;transform:translate(-50%,-50%);"></div></div>
+            <span>Live</span>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:14px;color:#d8d0c8;">
+          <span style="font-size:20px;">≡♪</span>
+          <span style="border:1px solid #8d6d4f;border-radius:999px;padding:9px 18px;display:inline-flex;gap:8px;align-items:center;">≋ Live radio</span>
+          <span>🔊</span>
+          <div style="width:112px;height:8px;border-radius:999px;background:#6f7d8d;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="match-reference" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Close match</h3>
+      <p>Sidebar spacing/colors like ref. Playerbar keeps current 3-dot actions, changes radio progress labels from track time to live state.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="current-plus-polish" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Conservative polish</h3>
+      <p>Only tune existing sizes/colors. Less visual change, lower regression risk, not as close to screenshot.</p>
+    </div>
+  </div>
+</div>

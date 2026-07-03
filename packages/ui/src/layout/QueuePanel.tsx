@@ -81,17 +81,24 @@ export function QueuePanel() {
             {queue.map((item, index) => (
               <li
                 key={item.id}
-                className="flex items-center gap-2 rounded-md px-2 py-2 hover:bg-muted/50"
+                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 hover:bg-muted/50"
+                onClick={() => void playQueueIndex(index)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    void playQueueIndex(index)
+                  }
+                }}
+                role="button"
+                tabIndex={0}
               >
                 <AlbumArt
                   coverUrl={getAlbumCoverUrl(item.track.albumId)}
                   title={item.track.title}
                   className="size-8 shrink-0 rounded text-xs"
                 />
-                <button
-                  type="button"
+                <div
                   className="min-w-0 flex-1 text-left"
-                  onClick={() => void playQueueIndex(index)}
                 >
                   <p
                     className={
@@ -105,14 +112,17 @@ export function QueuePanel() {
                   <p className="truncate text-foreground text-xs">
                     {item.track.artistName}
                   </p>
-                </button>
+                </div>
                 <span className="shrink-0 text-caption text-xs tabular-nums">
                   {formatDuration(item.track.durationMs)}
                 </span>
                 <button
                   type="button"
                   className="shrink-0 text-caption text-xs hover:text-foreground"
-                  onClick={() => void removeFromQueue(item.id)}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    void removeFromQueue(item.id)
+                  }}
                   aria-label="Remove from queue"
                 >
                   ×

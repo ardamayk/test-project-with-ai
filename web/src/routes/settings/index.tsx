@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import type { ThemePreferences } from '@repo/api-client'
 import { useLayout } from '@repo/ui'
@@ -14,15 +14,7 @@ export const Route = createFileRoute('/settings/')({
 })
 
 function SettingsPage() {
-  const queryClient = useQueryClient()
   const { preferences, setPreferences } = useLayout()
-
-  const patchPreferences = useMutation({
-    mutationFn: apiClient.patchPreferences,
-    onSuccess: (data) => {
-      queryClient.setQueryData(['preferences'], data)
-    },
-  })
 
   const health = useQuery({
     queryKey: ['health'],
@@ -32,7 +24,6 @@ function SettingsPage() {
   const saveTheme = (theme: Partial<ThemePreferences>) => {
     const next = { ...preferences.theme, ...theme }
     setPreferences({ theme: next })
-    patchPreferences.mutate({ theme: next })
   }
 
   return (

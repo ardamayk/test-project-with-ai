@@ -16,6 +16,7 @@ import { Route as PlaylistsIndexRouteImport } from './routes/playlists/index'
 import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as FoldersIndexRouteImport } from './routes/folders/index'
 import { Route as FavoritesIndexRouteImport } from './routes/favorites/index'
+import { Route as RadioStationIdRouteImport } from './routes/radio/$stationId'
 import { Route as PlaylistsPlaylistIdRouteImport } from './routes/playlists/$playlistId'
 import { Route as LibraryAlbumIdRouteImport } from './routes/library/$albumId'
 import { Route as LibraryTracksIndexRouteImport } from './routes/library/tracks/index'
@@ -59,6 +60,11 @@ const FavoritesIndexRoute = FavoritesIndexRouteImport.update({
   path: '/favorites/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RadioStationIdRoute = RadioStationIdRouteImport.update({
+  id: '/radio/$stationId',
+  path: '/radio/$stationId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlaylistsPlaylistIdRoute = PlaylistsPlaylistIdRouteImport.update({
   id: '/playlists/$playlistId',
   path: '/playlists/$playlistId',
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
+  '/radio/$stationId': typeof RadioStationIdRoute
   '/favorites/': typeof FavoritesIndexRoute
   '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
+  '/radio/$stationId': typeof RadioStationIdRoute
   '/favorites': typeof FavoritesIndexRoute
   '/folders': typeof FoldersIndexRoute
   '/library': typeof LibraryIndexRoute
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
+  '/radio/$stationId': typeof RadioStationIdRoute
   '/favorites/': typeof FavoritesIndexRoute
   '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/'
     | '/library/$albumId'
     | '/playlists/$playlistId'
+    | '/radio/$stationId'
     | '/favorites/'
     | '/folders/'
     | '/library/'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | '/'
     | '/library/$albumId'
     | '/playlists/$playlistId'
+    | '/radio/$stationId'
     | '/favorites'
     | '/folders'
     | '/library'
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | '/'
     | '/library/$albumId'
     | '/playlists/$playlistId'
+    | '/radio/$stationId'
     | '/favorites/'
     | '/folders/'
     | '/library/'
@@ -199,6 +211,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LibraryAlbumIdRoute: typeof LibraryAlbumIdRoute
   PlaylistsPlaylistIdRoute: typeof PlaylistsPlaylistIdRoute
+  RadioStationIdRoute: typeof RadioStationIdRoute
   FavoritesIndexRoute: typeof FavoritesIndexRoute
   FoldersIndexRoute: typeof FoldersIndexRoute
   LibraryIndexRoute: typeof LibraryIndexRoute
@@ -263,6 +276,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FavoritesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/radio/$stationId': {
+      id: '/radio/$stationId'
+      path: '/radio/$stationId'
+      fullPath: '/radio/$stationId'
+      preLoaderRoute: typeof RadioStationIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/playlists/$playlistId': {
       id: '/playlists/$playlistId'
       path: '/playlists/$playlistId'
@@ -319,6 +339,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LibraryAlbumIdRoute: LibraryAlbumIdRoute,
   PlaylistsPlaylistIdRoute: PlaylistsPlaylistIdRoute,
+  RadioStationIdRoute: RadioStationIdRoute,
   FavoritesIndexRoute: FavoritesIndexRoute,
   FoldersIndexRoute: FoldersIndexRoute,
   LibraryIndexRoute: LibraryIndexRoute,

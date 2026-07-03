@@ -1,34 +1,21 @@
-import type { Track } from "@repo/api-client";
 import { usePlayback } from "@repo/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
 import { CollectionDetailHeader } from "#/components/collection-detail-header";
 import { TrackList } from "#/components/track-list";
 import { apiClient } from "#/lib/api";
-import { filterTracksByText } from "#/lib/filter-tracks";
+import {
+	invalidatePlaylistCache,
+	playlistQueryKeys,
+} from "#/lib/playlist-query-cache";
+import {
+	formatTrackCollectionDuration,
+	useTrackCollectionViewState,
+} from "#/lib/track-collection-view-state";
 
 export const Route = createFileRoute("/playlists/$playlistId")({
 	component: PlaylistDetailPage,
 });
-
-function formatTotalDuration(ms: number): string {
-	if (!ms || ms < 0) return "0m";
-	const total = Math.floor(ms / 1000);
-	const hours = Math.floor(total / 3600);
-	const minutes = Math.floor((total % 3600) / 60);
-	if (hours > 0) return `${hours}h ${minutes}m`;
-	return `${minutes}m`;
-}
-
-function shuffleTracks(tracks: Track[]): Track[] {
-	const next = [...tracks];
-	for (let i = next.length - 1; i > 0; i -= 1) {
-		const j = Math.floor(Math.random() * (i + 1));
-		[next[i], next[j]] = [next[j], next[i]];
-	}
-	return next;
-}
 
 function PlaylistDetailPage() {
 	const { playlistId } = Route.useParams();
@@ -38,9 +25,8 @@ function PlaylistDetailPage() {
 export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 	const queryClient = useQueryClient();
 	const { playTrack, queueTracks } = usePlayback();
-	const [search, setSearch] = useState("");
 	const playlist = useQuery({
-		queryKey: ["playlist", playlistId],
+		queryKey: playlistQueryKeys.detail(playlistId),
 		queryFn: () => apiClient.getPlaylist(playlistId),
 	});
 
@@ -48,11 +34,12 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 		mutationFn: (trackId: string) =>
 			apiClient.removePlaylistTrack(playlistId, trackId),
 		onSuccess: async () => {
-			await Promise.all([
-				queryClient.invalidateQueries({ queryKey: ["playlist", playlistId] }),
-				queryClient.invalidateQueries({ queryKey: ["playlists"] }),
-			]);
+			await invalidatePlaylistCache(queryClient, playlistId);
 		},
+	});
+	const collection = useTrackCollectionViewState(playlist.data?.tracks ?? [], {
+		playTrack,
+		queueTracks,
 	});
 
 	if (playlist.isLoading) {
@@ -66,33 +53,7 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 	}
 
 	const data = playlist.data;
-	const visibleTracks = filterTracksByText(data.tracks, search);
-	const visibleTrackIds = visibleTracks.map((track) => track.id);
-	const totalDurationMs = data.tracks.reduce(
-		(sum, track) => sum + (track.durationMs ?? 0),
-		0,
-	);
 	const trackCount = data.trackCount ?? data.tracks.length;
-
-	const handlePlay = () => {
-		const first = visibleTracks[0];
-		if (!first) return;
-		void playTrack(first.id, visibleTrackIds);
-	};
-
-	const handleShuffle = () => {
-		const shuffled = shuffleTracks(visibleTracks);
-		const first = shuffled[0];
-		if (!first) return;
-		void playTrack(
-			first.id,
-			shuffled.map((track) => track.id),
-		);
-	};
-
-	const handleQueue = () => {
-		void queueTracks(visibleTrackIds);
-	};
 
 	return (
 		<div className="p-6">
@@ -109,31 +70,31 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 				subtitle={data.isDefault ? "Default playlist" : "User playlist"}
 				metaTags={[
 					`${trackCount} track${trackCount === 1 ? "" : "s"}`,
-					totalDurationMs > 0
-						? formatTotalDuration(totalDurationMs)
+					collection.totalDurationMs > 0
+						? formatTrackCollectionDuration(collection.totalDurationMs)
 						: "Duration unknown",
 				]}
-				trackCount={visibleTracks.length}
+				trackCount={collection.visibleTracks.length}
 				coverTracks={data.tracks}
-				searchValue={search}
+				searchValue={collection.search}
 				searchPlaceholder={`Search ${data.name}…`}
-				onSearchChange={setSearch}
-				onPlay={handlePlay}
-				onShuffle={handleShuffle}
-				onQueue={handleQueue}
+				onSearchChange={collection.setSearch}
+				onPlay={collection.handlePlay}
+				onShuffle={collection.handleShuffle}
+				onQueue={collection.handleQueue}
 			/>
 
 			<section className="mt-6">
 				{data.tracks.length === 0 ? (
 					<p className="text-foreground text-sm">This playlist is empty.</p>
-				) : visibleTracks.length === 0 ? (
+				) : collection.visibleTracks.length === 0 ? (
 					<p className="text-foreground text-sm">
 						No tracks match this search.
 					</p>
 				) : (
 					<TrackList
-						tracks={visibleTracks}
-						contextTracks={visibleTracks}
+						tracks={collection.visibleTracks}
+						contextTracks={collection.visibleTracks}
 						playMode="double"
 						showMeta
 						showDelete={false}

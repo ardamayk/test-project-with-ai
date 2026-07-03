@@ -8,127 +8,149 @@
  * Optional     → themes/semantic/{id}.css after layers.css (see registry.ts)
  */
 [data-theme-preset].dark {
-  /* Surfaces — dark end */
-  --background: var(--theme-1);
-  --card: var(--theme-2);
-  --popover: var(--theme-2);
-  --muted: color-mix(in srgb, var(--theme-2) 72%, var(--theme-3) 28%);
-  --input: color-mix(in srgb, var(--theme-2) 80%, var(--theme-3) 20%);
-  --sidebar: var(--theme-2);
-  --queue: var(--theme-2);
-  --player: var(--theme-1);
+	/* Surfaces — dark end */
+	--background: var(--theme-1);
+	--card: var(--theme-2);
+	--popover: var(--theme-2);
+	--muted: color-mix(in srgb, var(--theme-2) 72%, var(--theme-3) 28%);
+	--input: color-mix(in srgb, var(--theme-2) 80%, var(--theme-3) 20%);
+	--sidebar: var(--theme-2);
+	--queue: var(--theme-2);
+	--player: var(--theme-1);
 
-  /* Text — light end */
-  --heading: var(--theme-6);
-  --text: var(--theme-5);
-  --foreground: var(--text);
-  --card-foreground: var(--text);
-  --popover-foreground: var(--text);
-  --sidebar-foreground: var(--text);
-  --sidebar-heading: var(--heading);
-  --queue-foreground: var(--text);
-  --player-foreground: var(--text);
+	/* Text — light end */
+	--heading: var(--theme-6);
+	--text: var(--theme-5);
+	--foreground: var(--text);
+	--card-foreground: var(--text);
+	--popover-foreground: var(--text);
+	--sidebar-foreground: var(--text);
+	--sidebar-heading: var(--heading);
+	--queue-foreground: var(--text);
+	--player-foreground: var(--text);
 
-  /* Secondary copy — still from light end, slightly softer */
-  --caption: color-mix(in srgb, var(--theme-5) 72%, var(--theme-6) 28%);
-  --muted-foreground: var(--caption);
-  --secondary-foreground: var(--text);
-  --accent-foreground: var(--heading);
+	/* Secondary copy — still from light end, slightly softer */
+	--caption: color-mix(in srgb, var(--theme-5) 72%, var(--theme-6) 28%);
+	--muted-foreground: var(--caption);
+	--secondary-foreground: var(--text);
+	--accent-foreground: var(--heading);
 
-  /* UI chrome — mid tones */
-  --border: color-mix(in srgb, var(--theme-3) 70%, var(--theme-4) 30%);
-  --ring: var(--theme-4);
-  --primary: var(--theme-4);
-  --primary-foreground: var(--theme-1);
-  --secondary: color-mix(in srgb, var(--theme-2) 55%, var(--theme-3) 45%);
-  --accent: color-mix(in srgb, var(--theme-2) 50%, var(--theme-3) 50%);
-  --destructive: #f87171;
-  --destructive-foreground: var(--theme-1);
+	/* UI chrome — mid tones */
+	--border: color-mix(in srgb, var(--theme-3) 70%, var(--theme-4) 30%);
+	--ring: var(--theme-4);
+	--primary: var(--theme-4);
+	--primary-foreground: var(--theme-1);
+	--secondary: color-mix(in srgb, var(--theme-2) 55%, var(--theme-3) 45%);
+	--accent: color-mix(in srgb, var(--theme-2) 50%, var(--theme-3) 50%);
+	--destructive: #f87171;
+	--destructive-foreground: var(--theme-1);
 
-  --sidebar-primary: var(--theme-4);
-  --sidebar-primary-foreground: var(--theme-1);
-  --sidebar-accent: color-mix(in srgb, var(--theme-2) 45%, var(--theme-3) 55%);
-  --sidebar-accent-foreground: var(--heading);
-  --sidebar-border: color-mix(in srgb, var(--theme-3) 65%, var(--theme-4) 35%);
-  --sidebar-ring: var(--theme-4);
+	--sidebar-primary: var(--theme-4);
+	--sidebar-primary-foreground: var(--theme-1);
+	--sidebar-accent: color-mix(in srgb, var(--theme-2) 45%, var(--theme-3) 55%);
+	--sidebar-accent-foreground: var(--heading);
+	--sidebar-border: color-mix(in srgb, var(--theme-3) 65%, var(--theme-4) 35%);
+	--sidebar-ring: var(--theme-4);
+	--shell-brand: var(--sidebar-heading);
+	--shell-active: var(--sidebar-accent);
+	--shell-active-foreground: var(--sidebar-accent-foreground);
+	--shell-subtle-border: color-mix(in srgb, var(--border) 35%, transparent);
+	--player-title: var(--heading);
+	--player-artwork: var(--muted);
+	--player-control-primary: var(--primary);
+	--player-control-primary-foreground: var(--primary-foreground);
+	--player-control-shadow: color-mix(in srgb, var(--primary) 20%, transparent);
+	--player-live-progress: var(--primary);
+	--player-pill: color-mix(in srgb, var(--player) 72%, var(--theme-3) 28%);
 
-  --chart-1: var(--theme-4);
-  --chart-2: var(--theme-3);
-  --chart-3: var(--theme-5);
-  --chart-4: var(--theme-6);
-  --chart-5: var(--theme-2);
+	--chart-1: var(--theme-4);
+	--chart-2: var(--theme-3);
+	--chart-3: var(--theme-5);
+	--chart-4: var(--theme-6);
+	--chart-5: var(--theme-2);
 
-  --bg-base: var(--background);
-  --hero-a: color-mix(in srgb, var(--theme-4) 22%, transparent);
-  --hero-b: color-mix(in srgb, var(--theme-3) 16%, transparent);
-  --lagoon: var(--theme-4);
-  --lagoon-deep: var(--theme-3);
-  --palm: var(--theme-3);
-  --sand: var(--theme-2);
-  --sea-ink: var(--heading);
-  --sea-ink-soft: var(--text);
-  --kicker: var(--theme-5);
+	--bg-base: var(--background);
+	--hero-a: color-mix(in srgb, var(--theme-4) 22%, transparent);
+	--hero-b: color-mix(in srgb, var(--theme-3) 16%, transparent);
+	--lagoon: var(--theme-4);
+	--lagoon-deep: var(--theme-3);
+	--palm: var(--theme-3);
+	--sand: var(--theme-2);
+	--sea-ink: var(--heading);
+	--sea-ink-soft: var(--text);
+	--kicker: var(--theme-5);
 }
 
 [data-theme-preset]:not(.dark) {
-  /* Surfaces — light end */
-  --background: var(--theme-6);
-  --card: var(--theme-5);
-  --popover: var(--theme-5);
-  --muted: color-mix(in srgb, var(--theme-5) 72%, var(--theme-4) 28%);
-  --input: color-mix(in srgb, var(--theme-5) 80%, var(--theme-4) 20%);
-  --sidebar: var(--theme-5);
-  --queue: var(--theme-5);
-  --player: var(--theme-6);
+	/* Surfaces — light end */
+	--background: var(--theme-6);
+	--card: var(--theme-5);
+	--popover: var(--theme-5);
+	--muted: color-mix(in srgb, var(--theme-5) 72%, var(--theme-4) 28%);
+	--input: color-mix(in srgb, var(--theme-5) 80%, var(--theme-4) 20%);
+	--sidebar: var(--theme-5);
+	--queue: var(--theme-5);
+	--player: var(--theme-6);
 
-  /* Text — dark end */
-  --heading: var(--theme-1);
-  --text: var(--theme-2);
-  --foreground: var(--text);
-  --card-foreground: var(--text);
-  --popover-foreground: var(--text);
-  --sidebar-foreground: var(--text);
-  --sidebar-heading: var(--heading);
-  --queue-foreground: var(--text);
-  --player-foreground: var(--text);
+	/* Text — dark end */
+	--heading: var(--theme-1);
+	--text: var(--theme-2);
+	--foreground: var(--text);
+	--card-foreground: var(--text);
+	--popover-foreground: var(--text);
+	--sidebar-foreground: var(--text);
+	--sidebar-heading: var(--heading);
+	--queue-foreground: var(--text);
+	--player-foreground: var(--text);
 
-  /* Secondary copy — still from dark end, slightly softer */
-  --caption: color-mix(in srgb, var(--theme-2) 72%, var(--theme-1) 28%);
-  --muted-foreground: var(--caption);
-  --secondary-foreground: var(--text);
-  --accent-foreground: var(--heading);
+	/* Secondary copy — still from dark end, slightly softer */
+	--caption: color-mix(in srgb, var(--theme-2) 72%, var(--theme-1) 28%);
+	--muted-foreground: var(--caption);
+	--secondary-foreground: var(--text);
+	--accent-foreground: var(--heading);
 
-  /* UI chrome — mid tones */
-  --border: color-mix(in srgb, var(--theme-4) 70%, var(--theme-3) 30%);
-  --ring: var(--theme-3);
-  --primary: var(--theme-3);
-  --primary-foreground: var(--theme-6);
-  --secondary: color-mix(in srgb, var(--theme-5) 55%, var(--theme-4) 45%);
-  --accent: color-mix(in srgb, var(--theme-5) 50%, var(--theme-4) 50%);
-  --destructive: #dc2626;
-  --destructive-foreground: var(--theme-6);
+	/* UI chrome — mid tones */
+	--border: color-mix(in srgb, var(--theme-4) 70%, var(--theme-3) 30%);
+	--ring: var(--theme-3);
+	--primary: var(--theme-3);
+	--primary-foreground: var(--theme-6);
+	--secondary: color-mix(in srgb, var(--theme-5) 55%, var(--theme-4) 45%);
+	--accent: color-mix(in srgb, var(--theme-5) 50%, var(--theme-4) 50%);
+	--destructive: #dc2626;
+	--destructive-foreground: var(--theme-6);
 
-  --sidebar-primary: var(--theme-3);
-  --sidebar-primary-foreground: var(--theme-6);
-  --sidebar-accent: color-mix(in srgb, var(--theme-5) 45%, var(--theme-4) 55%);
-  --sidebar-accent-foreground: var(--heading);
-  --sidebar-border: color-mix(in srgb, var(--theme-4) 65%, var(--theme-3) 35%);
-  --sidebar-ring: var(--theme-3);
+	--sidebar-primary: var(--theme-3);
+	--sidebar-primary-foreground: var(--theme-6);
+	--sidebar-accent: color-mix(in srgb, var(--theme-5) 45%, var(--theme-4) 55%);
+	--sidebar-accent-foreground: var(--heading);
+	--sidebar-border: color-mix(in srgb, var(--theme-4) 65%, var(--theme-3) 35%);
+	--sidebar-ring: var(--theme-3);
+	--shell-brand: var(--sidebar-heading);
+	--shell-active: var(--sidebar-accent);
+	--shell-active-foreground: var(--sidebar-accent-foreground);
+	--shell-subtle-border: color-mix(in srgb, var(--border) 35%, transparent);
+	--player-title: var(--heading);
+	--player-artwork: var(--muted);
+	--player-control-primary: var(--primary);
+	--player-control-primary-foreground: var(--primary-foreground);
+	--player-control-shadow: color-mix(in srgb, var(--primary) 20%, transparent);
+	--player-live-progress: var(--primary);
+	--player-pill: color-mix(in srgb, var(--player) 72%, var(--theme-4) 28%);
 
-  --chart-1: var(--theme-3);
-  --chart-2: var(--theme-4);
-  --chart-3: var(--theme-2);
-  --chart-4: var(--theme-1);
-  --chart-5: var(--theme-5);
+	--chart-1: var(--theme-3);
+	--chart-2: var(--theme-4);
+	--chart-3: var(--theme-2);
+	--chart-4: var(--theme-1);
+	--chart-5: var(--theme-5);
 
-  --bg-base: var(--background);
-  --hero-a: color-mix(in srgb, var(--theme-3) 16%, transparent);
-  --hero-b: color-mix(in srgb, var(--theme-4) 12%, transparent);
-  --lagoon: var(--theme-3);
-  --lagoon-deep: var(--theme-4);
-  --palm: var(--theme-4);
-  --sand: var(--theme-5);
-  --sea-ink: var(--heading);
-  --sea-ink-soft: var(--text);
-  --kicker: var(--theme-2);
+	--bg-base: var(--background);
+	--hero-a: color-mix(in srgb, var(--theme-3) 16%, transparent);
+	--hero-b: color-mix(in srgb, var(--theme-4) 12%, transparent);
+	--lagoon: var(--theme-3);
+	--lagoon-deep: var(--theme-4);
+	--palm: var(--theme-4);
+	--sand: var(--theme-5);
+	--sea-ink: var(--heading);
+	--sea-ink-soft: var(--text);
+	--kicker: var(--theme-2);
 }

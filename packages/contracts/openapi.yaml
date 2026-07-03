@@ -13,6 +13,7 @@ tags:
   - name: library
   - name: playback
   - name: playlists
+  - name: radio
 paths:
   /api/v1/health:
     get:
@@ -456,6 +457,171 @@ paths:
                 $ref: "#/components/schemas/PlaylistDetail"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/radio/stations:
+    get:
+      tags: [radio]
+      operationId: listRadioStations
+      summary: List user radio stations
+      responses:
+        "200":
+          description: Radio station list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStationList"
+    post:
+      tags: [radio]
+      operationId: createRadioStation
+      summary: Create user radio station
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RadioStationCreate"
+      responses:
+        "201":
+          description: Created radio station
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/radio/stations/{stationId}:
+    get:
+      tags: [radio]
+      operationId: getRadioStation
+      summary: Get user radio station
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      responses:
+        "200":
+          description: Radio station detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [radio]
+      operationId: patchRadioStation
+      summary: Update user radio station
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RadioStationPatch"
+      responses:
+        "200":
+          description: Updated radio station
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [radio]
+      operationId: deleteRadioStation
+      summary: Delete user radio station
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      responses:
+        "204":
+          description: Radio station deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/radio/search:
+    get:
+      tags: [radio]
+      operationId: searchRadioStations
+      summary: Search Radio Browser stations
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: country
+          in: query
+          schema:
+            type: string
+        - name: language
+          in: query
+          schema:
+            type: string
+        - name: tag
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Radio search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioSearchResultList"
+  /api/v1/radio/import:
+    post:
+      tags: [radio]
+      operationId: importRadioStation
+      summary: Import Radio Browser station
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RadioImportRequest"
+      responses:
+        "201":
+          description: Imported radio station
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/radio/stations/{stationId}/stream:
+    get:
+      tags: [radio]
+      operationId: streamRadioStation
+      summary: Stream radio station through backend proxy
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      responses:
+        "200":
+          description: Radio stream
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/radio/stations/{stationId}/now-playing:
+    get:
+      tags: [radio]
+      operationId: getRadioNowPlaying
+      summary: Get latest radio now-playing metadata
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      responses:
+        "200":
+          description: Now-playing metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioNowPlaying"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     bearerAuth:
@@ -532,6 +698,13 @@ components:
         format: uuid
     playlistId:
       name: playlistId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    stationId:
+      name: stationId
       in: path
       required: true
       schema:
@@ -785,6 +958,181 @@ components:
         trackId:
           type: string
           format: uuid
+    RadioNowPlaying:
+      type: object
+      properties:
+        title:
+          type: string
+        artist:
+          type: string
+        raw:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+    RadioStation:
+      type: object
+      required: [id, name, streamUrl, tags, source, isFavorite, position]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        source:
+          type: string
+        externalId:
+          type: string
+        isFavorite:
+          type: boolean
+        position:
+          type: integer
+        lastNowPlaying:
+          $ref: "#/components/schemas/RadioNowPlaying"
+    RadioStationList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadioStation"
+        total:
+          type: integer
+    RadioStationCreate:
+      type: object
+      required: [name, streamUrl]
+      properties:
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        source:
+          type: string
+        externalId:
+          type: string
+        isFavorite:
+          type: boolean
+    RadioStationPatch:
+      type: object
+      properties:
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        isFavorite:
+          type: boolean
+        position:
+          type: integer
+    RadioSearchResult:
+      type: object
+      required: [stationUuid, name, streamUrl, tags]
+      properties:
+        stationUuid:
+          type: string
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        votes:
+          type: integer
+    RadioSearchResultList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadioSearchResult"
+        total:
+          type: integer
+    RadioImportRequest:
+      type: object
+      properties:
+        stationUuid:
+          type: string
+        result:
+          $ref: "#/components/schemas/RadioSearchResult"
     DeleteResult:
       type: object
       required: [deletedFiles]

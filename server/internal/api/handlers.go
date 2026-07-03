@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/ardam/navidrome-replacement/server/internal/api/respond"
+	"github.com/ardam/navidrome-replacement/server/internal/auth"
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 )
 
@@ -30,10 +31,15 @@ func (h *Handler) GetHealth(w http.ResponseWriter, _ *http.Request) {
 	respond.JSON(w, http.StatusOK, healthResponse{Status: "ok", Version: h.version})
 }
 
-func (h *Handler) GetMe(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
+	user, err := auth.CurrentUser(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	respond.JSON(w, http.StatusOK, userResponse{
-		ID:          "00000000-0000-0000-0000-000000000001",
-		Username:    "admin",
-		DisplayName: "Admin",
+		ID:          user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
 	})
 }

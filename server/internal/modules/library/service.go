@@ -2,7 +2,6 @@ package library
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
@@ -10,19 +9,19 @@ import (
 
 type Service struct {
 	store      *Store
-	musicPaths []string
+	scanRunner *ScanRunner
 	mu         sync.Mutex
 }
 
 func NewService(store *Store, cfg config.Config) *Service {
 	return &Service{
 		store:      store,
-		musicPaths: cfg.MusicPaths,
+		scanRunner: NewScanRunner(store, cfg.MusicPaths),
 	}
 }
 
 func (s *Service) MusicPathsConfigured() bool {
-	return len(s.musicPaths) > 0
+	return s.scanRunner.HasMusicPaths()
 }
 
 func (s *Service) TriggerScan(ctx context.Context) (ScanStatus, error) {
@@ -38,57 +37,13 @@ func (s *Service) TriggerScan(ctx context.Context) (ScanStatus, error) {
 		return ScanStatus{}, err
 	}
 
-	go s.runScan(jobID)
+	go s.scanRunner.Run(jobID)
 
 	st, err := s.store.GetScanStatus(ctx)
 	if err != nil {
 		return ScanStatus{Status: "running"}, nil
 	}
 	return st, nil
-}
-
-func (s *Service) runScan(jobID string) {
-	ctx := context.Background()
-	scanned, added, updated := 0, 0, 0
-	seenPaths := make(map[string]struct{})
-
-	files, err := WalkMusicPaths(s.musicPaths)
-	if err != nil {
-		slog.Error("library scan walk failed", "error", err, "jobId", jobID)
-		_ = s.store.FinishScan(ctx, jobID, "failed", err.Error(), scanned, added, updated, 0)
-		return
-	}
-
-	for _, file := range files {
-		scanned++
-		seenPaths[file.Metadata.Path] = struct{}{}
-		isAdded, isUpdated, err := s.store.UpsertFromScan(ctx, file.Metadata)
-		if err != nil {
-			slog.Error("library scan upsert failed", "path", file.Metadata.Path, "error", err)
-			continue
-		}
-		if isAdded {
-			added++
-		}
-		if isUpdated {
-			updated++
-		}
-		_ = s.store.UpdateScanProgress(ctx, jobID, scanned, added, updated, 0)
-	}
-
-	removed, err := s.store.MarkSeenPaths(ctx, seenPaths)
-	if err != nil {
-		slog.Error("library scan mark missing failed", "error", err)
-		_ = s.store.FinishScan(ctx, jobID, "failed", err.Error(), scanned, added, updated, 0)
-		return
-	}
-
-	_ = s.store.UpdateScanProgress(ctx, jobID, scanned, added, updated, removed)
-	if err := s.store.RecomputeAllAlbumGenres(ctx); err != nil {
-		slog.Error("library scan recompute album genres failed", "error", err, "jobId", jobID)
-	}
-	_ = s.store.FinishScan(ctx, jobID, "completed", "", scanned, added, updated, removed)
-	slog.Info("library scan completed", "jobId", jobID, "scanned", scanned, "added", added, "updated", updated, "removed", removed)
 }
 
 func (s *Service) GetScanStatus(ctx context.Context) (ScanStatus, error) {
@@ -125,12 +80,12 @@ func (s *Service) GetTrackFilePath(ctx context.Context, trackID string) (string,
 
 func (s *Service) DeleteTrack(ctx context.Context, trackID string) (DeleteResult, error) {
 	return s.store.DeleteTrack(ctx, trackID, func(path string) error {
-		return removeMusicFile(path, s.musicPaths)
+		return removeMusicFile(path, s.scanRunner.musicPaths)
 	})
 }
 
 func (s *Service) DeleteAlbum(ctx context.Context, albumID string) (DeleteResult, error) {
 	return s.store.DeleteAlbum(ctx, albumID, func(path string) error {
-		return removeMusicFile(path, s.musicPaths)
+		return removeMusicFile(path, s.scanRunner.musicPaths)
 	})
 }

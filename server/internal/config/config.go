@@ -7,11 +7,12 @@ import (
 )
 
 type Config struct {
-	Addr         string
-	DatabasePath string
-	CORSOrigins  []string
-	Version      string
-	MusicPaths   []string
+	Addr                string
+	DatabasePath        string
+	CORSOrigins         []string
+	Version             string
+	MusicPaths          []string
+	RadioBrowserBaseURL string
 }
 
 func Load() Config {
@@ -21,6 +22,10 @@ func Load() Config {
 		CORSOrigins:  []string{"http://localhost:3000", "http://127.0.0.1:3000"},
 		Version:      getEnv("APP_VERSION", "0.1.0"),
 		MusicPaths:   parseMusicPaths(getEnv("MUSIC_PATHS", "./music")),
+		RadioBrowserBaseURL: getEnv(
+			"RADIO_BROWSER_BASE_URL",
+			"https://de1.api.radio-browser.info",
+		),
 	}
 	return cfg
 }

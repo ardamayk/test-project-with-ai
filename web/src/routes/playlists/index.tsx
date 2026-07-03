@@ -3,6 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { CollectionCoverStrip } from "#/components/collection-cover-strip";
 import { apiClient } from "#/lib/api";
+import {
+	PLAYLIST_PREVIEW_STALE_TIME_MS,
+	playlistQueryKeys,
+} from "#/lib/playlist-query-cache";
 
 export const Route = createFileRoute("/playlists/")({
 	component: PlaylistsPage,
@@ -10,7 +14,7 @@ export const Route = createFileRoute("/playlists/")({
 
 export function PlaylistsPage() {
 	const playlists = useQuery({
-		queryKey: ["playlists"],
+		queryKey: playlistQueryKeys.list,
 		queryFn: () => apiClient.listPlaylists(),
 	});
 
@@ -47,10 +51,10 @@ export function PlaylistsPage() {
 
 function PlaylistCard({ playlist }: { playlist: Playlist }) {
 	const preview = useQuery({
-		queryKey: ["playlist", playlist.id, "preview"],
+		queryKey: playlistQueryKeys.preview(playlist.id),
 		queryFn: () => apiClient.getPlaylist(playlist.id),
 		enabled: playlist.trackCount > 0,
-		staleTime: 60_000,
+		staleTime: PLAYLIST_PREVIEW_STALE_TIME_MS,
 	});
 	const tracks = preview.data?.tracks ?? [];
 

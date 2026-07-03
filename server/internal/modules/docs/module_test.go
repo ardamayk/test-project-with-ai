@@ -3,8 +3,6 @@ package docs
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,14 +10,10 @@ import (
 )
 
 func TestModuleRegistersDocumentationRoutes(t *testing.T) {
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "openapi.yaml")
-	if err := os.WriteFile(specPath, []byte("openapi: 3.0.3\ninfo:\n  title: Test API\n"), 0o644); err != nil {
-		t.Fatalf("write spec: %v", err)
-	}
-
 	r := chi.NewRouter()
-	NewModule(specPath).RegisterRoutes(r)
+	NewModuleWithOpenAPISpec(func() ([]byte, error) {
+		return []byte("openapi: 3.0.3\ninfo:\n  title: Test API\n"), nil
+	}).RegisterRoutes(r)
 
 	tests := []struct {
 		path string
@@ -48,8 +42,28 @@ func TestModuleRegistersDocumentationRoutes(t *testing.T) {
 	}
 }
 
+func TestModuleServesGeneratedOpenAPI(t *testing.T) {
+	r := chi.NewRouter()
+	NewModule().RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/yaml" {
+		t.Fatalf("Content-Type = %q, want application/yaml", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "openapi: 3.0.3") {
+		t.Fatalf("body missing generated OpenAPI spec")
+	}
+}
+
 func TestModuleName(t *testing.T) {
-	if got := NewModule("openapi.yaml").Name(); got != "docs" {
+	if got := NewModule().Name(); got != "docs" {
 		t.Fatalf("Name() = %q, want docs", got)
 	}
 }

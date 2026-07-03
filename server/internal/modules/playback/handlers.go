@@ -21,7 +21,12 @@ func NewHandlers(store *Store, tracks library.TrackAccess) *Handlers {
 }
 
 func (h *Handlers) GetQueue(w http.ResponseWriter, r *http.Request) {
-	queue, err := h.store.GetQueue(r.Context(), auth.DefaultUserID)
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
+	queue, err := h.store.GetQueue(r.Context(), userID)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -30,6 +35,11 @@ func (h *Handlers) GetQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) ReplaceQueue(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	var body struct {
 		TrackIDs []string `json:"trackIds"`
 	}
@@ -38,7 +48,7 @@ func (h *Handlers) ReplaceQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queue, err := h.store.ReplaceQueue(r.Context(), auth.DefaultUserID, body.TrackIDs)
+	queue, err := h.store.ReplaceQueue(r.Context(), userID, body.TrackIDs)
 	if errors.Is(err, library.ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
 		return
@@ -51,6 +61,11 @@ func (h *Handlers) ReplaceQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	var body struct {
 		TrackID string `json:"trackId"`
 	}
@@ -63,7 +78,7 @@ func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queue, err := h.store.AppendItem(r.Context(), auth.DefaultUserID, body.TrackID)
+	queue, err := h.store.AppendItem(r.Context(), userID, body.TrackID)
 	if errors.Is(err, library.ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
 		return
@@ -76,8 +91,13 @@ func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) RemoveItem(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	itemID := chi.URLParam(r, "itemId")
-	queue, err := h.store.RemoveItem(r.Context(), auth.DefaultUserID, itemID)
+	queue, err := h.store.RemoveItem(r.Context(), userID, itemID)
 	if errors.Is(err, ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "queue item not found")
 		return

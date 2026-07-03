@@ -1,6 +1,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RadioNowPlaying, RadioStation } from '@repo/api-client'
 import { PlaybackProvider, usePlayback, type PlaybackApi } from './PlaybackProvider'
 
 const track = {
@@ -52,6 +53,27 @@ const playlistApi = {
   })),
 }
 
+const radioStation: RadioStation = {
+  id: 'station-1',
+  name: 'Station 1',
+  streamUrl: 'https://example.com/live',
+  tags: [],
+  source: 'manual',
+  isFavorite: false,
+  position: 0,
+}
+
+const radioNowPlaying: RadioNowPlaying = {
+  raw: 'Artist - Song',
+  title: 'Song',
+  artist: 'Artist',
+}
+
+const radioApi = {
+  getRadioStationStreamUrl: (stationId: string) => `/radio/${stationId}`,
+  getRadioNowPlaying: vi.fn(async () => radioNowPlaying),
+}
+
 class AudioMock extends EventTarget {
   static instances: AudioMock[] = []
 
@@ -94,6 +116,7 @@ function createApi(): PlaybackApi {
     removeQueueItem: vi.fn(async () => ({ items: [] })),
     getStreamUrl: (trackId) => `/stream/${trackId}`,
     getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...radioApi,
     ...playlistApi,
   }
 }
@@ -113,6 +136,7 @@ function createEmptyQueueApi(): PlaybackApi {
     removeQueueItem: vi.fn(async () => ({ items: [] })),
     getStreamUrl: (trackId) => `/stream/${trackId}`,
     getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...radioApi,
     ...playlistApi,
   }
 }
@@ -139,6 +163,7 @@ function createAppendAlbumApi(): PlaybackApi {
     removeQueueItem: vi.fn(async () => ({ items: [] })),
     getStreamUrl: (trackId) => `/stream/${trackId}`,
     getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...radioApi,
     ...playlistApi,
   }
 }
@@ -166,6 +191,7 @@ function createPlayNextApi(): PlaybackApi {
     removeQueueItem: vi.fn(async () => ({ items: [] })),
     getStreamUrl: (trackId) => `/stream/${trackId}`,
     getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+    ...radioApi,
     ...playlistApi,
   }
 }
@@ -179,6 +205,12 @@ function Harness({ children }: { children?: ReactNode }) {
       <span data-testid="current-track">
         {playback.currentTrack?.title ?? ''}
       </span>
+      <span data-testid="current-radio">
+        {playback.currentRadioStation?.name ?? ''}
+      </span>
+      <span data-testid="radio-now-playing">
+        {playback.radioNowPlaying?.raw ?? ''}
+      </span>
       <span data-testid="repeat-mode">{playback.repeatMode}</span>
       <span data-testid="shuffle-enabled">
         {String(playback.shuffleEnabled)}
@@ -188,6 +220,12 @@ function Harness({ children }: { children?: ReactNode }) {
       </button>
       <button type="button" onClick={() => void playback.playTrack(track.id)}>
         Play
+      </button>
+      <button
+        type="button"
+        onClick={() => void playback.playRadioStation(radioStation)}
+      >
+        Play radio
       </button>
       <button
         type="button"
@@ -264,6 +302,28 @@ describe('PlaybackProvider', () => {
     expect(AudioMock.instances[0]?.src).toBe('/stream/track-1')
     expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce()
     expect(screen.getByTestId('playing').textContent).toBe('true')
+  })
+
+  it('plays a radio station without replacing the queue', async () => {
+    const api = createApi()
+    render(
+      <PlaybackProvider api={api}>
+        <Harness />
+      </PlaybackProvider>,
+    )
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Play radio' }).click()
+    })
+
+    expect(AudioMock.instances[0]?.src).toBe('/radio/station-1')
+    expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce()
+    expect(api.replaceQueue).not.toHaveBeenCalled()
+    expect(screen.getByTestId('current-track').textContent).toBe('')
+    expect(screen.getByTestId('current-radio').textContent).toBe('Station 1')
+    expect(screen.getByTestId('radio-now-playing').textContent).toBe(
+      'Artist - Song',
+    )
   })
 
   it('sets the current track when replacing the queue before playback', async () => {

@@ -32,6 +32,14 @@ export type Queue = Schemas['Queue']
 export type ErrorResponse = Schemas['ErrorResponse']
 export type QueueReplace = Schemas['QueueReplace']
 export type QueueItemAppend = Schemas['QueueItemAppend']
+export type RadioNowPlaying = Schemas['RadioNowPlaying']
+export type RadioStation = Schemas['RadioStation']
+export type RadioStationList = Schemas['RadioStationList']
+export type RadioStationCreate = Schemas['RadioStationCreate']
+export type RadioStationPatch = Schemas['RadioStationPatch']
+export type RadioSearchResult = Schemas['RadioSearchResult']
+export type RadioSearchResultList = Schemas['RadioSearchResultList']
+export type RadioImportRequest = Schemas['RadioImportRequest']
 
 export class ApiError extends Error {
   constructor(
@@ -46,6 +54,9 @@ export class ApiError extends Error {
 export type ListParams = NonNullable<
   operations['listAlbums']['parameters']['query']
 >
+export type RadioSearchParams = NonNullable<
+  operations['searchRadioStations']['parameters']['query']
+>
 
 function buildQuery(params?: ListParams): string {
   if (!params) return ''
@@ -54,6 +65,17 @@ function buildQuery(params?: ListParams): string {
   if (params.offset != null) search.set('offset', String(params.offset))
   if (params.q) search.set('q', params.q)
   if (params.artistId) search.set('artistId', params.artistId)
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
+function buildRadioSearchQuery(params?: RadioSearchParams): string {
+  if (!params) return ''
+  const search = new URLSearchParams()
+  if (params.q) search.set('q', params.q)
+  if (params.country) search.set('country', params.country)
+  if (params.language) search.set('language', params.language)
+  if (params.tag) search.set('tag', params.tag)
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }
@@ -161,6 +183,39 @@ export function createApiClient(config: ApiClientConfig) {
       request<PlaylistDetail>(`/api/v1/playlists/${playlistId}/tracks/${trackId}`, {
         method: 'DELETE',
       }),
+    listRadioStations: () =>
+      request<RadioStationList>('/api/v1/radio/stations'),
+    getRadioStation: (stationId: string) =>
+      request<RadioStation>(`/api/v1/radio/stations/${stationId}`),
+    createRadioStation: (body: RadioStationCreate) =>
+      request<RadioStation>('/api/v1/radio/stations', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    patchRadioStation: (stationId: string, body: RadioStationPatch) =>
+      request<RadioStation>(`/api/v1/radio/stations/${stationId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    deleteRadioStation: (stationId: string) =>
+      request<void>(`/api/v1/radio/stations/${stationId}`, {
+        method: 'DELETE',
+      }),
+    searchRadioStations: (params?: RadioSearchParams) =>
+      request<RadioSearchResultList>(
+        `/api/v1/radio/search${buildRadioSearchQuery(params)}`,
+      ),
+    importRadioStation: (body: RadioImportRequest) =>
+      request<RadioStation>('/api/v1/radio/import', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    getRadioNowPlaying: (stationId: string) =>
+      request<RadioNowPlaying>(
+        `/api/v1/radio/stations/${stationId}/now-playing`,
+      ),
+    getRadioStationStreamUrl: (stationId: string) =>
+      `${baseUrl}/api/v1/radio/stations/${stationId}/stream`,
     getTrackStreamUrl: (trackId: string) =>
       `${baseUrl}/api/v1/tracks/${trackId}/stream`,
     getAlbumCoverUrl: (albumId: string) =>

@@ -7,21 +7,10 @@ import {
 import { useLayout } from './LayoutProvider'
 import { QueuePanel } from './QueuePanel'
 import { WidgetDock, WidgetDndProvider } from './WidgetDock'
-import {
-  clampPanelSizes,
-  getNavPanel,
-  getQueuePanel,
-  MINI_PANEL_MAX,
-} from '../widgets/layout-utils'
+import { deriveShellLayout } from '../widgets/layout-utils'
 
 /** Panel size strings — react-resizable-panels v4 treats numbers as px, strings as %. */
-const MIN_LEFT = '15'
-const MAX_LEFT = '45'
-const MIN_RIGHT = '18'
-const MAX_RIGHT = '50'
 const MIN_MAIN = '25'
-const MIN_MINI = '4'
-const MAX_MINI = String(MINI_PANEL_MAX)
 
 function pct(n: number): `${number}%` {
   return `${n}%`
@@ -38,15 +27,23 @@ export function AppShell({
 }) {
   const { preferences, setPanelSizes } = useLayout()
   const { layout } = preferences
-  const sizes = clampPanelSizes(layout.sizes ?? [22, 50, 28], layout.collapsed)
-  const panelLayout = { left: sizes[0], main: sizes[1], right: sizes[2] }
+  const {
+    sizes,
+    panelLayout,
+    navPanel,
+    queuePanel,
+    navCollapsed,
+    queueCollapsed,
+    leftVisible,
+    rightVisible,
+    leftMin,
+    leftMax,
+    rightMin,
+    rightMax,
+    visibleResizableLayout,
+    toPanelSizes,
+  } = deriveShellLayout(layout)
   const isLeftPrimary = layout.sidebarPosition === 'left'
-  const navPanel = getNavPanel(layout.sidebarPosition)
-  const queuePanel = getQueuePanel(layout.sidebarPosition)
-  const navCollapsed = layout.collapsed[navPanel]
-  const queueCollapsed = layout.collapsed[queuePanel]
-  const hideQueuePanel = queueCollapsed
-  const fixedNavSize = panelLayout[navPanel]
 
   const navWidgetPanel = navPanel === 'left' ? 'left' : 'right'
   const queueWidgetPanel = queuePanel === 'left' ? 'left' : 'right'
@@ -80,56 +77,6 @@ export function AppShell({
     </div>
   )
 
-  const leftMin = layout.collapsed.left
-    ? queuePanel === 'left'
-      ? MIN_LEFT
-      : MIN_MINI
-    : MIN_LEFT
-  const leftMax = layout.collapsed.left
-    ? queuePanel === 'left'
-      ? MAX_LEFT
-      : MAX_MINI
-    : MAX_LEFT
-  const rightMin = layout.collapsed.right
-    ? queuePanel === 'right'
-      ? MIN_RIGHT
-      : MIN_MINI
-    : MIN_RIGHT
-  const rightMax = layout.collapsed.right
-    ? queuePanel === 'right'
-      ? MAX_RIGHT
-      : MAX_MINI
-    : MAX_RIGHT
-
-  const leftVisible = !(hideQueuePanel && queuePanel === 'left') && navPanel !== 'left'
-  const rightVisible = !(hideQueuePanel && queuePanel === 'right') && navPanel !== 'right'
-  const resizableTotal = 100 - fixedNavSize
-  const fromResizablePct = (size: number | undefined, fallback: number): number =>
-    size === undefined ? fallback : Math.round((size / 100) * resizableTotal * 10) / 10
-  const toResizablePct = (size: number): number =>
-    resizableTotal > 0 ? Math.round((size / resizableTotal) * 1000) / 10 : size
-  const layoutToSizes = (next: Record<string, number>): [number, number, number] =>
-    clampPanelSizes(
-      [
-        navPanel === 'left'
-          ? fixedNavSize
-          : fromResizablePct(next.left, sizes[0]),
-        fromResizablePct(next.main, sizes[1]),
-        navPanel === 'right'
-          ? fixedNavSize
-          : fromResizablePct(next.right, sizes[2]),
-      ],
-      layout.collapsed,
-    )
-  const visibleResizableLayout = {
-    ...(leftVisible ? { left: toResizablePct(panelLayout.left) } : {}),
-    main:
-      toResizablePct(panelLayout.main) +
-      (!leftVisible && queuePanel === 'left' ? toResizablePct(panelLayout.left) : 0) +
-      (!rightVisible && queuePanel === 'right' ? toResizablePct(panelLayout.right) : 0),
-    ...(rightVisible ? { right: toResizablePct(panelLayout.right) } : {}),
-  }
-
   return (
     <WidgetDndProvider>
       <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background text-foreground">
@@ -145,7 +92,7 @@ export function AppShell({
               if (meta && 'isUserInteraction' in meta && !meta.isUserInteraction) {
                 return
               }
-              setPanelSizes(layoutToSizes(next))
+              setPanelSizes(toPanelSizes(next))
             }}
           >
             {leftVisible ? (
