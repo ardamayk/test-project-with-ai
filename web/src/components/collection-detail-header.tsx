@@ -8,7 +8,7 @@ import {
 	SkipForward,
 	Tags,
 } from "lucide-react";
-import { CollectionCoverStrip } from "#/components/collection-cover-strip";
+import { CollectionCoverStack } from "#/components/collection-cover-strip";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
@@ -47,13 +47,9 @@ export function CollectionDetailHeader({
 	return (
 		<div className="relative overflow-hidden rounded-xl border border-border/60 bg-card/40">
 			<div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/20 via-background/40 to-background" />
-			<div className="relative grid gap-6 p-6 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
+			<div className="relative grid gap-6 p-6 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-stretch">
 				{coverTracks && coverTracks.length > 0 ? (
-					<CollectionCoverStrip
-						tracks={coverTracks}
-						seed={`${kind}:${title}`}
-						layout="grid"
-					/>
+					<CollectionCoverStack tracks={coverTracks} />
 				) : (
 					<div className="flex size-32 shrink-0 items-center justify-center rounded-lg bg-muted text-caption shadow-lg">
 						<Icon className="size-12" />

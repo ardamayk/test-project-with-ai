@@ -1,6 +1,6 @@
 import { usePlayback } from "@repo/ui";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { CollectionDetailHeader } from "#/components/collection-detail-header";
 import { TrackList } from "#/components/track-list";
@@ -48,13 +48,6 @@ export function GenreDetailContent({ genre }: { genre: string }) {
 
 	return (
 		<div className="p-6">
-			<Link
-				to="/library/genres"
-				className="mb-5 inline-block text-foreground text-sm hover:text-heading"
-			>
-				← Back to genres
-			</Link>
-
 			<CollectionDetailHeader
 				kind="Genre"
 				title={genre}
@@ -89,8 +82,10 @@ export function GenreDetailContent({ genre }: { genre: string }) {
 						tracks={collection.visibleTracks}
 						contextTracks={collection.visibleTracks}
 						playMode="double"
+						showFavorite
 						showMeta
 						showDelete
+						compact
 					/>
 				)}
 			</section>

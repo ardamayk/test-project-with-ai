@@ -12,6 +12,10 @@ import { GenresPage } from "./index";
 
 const mocks = vi.hoisted(() => ({
 	listTracks: vi.fn(),
+	listPlaylists: vi.fn(),
+	getPlaylist: vi.fn(),
+	addPlaylistTrack: vi.fn(),
+	removePlaylistTrack: vi.fn(),
 	playTrack: vi.fn(),
 	queueTracks: vi.fn(),
 }));
@@ -42,6 +46,10 @@ vi.mock("@tanstack/react-router", async () => {
 vi.mock("#/lib/api", () => ({
 	apiClient: {
 		listTracks: mocks.listTracks,
+		listPlaylists: mocks.listPlaylists,
+		getPlaylist: mocks.getPlaylist,
+		addPlaylistTrack: mocks.addPlaylistTrack,
+		removePlaylistTrack: mocks.removePlaylistTrack,
 		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
 	},
 }));
@@ -58,6 +66,7 @@ vi.mock("@repo/ui", () => ({
 		playTrack: mocks.playTrack,
 		queueTracks: mocks.queueTracks,
 		currentTrack: null,
+		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
 	}),
 }));
 
@@ -112,6 +121,12 @@ function renderWithQuery(ui: React.ReactElement) {
 describe("genre routes", () => {
 	beforeEach(() => {
 		mocks.listTracks.mockResolvedValue({ items: tracks });
+		mocks.listPlaylists.mockResolvedValue({
+			items: [{ id: "favorites", name: "Favorites", isDefault: true }],
+		});
+		mocks.getPlaylist.mockResolvedValue({ tracks: [] });
+		mocks.addPlaylistTrack.mockResolvedValue({ tracks: [] });
+		mocks.removePlaylistTrack.mockResolvedValue({ tracks: [] });
 		mocks.playTrack.mockClear();
 		mocks.queueTracks.mockClear();
 	});
@@ -130,6 +145,10 @@ describe("genre routes", () => {
 
 		expect(synthpop.getAttribute("href")).toBe("/library/genres/Synthpop");
 		expect(dance.getAttribute("href")).toBe("/library/genres/Dance");
+		expect(synthpop.className).toContain("duration-300");
+		expect(synthpop.className).toContain("ease-out");
+		expect(synthpop.className).toContain("hover:-translate-y-1");
+		expect(synthpop.className).toContain("hover:shadow-lg");
 		await waitFor(() => {
 			expect(container.querySelectorAll("img").length).toBeGreaterThanOrEqual(
 				4,
@@ -141,6 +160,7 @@ describe("genre routes", () => {
 		renderWithQuery(<GenreDetailContent genre="Synthpop" />);
 
 		await screen.findByRole("heading", { name: "Synthpop" });
+		expect(screen.queryByRole("link", { name: /Back to genres/ })).toBeNull();
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));
 		expect(mocks.playTrack).toHaveBeenCalledWith("t1", [
@@ -155,6 +175,16 @@ describe("genre routes", () => {
 
 		expect(screen.getByText("Blue Monday")).toBeTruthy();
 		expect(screen.getByText("Bizarre Love Triangle")).toBeTruthy();
+		expect(
+			document.querySelector('[data-testid="collection-cover-stack"]'),
+		).toBeTruthy();
+		expect(
+			screen.getAllByRole("button", { name: "Add to favorites" }),
+		).toHaveLength(4);
+		expect(
+			screen.getByRole("row", { name: /Blue Monday/ }).querySelector("td")
+				?.className,
+		).toContain("py-1.5");
 	});
 
 	it("filters genre detail actions to the visible tracks", async () => {
@@ -163,7 +193,12 @@ describe("genre routes", () => {
 		);
 
 		await screen.findByRole("heading", { name: "Synthpop" });
-		expect(container.querySelectorAll("img")).toHaveLength(4);
+		expect(
+			container
+				.querySelector('[data-testid="collection-cover-stack"]')
+				?.querySelectorAll("img"),
+		).toHaveLength(4);
+		expect(container.querySelectorAll("img")).toHaveLength(8);
 
 		fireEvent.change(screen.getByPlaceholderText("Search Synthpop…"), {
 			target: { value: "bizarre" },

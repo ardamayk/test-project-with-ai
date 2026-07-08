@@ -92,7 +92,7 @@ export function GenresPage() {
 							key={genre.name}
 							to="/library/genres/$genre"
 							params={{ genre: genre.name }}
-							className="flex items-center gap-3 rounded-lg border border-border bg-card/40 p-4"
+							className="flex items-center gap-3 rounded-lg border border-border bg-card/40 p-4 transition duration-300 ease-out hover:-translate-y-1 hover:bg-card/60 hover:shadow-lg"
 						>
 							<CollectionCoverStrip tracks={genre.tracks} seed={genre.name} />
 							<div className="min-w-0">

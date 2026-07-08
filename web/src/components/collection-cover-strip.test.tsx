@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	CollectionCoverStrip,
 	pickPreviewTracks,
+	pickRandomUniqueAlbumTracks,
 } from "./collection-cover-strip";
 
 vi.mock("#/lib/api", () => ({
@@ -88,5 +89,16 @@ describe("CollectionCoverStrip", () => {
 		expect(strip?.className).toContain("grid");
 		expect(strip?.className).toContain("grid-cols-2");
 		expect(container.querySelectorAll("img")).toHaveLength(4);
+	});
+
+	it("selects at most four random unique album covers for playlist stacks", () => {
+		const selected = pickRandomUniqueAlbumTracks(
+			[...tracks, { ...tracks[0], id: "t6" }, { ...tracks[1], id: "t7" }],
+			4,
+			() => 0.9,
+		);
+
+		expect(selected).toHaveLength(4);
+		expect(new Set(selected.map((track) => track.albumId)).size).toBe(4);
 	});
 });

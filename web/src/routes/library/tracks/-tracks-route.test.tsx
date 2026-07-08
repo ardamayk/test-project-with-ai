@@ -11,6 +11,10 @@ import { TracksPage } from "./index";
 
 const mocks = vi.hoisted(() => ({
 	listTracks: vi.fn(),
+	listPlaylists: vi.fn(),
+	getPlaylist: vi.fn(),
+	addPlaylistTrack: vi.fn(),
+	removePlaylistTrack: vi.fn(),
 }));
 
 const libraryTracks = [
@@ -37,12 +41,29 @@ const libraryTracks = [
 vi.mock("#/lib/api", () => ({
 	apiClient: {
 		listTracks: mocks.listTracks,
+		listPlaylists: mocks.listPlaylists,
+		getPlaylist: mocks.getPlaylist,
+		addPlaylistTrack: mocks.addPlaylistTrack,
+		removePlaylistTrack: mocks.removePlaylistTrack,
 	},
 }));
 
 vi.mock("#/components/track-list", () => ({
-	TrackList: ({ tracks }: { tracks: Array<{ id: string; title: string }> }) => (
+	TrackList: ({
+		tracks,
+		numbering,
+		showFavorite,
+		compact,
+	}: {
+		tracks: Array<{ id: string; title: string }>;
+		numbering?: string;
+		showFavorite?: boolean;
+		compact?: boolean;
+	}) => (
 		<div>
+			<p data-testid="track-numbering">{numbering}</p>
+			<p data-testid="track-show-favorite">{String(showFavorite)}</p>
+			<p data-testid="track-compact">{String(compact)}</p>
 			{tracks.map((track) => (
 				<p key={track.id}>{track.title}</p>
 			))}
@@ -65,6 +86,12 @@ describe("tracks route", () => {
 		mocks.listTracks.mockResolvedValue({
 			items: libraryTracks,
 		});
+		mocks.listPlaylists.mockResolvedValue({
+			items: [{ id: "favorites", name: "Favorites", isDefault: true }],
+		});
+		mocks.getPlaylist.mockResolvedValue({ tracks: [] });
+		mocks.addPlaylistTrack.mockResolvedValue({ tracks: [] });
+		mocks.removePlaylistTrack.mockResolvedValue({ tracks: [] });
 	});
 
 	afterEach(() => {
@@ -76,6 +103,9 @@ describe("tracks route", () => {
 		renderWithQuery(<TracksPage />);
 
 		await screen.findByText("Anti-Hero");
+		expect(screen.getByTestId("track-numbering").textContent).toBe("list");
+		expect(screen.getByTestId("track-show-favorite").textContent).toBe("true");
+		expect(screen.getByTestId("track-compact").textContent).toBe("true");
 		expect(mocks.listTracks).toHaveBeenCalledTimes(1);
 		expect(mocks.listTracks).toHaveBeenLastCalledWith({
 			limit: 200,
@@ -83,7 +113,18 @@ describe("tracks route", () => {
 		});
 
 		const input = screen.getByPlaceholderText("Search tracks…");
-		expect(input.closest("header")).toBeTruthy();
+		const header = input.closest("header");
+		expect(header).toBeTruthy();
+		expect(header?.className).toContain("sticky");
+		expect(header?.className).toContain("top-0");
+		expect(screen.getByTestId("tracks-page-shell").className).toContain(
+			"overflow-hidden",
+		);
+		expect(screen.getByTestId("tracks-page-content").className).toContain(
+			"[scrollbar-width:none]",
+		);
+		expect(input.className).toContain("h-11");
+		expect(input.className).toContain("pl-10");
 		expect(input.parentElement?.className).toContain("sm:max-w-md");
 
 		vi.useFakeTimers();
