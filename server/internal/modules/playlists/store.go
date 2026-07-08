@@ -171,7 +171,8 @@ func (s *Store) AddTrack(ctx context.Context, userID, playlistID, trackID string
 }
 
 func (s *Store) RemoveTrack(ctx context.Context, userID, playlistID, trackID string) (PlaylistDetail, error) {
-	if _, err := s.GetPlaylist(ctx, userID, playlistID); err != nil {
+	detail, err := s.GetPlaylist(ctx, userID, playlistID)
+	if err != nil {
 		return PlaylistDetail{}, err
 	}
 	if _, err := s.db.ExecContext(ctx,
@@ -179,6 +180,28 @@ func (s *Store) RemoveTrack(ctx context.Context, userID, playlistID, trackID str
 		playlistID, trackID,
 	); err != nil {
 		return PlaylistDetail{}, err
+	}
+	if detail.IsDefault {
+		return s.GetPlaylist(ctx, userID, playlistID)
+	}
+
+	var remaining int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?`,
+		playlistID,
+	).Scan(&remaining); err != nil {
+		return PlaylistDetail{}, err
+	}
+	if remaining == 0 {
+		if _, err := s.db.ExecContext(ctx,
+			`DELETE FROM playlists WHERE id = ? AND user_id = ? AND is_default = 0`,
+			playlistID, userID,
+		); err != nil {
+			return PlaylistDetail{}, err
+		}
+		detail.TrackCount = 0
+		detail.Tracks = []library.Track{}
+		return detail, nil
 	}
 	return s.GetPlaylist(ctx, userID, playlistID)
 }

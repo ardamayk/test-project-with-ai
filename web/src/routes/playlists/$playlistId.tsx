@@ -1,6 +1,6 @@
 import { usePlayback } from "@repo/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { CollectionDetailHeader } from "#/components/collection-detail-header";
 import { TrackList } from "#/components/track-list";
 import { apiClient } from "#/lib/api";
@@ -24,6 +24,7 @@ function PlaylistDetailPage() {
 
 export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 	const queryClient = useQueryClient();
+	const navigate = useNavigate();
 	const { playTrack, queueTracks } = usePlayback();
 	const playlist = useQuery({
 		queryKey: playlistQueryKeys.detail(playlistId),
@@ -33,8 +34,11 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 	const removeTrack = useMutation({
 		mutationFn: (trackId: string) =>
 			apiClient.removePlaylistTrack(playlistId, trackId),
-		onSuccess: async () => {
+		onSuccess: async (nextPlaylist) => {
 			await invalidatePlaylistCache(queryClient, playlistId);
+			if (!nextPlaylist.isDefault && nextPlaylist.tracks.length === 0) {
+				await navigate({ to: "/playlists" });
+			}
 		},
 	});
 	const collection = useTrackCollectionViewState(playlist.data?.tracks ?? [], {
@@ -57,13 +61,6 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 
 	return (
 		<div className="p-6">
-			<Link
-				to="/playlists"
-				className="mb-5 inline-block text-foreground text-sm hover:text-heading"
-			>
-				← Back to playlists
-			</Link>
-
 			<CollectionDetailHeader
 				kind="Playlist"
 				title={data.name}
@@ -96,9 +93,16 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 						tracks={collection.visibleTracks}
 						contextTracks={collection.visibleTracks}
 						playMode="double"
+						numbering="list"
+						showFavorite
 						showMeta
-						showDelete={false}
+						compact
 						onRemoveTrack={(track) => removeTrack.mutate(track.id)}
+						onDeleteTrackSuccess={() => {
+							if (!data.isDefault && data.tracks.length === 1) {
+								void navigate({ to: "/playlists" });
+							}
+						}}
 						removeLabel="Remove from playlist"
 					/>
 				)}

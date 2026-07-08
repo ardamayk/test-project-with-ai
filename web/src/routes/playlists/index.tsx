@@ -1,7 +1,8 @@
 import type { Playlist } from "@repo/api-client";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { CollectionCoverStrip } from "#/components/collection-cover-strip";
+import { CollectionCoverRowStack } from "#/components/collection-cover-strip";
+import { PageHeader, PageShell } from "#/components/page-layout";
 import { apiClient } from "#/lib/api";
 import {
 	PLAYLIST_PREVIEW_STALE_TIME_MS,
@@ -33,19 +34,22 @@ export function PlaylistsPage() {
 	}
 
 	return (
-		<div className="p-6">
-			<div className="mb-6">
-				<h1 className="font-semibold text-2xl text-heading">Playlists</h1>
-				<p className="text-foreground text-sm">
-					Favorites is your default playlist.
-				</p>
-			</div>
-			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+		<PageShell
+			testId="playlists-page-shell"
+			contentTestId="playlists-page-content"
+			header={
+				<PageHeader
+					title="Playlists"
+					description="Favorites is your default playlist."
+				/>
+			}
+		>
+			<div className="flex flex-col gap-1">
 				{(playlists.data?.items ?? []).map((playlist) => (
 					<PlaylistCard key={playlist.id} playlist={playlist} />
 				))}
 			</div>
-		</div>
+		</PageShell>
 	);
 }
 
@@ -62,12 +66,10 @@ function PlaylistCard({ playlist }: { playlist: Playlist }) {
 		<Link
 			to="/playlists/$playlistId"
 			params={{ playlistId: playlist.id }}
-			className="flex items-center gap-3 rounded-lg border border-border bg-card/40 p-4"
+			className="flex h-36 items-center gap-4 rounded-md border border-border bg-card/40 px-4 transition-colors hover:bg-muted/50"
 		>
-			{tracks.length > 0 ? (
-				<CollectionCoverStrip tracks={tracks} seed={playlist.id} />
-			) : null}
-			<div className="min-w-0">
+			{tracks.length > 0 ? <CollectionCoverRowStack tracks={tracks} /> : null}
+			<div className="min-w-0 flex-1">
 				<p className="truncate font-medium text-heading">{playlist.name}</p>
 				<p className="text-caption text-xs">
 					{playlist.trackCount} track{playlist.trackCount === 1 ? "" : "s"}

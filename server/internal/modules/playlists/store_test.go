@@ -3,6 +3,7 @@ package playlists
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -126,6 +127,38 @@ func TestAddAndRemoveTrackAreIdempotent(t *testing.T) {
 	}
 	if len(detail.Tracks) != 0 {
 		t.Fatalf("tracks after duplicate remove = %d, want 0", len(detail.Tracks))
+	}
+}
+
+func TestRemoveLastTrackDeletesUserPlaylist(t *testing.T) {
+	store, libStore, db, musicRoot := setupPlaylistStore(t)
+	trackID := seedPlaylistTrack(t, db, libStore, musicRoot)
+
+	playlist, err := store.CreatePlaylist(context.Background(), "user-1", "Road")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddTrack(context.Background(), "user-1", playlist.ID, trackID); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := store.RemoveTrack(context.Background(), "user-1", playlist.ID, trackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.TrackCount != 0 || len(detail.Tracks) != 0 {
+		t.Fatalf("removed playlist detail = %+v, want empty", detail)
+	}
+
+	playlists, err := store.ListPlaylists(context.Background(), "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(playlists.Items) != 1 || !playlists.Items[0].IsDefault {
+		t.Fatalf("playlists after empty user playlist cleanup = %+v", playlists.Items)
+	}
+	if _, err := store.GetPlaylist(context.Background(), "user-1", playlist.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPlaylist error = %v, want ErrNotFound", err)
 	}
 }
 
