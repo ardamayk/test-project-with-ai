@@ -25,6 +25,12 @@ export async function invalidatePlaylistCache(
 				queryKey: playlistQueryKeys.preview(playlistId),
 			}),
 		);
+	} else {
+		invalidations.push(
+			queryClient.invalidateQueries({
+				queryKey: ["playlist"],
+			}),
+		);
 	}
 	await Promise.all(invalidations);
 }

@@ -25,6 +25,7 @@ function createApi(): PlaybackApi {
     getStreamUrl: (trackId) => `/stream/${trackId}`,
     getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
     getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
+    getRadioCatalogPreviewStreamUrl: (stationUuid) => `/radio/preview/${stationUuid}`,
     getRadioNowPlaying: vi.fn(async () => ({})),
     listPlaylists: vi.fn(async () => ({ items: [], total: 0 })),
     getPlaylist: vi.fn(async (playlistId: string) => ({

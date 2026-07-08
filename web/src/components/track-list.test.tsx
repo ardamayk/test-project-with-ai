@@ -1,15 +1,23 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrackList } from "./track-list";
 
 const toggleFavorite = vi.fn();
 const playTrack = vi.fn();
+const deleteTrack = vi.fn();
 let favorite = false;
 
 vi.mock("@repo/ui", () => ({
 	usePlayback: () => ({
 		playTrack,
 		currentTrack: null,
+		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
 	}),
 }));
 
@@ -21,8 +29,8 @@ vi.mock("#/hooks/use-favorite-tracks", () => ({
 }));
 
 vi.mock("#/hooks/use-delete-library", () => ({
-	useDeleteTrack: () => ({ mutate: vi.fn(), isPending: false }),
-	confirmDelete: () => false,
+	useDeleteTrack: () => ({ mutate: deleteTrack, isPending: false }),
+	confirmDelete: () => true,
 }));
 
 const sampleTrack = {
@@ -30,11 +38,14 @@ const sampleTrack = {
 	title: "Welcome to New York",
 	artistName: "Taylor Swift",
 	albumId: "a1",
+	albumTitle: "1989",
+	trackNo: 1,
 	durationMs: 212_000,
 	format: "flac",
 	genre: "Pop",
 	bitDepth: 24,
 	sampleRateHz: 96_000,
+	sizeBytes: 50_059_000,
 };
 
 describe("TrackList", () => {
@@ -46,12 +57,48 @@ describe("TrackList", () => {
 		favorite = false;
 		playTrack.mockClear();
 		toggleFavorite.mockClear();
+		deleteTrack.mockClear();
 	});
 
-	it("renders compact metadata line", () => {
-		render(<TrackList tracks={[sampleTrack]} albumId="a1" showMeta compact />);
+	it("renders album tracks with only the title line", () => {
+		const { container } = render(
+			<TrackList tracks={[sampleTrack]} albumId="a1" showMeta compact />,
+		);
+		const row = screen.getByRole("row", { name: /Welcome to New York/ });
+		const cover = container.querySelector('img[src="/cover/a1"]');
+
 		expect(screen.getByText("Welcome to New York")).toBeTruthy();
-		expect(screen.getByText("Pop · FLAC · 24-bit · 96 kHz")).toBeTruthy();
+		expect(cover).toBeNull();
+		expect(row.textContent).not.toContain("Taylor Swift");
+		expect(screen.queryByText("Pop · FLAC · 24-bit · 96 kHz")).toBeNull();
+		expect(screen.queryByText(/FLAC/)).toBeNull();
+	});
+
+	it("renders non-album tracks with the artist line", () => {
+		const { container } = render(<TrackList tracks={[sampleTrack]} compact />);
+		const cover = container.querySelector('img[src="/cover/a1"]');
+
+		expect(screen.getByText("Welcome to New York")).toBeTruthy();
+		expect(cover).toBeTruthy();
+		expect(cover?.className).toContain("size-8");
+		expect(screen.getByText("Taylor Swift")).toBeTruthy();
+	});
+
+	it("uses visible list numbering when requested", () => {
+		const secondTrack = {
+			...sampleTrack,
+			id: "t2",
+			title: "Style",
+			albumId: "a2",
+			trackNo: 1,
+		};
+
+		render(<TrackList tracks={[sampleTrack, secondTrack]} numbering="list" />);
+
+		expect(
+			screen.getByRole("row", { name: /1 Welcome to New York/ }),
+		).toBeTruthy();
+		expect(screen.getByRole("row", { name: /2 Style/ })).toBeTruthy();
 	});
 
 	it("toggles favorites through the server-backed favorites hook", () => {
@@ -113,7 +160,51 @@ describe("TrackList", () => {
 		expect(screen.queryByText("Delete track")).toBeNull();
 	});
 
-	it("renders a custom remove action when supplied", () => {
+	it("renders metadata details and delete actions in the context menu", () => {
+		render(<TrackList tracks={[sampleTrack]} />);
+
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(screen.getByText("Details"));
+
+		const dialog = screen.getByRole("dialog", { name: "Welcome to New York" });
+		expect(dialog).toBeTruthy();
+		expect(dialog.className).toContain("max-w-2xl");
+		expect(dialog.className).toContain("bg-popover");
+		expect(within(dialog).getByText("Title")).toBeTruthy();
+		expect(within(dialog).getByText("Artist")).toBeTruthy();
+		expect(within(dialog).getByText("Album")).toBeTruthy();
+		expect(within(dialog).getByText("Track")).toBeTruthy();
+		expect(within(dialog).getByText("Duration")).toBeTruthy();
+		expect(within(dialog).getByText("Codec")).toBeTruthy();
+		expect(within(dialog).getByText("Sample rate")).toBeTruthy();
+		expect(within(dialog).getByText("Bit depth")).toBeTruthy();
+		expect(within(dialog).getByText("Genre")).toBeTruthy();
+		expect(within(dialog).getByText("Size")).toBeTruthy();
+		expect(within(dialog).getByText("Id")).toBeTruthy();
+		expect(within(dialog).getByText("Taylor Swift")).toBeTruthy();
+		expect(within(dialog).getByText("1989")).toBeTruthy();
+		expect(within(dialog).getByText("1")).toBeTruthy();
+		expect(within(dialog).getByText("3m 32s")).toBeTruthy();
+		expect(within(dialog).getByText("flac")).toBeTruthy();
+		expect(within(dialog).getByText("96 kHz")).toBeTruthy();
+		expect(within(dialog).getByText("24-bit")).toBeTruthy();
+		expect(within(dialog).getByText("Pop")).toBeTruthy();
+		expect(within(dialog).getByText("47.74 MiB")).toBeTruthy();
+		expect(within(dialog).getByText("t1")).toBeTruthy();
+		expect(within(dialog).getByRole("button", { name: "Close" })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "Close" }));
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(screen.getByText("Delete track"));
+
+		expect(deleteTrack).toHaveBeenCalledWith("t1", expect.any(Object));
+	});
+
+	it("renders custom remove and delete actions together when supplied", () => {
 		const removeTrack = vi.fn();
 
 		render(
@@ -121,13 +212,13 @@ describe("TrackList", () => {
 				tracks={[sampleTrack]}
 				onRemoveTrack={removeTrack}
 				removeLabel="Remove from playlist"
-				showDelete={false}
 			/>,
 		);
 
 		fireEvent.contextMenu(
 			screen.getByRole("row", { name: /Welcome to New York/ }),
 		);
+		expect(screen.getByText("Delete track")).toBeTruthy();
 		fireEvent.click(screen.getByText("Remove from playlist"));
 
 		expect(removeTrack).toHaveBeenCalledWith(sampleTrack);

@@ -36,6 +36,7 @@ const mockPlaybackApi = {
 	getStreamUrl: (id: string) => `/stream/${id}`,
 	getAlbumCoverUrl: (id: string) => `/cover/${id}`,
 	getRadioStationStreamUrl: (id: string) => `/radio/${id}`,
+	getRadioCatalogPreviewStreamUrl: (id: string) => `/radio/preview/${id}`,
 	getRadioNowPlaying: async () => ({}),
 	listPlaylists: async () => ({ items: [], total: 0 }),
 	getPlaylist: async (playlistId: string) => ({

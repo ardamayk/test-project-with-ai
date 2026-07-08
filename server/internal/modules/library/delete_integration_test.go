@@ -232,3 +232,61 @@ func TestDeleteTrackRemovesQueueAndEmptyAlbum(t *testing.T) {
 		t.Fatalf("queue=%d album=%d artist=%d, want all 0", queueCount, albumCount, artistCount)
 	}
 }
+
+func TestDeleteTrackRemovesEmptyUserPlaylist(t *testing.T) {
+	tempDir := t.TempDir()
+	trackPath := filepath.Join(tempDir, "track.flac")
+	if err := os.WriteFile(trackPath, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db := setupLibraryDB(t)
+	defer db.Close()
+
+	store := library.NewStore(db)
+	meta := library.FileMetadata{
+		Path:        trackPath,
+		Format:      "flac",
+		SizeBytes:   10,
+		ModTime:     time.Now(),
+		Title:       "Only Track",
+		Artist:      "Solo Artist",
+		AlbumArtist: "Solo Artist",
+		Album:       "Solo Album",
+		TrackNo:     1,
+		DurationMs:  1000,
+		Genre:       "Indie",
+	}
+	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+		t.Fatal(err)
+	}
+
+	var trackID string
+	if err := db.QueryRow(`SELECT id FROM tracks`).Scan(&trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO playlists (id, user_id, name, is_default) VALUES (?, ?, ?, 0)`,
+		"playlist-1", "user", "Temporary",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)`,
+		"playlist-1", trackID, 0,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.DeleteTrack(context.Background(), trackID, os.Remove); err != nil {
+		t.Fatal(err)
+	}
+
+	var playlistCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM playlists WHERE id = ?`, "playlist-1").Scan(&playlistCount); err != nil {
+		t.Fatal(err)
+	}
+	if playlistCount != 0 {
+		t.Fatalf("playlist count = %d, want 0", playlistCount)
+	}
+}
