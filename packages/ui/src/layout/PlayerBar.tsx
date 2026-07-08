@@ -129,6 +129,7 @@ export function PlayerBar({
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
+	const playlistSubmenuCloseTimerRef = useRef<number | null>(null);
 	const [actionsOpen, setActionsOpen] = useState(false);
 	const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
 	const [playlistSubmenuOpen, setPlaylistSubmenuOpen] = useState(false);
@@ -159,7 +160,6 @@ export function PlayerBar({
 		seek,
 		setVolume,
 		playQueueIndex,
-		playNext,
 		queue,
 		getAlbumCoverUrl,
 	} = usePlayback();
@@ -246,6 +246,14 @@ export function PlayerBar({
 		void loadPlaylistsForSubmenu();
 	}, [actionsOpen, currentTrack, loadPlaylistsForSubmenu]);
 
+	useEffect(() => {
+		return () => {
+			if (playlistSubmenuCloseTimerRef.current !== null) {
+				window.clearTimeout(playlistSubmenuCloseTimerRef.current);
+			}
+		};
+	}, []);
+
 	const currentIndex = queue.findIndex(
 		(item) => item.track.id === currentTrack?.id,
 	);
@@ -325,31 +333,46 @@ export function PlayerBar({
 	}, [playlistSearchQuery, sortedPlaylists]);
 
 	const closeActionsMenu = () => {
+		if (playlistSubmenuCloseTimerRef.current !== null) {
+			window.clearTimeout(playlistSubmenuCloseTimerRef.current);
+			playlistSubmenuCloseTimerRef.current = null;
+		}
 		setPlaylistSubmenuOpen(false);
 		setActionsOpen(false);
 	};
 
 	const openPlaylistSubmenu = () => {
+		if (playlistSubmenuCloseTimerRef.current !== null) {
+			window.clearTimeout(playlistSubmenuCloseTimerRef.current);
+			playlistSubmenuCloseTimerRef.current = null;
+		}
 		setPlaylistSubmenuOpen(true);
 		if (!playlistsLoaded) void loadPlaylistsForSubmenu();
 	};
 
 	const closePlaylistSubmenu = () => {
+		if (playlistSubmenuCloseTimerRef.current !== null) {
+			window.clearTimeout(playlistSubmenuCloseTimerRef.current);
+			playlistSubmenuCloseTimerRef.current = null;
+		}
 		setPlaylistSubmenuOpen(false);
 		setPlaylistQuery("");
 		setCreatePlaylistOpen(false);
 		setNewPlaylistName("");
 	};
 
+	const schedulePlaylistSubmenuClose = () => {
+		if (playlistSubmenuCloseTimerRef.current !== null) {
+			window.clearTimeout(playlistSubmenuCloseTimerRef.current);
+		}
+		playlistSubmenuCloseTimerRef.current = window.setTimeout(() => {
+			closePlaylistSubmenu();
+		}, 200);
+	};
+
 	const openInfoModal = () => {
 		closeActionsMenu();
 		setInfoOpen(true);
-	};
-
-	const handlePlayNext = () => {
-		if (!currentTrack) return;
-		closeActionsMenu();
-		void playNext(currentTrack.id);
 	};
 
 	const handleGoToAlbum = () => {
@@ -481,7 +504,7 @@ export function PlayerBar({
 									<AddToPlaylistMenuItem
 										open={playlistSubmenuOpen}
 										onOpen={openPlaylistSubmenu}
-										onClose={closePlaylistSubmenu}
+										onClose={schedulePlaylistSubmenuClose}
 										query={playlistQuery}
 										onQueryChange={setPlaylistQuery}
 										createOpen={createPlaylistOpen}
@@ -496,10 +519,6 @@ export function PlayerBar({
 										}
 										onCreate={() => void handleCreatePlaylist()}
 									/>
-									<MenuButton onClick={handlePlayNext}>
-										<SkipForward className="size-3.5" />
-										Play next
-									</MenuButton>
 									<MenuButton onClick={handleGoToAlbum}>Go to album</MenuButton>
 									<MenuButton onClick={handleGoToArtist}>
 										Go to artist
@@ -510,7 +529,7 @@ export function PlayerBar({
 									</MenuButton>
 									<MenuButton onClick={openInfoModal}>
 										<Info className="size-3.5" />
-										Get Info
+										Details
 									</MenuButton>
 								</div>
 							</Portal>
@@ -614,19 +633,23 @@ export function PlayerBar({
 						<span className="w-8 shrink-0 text-right text-player-foreground">
 							{isRadioPlaying ? "LIVE" : formatTime(currentTime)}
 						</span>
-						<input
-							type="range"
-							min={0}
-							max={1}
-							step={0.001}
-							value={
-								effectiveDuration > 0 ? currentTime / effectiveDuration : 0
-							}
-							onChange={(e) => handleSeek(Number(e.target.value))}
-							className="h-1 min-w-0 flex-1 accent-[var(--player-live-progress)] disabled:opacity-100"
-							disabled={!currentTrack}
-							aria-label="Seek"
-						/>
+						{isRadioPlaying ? (
+							<div className="h-1 min-w-0 flex-1 rounded-full bg-[var(--player-live-progress)]/45" />
+						) : (
+							<input
+								type="range"
+								min={0}
+								max={1}
+								step={0.001}
+								value={
+									effectiveDuration > 0 ? currentTime / effectiveDuration : 0
+								}
+								onChange={(e) => handleSeek(Number(e.target.value))}
+								className="h-1 min-w-0 flex-1 accent-[var(--player-live-progress)] disabled:opacity-100"
+								disabled={!currentTrack}
+								aria-label="Seek"
+							/>
+						)}
 						<span className="w-8 shrink-0 text-player-foreground">
 							{isRadioPlaying ? "--:--" : formatTime(effectiveDuration)}
 						</span>
@@ -743,10 +766,7 @@ function AddToPlaylistMenuItem({
 				onFocus={onOpen}
 				onBlur={onClose}
 			>
-				<span className="flex items-center gap-2">
-					<Plus className="size-3.5" />
-					Add to playlist
-				</span>
+				<span className="flex items-center gap-2">Add to playlist</span>
 				<ChevronRight className="size-3.5 text-caption" />
 			</div>
 			{open ? (

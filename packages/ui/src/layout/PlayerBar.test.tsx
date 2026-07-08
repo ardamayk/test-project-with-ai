@@ -86,6 +86,8 @@ const api: PlaybackApi = {
 	getStreamUrl: (trackId) => `/stream/${trackId}`,
 	getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
 	getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
+	getRadioCatalogPreviewStreamUrl: (stationUuid) =>
+		`/radio/preview/${stationUuid}`,
 	getRadioNowPlaying: vi.fn(async () => ({})),
 	listPlaylists: vi.fn(async () => ({
 		items: [
@@ -262,14 +264,14 @@ describe("PlayerBar", () => {
 		).toBeTruthy();
 		expect(screen.getByText("1411 kbps · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("Add to playlist")).toBeTruthy();
-		expect(screen.getByText("Play next")).toBeTruthy();
+		expect(screen.queryByText("Play next")).toBeNull();
 		expect(screen.getByText("Go to album")).toBeTruthy();
 		expect(screen.getByText("Go to artist")).toBeTruthy();
 		expect(
 			(screen.getByRole("menuitem", { name: "Download" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
-		expect(screen.getByRole("menuitem", { name: "Get Info" })).toBeTruthy();
+		expect(screen.getByRole("menuitem", { name: "Details" })).toBeTruthy();
 	});
 
 	it("shows live radio progress instead of track time", async () => {
@@ -281,9 +283,7 @@ describe("PlayerBar", () => {
 
 		expect(screen.getByText("LIVE")).toBeTruthy();
 		expect(screen.getByText("--:--")).toBeTruthy();
-		expect((screen.getByLabelText("Seek") as HTMLInputElement).disabled).toBe(
-			true,
-		);
+		expect(screen.queryByLabelText("Seek")).toBeNull();
 		expect(
 			screen.getByRole("button", { name: "Quality High Quality" }),
 		).toBeTruthy();
@@ -338,6 +338,10 @@ describe("PlayerBar", () => {
 		renderPlayerBar(onPlaylistMutated);
 		await openPlaylistSubmenu();
 
+		const addToPlaylist = screen.getByRole("menuitem", {
+			name: "Add to playlist",
+		});
+		expect(addToPlaylist.querySelector(".lucide-plus")).toBeNull();
 		expect(screen.getByPlaceholderText("Search playlists")).toBeTruthy();
 		expect(
 			screen.getByRole("menuitem", { name: "Create new playlist" }),
@@ -363,6 +367,28 @@ describe("PlayerBar", () => {
 		});
 
 		expect(api.addPlaylistTrack).toHaveBeenCalledWith("favorites", track.id);
+	});
+
+	it("keeps the add-to-playlist submenu open while moving across the hover gap", async () => {
+		vi.useFakeTimers();
+		renderPlayerBar();
+		await openPlaylistSubmenu();
+
+		const addToPlaylist = screen.getByRole("menuitem", {
+			name: "Add to playlist",
+		});
+		const wrapper = addToPlaylist.parentElement;
+		expect(wrapper).toBeTruthy();
+		fireEvent.mouseLeave(wrapper as HTMLElement);
+		expect(screen.getByRole("menu", { name: "Add to playlist" })).toBeTruthy();
+
+		fireEvent.mouseEnter(screen.getByRole("menu", { name: "Add to playlist" }));
+		await act(async () => {
+			vi.advanceTimersByTime(250);
+		});
+
+		expect(screen.getByRole("menu", { name: "Add to playlist" })).toBeTruthy();
+		vi.useRealTimers();
 	});
 
 	it("creates a playlist from the add-to-playlist submenu", async () => {
@@ -399,7 +425,7 @@ describe("PlayerBar", () => {
 	it("opens a track info modal from the actions menu", async () => {
 		renderPlayerBar();
 		await openActionsMenu();
-		fireEvent.click(screen.getByRole("menuitem", { name: "Get Info" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Details" }));
 
 		expect(screen.getByRole("dialog", { name: "Track 1" })).toBeTruthy();
 		const dialog = screen.getByRole("dialog", { name: "Track 1" });

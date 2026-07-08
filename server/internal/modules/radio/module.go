@@ -31,7 +31,11 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Patch("/api/v1/radio/stations/{stationId}", m.handlers.PatchStation)
 	r.Delete("/api/v1/radio/stations/{stationId}", m.handlers.DeleteStation)
 	r.Get("/api/v1/radio/search", m.handlers.SearchStations)
+	r.Get("/api/v1/radio/catalog/countries", m.handlers.ListCatalogCountries)
+	r.Get("/api/v1/radio/catalog/tags", m.handlers.ListCatalogTags)
 	r.Post("/api/v1/radio/import", m.handlers.ImportStation)
+	r.Post("/api/v1/radio/preview", m.handlers.PreviewStation)
+	r.Get("/api/v1/radio/preview/{stationUuid}/stream", m.handlers.StreamPreviewStation)
 	r.Get("/api/v1/radio/stations/{stationId}/stream", m.handlers.StreamStation)
 	r.Get("/api/v1/radio/stations/{stationId}/now-playing", m.handlers.GetNowPlaying)
 }

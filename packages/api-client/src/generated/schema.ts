@@ -386,6 +386,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/radio/catalog/countries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Radio Browser catalog countries */
+        get: operations["listRadioCatalogCountries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/catalog/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Radio Browser catalog tags */
+        get: operations["listRadioCatalogTags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/radio/import": {
         parameters: {
             query?: never;
@@ -397,6 +431,23 @@ export interface paths {
         put?: never;
         /** Import Radio Browser station */
         post: operations["importRadioStation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/preview/{stationUuid}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Radio Browser station preview */
+        get: operations["streamRadioPreview"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -636,9 +687,24 @@ export interface components {
             codec?: string;
             bitrate?: number;
             votes?: number;
+            /** @enum {string} */
+            healthStatus?: "healthy" | "broken" | "unknown";
+            /** Format: date-time */
+            lastCheckedAt?: string;
+            /** Format: date-time */
+            lastSuccessfulAt?: string;
         };
         RadioSearchResultList: {
             items: components["schemas"]["RadioSearchResult"][];
+            total: number;
+        };
+        RadioCatalogOption: {
+            name: string;
+            code?: string;
+            stationCount?: number;
+        };
+        RadioCatalogOptionList: {
+            items: components["schemas"]["RadioCatalogOption"][];
             total: number;
         };
         RadioImportRequest: {
@@ -1439,6 +1505,11 @@ export interface operations {
                 country?: string;
                 language?: string;
                 tag?: string;
+                codec?: string;
+                codecGroup?: "aac";
+                minBitrate?: number;
+                limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -1453,6 +1524,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RadioSearchResultList"];
+                };
+            };
+        };
+    };
+    listRadioCatalogCountries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio Browser country options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioCatalogOptionList"];
+                };
+            };
+        };
+    };
+    listRadioCatalogTags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio Browser tag options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioCatalogOptionList"];
                 };
             };
         };
@@ -1477,6 +1588,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RadioStation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    streamRadioPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stationUuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio preview stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
                 };
             };
             400: components["responses"]["BadRequest"];

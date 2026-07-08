@@ -26,6 +26,30 @@ func (f fakeSearcher) LookupStation(_ *http.Request, stationUUID string) (Search
 	return result, nil
 }
 
+func (f fakeSearcher) Countries() (CatalogOptionList, error) {
+	return CatalogOptionList{
+		Items: []CatalogOption{{Name: "Switzerland", Code: "CH", StationCount: 10}},
+		Total: 1,
+	}, nil
+}
+
+func (f fakeSearcher) Tags() (CatalogOptionList, error) {
+	return CatalogOptionList{
+		Items: []CatalogOption{{Name: "jazz", StationCount: 7}},
+		Total: 1,
+	}, nil
+}
+
+type fakeStreamer struct {
+	station Station
+}
+
+func (f *fakeStreamer) Stream(w http.ResponseWriter, _ *http.Request, station Station) {
+	f.station = station
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("preview"))
+}
+
 func setupHandlers(t *testing.T) (*Handlers, *Store) {
 	t.Helper()
 	db := testutil.OpenMigratedDB(t)
@@ -123,6 +147,70 @@ func TestHandlersSearchAndImportStation(t *testing.T) {
 	}
 	if station.Source != RadioBrowserSource || station.ExternalID != "abc" {
 		t.Fatalf("station = %+v", station)
+	}
+}
+
+func TestHandlersListCatalogOptions(t *testing.T) {
+	h := NewHandlers(nil, fakeSearcher{}, nil)
+
+	countriesRec := httptest.NewRecorder()
+	h.ListCatalogCountries(countriesRec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if countriesRec.Code != http.StatusOK {
+		t.Fatalf("countries status = %d", countriesRec.Code)
+	}
+	var countries CatalogOptionList
+	if err := json.NewDecoder(countriesRec.Body).Decode(&countries); err != nil {
+		t.Fatal(err)
+	}
+	if countries.Total != 1 || countries.Items[0].Code != "CH" {
+		t.Fatalf("countries = %+v", countries)
+	}
+
+	tagsRec := httptest.NewRecorder()
+	h.ListCatalogTags(tagsRec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if tagsRec.Code != http.StatusOK {
+		t.Fatalf("tags status = %d", tagsRec.Code)
+	}
+	var tags CatalogOptionList
+	if err := json.NewDecoder(tagsRec.Body).Decode(&tags); err != nil {
+		t.Fatal(err)
+	}
+	if tags.Total != 1 || tags.Items[0].Name != "jazz" {
+		t.Fatalf("tags = %+v", tags)
+	}
+}
+
+func TestHandlersPreviewCatalogStationStreamsWithoutImport(t *testing.T) {
+	db := testutil.OpenMigratedDB(t)
+	store := NewStore(db)
+	streamer := &fakeStreamer{}
+	searcher := fakeSearcher{result: SearchResult{
+		StationUUID: "abc",
+		Name:        "Radio Swiss Jazz",
+		StreamURL:   "https://stream.example.com/jazz",
+		Country:     "Switzerland",
+		Language:    "italian",
+		Tags:        []string{"jazz", "public radio"},
+		Codec:       "AAC",
+		Bitrate:     128,
+	}}
+	h := NewHandlers(store, searcher, streamer)
+
+	rec := httptest.NewRecorder()
+	h.PreviewStation(rec, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"stationUuid": "abc"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if streamer.station.ID != "preview:abc" || streamer.station.Source != RadioBrowserSource {
+		t.Fatalf("preview station = %+v", streamer.station)
+	}
+
+	list, err := store.ListStations(context.Background(), "00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Total != 0 {
+		t.Fatalf("preview imported station, list = %+v", list)
 	}
 }
 

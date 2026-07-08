@@ -560,6 +560,30 @@ paths:
           in: query
           schema:
             type: string
+        - name: codec
+          in: query
+          schema:
+            type: string
+        - name: codecGroup
+          in: query
+          schema:
+            type: string
+            enum: [aac]
+        - name: minBitrate
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
       responses:
         "200":
           description: Radio search results
@@ -567,6 +591,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RadioSearchResultList"
+  /api/v1/radio/catalog/countries:
+    get:
+      tags: [radio]
+      operationId: listRadioCatalogCountries
+      summary: List Radio Browser catalog countries
+      responses:
+        "200":
+          description: Radio Browser country options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioCatalogOptionList"
+  /api/v1/radio/catalog/tags:
+    get:
+      tags: [radio]
+      operationId: listRadioCatalogTags
+      summary: List Radio Browser catalog tags
+      responses:
+        "200":
+          description: Radio Browser tag options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioCatalogOptionList"
   /api/v1/radio/import:
     post:
       tags: [radio]
@@ -585,6 +633,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RadioStation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/radio/preview/{stationUuid}/stream:
+    get:
+      tags: [radio]
+      operationId: streamRadioPreview
+      summary: Stream Radio Browser station preview
+      parameters:
+        - name: stationUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Radio preview stream
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
         "400":
           $ref: "#/components/responses/BadRequest"
   /api/v1/radio/stations/{stationId}/stream:
@@ -1116,6 +1185,15 @@ components:
           type: integer
         votes:
           type: integer
+        healthStatus:
+          type: string
+          enum: [healthy, broken, unknown]
+        lastCheckedAt:
+          type: string
+          format: date-time
+        lastSuccessfulAt:
+          type: string
+          format: date-time
     RadioSearchResultList:
       type: object
       required: [items, total]
@@ -1124,6 +1202,26 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RadioSearchResult"
+        total:
+          type: integer
+    RadioCatalogOption:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        stationCount:
+          type: integer
+    RadioCatalogOptionList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadioCatalogOption"
         total:
           type: integer
     RadioImportRequest:

@@ -24,6 +24,8 @@ const playbackApi: PlaybackApi = {
 	getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
 	getRadioStationStreamUrl: (stationId) =>
 		apiClient.getRadioStationStreamUrl(stationId),
+	getRadioCatalogPreviewStreamUrl: (stationUuid) =>
+		apiClient.getRadioCatalogPreviewStreamUrl(stationUuid),
 	getRadioNowPlaying: (stationId) => apiClient.getRadioNowPlaying(stationId),
 	listPlaylists: () => apiClient.listPlaylists(),
 	getPlaylist: (playlistId) => apiClient.getPlaylist(playlistId),

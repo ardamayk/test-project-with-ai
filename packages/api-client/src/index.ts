@@ -39,6 +39,8 @@ export type RadioStationCreate = Schemas['RadioStationCreate']
 export type RadioStationPatch = Schemas['RadioStationPatch']
 export type RadioSearchResult = Schemas['RadioSearchResult']
 export type RadioSearchResultList = Schemas['RadioSearchResultList']
+export type RadioCatalogOption = Schemas['RadioCatalogOption']
+export type RadioCatalogOptionList = Schemas['RadioCatalogOptionList']
 export type RadioImportRequest = Schemas['RadioImportRequest']
 
 export class ApiError extends Error {
@@ -76,6 +78,11 @@ function buildRadioSearchQuery(params?: RadioSearchParams): string {
   if (params.country) search.set('country', params.country)
   if (params.language) search.set('language', params.language)
   if (params.tag) search.set('tag', params.tag)
+  if (params.codec) search.set('codec', params.codec)
+  if (params.codecGroup) search.set('codecGroup', params.codecGroup)
+  if (params.minBitrate != null) search.set('minBitrate', String(params.minBitrate))
+  if (params.limit != null) search.set('limit', String(params.limit))
+  if (params.offset != null) search.set('offset', String(params.offset))
   const qs = search.toString()
   return qs ? `?${qs}` : ''
 }
@@ -205,6 +212,10 @@ export function createApiClient(config: ApiClientConfig) {
       request<RadioSearchResultList>(
         `/api/v1/radio/search${buildRadioSearchQuery(params)}`,
       ),
+    listRadioCatalogCountries: () =>
+      request<RadioCatalogOptionList>('/api/v1/radio/catalog/countries'),
+    listRadioCatalogTags: () =>
+      request<RadioCatalogOptionList>('/api/v1/radio/catalog/tags'),
     importRadioStation: (body: RadioImportRequest) =>
       request<RadioStation>('/api/v1/radio/import', {
         method: 'POST',
@@ -216,6 +227,8 @@ export function createApiClient(config: ApiClientConfig) {
       ),
     getRadioStationStreamUrl: (stationId: string) =>
       `${baseUrl}/api/v1/radio/stations/${stationId}/stream`,
+    getRadioCatalogPreviewStreamUrl: (stationUuid: string) =>
+      `${baseUrl}/api/v1/radio/preview/${stationUuid}/stream`,
     getTrackStreamUrl: (trackId: string) =>
       `${baseUrl}/api/v1/tracks/${trackId}/stream`,
     getAlbumCoverUrl: (albumId: string) =>

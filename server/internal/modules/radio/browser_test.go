@@ -21,12 +21,15 @@ func TestRadioBrowserSearchMapsResults(t *testing.T) {
 		if r.URL.Query().Get("name") != "paradise" {
 			t.Fatalf("name query = %q", r.URL.Query().Get("name"))
 		}
+		if r.URL.Query().Get("order") != "name" {
+			t.Fatalf("order query = %q", r.URL.Query().Get("order"))
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(`[{
 			"stationuuid": "abc",
-			"name": "Radio Paradise",
+			"name": "  Radio Paradise\t",
 			"url_resolved": "https://stream.radioparadise.com/mp3-192",
 			"homepage": "https://radioparadise.com",
 			"favicon": "https://radioparadise.com/favicon.ico",
@@ -35,7 +38,10 @@ func TestRadioBrowserSearchMapsResults(t *testing.T) {
 			"tags": "rock,eclectic",
 			"codec": "MP3",
 			"bitrate": 192,
-			"votes": 100
+			"votes": 100,
+			"lastcheckok": 1,
+			"lastchecktime_iso8601": "2026-07-04T20:00:00Z",
+			"lastcheckoktime_iso8601": "2026-07-04T20:00:00Z"
 		}]`)),
 		}, nil
 	})}
@@ -54,6 +60,106 @@ func TestRadioBrowserSearchMapsResults(t *testing.T) {
 	}
 	if len(item.Tags) != 2 || item.Tags[0] != "rock" || item.Tags[1] != "eclectic" {
 		t.Fatalf("tags = %#v", item.Tags)
+	}
+	if item.HealthStatus != "healthy" || item.LastCheckedAt == nil {
+		t.Fatalf("health = %+v", item)
+	}
+}
+
+func TestRadioBrowserSearchUsesCatalogFiltersAndPagination(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		query := r.URL.Query()
+		if query.Get("limit") != "40" || query.Get("offset") != "80" {
+			t.Fatalf("pagination query = %s", query.Encode())
+		}
+		if query.Get("country") != "Switzerland" || query.Get("tag") != "jazz" {
+			t.Fatalf("filter query = %s", query.Encode())
+		}
+		if query.Get("codec") != "MP3" || query.Get("bitrateMin") != "128" {
+			t.Fatalf("quality query = %s", query.Encode())
+		}
+		if query.Get("order") != "name" || query.Get("reverse") != "false" {
+			t.Fatalf("sort query = %s", query.Encode())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+		}, nil
+	})}
+
+	client := NewRadioBrowserClient("https://radio.test", httpClient)
+	if _, err := client.SearchURL("/?country=Switzerland&tag=jazz&codec=MP3&minBitrate=128&limit=40&offset=80"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRadioBrowserSearchTreatsAACAsCodecFamily(t *testing.T) {
+	var codecs []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		codec := r.URL.Query().Get("codec")
+		codecs = append(codecs, codec)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`[{
+				"stationuuid": "` + codec + `",
+				"name": "` + codec + ` Station",
+				"url": "https://example.com/` + codec + `",
+				"codec": "` + codec + `",
+				"tags": ""
+			}]`)),
+		}, nil
+	})}
+
+	client := NewRadioBrowserClient("https://radio.test", httpClient)
+	results, err := client.SearchURL("/?codec=AAC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(codecs, ",") != "AAC,AAC+" {
+		t.Fatalf("codecs = %#v", codecs)
+	}
+	if results.Total != 2 {
+		t.Fatalf("total = %d", results.Total)
+	}
+}
+
+func TestRadioBrowserCatalogOptions(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/json/countries":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`[{"name":"Switzerland","iso_3166_1":"CH","stationcount":12}]`)),
+			}, nil
+		case "/json/tags":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`[{"name":"jazz","stationcount":7}]`)),
+			}, nil
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+			return nil, nil
+		}
+	})}
+
+	client := NewRadioBrowserClient("https://radio.test", httpClient)
+	countries, err := client.Countries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countries.Total != 1 || countries.Items[0].Code != "CH" {
+		t.Fatalf("countries = %+v", countries)
+	}
+	tags, err := client.Tags()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tags.Total != 1 || tags.Items[0].Name != "jazz" {
+		t.Fatalf("tags = %+v", tags)
 	}
 }
 

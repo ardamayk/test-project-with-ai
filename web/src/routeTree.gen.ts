@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as HomeRouteImport } from './routes/home'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as RadioIndexRouteImport } from './routes/radio/index'
@@ -16,6 +17,7 @@ import { Route as PlaylistsIndexRouteImport } from './routes/playlists/index'
 import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as FoldersIndexRouteImport } from './routes/folders/index'
 import { Route as FavoritesIndexRouteImport } from './routes/favorites/index'
+import { Route as RadioDiscoverRouteImport } from './routes/radio/discover'
 import { Route as RadioStationIdRouteImport } from './routes/radio/$stationId'
 import { Route as PlaylistsPlaylistIdRouteImport } from './routes/playlists/$playlistId'
 import { Route as LibraryAlbumIdRouteImport } from './routes/library/$albumId'
@@ -25,6 +27,11 @@ import { Route as LibraryArtistsIndexRouteImport } from './routes/library/artist
 import { Route as LibraryAlbumsIndexRouteImport } from './routes/library/albums/index'
 import { Route as LibraryGenresGenreRouteImport } from './routes/library/genres/$genre'
 
+const HomeRoute = HomeRouteImport.update({
+  id: '/home',
+  path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -58,6 +65,11 @@ const FoldersIndexRoute = FoldersIndexRouteImport.update({
 const FavoritesIndexRoute = FavoritesIndexRouteImport.update({
   id: '/favorites/',
   path: '/favorites/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RadioDiscoverRoute = RadioDiscoverRouteImport.update({
+  id: '/radio/discover',
+  path: '/radio/discover',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RadioStationIdRoute = RadioStationIdRouteImport.update({
@@ -103,9 +115,11 @@ const LibraryGenresGenreRoute = LibraryGenresGenreRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/home': typeof HomeRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/radio/$stationId': typeof RadioStationIdRoute
+  '/radio/discover': typeof RadioDiscoverRoute
   '/favorites/': typeof FavoritesIndexRoute
   '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
@@ -120,9 +134,11 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/home': typeof HomeRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/radio/$stationId': typeof RadioStationIdRoute
+  '/radio/discover': typeof RadioDiscoverRoute
   '/favorites': typeof FavoritesIndexRoute
   '/folders': typeof FoldersIndexRoute
   '/library': typeof LibraryIndexRoute
@@ -138,9 +154,11 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/home': typeof HomeRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/radio/$stationId': typeof RadioStationIdRoute
+  '/radio/discover': typeof RadioDiscoverRoute
   '/favorites/': typeof FavoritesIndexRoute
   '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
@@ -157,9 +175,11 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/home'
     | '/library/$albumId'
     | '/playlists/$playlistId'
     | '/radio/$stationId'
+    | '/radio/discover'
     | '/favorites/'
     | '/folders/'
     | '/library/'
@@ -174,9 +194,11 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/home'
     | '/library/$albumId'
     | '/playlists/$playlistId'
     | '/radio/$stationId'
+    | '/radio/discover'
     | '/favorites'
     | '/folders'
     | '/library'
@@ -191,9 +213,11 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/home'
     | '/library/$albumId'
     | '/playlists/$playlistId'
     | '/radio/$stationId'
+    | '/radio/discover'
     | '/favorites/'
     | '/folders/'
     | '/library/'
@@ -209,9 +233,11 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  HomeRoute: typeof HomeRoute
   LibraryAlbumIdRoute: typeof LibraryAlbumIdRoute
   PlaylistsPlaylistIdRoute: typeof PlaylistsPlaylistIdRoute
   RadioStationIdRoute: typeof RadioStationIdRoute
+  RadioDiscoverRoute: typeof RadioDiscoverRoute
   FavoritesIndexRoute: typeof FavoritesIndexRoute
   FoldersIndexRoute: typeof FoldersIndexRoute
   LibraryIndexRoute: typeof LibraryIndexRoute
@@ -227,6 +253,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/home': {
+      id: '/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof HomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -274,6 +307,13 @@ declare module '@tanstack/react-router' {
       path: '/favorites'
       fullPath: '/favorites/'
       preLoaderRoute: typeof FavoritesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/radio/discover': {
+      id: '/radio/discover'
+      path: '/radio/discover'
+      fullPath: '/radio/discover'
+      preLoaderRoute: typeof RadioDiscoverRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/radio/$stationId': {
@@ -337,9 +377,11 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  HomeRoute: HomeRoute,
   LibraryAlbumIdRoute: LibraryAlbumIdRoute,
   PlaylistsPlaylistIdRoute: PlaylistsPlaylistIdRoute,
   RadioStationIdRoute: RadioStationIdRoute,
+  RadioDiscoverRoute: RadioDiscoverRoute,
   FavoritesIndexRoute: FavoritesIndexRoute,
   FoldersIndexRoute: FoldersIndexRoute,
   LibraryIndexRoute: LibraryIndexRoute,
