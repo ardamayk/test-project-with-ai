@@ -2,7 +2,6 @@ package library_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	_ "modernc.org/sqlite"
 )
 
 func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
@@ -20,20 +18,7 @@ func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
 		t.Skip("sample flac not present")
 	}
 
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	_, err = db.Exec(`
-		CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT, name_sort TEXT, created_at TEXT, updated_at TEXT);
-		CREATE TABLE albums (id TEXT PRIMARY KEY, artist_id TEXT, title TEXT, title_sort TEXT, year INTEGER, genres TEXT NOT NULL DEFAULT '[]', cover_mime TEXT, cover_data BLOB, created_at TEXT, updated_at TEXT);
-		CREATE TABLE tracks (id TEXT PRIMARY KEY, album_id TEXT, title TEXT, title_sort TEXT, artist_name TEXT, track_no INTEGER, duration_ms INTEGER, format TEXT, size_bytes INTEGER, file_path TEXT UNIQUE, file_mtime INTEGER, missing_at TEXT, genre TEXT, sample_rate_hz INTEGER, bit_depth INTEGER, created_at TEXT, updated_at TEXT);
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := setupLibraryDB(t)
 
 	store := library.NewStore(db)
 	files, err := library.WalkMusicPaths([]string{musicDir})
@@ -72,8 +57,8 @@ func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
 		t.Fatal(err)
 	}
 	var genres []string
-	if err := json.Unmarshal([]byte(genresJSON), &genres); err != nil {
-		t.Fatal(err)
+	if unmarshalErr := json.Unmarshal([]byte(genresJSON), &genres); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
 	}
 	if len(genres) != 1 || genres[0] != meta.Genre {
 		t.Fatalf("album genres = %#v, want [%q]", genres, meta.Genre)
@@ -96,7 +81,6 @@ func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
 
 func TestRescanWithMissingGenrePreservesExistingTrackAndAlbumGenre(t *testing.T) {
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{

@@ -209,7 +209,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Reorder playback queue items */
+        patch: operations["reorderPlaybackQueue"];
         trace?: never;
     };
     "/api/v1/playback/queue/items": {
@@ -332,6 +333,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/radio/stations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List user radio stations */
+        get: operations["listRadioStations"];
+        put?: never;
+        /** Create user radio station */
+        post: operations["createRadioStation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/stations/{stationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get user radio station */
+        get: operations["getRadioStation"];
+        put?: never;
+        post?: never;
+        /** Delete user radio station */
+        delete: operations["deleteRadioStation"];
+        options?: never;
+        head?: never;
+        /** Update user radio station */
+        patch: operations["patchRadioStation"];
+        trace?: never;
+    };
+    "/api/v1/radio/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Radio Browser stations */
+        get: operations["searchRadioStations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/catalog/countries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Radio Browser catalog countries */
+        get: operations["listRadioCatalogCountries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/catalog/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Radio Browser catalog tags */
+        get: operations["listRadioCatalogTags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Radio Browser station */
+        post: operations["importRadioStation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/preview/{stationUuid}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Radio Browser station preview */
+        get: operations["streamRadioPreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/stations/{stationId}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream radio station through backend proxy */
+        get: operations["streamRadioStation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/radio/stations/{stationId}/now-playing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get latest radio now-playing metadata */
+        get: operations["getRadioNowPlaying"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -340,6 +497,8 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
+            /** @description Named server behaviors supported by this release */
+            capabilities: string[];
         };
         User: {
             /** Format: uuid */
@@ -424,6 +583,17 @@ export interface components {
             bitDepth?: number;
             bitrateKbps?: number;
             sizeBytes?: number;
+            replayGain?: components["schemas"]["ReplayGainMetadata"];
+        };
+        ReplayGainMetadata: {
+            /** Format: double */
+            trackGainDb: number | null;
+            /** Format: double */
+            trackPeak: number | null;
+            /** Format: double */
+            albumGainDb: number | null;
+            /** Format: double */
+            albumPeak: number | null;
         };
         TrackList: {
             items: components["schemas"]["Track"][];
@@ -449,6 +619,111 @@ export interface components {
         PlaylistTrackAdd: {
             /** Format: uuid */
             trackId: string;
+        };
+        RadioNowPlaying: {
+            title?: string;
+            artist?: string;
+            raw?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+            stale?: boolean;
+        };
+        RadioStation: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uri */
+            streamUrl: string;
+            /** Format: uri */
+            homepageUrl?: string;
+            /** Format: uri */
+            faviconUrl?: string;
+            country?: string;
+            language?: string;
+            tags: string[];
+            codec?: string;
+            bitrate?: number;
+            source: string;
+            externalId?: string;
+            isFavorite: boolean;
+            position: number;
+            lastNowPlaying?: components["schemas"]["RadioNowPlaying"];
+        };
+        RadioStationList: {
+            items: components["schemas"]["RadioStation"][];
+            total: number;
+        };
+        RadioStationCreate: {
+            name: string;
+            /** Format: uri */
+            streamUrl: string;
+            /** Format: uri */
+            homepageUrl?: string;
+            /** Format: uri */
+            faviconUrl?: string;
+            country?: string;
+            language?: string;
+            tags?: string[];
+            codec?: string;
+            bitrate?: number;
+            source?: string;
+            externalId?: string;
+            isFavorite?: boolean;
+        };
+        RadioStationPatch: {
+            name?: string;
+            /** Format: uri */
+            streamUrl?: string;
+            /** Format: uri */
+            homepageUrl?: string;
+            /** Format: uri */
+            faviconUrl?: string;
+            country?: string;
+            language?: string;
+            tags?: string[];
+            codec?: string;
+            bitrate?: number;
+            isFavorite?: boolean;
+            position?: number;
+        };
+        RadioSearchResult: {
+            stationUuid: string;
+            name: string;
+            /** Format: uri */
+            streamUrl: string;
+            /** Format: uri */
+            homepageUrl?: string;
+            /** Format: uri */
+            faviconUrl?: string;
+            country?: string;
+            language?: string;
+            tags: string[];
+            codec?: string;
+            bitrate?: number;
+            votes?: number;
+            /** @enum {string} */
+            healthStatus?: "healthy" | "broken" | "unknown";
+            /** Format: date-time */
+            lastCheckedAt?: string;
+            /** Format: date-time */
+            lastSuccessfulAt?: string;
+        };
+        RadioSearchResultList: {
+            items: components["schemas"]["RadioSearchResult"][];
+            total: number;
+        };
+        RadioCatalogOption: {
+            name: string;
+            code?: string;
+            stationCount?: number;
+        };
+        RadioCatalogOptionList: {
+            items: components["schemas"]["RadioCatalogOption"][];
+            total: number;
+        };
+        RadioImportRequest: {
+            stationUuid?: string;
+            result?: components["schemas"]["RadioSearchResult"];
         };
         DeleteResult: {
             deletedFiles: number;
@@ -476,13 +751,24 @@ export interface components {
         };
         Queue: {
             items: components["schemas"]["QueueItem"][];
+            /** @description Opaque version of this Queue state */
+            revision: string;
         };
         QueueReplace: {
             trackIds: string[];
+            revision: string;
         };
         QueueItemAppend: {
             /** Format: uuid */
             trackId: string;
+            revision: string;
+        };
+        QueueReorder: {
+            itemIds: string[];
+            revision: string;
+        };
+        QueueConflictResponse: components["schemas"]["ErrorResponse"] & {
+            queue: components["schemas"]["Queue"];
         };
     };
     responses: {
@@ -539,6 +825,7 @@ export interface components {
         trackId: string;
         queueItemId: string;
         playlistId: string;
+        stationId: string;
     };
     requestBodies: never;
     headers: never;
@@ -913,6 +1200,50 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
+        };
+    };
+    reorderPlaybackQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueReorder"];
+            };
+        };
+        responses: {
+            /** @description Updated queue */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Queue"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
         };
     };
     appendPlaybackQueueItem: {
@@ -940,12 +1271,24 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
         };
     };
     removePlaybackQueueItem: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Queue Revision on which removal intent is based */
+                "If-Match": string;
+            };
             path: {
                 itemId: components["parameters"]["queueItemId"];
             };
@@ -962,8 +1305,18 @@ export interface operations {
                     "application/json": components["schemas"]["Queue"];
                 };
             };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
         };
     };
     streamTrack: {
@@ -1114,6 +1467,353 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaylistDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listRadioStations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio station list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioStationList"];
+                };
+            };
+        };
+    };
+    createRadioStation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RadioStationCreate"];
+            };
+        };
+        responses: {
+            /** @description Created radio station */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioStation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getRadioStation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stationId: components["parameters"]["stationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio station detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioStation"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteRadioStation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stationId: components["parameters"]["stationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio station deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchRadioStation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stationId: components["parameters"]["stationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RadioStationPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated radio station */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioStation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    searchRadioStations: {
+        parameters: {
+            query?: {
+                q?: string;
+                country?: string;
+                language?: string;
+                tag?: string;
+                codec?: string;
+                codecGroup?: "aac";
+                minBitrate?: number;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio search results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioSearchResultList"];
+                };
+            };
+        };
+    };
+    listRadioCatalogCountries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio Browser country options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioCatalogOptionList"];
+                };
+            };
+        };
+    };
+    listRadioCatalogTags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio Browser tag options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioCatalogOptionList"];
+                };
+            };
+        };
+    };
+    importRadioStation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RadioImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Imported radio station */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioStation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    streamRadioPreview: {
+        parameters: {
+            query?: {
+                /** @description Signed HLS resource token emitted by a proxied playlist */
+                resource?: string;
+            };
+            header?: never;
+            path: {
+                stationUuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio preview stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                    "audio/*": string;
+                    "application/vnd.apple.mpegurl": string;
+                    "application/x-mpegurl": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Partial HLS media resource */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description DRM-protected HLS is unsupported */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream radio resource failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    streamRadioStation: {
+        parameters: {
+            query?: {
+                /** @description Signed HLS resource token emitted by a proxied playlist */
+                resource?: string;
+            };
+            header?: never;
+            path: {
+                stationId: components["parameters"]["stationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Radio stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                    "application/vnd.apple.mpegurl": string;
+                    "application/x-mpegurl": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Partial HLS media resource */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description DRM-protected HLS is unsupported */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream radio resource failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getRadioNowPlaying: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stationId: components["parameters"]["stationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Now-playing metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RadioNowPlaying"];
                 };
             };
             404: components["responses"]["NotFound"];

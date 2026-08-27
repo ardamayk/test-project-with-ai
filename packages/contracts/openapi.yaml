@@ -13,6 +13,7 @@ tags:
   - name: library
   - name: playback
   - name: playlists
+  - name: radio
 paths:
   /api/v1/health:
     get:
@@ -296,6 +297,41 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
+    patch:
+      tags: [playback]
+      operationId: reorderPlaybackQueue
+      summary: Reorder playback queue items
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueReorder"
+      responses:
+        "200":
+          description: Updated queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
   /api/v1/playback/queue/items:
     post:
       tags: [playback]
@@ -322,6 +358,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
   /api/v1/playback/queue/items/{itemId}:
     delete:
       tags: [playback]
@@ -331,6 +373,12 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/queueItemId"
+        - name: If-Match
+          in: header
+          required: true
+          description: Queue Revision on which removal intent is based
+          schema:
+            type: string
       responses:
         "200":
           description: Updated queue
@@ -338,10 +386,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Queue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
   /api/v1/tracks/{trackId}/stream:
     get:
       tags: [playback]
@@ -456,6 +512,324 @@ paths:
                 $ref: "#/components/schemas/PlaylistDetail"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/radio/stations:
+    get:
+      tags: [radio]
+      operationId: listRadioStations
+      summary: List user radio stations
+      responses:
+        "200":
+          description: Radio station list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStationList"
+    post:
+      tags: [radio]
+      operationId: createRadioStation
+      summary: Create user radio station
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RadioStationCreate"
+      responses:
+        "201":
+          description: Created radio station
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/radio/stations/{stationId}:
+    get:
+      tags: [radio]
+      operationId: getRadioStation
+      summary: Get user radio station
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      responses:
+        "200":
+          description: Radio station detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [radio]
+      operationId: patchRadioStation
+      summary: Update user radio station
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RadioStationPatch"
+      responses:
+        "200":
+          description: Updated radio station
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [radio]
+      operationId: deleteRadioStation
+      summary: Delete user radio station
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      responses:
+        "204":
+          description: Radio station deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/radio/search:
+    get:
+      tags: [radio]
+      operationId: searchRadioStations
+      summary: Search Radio Browser stations
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: country
+          in: query
+          schema:
+            type: string
+        - name: language
+          in: query
+          schema:
+            type: string
+        - name: tag
+          in: query
+          schema:
+            type: string
+        - name: codec
+          in: query
+          schema:
+            type: string
+        - name: codecGroup
+          in: query
+          schema:
+            type: string
+            enum: [aac]
+        - name: minBitrate
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Radio search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioSearchResultList"
+  /api/v1/radio/catalog/countries:
+    get:
+      tags: [radio]
+      operationId: listRadioCatalogCountries
+      summary: List Radio Browser catalog countries
+      responses:
+        "200":
+          description: Radio Browser country options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioCatalogOptionList"
+  /api/v1/radio/catalog/tags:
+    get:
+      tags: [radio]
+      operationId: listRadioCatalogTags
+      summary: List Radio Browser catalog tags
+      responses:
+        "200":
+          description: Radio Browser tag options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioCatalogOptionList"
+  /api/v1/radio/import:
+    post:
+      tags: [radio]
+      operationId: importRadioStation
+      summary: Import Radio Browser station
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RadioImportRequest"
+      responses:
+        "201":
+          description: Imported radio station
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioStation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/radio/preview/{stationUuid}/stream:
+    get:
+      tags: [radio]
+      operationId: streamRadioPreview
+      summary: Stream Radio Browser station preview
+      parameters:
+        - name: stationUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: query
+          description: Signed HLS resource token emitted by a proxied playlist
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Radio preview stream
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+            application/x-mpegurl:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial HLS media resource
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "415":
+          description: DRM-protected HLS is unsupported
+        "502":
+          description: Upstream radio resource failed
+  /api/v1/radio/stations/{stationId}/stream:
+    get:
+      tags: [radio]
+      operationId: streamRadioStation
+      summary: Stream radio station through backend proxy
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+        - name: resource
+          in: query
+          description: Signed HLS resource token emitted by a proxied playlist
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Radio stream
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+            application/x-mpegurl:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial HLS media resource
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          description: DRM-protected HLS is unsupported
+        "502":
+          description: Upstream radio resource failed
+  /api/v1/radio/stations/{stationId}/now-playing:
+    get:
+      tags: [radio]
+      operationId: getRadioNowPlaying
+      summary: Get latest radio now-playing metadata
+      parameters:
+        - $ref: "#/components/parameters/stationId"
+      responses:
+        "200":
+          description: Now-playing metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadioNowPlaying"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     bearerAuth:
@@ -537,16 +911,28 @@ components:
       schema:
         type: string
         format: uuid
+    stationId:
+      name: stationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   schemas:
     HealthResponse:
       type: object
-      required: [status, version]
+      required: [status, version, capabilities]
       properties:
         status:
           type: string
           enum: [ok]
         version:
           type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Named server behaviors supported by this release
     User:
       type: object
       required: [id, username]
@@ -729,6 +1115,28 @@ components:
           type: integer
         sizeBytes:
           type: integer
+        replayGain:
+          $ref: "#/components/schemas/ReplayGainMetadata"
+    ReplayGainMetadata:
+      type: object
+      required: [trackGainDb, trackPeak, albumGainDb, albumPeak]
+      properties:
+        trackGainDb:
+          type: number
+          format: double
+          nullable: true
+        trackPeak:
+          type: number
+          format: double
+          nullable: true
+        albumGainDb:
+          type: number
+          format: double
+          nullable: true
+        albumPeak:
+          type: number
+          format: double
+          nullable: true
     TrackList:
       type: object
       required: [items, total]
@@ -785,6 +1193,210 @@ components:
         trackId:
           type: string
           format: uuid
+    RadioNowPlaying:
+      type: object
+      properties:
+        title:
+          type: string
+        artist:
+          type: string
+        raw:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+    RadioStation:
+      type: object
+      required: [id, name, streamUrl, tags, source, isFavorite, position]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        source:
+          type: string
+        externalId:
+          type: string
+        isFavorite:
+          type: boolean
+        position:
+          type: integer
+        lastNowPlaying:
+          $ref: "#/components/schemas/RadioNowPlaying"
+    RadioStationList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadioStation"
+        total:
+          type: integer
+    RadioStationCreate:
+      type: object
+      required: [name, streamUrl]
+      properties:
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        source:
+          type: string
+        externalId:
+          type: string
+        isFavorite:
+          type: boolean
+    RadioStationPatch:
+      type: object
+      properties:
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        isFavorite:
+          type: boolean
+        position:
+          type: integer
+    RadioSearchResult:
+      type: object
+      required: [stationUuid, name, streamUrl, tags]
+      properties:
+        stationUuid:
+          type: string
+        name:
+          type: string
+        streamUrl:
+          type: string
+          format: uri
+        homepageUrl:
+          type: string
+          format: uri
+        faviconUrl:
+          type: string
+          format: uri
+        country:
+          type: string
+        language:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        codec:
+          type: string
+        bitrate:
+          type: integer
+        votes:
+          type: integer
+        healthStatus:
+          type: string
+          enum: [healthy, broken, unknown]
+        lastCheckedAt:
+          type: string
+          format: date-time
+        lastSuccessfulAt:
+          type: string
+          format: date-time
+    RadioSearchResultList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadioSearchResult"
+        total:
+          type: integer
+    RadioCatalogOption:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        stationCount:
+          type: integer
+    RadioCatalogOptionList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RadioCatalogOption"
+        total:
+          type: integer
+    RadioImportRequest:
+      type: object
+      properties:
+        stationUuid:
+          type: string
+        result:
+          $ref: "#/components/schemas/RadioSearchResult"
     DeleteResult:
       type: object
       required: [deletedFiles]
@@ -830,25 +1442,51 @@ components:
           $ref: "#/components/schemas/Track"
     Queue:
       type: object
-      required: [items]
+      required: [items, revision]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/QueueItem"
+        revision:
+          type: string
+          description: Opaque version of this Queue state
     QueueReplace:
       type: object
-      required: [trackIds]
+      required: [trackIds, revision]
       properties:
         trackIds:
           type: array
           items:
             type: string
             format: uuid
+        revision:
+          type: string
     QueueItemAppend:
       type: object
-      required: [trackId]
+      required: [trackId, revision]
       properties:
         trackId:
           type: string
           format: uuid
+        revision:
+          type: string
+    QueueReorder:
+      type: object
+      required: [itemIds, revision]
+      properties:
+        itemIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        revision:
+          type: string
+    QueueConflictResponse:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          required: [queue]
+          properties:
+            queue:
+              $ref: "#/components/schemas/Queue"

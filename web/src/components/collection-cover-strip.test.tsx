@@ -1,0 +1,147 @@
+import { render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import {
+	CollectionCoverCardStack,
+	CollectionCoverStack,
+	CollectionCoverStrip,
+	pickPreviewTracks,
+	pickRandomUniqueAlbumTracks,
+} from "./collection-cover-strip";
+
+vi.mock("#/lib/api", () => ({
+	apiClient: {
+		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
+	},
+}));
+
+const tracks = [
+	{
+		id: "t1",
+		title: "A",
+		albumId: "a1",
+		artistName: "Artist",
+		durationMs: 1,
+		format: "flac",
+	},
+	{
+		id: "t2",
+		title: "B",
+		albumId: "a2",
+		artistName: "Artist",
+		durationMs: 1,
+		format: "flac",
+	},
+	{
+		id: "t3",
+		title: "C",
+		albumId: "a3",
+		artistName: "Artist",
+		durationMs: 1,
+		format: "flac",
+	},
+	{
+		id: "t4",
+		title: "D",
+		albumId: "a4",
+		artistName: "Artist",
+		durationMs: 1,
+		format: "flac",
+	},
+	{
+		id: "t5",
+		title: "E",
+		albumId: "a5",
+		artistName: "Artist",
+		durationMs: 1,
+		format: "flac",
+	},
+];
+
+describe("CollectionCoverStrip", () => {
+	it("selects a stable four-track preview from a seed", () => {
+		const first = pickPreviewTracks(tracks, "playlist-1").map(
+			(track) => track.id,
+		);
+		const second = pickPreviewTracks(tracks, "playlist-1").map(
+			(track) => track.id,
+		);
+
+		expect(first).toEqual(second);
+		expect(first).toHaveLength(4);
+		expect(first).not.toEqual(["t1", "t2", "t3", "t4"]);
+	});
+
+	it("renders a fit-content row of four album covers", () => {
+		const { container } = render(
+			<CollectionCoverStrip tracks={tracks} seed="genre-pop" layout="row" />,
+		);
+
+		const strip = container.firstElementChild;
+		expect(strip?.className).toContain("w-fit");
+		expect(strip?.className).toContain("flex");
+		expect(container.querySelectorAll("img")).toHaveLength(4);
+	});
+
+	it("renders a two-by-two detail cover grid", () => {
+		const { container } = render(
+			<CollectionCoverStrip tracks={tracks} seed="genre-pop" layout="grid" />,
+		);
+
+		const strip = container.firstElementChild;
+		expect(strip?.className).toContain("grid");
+		expect(strip?.className).toContain("grid-cols-2");
+		expect(container.querySelectorAll("img")).toHaveLength(4);
+	});
+
+	it("selects at most four random unique album covers for playlist stacks", () => {
+		const selected = pickRandomUniqueAlbumTracks(
+			[...tracks, { ...tracks[0], id: "t6" }, { ...tracks[1], id: "t7" }],
+			4,
+			() => 0.9,
+		);
+
+		expect(selected).toHaveLength(4);
+		expect(new Set(selected.map((track) => track.albumId)).size).toBe(4);
+	});
+
+	it("raises stacked playlist covers on hover", () => {
+		const { container: detailContainer } = render(
+			<CollectionCoverStack tracks={tracks} />,
+		);
+		const { container: cardContainer } = render(
+			<CollectionCoverCardStack tracks={tracks} />,
+		);
+
+		for (const image of [
+			...Array.from(detailContainer.querySelectorAll("img")),
+			...Array.from(cardContainer.querySelectorAll("img")),
+		]) {
+			expect(image.className).toContain("transition");
+			expect(image.className).toContain("hover:z-50");
+			expect(image.className).toContain("hover:scale-105");
+			expect(image.className).toContain("hover:rotate-0");
+		}
+	});
+
+	it("stacks playlist card covers from right to left without a fan rotation", () => {
+		const { container } = render(<CollectionCoverCardStack tracks={tracks} />);
+
+		const images = Array.from(container.querySelectorAll("img"));
+		expect(images).toHaveLength(4);
+		expect(images[0].className).toContain("right-[48%]");
+		expect(images[0].className).toContain("z-40");
+		expect(images[1].className).toContain("right-[32%]");
+		expect(images[1].className).toContain("z-30");
+		expect(images[2].className).toContain("right-[16%]");
+		expect(images[2].className).toContain("z-20");
+		expect(images[3].className).toContain("right-[0%]");
+		expect(images[3].className).toContain("z-10");
+		for (const image of images) {
+			expect(image.className).toContain("top-0");
+			expect(image.className).toContain("h-[88%]");
+			expect(image.className).toContain("w-[64%]");
+			expect(image.className).not.toContain(" -rotate-");
+			expect(image.className).not.toContain(" rotate-");
+		}
+	});
+});

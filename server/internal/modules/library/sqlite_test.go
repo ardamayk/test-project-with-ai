@@ -2,18 +2,12 @@ package library
 
 import (
 	"database/sql"
-	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
 
 func openMemoryDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
+	return testutil.OpenMigratedDB(t)
 }

@@ -2,8 +2,9 @@ package library
 
 import (
 	"fmt"
+	"math"
 	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,22 +12,30 @@ import (
 )
 
 type FileMetadata struct {
-	Path        string
-	Format      string
-	SizeBytes   int64
-	ModTime     time.Time
-	Title       string
-	Artist      string
-	AlbumArtist string
-	Album       string
-	TrackNo     int
-	Year        int
+	Path         string
+	Format       string
+	SizeBytes    int64
+	ModTime      time.Time
+	Title        string
+	Artist       string
+	AlbumArtist  string
+	Album        string
+	TrackNo      int
+	Year         int
 	DurationMs   int
 	Genre        string
 	SampleRateHz int
 	BitDepth     int
 	CoverMime    string
 	CoverData    []byte
+	ReplayGain   ReplayGainMetadata
+}
+
+type ReplayGainMetadata struct {
+	TrackGainDB *float64 `json:"trackGainDb"`
+	TrackPeak   *float64 `json:"trackPeak"`
+	AlbumGainDB *float64 `json:"albumGainDb"`
+	AlbumPeak   *float64 `json:"albumPeak"`
 }
 
 func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadata, error) {
@@ -44,7 +53,7 @@ func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadat
 	if err != nil {
 		return meta, fmt.Errorf("open file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	m, err := tag.ReadFrom(f)
 	if err != nil {
@@ -69,6 +78,7 @@ func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadat
 	if genres := splitGenres(m.Genre()); len(genres) > 0 {
 		meta.Genre = genres[0]
 	}
+	meta.ReplayGain = readReplayGainMetadata(m.Raw())
 	applyAudioFormat(&meta)
 	if pic := m.Picture(); pic != nil && len(pic.Data) > 0 {
 		meta.CoverMime = pic.MIMEType
@@ -81,17 +91,46 @@ func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadat
 	return meta, nil
 }
 
-func parseFilenameArtistAlbum(path string) (artist, album, title string) {
-	base := filepath.Base(path)
-	if idx := strings.LastIndex(base, "."); idx >= 0 {
-		base = base[:idx]
+func readReplayGainMetadata(raw map[string]interface{}) ReplayGainMetadata {
+	values := make(map[string]string, len(raw))
+	for key, value := range raw {
+		normalizedKey := strings.ToUpper(key)
+		switch typedValue := value.(type) {
+		case string:
+			values[normalizedKey] = typedValue
+		case []string:
+			if len(typedValue) > 0 {
+				values[normalizedKey] = typedValue[0]
+			}
+		case *tag.Comm:
+			values[strings.ToUpper(typedValue.Description)] = typedValue.Text
+		case tag.Comm:
+			values[strings.ToUpper(typedValue.Description)] = typedValue.Text
+		}
 	}
-	parts := strings.Split(base, " - ")
-	if len(parts) >= 3 {
-		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(strings.Join(parts[2:], " - "))
+
+	return ReplayGainMetadata{
+		TrackGainDB: parseReplayGainValue(values["REPLAYGAIN_TRACK_GAIN"]),
+		TrackPeak:   parseReplayGainPeak(values["REPLAYGAIN_TRACK_PEAK"]),
+		AlbumGainDB: parseReplayGainValue(values["REPLAYGAIN_ALBUM_GAIN"]),
+		AlbumPeak:   parseReplayGainPeak(values["REPLAYGAIN_ALBUM_PEAK"]),
 	}
-	if len(parts) == 2 {
-		return "Unknown Artist", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+}
+
+func parseReplayGainValue(value string) *float64 {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSpace(strings.TrimSuffix(strings.ToLower(value), "db"))
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return nil
 	}
-	return "Unknown Artist", "Unknown Album", base
+	return &parsed
+}
+
+func parseReplayGainPeak(value string) *float64 {
+	parsed := parseReplayGainValue(value)
+	if parsed == nil || *parsed < 0 {
+		return nil
+	}
+	return parsed
 }

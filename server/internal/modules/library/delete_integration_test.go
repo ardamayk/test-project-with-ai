@@ -3,39 +3,28 @@ package library_test
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	_ "modernc.org/sqlite"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
 
 func setupLibraryDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT, name_sort TEXT, created_at TEXT, updated_at TEXT);
-		CREATE TABLE albums (id TEXT PRIMARY KEY, artist_id TEXT, title TEXT, title_sort TEXT, year INTEGER, genres TEXT NOT NULL DEFAULT '[]', cover_mime TEXT, cover_data BLOB, created_at TEXT, updated_at TEXT);
-		CREATE TABLE tracks (id TEXT PRIMARY KEY, album_id TEXT, title TEXT, title_sort TEXT, artist_name TEXT, track_no INTEGER, duration_ms INTEGER, format TEXT, size_bytes INTEGER, file_path TEXT UNIQUE, file_mtime INTEGER, missing_at TEXT, genre TEXT, sample_rate_hz INTEGER, bit_depth INTEGER, created_at TEXT, updated_at TEXT);
-		CREATE TABLE playback_queue (id TEXT PRIMARY KEY, user_id TEXT, position INTEGER, track_id TEXT, UNIQUE(user_id, position));
-		CREATE TABLE scan_jobs (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', started_at TEXT, finished_at TEXT, scanned INTEGER NOT NULL DEFAULT 0, added INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0, error_message TEXT);
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testutil.OpenMigratedDB(t)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 	return db
 }
 
 func TestAlbumArtistGroupsFeaturedTrackUnderAlbumArtist(t *testing.T) {
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
@@ -93,7 +82,6 @@ func TestDeleteTrackRemovesDatabaseRowsAndFile(t *testing.T) {
 	}
 
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
@@ -143,24 +131,23 @@ func TestDeleteAlbumRemovesTracksAndFiles(t *testing.T) {
 	}
 
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
-		Path:        trackPath,
-		Format:      "flac",
-		SizeBytes:   10,
-		ModTime:     time.Now(),
-		Title:       "Track",
-		Artist:      "Taylor Swift",
-		AlbumArtist: "Taylor Swift",
-		Album:       "Midnights",
-		TrackNo:     1,
-		Year:        2022,
-		DurationMs:  1000,
+		Path:         trackPath,
+		Format:       "flac",
+		SizeBytes:    10,
+		ModTime:      time.Now(),
+		Title:        "Track",
+		Artist:       "Taylor Swift",
+		AlbumArtist:  "Taylor Swift",
+		Album:        "Midnights",
+		TrackNo:      1,
+		Year:         2022,
+		DurationMs:   1000,
 		SampleRateHz: 44100,
-		BitDepth:    16,
-		Genre:       "Pop",
+		BitDepth:     16,
+		Genre:        "Pop",
 	}
 	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
 		t.Fatal(err)
@@ -195,7 +182,6 @@ func TestDeleteTrackRemovesQueueAndEmptyAlbum(t *testing.T) {
 	}
 
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
@@ -246,5 +232,62 @@ func TestDeleteTrackRemovesQueueAndEmptyAlbum(t *testing.T) {
 	}
 	if queueCount != 0 || albumCount != 0 || artistCount != 0 {
 		t.Fatalf("queue=%d album=%d artist=%d, want all 0", queueCount, albumCount, artistCount)
+	}
+}
+
+func TestDeleteTrackRemovesEmptyUserPlaylist(t *testing.T) {
+	tempDir := t.TempDir()
+	trackPath := filepath.Join(tempDir, "track.flac")
+	if err := os.WriteFile(trackPath, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db := setupLibraryDB(t)
+
+	store := library.NewStore(db)
+	meta := library.FileMetadata{
+		Path:        trackPath,
+		Format:      "flac",
+		SizeBytes:   10,
+		ModTime:     time.Now(),
+		Title:       "Only Track",
+		Artist:      "Solo Artist",
+		AlbumArtist: "Solo Artist",
+		Album:       "Solo Album",
+		TrackNo:     1,
+		DurationMs:  1000,
+		Genre:       "Indie",
+	}
+	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+		t.Fatal(err)
+	}
+
+	var trackID string
+	if err := db.QueryRow(`SELECT id FROM tracks`).Scan(&trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO playlists (id, user_id, name, is_default) VALUES (?, ?, ?, 0)`,
+		"playlist-1", "user", "Temporary",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)`,
+		"playlist-1", trackID, 0,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.DeleteTrack(context.Background(), trackID, os.Remove); err != nil {
+		t.Fatal(err)
+	}
+
+	var playlistCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM playlists WHERE id = ?`, "playlist-1").Scan(&playlistCount); err != nil {
+		t.Fatal(err)
+	}
+	if playlistCount != 0 {
+		t.Fatalf("playlist count = %d, want 0", playlistCount)
 	}
 }

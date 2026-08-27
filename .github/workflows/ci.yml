@@ -14,6 +14,17 @@ jobs:
 
       - uses: jdx/mise-action@v2
 
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
+
       - name: Install JS deps
         run: pnpm install
 
@@ -26,8 +37,11 @@ jobs:
       - name: Lint web
         run: pnpm --filter web check
 
-      - name: Unit tests
-        run: pnpm test
+      - name: Core unit tests
+        run: pnpm test:core
+
+      - name: Desktop unit tests
+        run: pnpm test:desktop
 
       - name: Go test
         working-directory: server
@@ -53,3 +67,5 @@ jobs:
         run: pnpm --filter web exec playwright install chromium --with-deps
       - name: E2E tests
         run: pnpm test:e2e
+      - name: HLS browser integration
+        run: pnpm test:e2e:hls

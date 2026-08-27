@@ -63,23 +63,23 @@ function SortableWidget({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'rounded-lg border border-border bg-card',
+        'min-w-0 overflow-hidden rounded-lg border border-border bg-card',
         isDragging && 'opacity-60 shadow-md',
       )}
     >
-      <div className="flex items-center gap-1 border-border border-b px-2 py-1">
+      <div className="flex min-w-0 items-center gap-1 border-border border-b px-2 py-1">
         <button
           type="button"
-          className="cursor-grab text-caption hover:text-foreground active:cursor-grabbing"
+          className="shrink-0 cursor-grab text-caption hover:text-foreground active:cursor-grabbing"
           aria-label={`Drag ${title}`}
           {...attributes}
           {...listeners}
         >
           <GripVertical className="size-4" />
         </button>
-        <span className="font-medium text-xs">{title}</span>
+        <span className="min-w-0 truncate font-medium text-xs">{title}</span>
       </div>
-      <div className="p-2">
+      <div className="min-w-0 p-2">
         <Widget />
       </div>
     </div>
@@ -100,7 +100,10 @@ export function WidgetDock({ panel }: { panel: PanelSide }) {
 
   return (
     <SortableContext items={widgetIds} strategy={verticalListSortingStrategy}>
-      <div className="flex flex-col gap-3 p-2">
+      <div
+        className="flex min-w-0 flex-col gap-3 p-2 [contain:inline-size]"
+        data-widget-dock
+      >
         {widgetIds.map((id) => (
           <SortableWidget key={id} id={id} panel={panel} />
         ))}

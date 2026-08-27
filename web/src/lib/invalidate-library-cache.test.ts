@@ -1,91 +1,93 @@
-import type { AlbumDetail, AlbumList } from '@repo/api-client'
-import { describe, expect, it, vi } from 'vitest'
-import { QueryClient } from '@tanstack/react-query'
-import { invalidateLibraryCache } from './invalidate-library-cache'
+import type { AlbumDetail, AlbumList } from "@repo/api-client";
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it, vi } from "vitest";
+import { invalidateLibraryCache } from "./invalidate-library-cache";
 
-describe('invalidateLibraryCache', () => {
-  it('removes deleted album from cached album lists immediately', async () => {
-    const queryClient = new QueryClient()
-    queryClient.setQueryData<AlbumList>(['library', 'albums', '', 'all'], {
-      items: [
-        {
-          id: 'album-1',
-          title: 'Keep',
-          artistId: 'a1',
-          artistName: 'Artist',
-        },
-        {
-          id: 'album-2',
-          title: 'Delete me',
-          artistId: 'a1',
-          artistName: 'Artist',
-        },
-      ],
-      total: 2,
-    })
+describe("invalidateLibraryCache", () => {
+	it("removes deleted album from cached album lists immediately", async () => {
+		const queryClient = new QueryClient();
+		queryClient.setQueryData<AlbumList>(["library", "albums", "", "all"], {
+			items: [
+				{
+					id: "album-1",
+					title: "Keep",
+					artistId: "a1",
+					artistName: "Artist",
+				},
+				{
+					id: "album-2",
+					title: "Delete me",
+					artistId: "a1",
+					artistName: "Artist",
+				},
+			],
+			total: 2,
+		});
 
-    const invalidateSpy = vi
-      .spyOn(queryClient, 'invalidateQueries')
-      .mockResolvedValue(undefined as never)
+		const invalidateSpy = vi
+			.spyOn(queryClient, "invalidateQueries")
+			.mockResolvedValue(undefined as never);
 
-    await invalidateLibraryCache(queryClient, { albumId: 'album-2' })
+		await invalidateLibraryCache(queryClient, { albumId: "album-2" });
 
-    const cached = queryClient.getQueryData<AlbumList>([
-      'library',
-      'albums',
-      '',
-      'all',
-    ])
-    expect(cached?.items).toHaveLength(1)
-    expect(cached?.items[0]?.id).toBe('album-1')
-    expect(cached?.total).toBe(1)
-    expect(
-      queryClient.getQueryState(['library', 'album', 'album-2']),
-    ).toBeUndefined()
-    expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['library'],
-      refetchType: 'all',
-    })
-  })
+		const cached = queryClient.getQueryData<AlbumList>([
+			"library",
+			"albums",
+			"",
+			"all",
+		]);
+		expect(cached?.items).toHaveLength(1);
+		expect(cached?.items[0]?.id).toBe("album-1");
+		expect(cached?.total).toBe(1);
+		expect(
+			queryClient.getQueryState(["library", "album", "album-2"]),
+		).toBeUndefined();
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: ["library"],
+			refetchType: "all",
+		});
+	});
 
-  it('removes deleted track from cached album detail immediately', async () => {
-    const queryClient = new QueryClient()
-    vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined as never)
-    queryClient.setQueryData<AlbumDetail>(['library', 'album', 'album-1'], {
-      id: 'album-1',
-      title: 'Album',
-      artistId: 'a1',
-      artistName: 'Artist',
-      trackCount: 2,
-      tracks: [
-        {
-          id: 'track-1',
-          title: 'Keep',
-          artistName: 'Artist',
-          albumId: 'album-1',
-          durationMs: 1000,
-          format: 'flac',
-        },
-        {
-          id: 'track-2',
-          title: 'Delete',
-          artistName: 'Artist',
-          albumId: 'album-1',
-          durationMs: 1000,
-          format: 'flac',
-        },
-      ],
-    })
+	it("removes deleted track from cached album detail immediately", async () => {
+		const queryClient = new QueryClient();
+		vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(
+			undefined as never,
+		);
+		queryClient.setQueryData<AlbumDetail>(["library", "album", "album-1"], {
+			id: "album-1",
+			title: "Album",
+			artistId: "a1",
+			artistName: "Artist",
+			trackCount: 2,
+			tracks: [
+				{
+					id: "track-1",
+					title: "Keep",
+					artistName: "Artist",
+					albumId: "album-1",
+					durationMs: 1000,
+					format: "flac",
+				},
+				{
+					id: "track-2",
+					title: "Delete",
+					artistName: "Artist",
+					albumId: "album-1",
+					durationMs: 1000,
+					format: "flac",
+				},
+			],
+		});
 
-    await invalidateLibraryCache(queryClient, { trackId: 'track-2' })
+		await invalidateLibraryCache(queryClient, { trackId: "track-2" });
 
-    const cached = queryClient.getQueryData<AlbumDetail>([
-      'library',
-      'album',
-      'album-1',
-    ])
-    expect(cached?.tracks).toHaveLength(1)
-    expect(cached?.tracks[0]?.id).toBe('track-1')
-    expect(cached?.trackCount).toBe(1)
-  })
-})
+		const cached = queryClient.getQueryData<AlbumDetail>([
+			"library",
+			"album",
+			"album-1",
+		]);
+		expect(cached?.tracks).toHaveLength(1);
+		expect(cached?.tracks[0]?.id).toBe("track-1");
+		expect(cached?.trackCount).toBe(1);
+	});
+});

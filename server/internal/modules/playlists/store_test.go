@@ -3,37 +3,51 @@ package playlists
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	_ "modernc.org/sqlite"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
+
+type fakeTrackAccess struct {
+	tracks map[string]library.Track
+}
+
+func (f fakeTrackAccess) GetTrack(_ context.Context, trackID string) (library.Track, error) {
+	track, ok := f.tracks[trackID]
+	if !ok {
+		return library.Track{}, library.ErrNotFound
+	}
+	return track, nil
+}
+
+func (f fakeTrackAccess) GetTrackFilePath(_ context.Context, trackID string) (string, error) {
+	track, ok := f.tracks[trackID]
+	if !ok {
+		return "", library.ErrNotFound
+	}
+	return track.FilePath, nil
+}
 
 func setupPlaylistStore(t *testing.T) (*Store, *library.Store, *sql.DB, string) {
 	t.Helper()
 	musicRoot := t.TempDir()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT, name_sort TEXT, created_at TEXT, updated_at TEXT);
-		CREATE TABLE albums (id TEXT PRIMARY KEY, artist_id TEXT, title TEXT, title_sort TEXT, year INTEGER, genres TEXT NOT NULL DEFAULT '[]', cover_mime TEXT, cover_data BLOB, created_at TEXT, updated_at TEXT);
-		CREATE TABLE tracks (id TEXT PRIMARY KEY, album_id TEXT, title TEXT, title_sort TEXT, artist_name TEXT, track_no INTEGER, duration_ms INTEGER, format TEXT, size_bytes INTEGER, file_path TEXT UNIQUE, file_mtime INTEGER, missing_at TEXT, genre TEXT, sample_rate_hz INTEGER, bit_depth INTEGER, created_at TEXT, updated_at TEXT);
-		CREATE TABLE playlists (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name));
-		CREATE TABLE playlist_tracks (playlist_id TEXT NOT NULL, track_id TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (playlist_id, track_id));
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testutil.OpenMigratedDB(t)
 	libStore := library.NewStore(db)
 	return NewStore(db, libStore), libStore, db, musicRoot
+}
+
+func setupPlaylistStoreWithTrackAccess(t *testing.T, tracks map[string]library.Track) *Store {
+	t.Helper()
+	db := testutil.OpenMigratedDB(t)
+	for trackID := range tracks {
+		testutil.InsertTrack(t, db, trackID)
+	}
+	return NewStore(db, fakeTrackAccess{tracks: tracks})
 }
 
 func seedPlaylistTrack(t *testing.T, db *sql.DB, libStore *library.Store, musicRoot string) string {
@@ -89,8 +103,8 @@ func TestAddAndRemoveTrackAreIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID); err != nil {
-		t.Fatal(err)
+	if _, addErr := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID); addErr != nil {
+		t.Fatal(addErr)
 	}
 	detail, err := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID)
 	if err != nil {
@@ -116,6 +130,38 @@ func TestAddAndRemoveTrackAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestRemoveLastTrackDeletesUserPlaylist(t *testing.T) {
+	store, libStore, db, musicRoot := setupPlaylistStore(t)
+	trackID := seedPlaylistTrack(t, db, libStore, musicRoot)
+
+	playlist, err := store.CreatePlaylist(context.Background(), "user-1", "Road")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, addErr := store.AddTrack(context.Background(), "user-1", playlist.ID, trackID); addErr != nil {
+		t.Fatal(addErr)
+	}
+
+	detail, err := store.RemoveTrack(context.Background(), "user-1", playlist.ID, trackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.TrackCount != 0 || len(detail.Tracks) != 0 {
+		t.Fatalf("removed playlist detail = %+v, want empty", detail)
+	}
+
+	playlists, err := store.ListPlaylists(context.Background(), "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(playlists.Items) != 1 || !playlists.Items[0].IsDefault {
+		t.Fatalf("playlists after empty user playlist cleanup = %+v", playlists.Items)
+	}
+	if _, err := store.GetPlaylist(context.Background(), "user-1", playlist.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPlaylist error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCreatePlaylistAndListWithFavoritesPinned(t *testing.T) {
 	store, _, _, _ := setupPlaylistStore(t)
 
@@ -136,5 +182,28 @@ func TestCreatePlaylistAndListWithFavoritesPinned(t *testing.T) {
 	}
 	if playlists.Items[0].Name != DefaultFavoritesName || playlists.Items[1].Name != "Road" {
 		t.Fatalf("order = %+v", playlists.Items)
+	}
+}
+
+func TestStoreUsesTrackAccessInterface(t *testing.T) {
+	trackID := "track-1"
+	store := setupPlaylistStoreWithTrackAccess(t, map[string]library.Track{
+		trackID: {ID: trackID, Title: "Song"},
+	})
+
+	favorites, err := store.GetDefaultFavorites(context.Background(), "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(detail.Tracks) != 1 {
+		t.Fatalf("tracks = %d, want 1", len(detail.Tracks))
+	}
+	if detail.Tracks[0].Title != "Song" {
+		t.Fatalf("track = %+v", detail.Tracks[0])
 	}
 }

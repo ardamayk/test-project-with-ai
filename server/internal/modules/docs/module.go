@@ -1,28 +1,38 @@
 package docs
 
 import (
+	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 
+	apigen "github.com/ardam/navidrome-replacement/server/internal/api/gen"
 	"github.com/ardam/navidrome-replacement/server/internal/staticassets"
 	"github.com/go-chi/chi/v5"
+	"gopkg.in/yaml.v3"
 )
 
 type Module struct {
-	openAPIPath string
+	openAPISpec func() ([]byte, error)
 }
 
-func NewModule(openAPIPath string) *Module {
-	return &Module{openAPIPath: openAPIPath}
+func NewModule() *Module {
+	return NewModuleWithOpenAPISpec(generatedOpenAPISpec)
 }
 
-func DefaultOpenAPIPath() string {
-	path := filepath.Join("..", "packages", "contracts", "openapi.yaml")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return filepath.Join("packages", "contracts", "openapi.yaml")
+func NewModuleWithOpenAPISpec(openAPISpec func() ([]byte, error)) *Module {
+	return &Module{openAPISpec: openAPISpec}
+}
+
+func generatedOpenAPISpec() ([]byte, error) {
+	const specPath = "openapi.yaml"
+	raw, err := apigen.PathToRawSpec(specPath)[specPath]()
+	if err != nil {
+		return nil, err
 	}
-	return path
+	var spec map[string]any
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(spec)
 }
 
 func (m *Module) Name() string {
@@ -39,5 +49,11 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 }
 
 func (m *Module) ServeOpenAPI(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, m.openAPIPath)
+	spec, err := m.openAPISpec()
+	if err != nil {
+		http.Error(w, "openapi spec unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	_, _ = w.Write(spec)
 }

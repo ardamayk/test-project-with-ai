@@ -11,8 +11,8 @@ type Module struct {
 	handlers *Handlers
 }
 
-func NewModule(db *sql.DB, libStore *library.Store) *Module {
-	store := NewStore(db, libStore)
+func NewModule(db *sql.DB, tracks library.TrackReader) *Module {
+	store := NewStore(db, tracks)
 	return &Module{handlers: NewHandlers(store)}
 }
 

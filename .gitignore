@@ -11,4 +11,6 @@ graphify-out/
 coverage/
 playwright-report/
 test-results/
+.playwright-cli/
+.superpowers/**/state/
 server/music/

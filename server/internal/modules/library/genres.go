@@ -88,18 +88,18 @@ func (s *Store) recomputeAlbumGenres(ctx context.Context, albumID string) error 
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	collected := []string{}
 	for rows.Next() {
 		var genre string
-		if err := rows.Scan(&genre); err != nil {
-			return err
+		if scanErr := rows.Scan(&genre); scanErr != nil {
+			return scanErr
 		}
 		collected = append(collected, splitGenres(genre)...)
 	}
-	if err := rows.Err(); err != nil {
-		return err
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return rowsErr
 	}
 
 	genres := mergeGenres(collected)
@@ -114,7 +114,7 @@ func (s *Store) RecomputeAllAlbumGenres(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var albumID string

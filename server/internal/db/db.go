@@ -16,7 +16,7 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)", databasePath)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", databasePath)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -27,7 +27,10 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	goose.SetDialect("sqlite")
+	if err := goose.SetDialect("sqlite"); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("set migration dialect: %w", err)
+	}
 	if err := goose.Up(sqlDB, migrationsDir); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)

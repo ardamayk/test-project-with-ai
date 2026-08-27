@@ -1,8 +1,8 @@
-[data-theme-preset='dusty-earth'] {
-  --theme-1: #2a2420;
-  --theme-2: #3a3230;
-  --theme-3: #7a6a62;
-  --theme-4: #8a6f66;
-  --theme-5: #c4b5a8;
-  --theme-6: #f7f0e4;
+[data-theme-preset="dusty-earth"] {
+	--theme-1: #2a2420;
+	--theme-2: #3a3230;
+	--theme-3: #7a6a62;
+	--theme-4: #8a6f66;
+	--theme-5: #c4b5a8;
+	--theme-6: #f7f0e4;
 }

@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: 'radio-hls-proxy.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -18,7 +19,7 @@ export default defineConfig({
       url: 'http://localhost:8090/api/v1/health',
       reuseExistingServer: !process.env.CI,
       cwd: '../server',
-      env: { SERVER_ADDR: ':8090', DATABASE_PATH: './data/e2e.db' },
+      env: { SERVER_ADDR: '127.0.0.1:8090', DATABASE_PATH: './data/e2e.db' },
     },
     {
       command: 'pnpm dev',

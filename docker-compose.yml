@@ -1,10 +1,9 @@
 services:
   server:
     build: .
-    ports:
-      - "8090:8090"
+    network_mode: host
     environment:
-      SERVER_ADDR: ":8090"
+      SERVER_ADDR: "127.0.0.1:8090"
       DATABASE_PATH: /data/app.db
     volumes:
       - app-data:/data

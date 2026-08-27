@@ -32,6 +32,13 @@ const (
 	Right LayoutPreferencesSidebarPosition = "right"
 )
 
+// Defines values for RadioSearchResultHealthStatus.
+const (
+	Broken  RadioSearchResultHealthStatus = "broken"
+	Healthy RadioSearchResultHealthStatus = "healthy"
+	Unknown RadioSearchResultHealthStatus = "unknown"
+)
+
 // Defines values for ScanStatusStatus.
 const (
 	Completed ScanStatusStatus = "completed"
@@ -56,6 +63,11 @@ const (
 	SageHearth    ThemePreferencesPreset = "sage-hearth"
 	TokyoNight    ThemePreferencesPreset = "tokyo-night"
 	VintageHarbor ThemePreferencesPreset = "vintage-harbor"
+)
+
+// Defines values for SearchRadioStationsParamsCodecGroup.
+const (
+	Aac SearchRadioStationsParamsCodecGroup = "aac"
 )
 
 // Album defines model for Album.
@@ -114,8 +126,10 @@ type ErrorResponse struct {
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
-	Status  HealthResponseStatus `json:"status"`
-	Version string               `json:"version"`
+	// Capabilities Named server behaviors supported by this release
+	Capabilities []string             `json:"capabilities"`
+	Status       HealthResponseStatus `json:"status"`
+	Version      string               `json:"version"`
 }
 
 // HealthResponseStatus defines model for HealthResponse.Status.
@@ -176,6 +190,17 @@ type PlaylistTrackAdd struct {
 // Queue defines model for Queue.
 type Queue struct {
 	Items []QueueItem `json:"items"`
+
+	// Revision Opaque version of this Queue state
+	Revision string `json:"revision"`
+}
+
+// QueueConflictResponse defines model for QueueConflictResponse.
+type QueueConflictResponse struct {
+	Code    string `json:"code"`
+	Error   string `json:"error"`
+	Message string `json:"message"`
+	Queue   Queue  `json:"queue"`
 }
 
 // QueueItem defines model for QueueItem.
@@ -188,12 +213,139 @@ type QueueItem struct {
 
 // QueueItemAppend defines model for QueueItemAppend.
 type QueueItemAppend struct {
-	TrackId openapi_types.UUID `json:"trackId"`
+	Revision string             `json:"revision"`
+	TrackId  openapi_types.UUID `json:"trackId"`
+}
+
+// QueueReorder defines model for QueueReorder.
+type QueueReorder struct {
+	ItemIds  []openapi_types.UUID `json:"itemIds"`
+	Revision string               `json:"revision"`
 }
 
 // QueueReplace defines model for QueueReplace.
 type QueueReplace struct {
+	Revision string               `json:"revision"`
 	TrackIds []openapi_types.UUID `json:"trackIds"`
+}
+
+// RadioCatalogOption defines model for RadioCatalogOption.
+type RadioCatalogOption struct {
+	Code         *string `json:"code,omitempty"`
+	Name         string  `json:"name"`
+	StationCount *int    `json:"stationCount,omitempty"`
+}
+
+// RadioCatalogOptionList defines model for RadioCatalogOptionList.
+type RadioCatalogOptionList struct {
+	Items []RadioCatalogOption `json:"items"`
+	Total int                  `json:"total"`
+}
+
+// RadioImportRequest defines model for RadioImportRequest.
+type RadioImportRequest struct {
+	Result      *RadioSearchResult `json:"result,omitempty"`
+	StationUuid *string            `json:"stationUuid,omitempty"`
+}
+
+// RadioNowPlaying defines model for RadioNowPlaying.
+type RadioNowPlaying struct {
+	Artist    *string    `json:"artist,omitempty"`
+	Raw       *string    `json:"raw,omitempty"`
+	Stale     *bool      `json:"stale,omitempty"`
+	Title     *string    `json:"title,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+}
+
+// RadioSearchResult defines model for RadioSearchResult.
+type RadioSearchResult struct {
+	Bitrate          *int                           `json:"bitrate,omitempty"`
+	Codec            *string                        `json:"codec,omitempty"`
+	Country          *string                        `json:"country,omitempty"`
+	FaviconUrl       *string                        `json:"faviconUrl,omitempty"`
+	HealthStatus     *RadioSearchResultHealthStatus `json:"healthStatus,omitempty"`
+	HomepageUrl      *string                        `json:"homepageUrl,omitempty"`
+	Language         *string                        `json:"language,omitempty"`
+	LastCheckedAt    *time.Time                     `json:"lastCheckedAt,omitempty"`
+	LastSuccessfulAt *time.Time                     `json:"lastSuccessfulAt,omitempty"`
+	Name             string                         `json:"name"`
+	StationUuid      string                         `json:"stationUuid"`
+	StreamUrl        string                         `json:"streamUrl"`
+	Tags             []string                       `json:"tags"`
+	Votes            *int                           `json:"votes,omitempty"`
+}
+
+// RadioSearchResultHealthStatus defines model for RadioSearchResult.HealthStatus.
+type RadioSearchResultHealthStatus string
+
+// RadioSearchResultList defines model for RadioSearchResultList.
+type RadioSearchResultList struct {
+	Items []RadioSearchResult `json:"items"`
+	Total int                 `json:"total"`
+}
+
+// RadioStation defines model for RadioStation.
+type RadioStation struct {
+	Bitrate        *int               `json:"bitrate,omitempty"`
+	Codec          *string            `json:"codec,omitempty"`
+	Country        *string            `json:"country,omitempty"`
+	ExternalId     *string            `json:"externalId,omitempty"`
+	FaviconUrl     *string            `json:"faviconUrl,omitempty"`
+	HomepageUrl    *string            `json:"homepageUrl,omitempty"`
+	Id             openapi_types.UUID `json:"id"`
+	IsFavorite     bool               `json:"isFavorite"`
+	Language       *string            `json:"language,omitempty"`
+	LastNowPlaying *RadioNowPlaying   `json:"lastNowPlaying,omitempty"`
+	Name           string             `json:"name"`
+	Position       int                `json:"position"`
+	Source         string             `json:"source"`
+	StreamUrl      string             `json:"streamUrl"`
+	Tags           []string           `json:"tags"`
+}
+
+// RadioStationCreate defines model for RadioStationCreate.
+type RadioStationCreate struct {
+	Bitrate     *int      `json:"bitrate,omitempty"`
+	Codec       *string   `json:"codec,omitempty"`
+	Country     *string   `json:"country,omitempty"`
+	ExternalId  *string   `json:"externalId,omitempty"`
+	FaviconUrl  *string   `json:"faviconUrl,omitempty"`
+	HomepageUrl *string   `json:"homepageUrl,omitempty"`
+	IsFavorite  *bool     `json:"isFavorite,omitempty"`
+	Language    *string   `json:"language,omitempty"`
+	Name        string    `json:"name"`
+	Source      *string   `json:"source,omitempty"`
+	StreamUrl   string    `json:"streamUrl"`
+	Tags        *[]string `json:"tags,omitempty"`
+}
+
+// RadioStationList defines model for RadioStationList.
+type RadioStationList struct {
+	Items []RadioStation `json:"items"`
+	Total int            `json:"total"`
+}
+
+// RadioStationPatch defines model for RadioStationPatch.
+type RadioStationPatch struct {
+	Bitrate     *int      `json:"bitrate,omitempty"`
+	Codec       *string   `json:"codec,omitempty"`
+	Country     *string   `json:"country,omitempty"`
+	FaviconUrl  *string   `json:"faviconUrl,omitempty"`
+	HomepageUrl *string   `json:"homepageUrl,omitempty"`
+	IsFavorite  *bool     `json:"isFavorite,omitempty"`
+	Language    *string   `json:"language,omitempty"`
+	Name        *string   `json:"name,omitempty"`
+	Position    *int      `json:"position,omitempty"`
+	StreamUrl   *string   `json:"streamUrl,omitempty"`
+	Tags        *[]string `json:"tags,omitempty"`
+}
+
+// ReplayGainMetadata defines model for ReplayGainMetadata.
+type ReplayGainMetadata struct {
+	AlbumGainDb *float64 `json:"albumGainDb"`
+	AlbumPeak   *float64 `json:"albumPeak"`
+	TrackGainDb *float64 `json:"trackGainDb"`
+	TrackPeak   *float64 `json:"trackPeak"`
 }
 
 // ScanStatus defines model for ScanStatus.
@@ -225,19 +377,20 @@ type ThemePreferencesPreset string
 
 // Track defines model for Track.
 type Track struct {
-	AlbumId      openapi_types.UUID `json:"albumId"`
-	AlbumTitle   *string            `json:"albumTitle,omitempty"`
-	ArtistName   string             `json:"artistName"`
-	BitDepth     *int               `json:"bitDepth,omitempty"`
-	BitrateKbps  *int               `json:"bitrateKbps,omitempty"`
-	DurationMs   int                `json:"durationMs"`
-	Format       string             `json:"format"`
-	Genre        *string            `json:"genre,omitempty"`
-	Id           openapi_types.UUID `json:"id"`
-	SampleRateHz *int               `json:"sampleRateHz,omitempty"`
-	SizeBytes    *int               `json:"sizeBytes,omitempty"`
-	Title        string             `json:"title"`
-	TrackNo      *int               `json:"trackNo,omitempty"`
+	AlbumId      openapi_types.UUID  `json:"albumId"`
+	AlbumTitle   *string             `json:"albumTitle,omitempty"`
+	ArtistName   string              `json:"artistName"`
+	BitDepth     *int                `json:"bitDepth,omitempty"`
+	BitrateKbps  *int                `json:"bitrateKbps,omitempty"`
+	DurationMs   int                 `json:"durationMs"`
+	Format       string              `json:"format"`
+	Genre        *string             `json:"genre,omitempty"`
+	Id           openapi_types.UUID  `json:"id"`
+	ReplayGain   *ReplayGainMetadata `json:"replayGain,omitempty"`
+	SampleRateHz *int                `json:"sampleRateHz,omitempty"`
+	SizeBytes    *int                `json:"sizeBytes,omitempty"`
+	Title        string              `json:"title"`
+	TrackNo      *int                `json:"trackNo,omitempty"`
 }
 
 // TrackList defines model for TrackList.
@@ -279,6 +432,9 @@ type PlaylistId = openapi_types.UUID
 
 // QueueItemId defines model for queueItemId.
 type QueueItemId = openapi_types.UUID
+
+// StationId defines model for stationId.
+type StationId = openapi_types.UUID
 
 // TrackId defines model for trackId.
 type TrackId = openapi_types.UUID
@@ -326,6 +482,43 @@ type ListTracksParams struct {
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
 }
 
+// RemovePlaybackQueueItemParams defines parameters for RemovePlaybackQueueItem.
+type RemovePlaybackQueueItemParams struct {
+	// IfMatch Queue Revision on which removal intent is based
+	IfMatch string `json:"If-Match"`
+}
+
+// StreamRadioPreviewParams defines parameters for StreamRadioPreview.
+type StreamRadioPreviewParams struct {
+	// Resource Signed HLS resource token emitted by a proxied playlist
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty"`
+}
+
+// SearchRadioStationsParams defines parameters for SearchRadioStations.
+type SearchRadioStationsParams struct {
+	Q          *string                              `form:"q,omitempty" json:"q,omitempty"`
+	Country    *string                              `form:"country,omitempty" json:"country,omitempty"`
+	Language   *string                              `form:"language,omitempty" json:"language,omitempty"`
+	Tag        *string                              `form:"tag,omitempty" json:"tag,omitempty"`
+	Codec      *string                              `form:"codec,omitempty" json:"codec,omitempty"`
+	CodecGroup *SearchRadioStationsParamsCodecGroup `form:"codecGroup,omitempty" json:"codecGroup,omitempty"`
+	MinBitrate *int                                 `form:"minBitrate,omitempty" json:"minBitrate,omitempty"`
+	Limit      *int                                 `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset     *int                                 `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// SearchRadioStationsParamsCodecGroup defines parameters for SearchRadioStations.
+type SearchRadioStationsParamsCodecGroup string
+
+// StreamRadioStationParams defines parameters for StreamRadioStation.
+type StreamRadioStationParams struct {
+	// Resource Signed HLS resource token emitted by a proxied playlist
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty"`
+}
+
+// ReorderPlaybackQueueJSONRequestBody defines body for ReorderPlaybackQueue for application/json ContentType.
+type ReorderPlaybackQueueJSONRequestBody = QueueReorder
+
 // ReplacePlaybackQueueJSONRequestBody defines body for ReplacePlaybackQueue for application/json ContentType.
 type ReplacePlaybackQueueJSONRequestBody = QueueReplace
 
@@ -341,54 +534,85 @@ type AddPlaylistTrackJSONRequestBody = PlaylistTrackAdd
 // PatchPreferencesJSONRequestBody defines body for PatchPreferences for application/json ContentType.
 type PatchPreferencesJSONRequestBody = UserPreferencesPatch
 
+// ImportRadioStationJSONRequestBody defines body for ImportRadioStation for application/json ContentType.
+type ImportRadioStationJSONRequestBody = RadioImportRequest
+
+// CreateRadioStationJSONRequestBody defines body for CreateRadioStation for application/json ContentType.
+type CreateRadioStationJSONRequestBody = RadioStationCreate
+
+// PatchRadioStationJSONRequestBody defines body for PatchRadioStation for application/json ContentType.
+type PatchRadioStationJSONRequestBody = RadioStationPatch
+
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"N+ub9f8CAAD//3+hE/RfQgAA",
+	"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",
+	"/wsAAP//bnZImpRzAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

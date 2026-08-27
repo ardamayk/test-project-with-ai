@@ -33,12 +33,12 @@ type PlaylistDetail struct {
 }
 
 type Store struct {
-	db      *sql.DB
-	library *library.Store
+	db     *sql.DB
+	tracks library.TrackReader
 }
 
-func NewStore(db *sql.DB, libStore *library.Store) *Store {
-	return &Store{db: db, library: libStore}
+func NewStore(db *sql.DB, tracks library.TrackReader) *Store {
+	return &Store{db: db, tracks: tracks}
 }
 
 func (s *Store) ensureDefaultFavorites(ctx context.Context, userID string) (Playlist, error) {
@@ -71,7 +71,7 @@ func (s *Store) ListPlaylists(ctx context.Context, userID string) (PlaylistList,
 	if err != nil {
 		return PlaylistList{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []Playlist{}
 	for rows.Next() {
@@ -125,7 +125,7 @@ func (s *Store) GetPlaylist(ctx context.Context, userID, playlistID string) (Pla
 	if err != nil {
 		return PlaylistDetail{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	tracks := []library.Track{}
 	for rows.Next() {
@@ -133,7 +133,7 @@ func (s *Store) GetPlaylist(ctx context.Context, userID, playlistID string) (Pla
 		if err := rows.Scan(&trackID); err != nil {
 			return PlaylistDetail{}, err
 		}
-		track, err := s.library.GetTrack(ctx, trackID)
+		track, err := s.tracks.GetTrack(ctx, trackID)
 		if err != nil {
 			continue
 		}
@@ -146,7 +146,7 @@ func (s *Store) AddTrack(ctx context.Context, userID, playlistID, trackID string
 	if _, err := s.GetPlaylist(ctx, userID, playlistID); err != nil {
 		return PlaylistDetail{}, err
 	}
-	if _, err := s.library.GetTrack(ctx, trackID); err != nil {
+	if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
 		return PlaylistDetail{}, library.ErrNotFound
 	}
 
@@ -171,7 +171,8 @@ func (s *Store) AddTrack(ctx context.Context, userID, playlistID, trackID string
 }
 
 func (s *Store) RemoveTrack(ctx context.Context, userID, playlistID, trackID string) (PlaylistDetail, error) {
-	if _, err := s.GetPlaylist(ctx, userID, playlistID); err != nil {
+	detail, err := s.GetPlaylist(ctx, userID, playlistID)
+	if err != nil {
 		return PlaylistDetail{}, err
 	}
 	if _, err := s.db.ExecContext(ctx,
@@ -179,6 +180,28 @@ func (s *Store) RemoveTrack(ctx context.Context, userID, playlistID, trackID str
 		playlistID, trackID,
 	); err != nil {
 		return PlaylistDetail{}, err
+	}
+	if detail.IsDefault {
+		return s.GetPlaylist(ctx, userID, playlistID)
+	}
+
+	var remaining int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?`,
+		playlistID,
+	).Scan(&remaining); err != nil {
+		return PlaylistDetail{}, err
+	}
+	if remaining == 0 {
+		if _, err := s.db.ExecContext(ctx,
+			`DELETE FROM playlists WHERE id = ? AND user_id = ? AND is_default = 0`,
+			playlistID, userID,
+		); err != nil {
+			return PlaylistDetail{}, err
+		}
+		detail.TrackCount = 0
+		detail.Tracks = []library.Track{}
+		return detail, nil
 	}
 	return s.GetPlaylist(ctx, userID, playlistID)
 }

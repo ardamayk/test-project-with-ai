@@ -39,4 +39,7 @@ func TestContentTypeForPath(t *testing.T) {
 	if ct := contentTypeForPath("/music/song.flac"); ct != "audio/flac" {
 		t.Fatalf("expected audio/flac, got %s", ct)
 	}
+	if ct := contentTypeForPath("/music/song.opus"); ct != "audio/ogg" {
+		t.Fatalf("expected audio/ogg, got %s", ct)
+	}
 }

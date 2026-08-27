@@ -5,38 +5,23 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
-	_ "modernc.org/sqlite"
 )
 
 func setupPlaybackHandlers(t *testing.T) (*Handlers, *Store, *library.Store, *sql.DB, string) {
 	t.Helper()
 	musicRoot := t.TempDir()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT, name_sort TEXT, created_at TEXT, updated_at TEXT);
-		CREATE TABLE albums (id TEXT PRIMARY KEY, artist_id TEXT, title TEXT, title_sort TEXT, year INTEGER, genres TEXT NOT NULL DEFAULT '[]', cover_mime TEXT, cover_data BLOB, created_at TEXT, updated_at TEXT);
-		CREATE TABLE tracks (id TEXT PRIMARY KEY, album_id TEXT, title TEXT, title_sort TEXT, artist_name TEXT, track_no INTEGER, duration_ms INTEGER, format TEXT, size_bytes INTEGER, file_path TEXT UNIQUE, file_mtime INTEGER, missing_at TEXT, genre TEXT, sample_rate_hz INTEGER, bit_depth INTEGER, created_at TEXT, updated_at TEXT);
-		CREATE TABLE playback_queue (id TEXT PRIMARY KEY, user_id TEXT, position INTEGER, track_id TEXT, UNIQUE(user_id, position));
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testutil.OpenMigratedDB(t)
 
 	libStore := library.NewStore(db)
 	libSvc := library.NewService(libStore, config.Config{MusicPaths: []string{musicRoot}})
@@ -86,13 +71,16 @@ func TestHandlersGetQueueEmpty(t *testing.T) {
 	if len(body.Items) != 0 {
 		t.Fatalf("items = %d, want 0", len(body.Items))
 	}
+	if body.Revision != "0" {
+		t.Fatalf("revision = %q, want 0", body.Revision)
+	}
 }
 
 func TestHandlersReplaceQueue(t *testing.T) {
 	h, _, libStore, db, musicRoot := setupPlaybackHandlers(t)
 	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
 
-	body, _ := json.Marshal(map[string][]string{"trackIds": {trackID}})
+	body, _ := json.Marshal(map[string]any{"trackIds": []string{trackID}, "revision": "0"})
 	req := httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.ReplaceQueue(rec, req)
@@ -106,6 +94,102 @@ func TestHandlersReplaceQueue(t *testing.T) {
 	}
 	if len(queue.Items) != 1 || queue.Items[0].TrackID != trackID {
 		t.Fatalf("queue = %+v", queue.Items)
+	}
+}
+
+type staleHandlerMutation func(*Handlers, Queue, string) *httptest.ResponseRecorder
+
+func staleReplace(handlers *Handlers, _ Queue, trackID string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]any{"trackIds": []string{trackID}, "revision": "0"})
+	recorder := httptest.NewRecorder()
+	handlers.ReplaceQueue(recorder, httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)))
+	return recorder
+}
+
+func staleAppend(handlers *Handlers, _ Queue, trackID string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"trackId": trackID, "revision": "0"})
+	recorder := httptest.NewRecorder()
+	handlers.AppendItem(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+	return recorder
+}
+
+func staleReorder(handlers *Handlers, queue Queue, _ string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]any{"itemIds": []string{queue.Items[0].ID}, "revision": "0"})
+	recorder := httptest.NewRecorder()
+	handlers.ReorderQueue(recorder, httptest.NewRequest(http.MethodPatch, "/", bytes.NewReader(body)))
+	return recorder
+}
+
+func staleRemove(handlers *Handlers, queue Queue, _ string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodDelete, "/", nil)
+	request.Header.Set("If-Match", "0")
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("itemId", queue.Items[0].ID)
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	recorder := httptest.NewRecorder()
+	handlers.RemoveItem(recorder, request)
+	return recorder
+}
+
+func assertQueueConflict(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body %s", recorder.Code, recorder.Body.String())
+	}
+	var conflict struct {
+		Code  string `json:"code"`
+		Queue Queue  `json:"queue"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.Code != "queue_revision_conflict" || conflict.Queue.Revision != "1" || len(conflict.Queue.Items) != 1 {
+		t.Fatalf("conflict = %+v", conflict)
+	}
+}
+
+func TestHandlersReturnCurrentQueueForEveryStaleMutation(t *testing.T) {
+	tests := map[string]staleHandlerMutation{
+		"replace": staleReplace,
+		"append":  staleAppend,
+		"reorder": staleReorder,
+		"remove":  staleRemove,
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			handlers, store, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
+			trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+			queue, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			assertQueueConflict(t, mutate(handlers, queue, trackID))
+		})
+	}
+}
+
+func TestHandlersReorderQueue(t *testing.T) {
+	h, store, libStore, db, musicRoot := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
+	queue, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"itemIds": []string{queue.Items[0].ID}, "revision": "1"})
+	rec := httptest.NewRecorder()
+	h.ReorderQueue(rec, httptest.NewRequest(http.MethodPatch, "/", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var reordered Queue
+	if err := json.NewDecoder(rec.Body).Decode(&reordered); err != nil {
+		t.Fatal(err)
+	}
+	if reordered.Revision != "2" {
+		t.Fatalf("revision = %q, want 2", reordered.Revision)
 	}
 }
 

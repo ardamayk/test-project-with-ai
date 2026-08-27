@@ -1,8 +1,8 @@
-[data-theme-preset='earthly'] {
-  --theme-1: #0a1418;
-  --theme-2: #152428;
-  --theme-3: #2f6a4a;
-  --theme-4: #4fb8b2;
-  --theme-5: #a8d4c8;
-  --theme-6: #e7f0e8;
+[data-theme-preset="earthly"] {
+	--theme-1: #0a1418;
+	--theme-2: #152428;
+	--theme-3: #2f6a4a;
+	--theme-4: #4fb8b2;
+	--theme-5: #a8d4c8;
+	--theme-6: #e7f0e8;
 }

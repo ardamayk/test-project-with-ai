@@ -20,7 +20,12 @@ func NewHandlers(store *Store) *Handlers {
 }
 
 func (h *Handlers) ListPlaylists(w http.ResponseWriter, r *http.Request) {
-	playlists, err := h.store.ListPlaylists(r.Context(), auth.DefaultUserID)
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
+	playlists, err := h.store.ListPlaylists(r.Context(), userID)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -29,14 +34,19 @@ func (h *Handlers) ListPlaylists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	var body struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	playlist, err := h.store.CreatePlaylist(r.Context(), auth.DefaultUserID, body.Name)
+	playlist, err := h.store.CreatePlaylist(r.Context(), userID, body.Name)
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
@@ -45,8 +55,13 @@ func (h *Handlers) CreatePlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) GetPlaylist(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	playlistID := chi.URLParam(r, "playlistId")
-	playlist, err := h.store.GetPlaylist(r.Context(), auth.DefaultUserID, playlistID)
+	playlist, err := h.store.GetPlaylist(r.Context(), userID, playlistID)
 	if errors.Is(err, ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "playlist not found")
 		return
@@ -59,11 +74,16 @@ func (h *Handlers) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) AddTrack(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	playlistID := chi.URLParam(r, "playlistId")
 	var body struct {
 		TrackID string `json:"trackId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
@@ -71,7 +91,7 @@ func (h *Handlers) AddTrack(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "trackId is required")
 		return
 	}
-	playlist, err := h.store.AddTrack(r.Context(), auth.DefaultUserID, playlistID, body.TrackID)
+	playlist, err := h.store.AddTrack(r.Context(), userID, playlistID, body.TrackID)
 	if errors.Is(err, ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "playlist not found")
 		return
@@ -88,9 +108,14 @@ func (h *Handlers) AddTrack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) RemoveTrack(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.CurrentUserID(r)
+	if err != nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
 	playlistID := chi.URLParam(r, "playlistId")
 	trackID := chi.URLParam(r, "trackId")
-	playlist, err := h.store.RemoveTrack(r.Context(), auth.DefaultUserID, playlistID, trackID)
+	playlist, err := h.store.RemoveTrack(r.Context(), userID, playlistID, trackID)
 	if errors.Is(err, ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "playlist not found")
 		return

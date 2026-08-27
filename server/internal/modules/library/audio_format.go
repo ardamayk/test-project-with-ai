@@ -16,7 +16,7 @@ func readFlacStreamInfo(path string) (flacStreamInfo, bool) {
 	if err != nil {
 		return flacStreamInfo{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var header [4]byte
 	if _, err := io.ReadFull(f, header[:]); err != nil || string(header[:]) != "fLaC" {

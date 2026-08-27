@@ -1,28 +1,49 @@
 package config
 
 import (
+	"fmt"
+	"net"
 	"os"
-	"strconv"
 	"strings"
 )
 
 type Config struct {
-	Addr         string
-	DatabasePath string
-	CORSOrigins  []string
-	Version      string
-	MusicPaths   []string
+	Addr                string
+	DatabasePath        string
+	CORSOrigins         []string
+	Version             string
+	MusicPaths          []string
+	RadioBrowserBaseURL string
 }
 
 func Load() Config {
 	cfg := Config{
-		Addr:         getEnv("SERVER_ADDR", ":8090"),
+		Addr:         getEnv("SERVER_ADDR", "127.0.0.1:8090"),
 		DatabasePath: getEnv("DATABASE_PATH", "./data/app.db"),
 		CORSOrigins:  []string{"http://localhost:3000", "http://127.0.0.1:3000"},
 		Version:      getEnv("APP_VERSION", "0.1.0"),
 		MusicPaths:   parseMusicPaths(getEnv("MUSIC_PATHS", "./music")),
+		RadioBrowserBaseURL: getEnv(
+			"RADIO_BROWSER_BASE_URL",
+			"https://de1.api.radio-browser.info",
+		),
 	}
 	return cfg
+}
+
+func ValidateServerAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid SERVER_ADDR %q: %w", address, err)
+	}
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("SERVER_ADDR %q must bind to a loopback address while authentication is disabled", address)
+	}
+	return nil
 }
 
 func parseMusicPaths(raw string) []string {
@@ -40,15 +61,6 @@ func parseMusicPaths(raw string) []string {
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
 	}
 	return fallback
 }

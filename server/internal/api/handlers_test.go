@@ -21,12 +21,18 @@ func TestGetHealth(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var body map[string]string
+	var body struct {
+		Status       string   `json:"status"`
+		Capabilities []string `json:"capabilities"`
+	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["status"] != "ok" {
-		t.Fatalf("status field = %q", body["status"])
+	if body.Status != "ok" {
+		t.Fatalf("status field = %q", body.Status)
+	}
+	if len(body.Capabilities) == 0 || body.Capabilities[0] != "api.v1" {
+		t.Fatalf("capabilities = %v, want api.v1 first", body.Capabilities)
 	}
 }
 

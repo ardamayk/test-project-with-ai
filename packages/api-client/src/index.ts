@@ -2,7 +2,10 @@ import type { components, operations } from './generated/schema'
 
 export type ApiClientConfig = {
   baseUrl: string
+  mediaBaseUrl?: string | (() => string)
+  streamBaseUrl?: string | (() => string)
   getToken?: () => string | undefined
+  transport?: typeof fetch
 }
 
 type Schemas = components['schemas']
@@ -30,13 +33,25 @@ export type DeleteResult = Schemas['DeleteResult']
 export type QueueItem = Schemas['QueueItem']
 export type Queue = Schemas['Queue']
 export type ErrorResponse = Schemas['ErrorResponse']
+export type QueueConflictResponse = Schemas['QueueConflictResponse']
 export type QueueReplace = Schemas['QueueReplace']
 export type QueueItemAppend = Schemas['QueueItemAppend']
+export type QueueReorder = Schemas['QueueReorder']
+export type RadioNowPlaying = Schemas['RadioNowPlaying']
+export type RadioStation = Schemas['RadioStation']
+export type RadioStationList = Schemas['RadioStationList']
+export type RadioStationCreate = Schemas['RadioStationCreate']
+export type RadioStationPatch = Schemas['RadioStationPatch']
+export type RadioSearchResult = Schemas['RadioSearchResult']
+export type RadioSearchResultList = Schemas['RadioSearchResultList']
+export type RadioCatalogOption = Schemas['RadioCatalogOption']
+export type RadioCatalogOptionList = Schemas['RadioCatalogOptionList']
+export type RadioImportRequest = Schemas['RadioImportRequest']
 
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    public readonly body: ErrorResponse,
+    public readonly body: ErrorResponse | QueueConflictResponse,
   ) {
     super(body.message)
     this.name = 'ApiError'
@@ -45,6 +60,9 @@ export class ApiError extends Error {
 
 export type ListParams = NonNullable<
   operations['listAlbums']['parameters']['query']
+>
+export type RadioSearchParams = NonNullable<
+  operations['searchRadioStations']['parameters']['query']
 >
 
 function buildQuery(params?: ListParams): string {
@@ -58,8 +76,34 @@ function buildQuery(params?: ListParams): string {
   return qs ? `?${qs}` : ''
 }
 
+function buildRadioSearchQuery(params?: RadioSearchParams): string {
+  if (!params) return ''
+  const search = new URLSearchParams()
+  if (params.q) search.set('q', params.q)
+  if (params.country) search.set('country', params.country)
+  if (params.language) search.set('language', params.language)
+  if (params.tag) search.set('tag', params.tag)
+  if (params.codec) search.set('codec', params.codec)
+  if (params.codecGroup) search.set('codecGroup', params.codecGroup)
+  if (params.minBitrate != null) search.set('minBitrate', String(params.minBitrate))
+  if (params.limit != null) search.set('limit', String(params.limit))
+  if (params.offset != null) search.set('offset', String(params.offset))
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
 export function createApiClient(config: ApiClientConfig) {
-  const { baseUrl, getToken } = config
+  const {
+    baseUrl,
+    mediaBaseUrl = baseUrl,
+    streamBaseUrl = mediaBaseUrl,
+    getToken,
+    transport = globalThis.fetch,
+  } = config
+  const getMediaBaseUrl = () =>
+    typeof mediaBaseUrl === 'function' ? mediaBaseUrl() : mediaBaseUrl
+  const getStreamBaseUrl = () =>
+    typeof streamBaseUrl === 'function' ? streamBaseUrl() : streamBaseUrl
 
   async function request<T>(
     path: string,
@@ -75,7 +119,7 @@ export function createApiClient(config: ApiClientConfig) {
       headers.set('Authorization', `Bearer ${token}`)
     }
 
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await transport(`${baseUrl}${path}`, {
       ...init,
       headers,
     })
@@ -130,19 +174,25 @@ export function createApiClient(config: ApiClientConfig) {
       }),
 
     getPlaybackQueue: () => request<Queue>('/api/v1/playback/queue'),
-    replacePlaybackQueue: (trackIds: string[]) =>
+    replacePlaybackQueue: (trackIds: string[], revision: string) =>
       request<Queue>('/api/v1/playback/queue', {
         method: 'PUT',
-        body: JSON.stringify({ trackIds }),
+        body: JSON.stringify({ trackIds, revision }),
       }),
-    appendPlaybackQueueItem: (trackId: string) =>
+    reorderPlaybackQueue: (itemIds: string[], revision: string) =>
+      request<Queue>('/api/v1/playback/queue', {
+        method: 'PATCH',
+        body: JSON.stringify({ itemIds, revision }),
+      }),
+    appendPlaybackQueueItem: (trackId: string, revision: string) =>
       request<Queue>('/api/v1/playback/queue/items', {
         method: 'POST',
-        body: JSON.stringify({ trackId }),
+        body: JSON.stringify({ trackId, revision }),
       }),
-    removePlaybackQueueItem: (itemId: string) =>
+    removePlaybackQueueItem: (itemId: string, revision: string) =>
       request<Queue>(`/api/v1/playback/queue/items/${itemId}`, {
         method: 'DELETE',
+        headers: { 'If-Match': revision },
       }),
     listPlaylists: () => request<PlaylistList>('/api/v1/playlists'),
     createPlaylist: (body: PlaylistCreate) =>
@@ -161,10 +211,49 @@ export function createApiClient(config: ApiClientConfig) {
       request<PlaylistDetail>(`/api/v1/playlists/${playlistId}/tracks/${trackId}`, {
         method: 'DELETE',
       }),
+    listRadioStations: () =>
+      request<RadioStationList>('/api/v1/radio/stations'),
+    getRadioStation: (stationId: string) =>
+      request<RadioStation>(`/api/v1/radio/stations/${stationId}`),
+    createRadioStation: (body: RadioStationCreate) =>
+      request<RadioStation>('/api/v1/radio/stations', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    patchRadioStation: (stationId: string, body: RadioStationPatch) =>
+      request<RadioStation>(`/api/v1/radio/stations/${stationId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    deleteRadioStation: (stationId: string) =>
+      request<void>(`/api/v1/radio/stations/${stationId}`, {
+        method: 'DELETE',
+      }),
+    searchRadioStations: (params?: RadioSearchParams) =>
+      request<RadioSearchResultList>(
+        `/api/v1/radio/search${buildRadioSearchQuery(params)}`,
+      ),
+    listRadioCatalogCountries: () =>
+      request<RadioCatalogOptionList>('/api/v1/radio/catalog/countries'),
+    listRadioCatalogTags: () =>
+      request<RadioCatalogOptionList>('/api/v1/radio/catalog/tags'),
+    importRadioStation: (body: RadioImportRequest) =>
+      request<RadioStation>('/api/v1/radio/import', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    getRadioNowPlaying: (stationId: string) =>
+      request<RadioNowPlaying>(
+        `/api/v1/radio/stations/${stationId}/now-playing`,
+      ),
+    getRadioStationStreamUrl: (stationId: string) =>
+      `${getStreamBaseUrl()}/api/v1/radio/stations/${stationId}/stream`,
+    getRadioCatalogPreviewStreamUrl: (stationUuid: string) =>
+      `${getStreamBaseUrl()}/api/v1/radio/preview/${stationUuid}/stream`,
     getTrackStreamUrl: (trackId: string) =>
-      `${baseUrl}/api/v1/tracks/${trackId}/stream`,
+      `${getStreamBaseUrl()}/api/v1/tracks/${trackId}/stream`,
     getAlbumCoverUrl: (albumId: string) =>
-      `${baseUrl}/api/v1/library/albums/${albumId}/cover`,
+      `${getMediaBaseUrl()}/api/v1/library/albums/${albumId}/cover`,
   }
 }
 
