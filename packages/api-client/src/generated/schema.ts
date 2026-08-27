@@ -517,7 +517,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release */
+            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1. */
             capabilities: string[];
         };
         User: {

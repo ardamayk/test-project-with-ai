@@ -124,6 +124,13 @@ async fn run_queue_event_stream(
             last_event_id = None;
             continue;
         };
+        if let Err(error) = bridge.test_server(&current_origin).await {
+            on_error(error.message);
+            if wait_to_reconnect(&mut reconnect).await {
+                return;
+            }
+            continue;
+        }
         let response = bridge
             .open_queue_event_stream(&current_origin, last_event_id.as_deref())
             .await;
@@ -266,12 +273,62 @@ mod tests {
         drop(service);
     }
 
+    #[tokio::test]
+    async fn refuses_queue_stream_when_server_capability_is_absent() {
+        let (origin, requests) = serve_queue_capability_check(&["api.v1"]);
+        let origin = ServerOrigin::parse(&origin).expect("test origin");
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (errors_tx, mut errors_rx) = tokio::sync::mpsc::unbounded_channel();
+        let service = QueueEventService::start(
+            Arc::new(HttpBridge::new().expect("HTTP bridge")),
+            Arc::new(RwLock::new(Some(origin))),
+            move |event| {
+                let _ = events_tx.send(event);
+            },
+            move |error| {
+                let _ = errors_tx.send(error);
+            },
+        );
+
+        let error = tokio::time::timeout(Duration::from_secs(3), errors_rx.recv())
+            .await
+            .expect("capability error timeout")
+            .expect("capability error");
+        assert!(error.contains("playback.queue-events.v1"));
+        assert!(
+            requests
+                .recv_timeout(Duration::from_secs(3))
+                .expect("capability request")
+                .starts_with("GET /api/v1/health ")
+        );
+        assert!(events_rx.try_recv().is_err());
+        drop(service);
+    }
+
     fn serve_reconnecting_queue_events() -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind Queue SSE server");
         let address = listener.local_addr().expect("Queue SSE address");
         let (requests_tx, requests_rx) = mpsc::channel();
         thread::spawn(move || {
             for (sequence, revision) in [("1", "opaque-1"), ("3", "opaque-3")] {
+                let (mut health_stream, _) = listener.accept().expect("accept health request");
+                let mut health_request = [0_u8; 4096];
+                let _ = health_stream
+                    .read(&mut health_request)
+                    .expect("read health request");
+                let health = serde_json::json!({
+                    "status": "ok",
+                    "version": "0.1.0-test",
+                    "capabilities": ["api.v1", "playback.queue-events.v1"],
+                })
+                .to_string();
+                write!(
+                    health_stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{health}",
+                    health.len()
+                )
+                .expect("write health response");
+
                 let (mut stream, _) = listener.accept().expect("accept Queue SSE request");
                 let mut request = [0_u8; 4096];
                 let size = stream.read(&mut request).expect("read Queue SSE request");
@@ -288,6 +345,33 @@ mod tests {
                 )
                 .expect("write Queue SSE response");
             }
+        });
+        (format!("http://{address}"), requests_rx)
+    }
+
+    fn serve_queue_capability_check(capabilities: &[&str]) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind capability server");
+        let address = listener.local_addr().expect("capability server address");
+        let body = serde_json::json!({
+            "status": "ok",
+            "version": "0.1.0-test",
+            "capabilities": capabilities,
+        })
+        .to_string();
+        let (requests_tx, requests_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept capability request");
+            let mut request = [0_u8; 4096];
+            let size = stream.read(&mut request).expect("read capability request");
+            requests_tx
+                .send(String::from_utf8_lossy(&request[..size]).into_owned())
+                .expect("record capability request");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write capability response");
         });
         (format!("http://{address}"), requests_rx)
     }

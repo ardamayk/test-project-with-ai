@@ -132,6 +132,9 @@ function Harness() {
 			<button type="button" onClick={() => void playback.playTrack(track2.id)}>
 				Track 2
 			</button>
+			<button type="button" onClick={() => void playback.playQueueIndex(0)}>
+				First Queue item
+			</button>
 			<button
 				type="button"
 				onClick={() => void playback.playRadioStation(radioStation)}
@@ -258,6 +261,27 @@ describe("PlaybackProvider", () => {
 		});
 	});
 
+	it("advances duplicate Tracks by Queue item identity", async () => {
+		const duplicateItems = [
+			{ id: "item-1", trackId: track.id, position: 0, track },
+			{ id: "item-2", trackId: track.id, position: 1, track },
+			{ id: "item-3", trackId: track2.id, position: 2, track: track2 },
+		];
+		const { engine } = renderPlayback(createApi(duplicateItems));
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "First Queue item" }).click(),
+		);
+
+		await act(async () => engine.finish());
+		await act(async () => engine.finish());
+
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-2" } },
+			status: "playing",
+		});
+	});
+
 	it("lets current Track finish before stopping after Queue clear", async () => {
 		const { engine } = renderPlayback();
 		await act(async () =>
@@ -358,6 +382,40 @@ describe("PlaybackProvider", () => {
 		});
 
 		await act(async () => engine.finish());
+		expect(engine.getState()).toMatchObject({ source: null, status: "idle" });
+	});
+
+	it.each([
+		["once", 1],
+		["loop", 2],
+	] as const)("remote Queue clear overrides %s repeat after current Track", async (_repeatMode, repeatClicks) => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: [], revision: "2" });
+		const { engine } = renderPlayback(api);
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+		await act(async () => {
+			for (let clickIndex = 0; clickIndex < repeatClicks; clickIndex += 1) {
+				screen.getByRole("button", { name: "Repeat" }).click();
+			}
+		});
+
+		await notifyQueueEvent(api, {
+			revision: "2",
+			sequence: "2",
+			invalidates: ["queue"],
+		});
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-1" } },
+			status: "playing",
+			repeatMode: "off",
+		});
+		await act(async () => engine.finish());
+
 		expect(engine.getState()).toMatchObject({ source: null, status: "idle" });
 	});
 

@@ -953,7 +953,9 @@ components:
           type: array
           items:
             type: string
-          description: Named server behaviors supported by this release
+          description: >-
+            Named server behaviors supported by this release. Queue event streaming
+            is advertised as playback.queue-events.v1.
     User:
       type: object
       required: [id, username]

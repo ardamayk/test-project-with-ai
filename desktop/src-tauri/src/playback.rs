@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 const DEFAULT_VOLUME: f64 = 0.8;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const MPV_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
-const MPV_PINNED_VERSION: &str = "0.41.0";
+const MPV_PINNED_VERSION: &str = include_str!("../mpv-version.txt");
 const MPV_START_TIMEOUT: Duration = Duration::from_secs(3);
 const MPV_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -122,9 +122,7 @@ pub(crate) struct RealMpvProcess {
 impl RealMpvProcess {
     pub(crate) fn start_default() -> Result<(Box<dyn MpvProcessAdapter>, Receiver<MpvEvent>), String>
     {
-        let binary = std::env::var_os("EARTHLY_AUDIO_MPV_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/usr/bin/mpv"));
+        let binary = resolve_mpv_binary();
         let (process, events, _) = Self::start(binary, Vec::new())?;
         Ok((process, events))
     }
@@ -182,6 +180,25 @@ impl RealMpvProcess {
     }
 }
 
+fn resolve_mpv_binary() -> PathBuf {
+    if let Some(binary) = std::env::var_os("EARTHLY_AUDIO_MPV_PATH") {
+        return PathBuf::from(binary);
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        let packaged_binary = directory.join("mpv");
+        if packaged_binary.is_file() {
+            return packaged_binary;
+        }
+    }
+    let development_binary = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/mpv");
+    if development_binary.is_file() {
+        return development_binary;
+    }
+    PathBuf::from("/usr/bin/mpv")
+}
+
 impl MpvProcessAdapter for RealMpvProcess {
     fn load(&self, url: &str) -> Result<(), String> {
         self.command(json!(["loadfile", url, "replace"]))
@@ -220,7 +237,8 @@ fn ensure_pinned_mpv(binary: &PathBuf) -> Result<(), String> {
         .output()
         .map_err(|error| format!("Pinned mpv could not start: {error}"))?;
     let version = String::from_utf8_lossy(&output.stdout);
-    let expected = format!("mpv v{MPV_PINNED_VERSION}");
+    let pinned_version = MPV_PINNED_VERSION.trim();
+    let expected = format!("mpv v{pinned_version}");
     if !output.status.success()
         || !version
             .lines()
@@ -228,7 +246,7 @@ fn ensure_pinned_mpv(binary: &PathBuf) -> Result<(), String> {
             .is_some_and(|line| line.starts_with(&expected))
     {
         return Err(format!(
-            "Desktop Client requires pinned mpv {MPV_PINNED_VERSION}; set EARTHLY_AUDIO_MPV_PATH to that executable."
+            "Desktop Client requires pinned mpv {pinned_version}; set EARTHLY_AUDIO_MPV_PATH to that executable."
         ));
     }
     Ok(())
@@ -1044,6 +1062,18 @@ mod tests {
         assert!(arguments.contains(&"--input-terminal=no".to_owned()));
         assert!(arguments.contains(&"--gapless-audio=weak".to_owned()));
         assert!(arguments.contains(&"--input-ipc-server=/private/control.sock".to_owned()));
+    }
+
+    #[test]
+    fn desktop_config_packages_the_pinned_mpv_sidecar() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.sidecar.conf.json"))
+                .expect("Tauri sidecar config");
+
+        assert_eq!(
+            config.pointer("/bundle/externalBin"),
+            Some(&json!(["binaries/mpv"]))
+        );
     }
 
     fn temporary_path(file_name: &str) -> PathBuf {

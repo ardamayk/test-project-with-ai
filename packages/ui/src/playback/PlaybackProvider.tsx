@@ -121,6 +121,7 @@ export function PlaybackProvider({
 	);
 	const currentQueueItemIdRef = useRef<string | null>(null);
 	const currentQueueIndexRef = useRef<number | null>(null);
+	const repeatCancellationRequestedModeRef = useRef<RepeatMode | null>(null);
 	const [radioNowPlaying, setRadioNowPlaying] =
 		useState<RadioNowPlaying | null>(null);
 	apiRef.current = api;
@@ -162,14 +163,11 @@ export function PlaybackProvider({
 		return () => window.clearInterval(intervalId);
 	}, [currentRadioStation, refreshRadioNowPlaying]);
 
-	const playTrackInternal = useCallback(
-		async (trackId: string, queueOverride?: QueueItem[]) => {
+	const playQueueItemInternal = useCallback(
+		async (item: QueueItem, queueOverride?: QueueItem[]) => {
 			const activeQueue = queueOverride ?? queueRef.current;
-			const itemIndex = activeQueue.findIndex(
-				(entry) => entry.track.id === trackId || entry.trackId === trackId,
-			);
-			const item = activeQueue[itemIndex];
-			if (!item) return;
+			const itemIndex = activeQueue.findIndex((entry) => entry.id === item.id);
+			if (itemIndex < 0) return;
 			currentQueueItemIdRef.current = item.id;
 			currentQueueIndexRef.current = itemIndex;
 			setRadioNowPlaying(null);
@@ -177,13 +175,24 @@ export function PlaybackProvider({
 				await engine.play({
 					type: "track",
 					track: item.track,
-					playbackUrl: apiRef.current.getStreamUrl(trackId),
+					playbackUrl: apiRef.current.getStreamUrl(item.trackId),
 				});
 			} catch {
 				// PlaybackEngine exposes the error through observable session state.
 			}
 		},
 		[engine],
+	);
+
+	const playTrackInternal = useCallback(
+		async (trackId: string, queueOverride?: QueueItem[]) => {
+			const activeQueue = queueOverride ?? queueRef.current;
+			const item = activeQueue.find(
+				(entry) => entry.track.id === trackId || entry.trackId === trackId,
+			);
+			if (item) await playQueueItemInternal(item, activeQueue);
+		},
+		[playQueueItemInternal],
 	);
 
 	useEffect(() => {
@@ -196,6 +205,21 @@ export function PlaybackProvider({
 	}, [queue, session.source]);
 
 	useEffect(() => {
+		if (session.repeatMode === "off") {
+			repeatCancellationRequestedModeRef.current = null;
+			return;
+		}
+		if (queue.length > 0 || session.source?.type !== "track") {
+			repeatCancellationRequestedModeRef.current = null;
+			return;
+		}
+		if (repeatCancellationRequestedModeRef.current === session.repeatMode)
+			return;
+		repeatCancellationRequestedModeRef.current = session.repeatMode;
+		engine.cycleRepeatMode();
+	}, [engine, queue.length, session.repeatMode, session.source]);
+
+	useEffect(() => {
 		if (session.status !== "ended" || session.source?.type !== "track") return;
 		const index = queueRef.current.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
@@ -204,11 +228,11 @@ export function PlaybackProvider({
 			index >= 0 ? index + 1 : (currentQueueIndexRef.current ?? 0);
 		const next = queueRef.current[nextIndex];
 		if (next) {
-			void playTrackInternal(next.track.id);
+			void playQueueItemInternal(next);
 			return;
 		}
 		engine.stop();
-	}, [engine, playTrackInternal, session]);
+	}, [engine, playQueueItemInternal, session]);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {
@@ -282,9 +306,9 @@ export function PlaybackProvider({
 	const playQueueIndex = useCallback(
 		async (index: number) => {
 			const item = queueRef.current[index];
-			if (item) await playTrackInternal(item.track.id);
+			if (item) await playQueueItemInternal(item);
 		},
-		[playTrackInternal],
+		[playQueueItemInternal],
 	);
 
 	const playNext = useCallback(

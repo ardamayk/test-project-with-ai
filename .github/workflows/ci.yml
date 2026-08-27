@@ -43,6 +43,20 @@ jobs:
       - name: Desktop unit tests
         run: pnpm test:desktop
 
+      - name: Real mpv integration when pinned mpv is available
+        shell: bash
+        run: |
+          if ! command -v mpv >/dev/null; then
+            echo "Skipping real mpv integration: mpv is not installed."
+            exit 0
+          fi
+          PINNED_MPV_VERSION="$(tr -d '\r\n' < desktop/src-tauri/mpv-version.txt)"
+          if [[ "$(mpv --version | sed -n '1p')" != "mpv v${PINNED_MPV_VERSION}"* ]]; then
+            echo "Skipping real mpv integration: pinned mpv ${PINNED_MPV_VERSION} is unavailable."
+            exit 0
+          fi
+          pnpm --filter @repo/desktop test:mpv
+
       - name: Go test
         working-directory: server
         run: go test ./...

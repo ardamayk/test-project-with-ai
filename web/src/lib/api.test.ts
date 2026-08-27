@@ -1,14 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { listenForQueueEventsMock, unlistenQueueEventsMock } = vi.hoisted(
-	() => ({
+const { desktopFetchMock, listenForQueueEventsMock, unlistenQueueEventsMock } =
+	vi.hoisted(() => ({
+		desktopFetchMock: vi.fn(),
 		listenForQueueEventsMock: vi.fn(),
 		unlistenQueueEventsMock: vi.fn(),
-	}),
-);
+	}));
 
 vi.mock("#/desktop/bridge", () => ({
-	desktopFetch: vi.fn(),
+	desktopFetch: desktopFetchMock,
 	getCoverBaseUrl: () => "http://earthly-media.localhost",
 	getMediaProxyBaseUrl: () => "http://127.0.0.1:41000/token-1",
 	isDesktopClient: () => true,
@@ -18,7 +18,16 @@ vi.mock("#/desktop/bridge", () => ({
 import { apiClient } from "./api";
 
 describe("desktop API client", () => {
+	beforeEach(() => {
+		desktopFetchMock.mockReset();
+		listenForQueueEventsMock.mockReset();
+		unlistenQueueEventsMock.mockReset();
+	});
+
 	it("uses native Queue event subscription", async () => {
+		desktopFetchMock.mockResolvedValue(
+			serverHealthResponse(["api.v1", "playback.queue-events.v1"]),
+		);
 		listenForQueueEventsMock.mockResolvedValue(unlistenQueueEventsMock);
 
 		const unsubscribe = apiClient.subscribePlaybackQueueEvents(vi.fn());
@@ -26,6 +35,19 @@ describe("desktop API client", () => {
 		unsubscribe();
 
 		expect(unlistenQueueEventsMock).toHaveBeenCalledOnce();
+	});
+
+	it("does not start native Queue events when capability is absent", async () => {
+		desktopFetchMock.mockResolvedValue(serverHealthResponse(["api.v1"]));
+		const onError = vi.fn();
+
+		apiClient.subscribePlaybackQueueEvents(vi.fn(), onError);
+
+		await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+		expect(onError.mock.calls[0]?.[0].message).toContain(
+			"playback.queue-events.v1",
+		);
+		expect(listenForQueueEventsMock).not.toHaveBeenCalled();
 	});
 
 	it("routes covers through the bounded protocol and streams through the proxy", () => {
@@ -43,3 +65,10 @@ describe("desktop API client", () => {
 		);
 	});
 });
+
+function serverHealthResponse(capabilities: string[]) {
+	return new Response(
+		JSON.stringify({ status: "ok", version: "0.1.0", capabilities }),
+		{ status: 200, headers: { "Content-Type": "application/json" } },
+	);
+}

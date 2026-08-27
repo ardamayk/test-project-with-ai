@@ -22,7 +22,7 @@ type healthResponse struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-var serverCapabilities = []string{"api.v1"}
+var serverCapabilities = []string{"api.v1", "playback.queue-events.v1"}
 
 type userResponse struct {
 	ID          string `json:"id"`

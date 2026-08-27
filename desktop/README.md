@@ -2,7 +2,9 @@
 
 Linux Tauri development client. It builds the shared React source from `web/` and embeds those assets; it never loads UI assets from a Music Server.
 
-Native playback requires the pinned mpv `0.41.0` executable at `/usr/bin/mpv`. Set `EARTHLY_AUDIO_MPV_PATH` to another path containing that exact version when needed. The Desktop Client starts one audio-only `--idle=yes` child with `--no-config`, so user mpv configuration is never loaded. Rust owns its private JSON IPC socket inside a random `0700` directory, changes the socket to `0600`, and removes the whole endpoint when the application exits.
+Native playback requires pinned mpv `0.41.0`. `pnpm --dir desktop desktop:dev` validates `/usr/bin/mpv` (or `EARTHLY_AUDIO_MPV_PATH`), stages an ignored target-specific sidecar, and launches Tauri with `tauri.sidecar.conf.json`. `pnpm --dir desktop build:sidecar` uses the same exact-version staging path for a development build; the normal workspace build remains portable and does not require mpv. No mpv binary is committed to Git. Release binary provenance, licensing review, and distribution bundles remain deferred.
+
+The Desktop Client starts one audio-only `--idle=yes` child with `--no-config`, so user mpv configuration is never loaded. Rust resolves an explicitly configured executable first, then a packaged or staged sidecar, then `/usr/bin/mpv`. It owns the private JSON IPC socket inside a random `0700` directory, changes the socket to `0600`, and removes the whole endpoint when the application exits.
 
 Start the separate Music Server on loopback, then launch the Desktop Client:
 

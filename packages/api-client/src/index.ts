@@ -132,6 +132,7 @@ export function createApiClient(config: ApiClientConfig) {
     return subscribeQueueEvents(
       {
         getBaseUrl: getQueueEventsBaseUrl,
+        getCapabilities: async () => (await request<HealthResponse>('/api/v1/health')).capabilities,
         getToken,
         transport,
         eventSourceFactory,

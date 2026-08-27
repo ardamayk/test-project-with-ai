@@ -2,6 +2,7 @@ import type { components } from './generated/schema'
 
 const QUEUE_EVENT_RECONNECT_DELAY_MS = 1000
 const QUEUE_EVENTS_PATH = '/api/v1/playback/queue/events'
+export const QUEUE_EVENTS_CAPABILITY = 'playback.queue-events.v1'
 
 export type QueueEvent = components['schemas']['QueueEvent']
 
@@ -16,6 +17,7 @@ export type QueueEventSource = {
 
 export type QueueEventSubscription = {
   getBaseUrl: () => string | Promise<string>
+  getCapabilities: () => Promise<string[]>
   getToken?: () => string | undefined
   transport: typeof fetch
   eventSourceFactory: (url: string) => QueueEventSource
@@ -33,6 +35,35 @@ export function subscribeQueueEvents(
   const reportError = onError ?? ((error: Error) => {
     console.warn('Queue event stream error', { error })
   })
+  let unsubscribe: (() => void) | undefined
+  let isClosed = false
+  void config.getCapabilities().then((capabilities) => {
+    if (!capabilities.includes(QUEUE_EVENTS_CAPABILITY)) {
+      reportError(
+        new Error(
+          `Music Server does not advertise ${QUEUE_EVENTS_CAPABILITY}; Queue synchronization is disabled.`,
+        ),
+      )
+      return
+    }
+    if (isClosed) return
+    const cleanup = subscribeSupportedQueueEvents(config, onEvent, reportError)
+    if (isClosed) cleanup()
+    else unsubscribe = cleanup
+  }).catch((error) => {
+    if (!isClosed) reportError(toError(error))
+  })
+  return () => {
+    isClosed = true
+    unsubscribe?.()
+  }
+}
+
+function subscribeSupportedQueueEvents(
+  config: QueueEventSubscription,
+  onEvent: (event: QueueEvent) => void,
+  reportError: (error: Error) => void,
+): () => void {
   if (config.subscriber) {
     return subscribeWithCustomSubscriber(config.subscriber, onEvent, reportError)
   }

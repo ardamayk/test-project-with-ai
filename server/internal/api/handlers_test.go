@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/api"
@@ -33,6 +34,9 @@ func TestGetHealth(t *testing.T) {
 	}
 	if len(body.Capabilities) == 0 || body.Capabilities[0] != "api.v1" {
 		t.Fatalf("capabilities = %v, want api.v1 first", body.Capabilities)
+	}
+	if !slices.Contains(body.Capabilities, "playback.queue-events.v1") {
+		t.Fatalf("capabilities = %v, want playback.queue-events.v1", body.Capabilities)
 	}
 }
 
