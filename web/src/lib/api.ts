@@ -4,6 +4,7 @@ import {
 	getCoverBaseUrl,
 	getMediaProxyBaseUrl,
 	isDesktopClient,
+	listenForQueueEvents,
 } from "#/desktop/bridge";
 import { getApiBaseUrl } from "#/env";
 
@@ -12,5 +13,6 @@ export const apiClient = createApiClient({
 	baseUrl: isDesktop ? "" : getApiBaseUrl(),
 	mediaBaseUrl: isDesktop ? getCoverBaseUrl : undefined,
 	streamBaseUrl: isDesktop ? getMediaProxyBaseUrl : undefined,
+	queueEventSubscriber: isDesktop ? listenForQueueEvents : undefined,
 	transport: isDesktop ? desktopFetch : undefined,
 });

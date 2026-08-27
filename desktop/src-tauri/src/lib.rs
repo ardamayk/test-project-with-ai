@@ -1,18 +1,25 @@
 mod connection;
 mod media_proxy;
+mod playback;
+mod queue_events;
 
 use connection::{
     ConnectionCheck, ConnectionError, ConnectionErrorCode, ConnectionStore, HttpBridge,
     HttpRequest, HttpResponse, ServerOrigin,
 };
 use media_proxy::MediaProxy;
+use playback::{PlaybackCommandError, PlaybackController, PlaybackSessionState};
+use queue_events::QueueEventService;
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use tauri::{Emitter, Manager, State};
 
 const CONNECTION_FILE_NAME: &str = "server-connection.json";
 const CONNECTION_CHANGED_EVENT: &str = "server-connection-changed";
+const QUEUE_EVENTS_ERROR_EVENT: &str = "desktop-queue-events-error";
+const QUEUE_INVALIDATED_EVENT: &str = "desktop-queue-invalidated";
 const COVER_PROTOCOL: &str = "earthly-media";
 const COVER_REQUEST_HEADERS: &[&str] = &["accept", "authorization", "range"];
 const COVER_RESPONSE_HEADERS: &[&str] = &[
@@ -26,10 +33,12 @@ const COVER_RESPONSE_HEADERS: &[&str] = &[
 ];
 
 struct AppState {
+    playback: PlaybackController,
     bridge: Arc<HttpBridge>,
     store: ConnectionStore,
     origin: Arc<RwLock<Option<ServerOrigin>>>,
     media_proxy: MediaProxy,
+    queue_events: QueueEventService,
 }
 
 #[derive(Clone, Serialize)]
@@ -67,6 +76,7 @@ async fn save_server_connection(
     let check = state.bridge.test_server(&origin).await?;
     state.store.save(&origin)?;
     *state.origin.write().map_err(|_| state_error())? = Some(origin);
+    state.queue_events.reconnect();
     app.emit(CONNECTION_CHANGED_EVENT, &check)
         .map_err(|_| state_error())?;
     Ok(check)
@@ -94,6 +104,97 @@ async fn desktop_http_request(
 #[tauri::command]
 fn get_media_proxy_url(state: State<'_, AppState>) -> String {
     state.media_proxy.base_url().to_owned()
+}
+
+#[tauri::command]
+fn desktop_reconnect_queue_events(state: State<'_, AppState>) {
+    state.queue_events.reconnect();
+}
+
+#[tauri::command]
+fn get_desktop_playback_state(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.state()
+}
+
+#[tauri::command]
+fn desktop_playback_play(
+    state: State<'_, AppState>,
+    source: Option<Value>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    if let Some(source) = source.as_ref() {
+        validate_playback_source(source, state.media_proxy.base_url())?;
+    }
+    state.playback.play(source)
+}
+
+#[tauri::command]
+fn desktop_playback_pause(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.pause()
+}
+
+#[tauri::command]
+fn desktop_playback_stop(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.stop()
+}
+
+#[tauri::command]
+fn desktop_playback_toggle_play(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.toggle_play()
+}
+
+#[tauri::command]
+fn desktop_playback_seek(
+    state: State<'_, AppState>,
+    seconds: f64,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.seek(seconds)
+}
+
+#[tauri::command]
+fn desktop_playback_set_volume(
+    state: State<'_, AppState>,
+    value: f64,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.set_volume(value)
+}
+
+#[tauri::command]
+fn desktop_playback_toggle_shuffle(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.toggle_shuffle()
+}
+
+#[tauri::command]
+fn desktop_playback_cycle_repeat_mode(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.cycle_repeat_mode()
+}
+
+fn validate_playback_source(
+    source: &Value,
+    media_proxy_base_url: &str,
+) -> Result<(), PlaybackCommandError> {
+    let playback_url = source
+        .get("playbackUrl")
+        .and_then(Value::as_str)
+        .ok_or_else(|| PlaybackCommandError::new("Playback Source URL is missing."))?;
+    let required_prefix = format!("{media_proxy_base_url}/");
+    if !playback_url.starts_with(&required_prefix) {
+        return Err(PlaybackCommandError::new(
+            "Native playback is restricted to the private Desktop media proxy.",
+        ));
+    }
+    Ok(())
 }
 
 fn state_error() -> ConnectionError {
@@ -208,11 +309,36 @@ pub fn run() -> tauri::Result<()> {
             let origin = Arc::new(RwLock::new(store.load()?));
             let bridge = Arc::new(HttpBridge::new()?);
             let media_proxy = MediaProxy::start(bridge.clone(), origin.clone())?;
+            let app_handle = app.handle().clone();
+            let playback = PlaybackController::start_default(move |state| {
+                if let Err(error) = app_handle.emit("desktop-playback-state", state) {
+                    eprintln!("Desktop playback state event failed: {error}");
+                }
+            })
+            .map_err(std::io::Error::other)?;
+            let queue_event_app = app.handle().clone();
+            let queue_error_app = app.handle().clone();
+            let queue_events = QueueEventService::start(
+                bridge.clone(),
+                origin.clone(),
+                move |event| {
+                    if let Err(error) = queue_event_app.emit(QUEUE_INVALIDATED_EVENT, event) {
+                        eprintln!("Desktop Queue event emission failed: {error}");
+                    }
+                },
+                move |message| {
+                    if let Err(error) = queue_error_app.emit(QUEUE_EVENTS_ERROR_EVENT, message) {
+                        eprintln!("Desktop Queue error emission failed: {error}");
+                    }
+                },
+            );
             app.manage(AppState {
+                playback,
                 bridge,
                 store,
                 origin,
                 media_proxy,
+                queue_events,
             });
             Ok(())
         })
@@ -221,14 +347,25 @@ pub fn run() -> tauri::Result<()> {
             test_server_connection,
             save_server_connection,
             desktop_http_request,
-            get_media_proxy_url
+            get_media_proxy_url,
+            desktop_reconnect_queue_events,
+            get_desktop_playback_state,
+            desktop_playback_play,
+            desktop_playback_pause,
+            desktop_playback_stop,
+            desktop_playback_toggle_play,
+            desktop_playback_seek,
+            desktop_playback_set_volume,
+            desktop_playback_toggle_shuffle,
+            desktop_playback_cycle_repeat_mode
         ])
         .run(tauri::generate_context!())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::cover_http_request;
+    use super::{cover_http_request, validate_playback_source};
+    use serde_json::json;
 
     #[test]
     fn cover_protocol_discards_custom_authority_and_preserves_path() {
@@ -253,5 +390,15 @@ mod tests {
             .expect("track request");
 
         assert!(cover_http_request(&request).is_err());
+    }
+
+    #[test]
+    fn native_playback_rejects_urls_outside_private_media_proxy() {
+        let source = json!({
+            "type": "track",
+            "playbackUrl": "https://attacker.example/track.flac"
+        });
+
+        assert!(validate_playback_source(&source, "http://127.0.0.1:43129/private-token").is_err());
     }
 }

@@ -247,6 +247,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/playback/queue/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Queue invalidation events
+         * @description Emits queue-invalidated server-sent events. Event IDs carry the persisted event sequence, while data carries that sequence and the latest Queue Revision so reconnecting clients can detect stale state and refetch the Queue.
+         */
+        get: operations["streamPlaybackQueueEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tracks/{trackId}/stream": {
         parameters: {
             query?: never;
@@ -497,7 +517,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release */
+            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1. */
             capabilities: string[];
         };
         User: {
@@ -753,6 +773,14 @@ export interface components {
             items: components["schemas"]["QueueItem"][];
             /** @description Opaque version of this Queue state */
             revision: string;
+        };
+        QueueEvent: {
+            /** @description Latest Queue Revision when this event was emitted */
+            revision: string;
+            /** @description Monotonically increasing event order, independent from opaque Queue Revision semantics */
+            sequence: string;
+            /** @description Shared resources clients must refetch */
+            invalidates: "queue"[];
         };
         QueueReplace: {
             trackIds: string[];
@@ -1317,6 +1345,27 @@ export interface operations {
                     "application/json": components["schemas"]["QueueConflictResponse"];
                 };
             };
+        };
+    };
+    streamPlaybackQueueEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queue event stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["QueueEvent"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     streamTrack: {

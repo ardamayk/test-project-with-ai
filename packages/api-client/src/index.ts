@@ -1,11 +1,24 @@
 import type { components, operations } from './generated/schema'
+import {
+  type QueueEvent,
+  type QueueEventSource,
+  subscribeQueueEvents,
+} from './queue-events'
+
+export type { QueueEvent, QueueEventSource } from './queue-events'
 
 export type ApiClientConfig = {
   baseUrl: string
   mediaBaseUrl?: string | (() => string)
   streamBaseUrl?: string | (() => string)
+  queueEventsBaseUrl?: string | (() => string | Promise<string>)
   getToken?: () => string | undefined
   transport?: typeof fetch
+  eventSourceFactory?: (url: string) => QueueEventSource
+  queueEventSubscriber?: (
+    onEvent: (event: QueueEvent) => void,
+    onError: (error: Error) => void,
+  ) => (() => void) | Promise<() => void>
 }
 
 type Schemas = components['schemas']
@@ -97,13 +110,38 @@ export function createApiClient(config: ApiClientConfig) {
     baseUrl,
     mediaBaseUrl = baseUrl,
     streamBaseUrl = mediaBaseUrl,
+    queueEventsBaseUrl = baseUrl,
     getToken,
     transport = globalThis.fetch,
+    eventSourceFactory = (url) => new EventSource(url) as QueueEventSource,
+    queueEventSubscriber,
   } = config
   const getMediaBaseUrl = () =>
     typeof mediaBaseUrl === 'function' ? mediaBaseUrl() : mediaBaseUrl
   const getStreamBaseUrl = () =>
     typeof streamBaseUrl === 'function' ? streamBaseUrl() : streamBaseUrl
+  const getQueueEventsBaseUrl = () =>
+    typeof queueEventsBaseUrl === 'function'
+      ? queueEventsBaseUrl()
+      : queueEventsBaseUrl
+
+  function subscribePlaybackQueueEvents(
+    onEvent: (event: QueueEvent) => void,
+    onError?: (error: Error) => void,
+  ): () => void {
+    return subscribeQueueEvents(
+      {
+        getBaseUrl: getQueueEventsBaseUrl,
+        getCapabilities: async () => (await request<HealthResponse>('/api/v1/health')).capabilities,
+        getToken,
+        transport,
+        eventSourceFactory,
+        subscriber: queueEventSubscriber,
+      },
+      onEvent,
+      onError,
+    )
+  }
 
   async function request<T>(
     path: string,
@@ -174,6 +212,7 @@ export function createApiClient(config: ApiClientConfig) {
       }),
 
     getPlaybackQueue: () => request<Queue>('/api/v1/playback/queue'),
+    subscribePlaybackQueueEvents,
     replacePlaybackQueue: (trackIds: string[], revision: string) =>
       request<Queue>('/api/v1/playback/queue', {
         method: 'PUT',

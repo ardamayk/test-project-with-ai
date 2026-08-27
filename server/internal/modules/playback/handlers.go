@@ -12,12 +12,13 @@ import (
 )
 
 type Handlers struct {
-	store  *Store
-	tracks library.TrackAccess
+	store       *Store
+	tracks      library.TrackAccess
+	queueEvents *QueueEventBroker
 }
 
-func NewHandlers(store *Store, tracks library.TrackAccess) *Handlers {
-	return &Handlers{store: store, tracks: tracks}
+func NewHandlers(store *Store, tracks library.TrackAccess, queueEvents *QueueEventBroker) *Handlers {
+	return &Handlers{store: store, tracks: tracks, queueEvents: queueEvents}
 }
 
 func (h *Handlers) GetQueue(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +68,7 @@ func (h *Handlers) ReplaceQueue(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	respond.JSON(w, http.StatusOK, queue)
+	h.respondQueueMutation(w, userID, queue)
 }
 
 func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +107,7 @@ func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	respond.JSON(w, http.StatusOK, queue)
+	h.respondQueueMutation(w, userID, queue)
 }
 
 func (h *Handlers) RemoveItem(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +135,7 @@ func (h *Handlers) RemoveItem(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	respond.JSON(w, http.StatusOK, queue)
+	h.respondQueueMutation(w, userID, queue)
 }
 
 func (h *Handlers) ReorderQueue(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +169,11 @@ func (h *Handlers) ReorderQueue(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	h.respondQueueMutation(w, userID, queue)
+}
+
+func (h *Handlers) respondQueueMutation(w http.ResponseWriter, userID string, queue Queue) {
+	h.queueEvents.Publish(userID, queue.Revision, queue.EventSequence)
 	respond.JSON(w, http.StatusOK, queue)
 }
 

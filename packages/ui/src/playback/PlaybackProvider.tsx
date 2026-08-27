@@ -119,6 +119,9 @@ export function PlaybackProvider({
 	const [session, setSession] = useState<PlaybackSessionState>(() =>
 		engine.getState(),
 	);
+	const currentQueueItemIdRef = useRef<string | null>(null);
+	const currentQueueIndexRef = useRef<number | null>(null);
+	const repeatCancellationRequestedModeRef = useRef<RepeatMode | null>(null);
 	const [radioNowPlaying, setRadioNowPlaying] =
 		useState<RadioNowPlaying | null>(null);
 	apiRef.current = api;
@@ -160,18 +163,19 @@ export function PlaybackProvider({
 		return () => window.clearInterval(intervalId);
 	}, [currentRadioStation, refreshRadioNowPlaying]);
 
-	const playTrackInternal = useCallback(
-		async (trackId: string, queueOverride?: QueueItem[]) => {
-			const item = (queueOverride ?? queueRef.current).find(
-				(entry) => entry.track.id === trackId || entry.trackId === trackId,
-			);
-			if (!item) return;
+	const playQueueItemInternal = useCallback(
+		async (item: QueueItem, queueOverride?: QueueItem[]) => {
+			const activeQueue = queueOverride ?? queueRef.current;
+			const itemIndex = activeQueue.findIndex((entry) => entry.id === item.id);
+			if (itemIndex < 0) return;
+			currentQueueItemIdRef.current = item.id;
+			currentQueueIndexRef.current = itemIndex;
 			setRadioNowPlaying(null);
 			try {
 				await engine.play({
 					type: "track",
 					track: item.track,
-					playbackUrl: apiRef.current.getStreamUrl(trackId),
+					playbackUrl: apiRef.current.getStreamUrl(item.trackId),
 				});
 			} catch {
 				// PlaybackEngine exposes the error through observable session state.
@@ -180,15 +184,55 @@ export function PlaybackProvider({
 		[engine],
 	);
 
+	const playTrackInternal = useCallback(
+		async (trackId: string, queueOverride?: QueueItem[]) => {
+			const activeQueue = queueOverride ?? queueRef.current;
+			const item = activeQueue.find(
+				(entry) => entry.track.id === trackId || entry.trackId === trackId,
+			);
+			if (item) await playQueueItemInternal(item, activeQueue);
+		},
+		[playQueueItemInternal],
+	);
+
+	useEffect(() => {
+		if (session.source?.type !== "track") return;
+		const itemIndex = queue.findIndex(
+			(item) => item.id === currentQueueItemIdRef.current,
+		);
+		if (itemIndex < 0) return;
+		currentQueueIndexRef.current = itemIndex;
+	}, [queue, session.source]);
+
+	useEffect(() => {
+		if (session.repeatMode === "off") {
+			repeatCancellationRequestedModeRef.current = null;
+			return;
+		}
+		if (queue.length > 0 || session.source?.type !== "track") {
+			repeatCancellationRequestedModeRef.current = null;
+			return;
+		}
+		if (repeatCancellationRequestedModeRef.current === session.repeatMode)
+			return;
+		repeatCancellationRequestedModeRef.current = session.repeatMode;
+		engine.cycleRepeatMode();
+	}, [engine, queue.length, session.repeatMode, session.source]);
+
 	useEffect(() => {
 		if (session.status !== "ended" || session.source?.type !== "track") return;
-		const endedTrackId = session.source.track.id;
 		const index = queueRef.current.findIndex(
-			(item) => item.track.id === endedTrackId,
+			(item) => item.id === currentQueueItemIdRef.current,
 		);
-		const next = queueRef.current[index + 1];
-		if (next) void playTrackInternal(next.track.id);
-	}, [playTrackInternal, session]);
+		const nextIndex =
+			index >= 0 ? index + 1 : (currentQueueIndexRef.current ?? 0);
+		const next = queueRef.current[nextIndex];
+		if (next) {
+			void playQueueItemInternal(next);
+			return;
+		}
+		engine.stop();
+	}, [engine, playQueueItemInternal, session]);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {
@@ -262,9 +306,9 @@ export function PlaybackProvider({
 	const playQueueIndex = useCallback(
 		async (index: number) => {
 			const item = queueRef.current[index];
-			if (item) await playTrackInternal(item.track.id);
+			if (item) await playQueueItemInternal(item);
 		},
-		[playTrackInternal],
+		[playQueueItemInternal],
 	);
 
 	const playNext = useCallback(
@@ -288,11 +332,8 @@ export function PlaybackProvider({
 	);
 
 	const clearQueue = useCallback(async () => {
-		const data = await replaceQueue([]);
-		if (!data) return;
-		setRadioNowPlaying(null);
-		engine.stop();
-	}, [engine, replaceQueue]);
+		await replaceQueue([]);
+	}, [replaceQueue]);
 
 	const value = useMemo<PlaybackContextValue>(
 		() => ({

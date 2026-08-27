@@ -1,6 +1,7 @@
 package playback
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -9,9 +10,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	api "github.com/ardam/navidrome-replacement/server/internal/api/gen"
+	"github.com/ardam/navidrome-replacement/server/internal/auth"
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
@@ -26,7 +30,7 @@ func setupPlaybackHandlers(t *testing.T) (*Handlers, *Store, *library.Store, *sq
 	libStore := library.NewStore(db)
 	libSvc := library.NewService(libStore, config.Config{MusicPaths: []string{musicRoot}})
 	pbStore := NewStore(db, libStore)
-	return NewHandlers(pbStore, libSvc), pbStore, libStore, db, musicRoot
+	return NewHandlers(pbStore, libSvc, NewQueueEventBroker()), pbStore, libStore, db, musicRoot
 }
 
 func seedPlaybackTrack(t *testing.T, db *sql.DB, libStore *library.Store, musicRoot string) string {
@@ -74,6 +78,155 @@ func TestHandlersGetQueueEmpty(t *testing.T) {
 	if body.Revision != "0" {
 		t.Fatalf("revision = %q, want 0", body.Revision)
 	}
+}
+
+func TestHandlersStreamQueueEventsStartsWithLatestQueueInvalidation(t *testing.T) {
+	handlers, _, _, _, _ := setupPlaybackHandlers(t)
+	server := httptest.NewServer(http.HandlerFunc(handlers.StreamQueueEvents))
+	t.Cleanup(server.Close)
+
+	response, err := server.Client().Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if contentType := response.Header.Get("Content-Type"); contentType != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", contentType)
+	}
+	event := readQueueEvent(t, bufio.NewScanner(response.Body))
+	if event.ID != "0" || event.Name != "queue-invalidated" {
+		t.Fatalf("event = %+v, want initial Queue revision 0 invalidation", event)
+	}
+	if event.Data.Revision != "0" || event.Data.Sequence != "0" || len(event.Data.Invalidates) != 1 || event.Data.Invalidates[0] != api.QueueEventInvalidatesQueue {
+		t.Fatalf("event data = %+v", event.Data)
+	}
+}
+
+func TestHandlersStreamQueueEventsNotifiesSimultaneousClients(t *testing.T) {
+	handlers, _, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+	router := chi.NewRouter()
+	router.Get("/events", handlers.StreamQueueEvents)
+	router.Post("/items", handlers.AppendItem)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	firstResponse, firstEvents := openQueueEventStream(t, server, "")
+	defer func() { _ = firstResponse.Body.Close() }()
+	secondResponse, secondEvents := openQueueEventStream(t, server, "")
+	defer func() { _ = secondResponse.Body.Close() }()
+	_ = readQueueEvent(t, firstEvents)
+	_ = readQueueEvent(t, secondEvents)
+
+	body, _ := json.Marshal(map[string]string{"trackId": trackID, "revision": "0"})
+	response, err := server.Client().Post(server.URL+"/items", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("mutation status = %d, want 200", response.StatusCode)
+	}
+
+	for clientIndex, scanner := range []*bufio.Scanner{firstEvents, secondEvents} {
+		event := readQueueEvent(t, scanner)
+		if event.ID != "1" || event.Data.Revision != "1" {
+			t.Fatalf("client %d event = %+v, want revision 1", clientIndex+1, event)
+		}
+	}
+}
+
+func TestHandlersStreamQueueEventsReconnectsWithLatestRevision(t *testing.T) {
+	handlers, store, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+	router := chi.NewRouter()
+	router.Get("/events", handlers.StreamQueueEvents)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	initialResponse, initialEvents := openQueueEventStream(t, server, "")
+	initial := readQueueEvent(t, initialEvents)
+	_ = initialResponse.Body.Close()
+	if initial.Data.Revision != "0" {
+		t.Fatalf("initial revision = %q, want 0", initial.Data.Revision)
+	}
+	if _, err := store.AppendItem(context.Background(), auth.DefaultUserID, trackID, "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	reconnectedResponse, reconnectedEvents := openQueueEventStream(t, server, initial.ID)
+	defer func() { _ = reconnectedResponse.Body.Close() }()
+	reconnected := readQueueEvent(t, reconnectedEvents)
+	if reconnected.ID != "1" || reconnected.Data.Revision != "1" {
+		t.Fatalf("reconnected event = %+v, want latest revision 1", reconnected)
+	}
+}
+
+func TestHandlersStreamQueueEventsUsesPersistedSequenceIndependentOfRevision(t *testing.T) {
+	handlers, store, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+	if _, err := store.AppendItem(context.Background(), auth.DefaultUserID, trackID, "0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE playback_queue_state SET event_sequence = 41 WHERE user_id = ?`, auth.DefaultUserID); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(handlers.StreamQueueEvents))
+	t.Cleanup(server.Close)
+
+	response, events := openQueueEventStream(t, server, "")
+	defer func() { _ = response.Body.Close() }()
+	event := readQueueEvent(t, events)
+	if event.ID != "41" || event.Data.Sequence != "41" || event.Data.Revision != "1" {
+		t.Fatalf("event = %+v, want persisted sequence 41 and revision 1", event)
+	}
+}
+
+func openQueueEventStream(t *testing.T, server *httptest.Server, lastEventID string) (*http.Response, *bufio.Scanner) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastEventID != "" {
+		request.Header.Set("Last-Event-ID", lastEventID)
+	}
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response, bufio.NewScanner(response.Body)
+}
+
+type queueServerEvent struct {
+	ID   string
+	Name string
+	Data api.QueueEvent
+}
+
+func readQueueEvent(t *testing.T, scanner *bufio.Scanner) queueServerEvent {
+	t.Helper()
+	var event queueServerEvent
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			return event
+		}
+		if value, found := strings.CutPrefix(line, "id: "); found {
+			event.ID = value
+		}
+		if value, found := strings.CutPrefix(line, "event: "); found {
+			event.Name = value
+		}
+		if value, found := strings.CutPrefix(line, "data: "); found {
+			if err := json.Unmarshal([]byte(value), &event.Data); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Fatalf("Queue event stream ended: %v", scanner.Err())
+	return queueServerEvent{}
 }
 
 func TestHandlersReplaceQueue(t *testing.T) {

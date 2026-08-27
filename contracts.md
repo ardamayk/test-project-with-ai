@@ -74,9 +74,9 @@ HTTP status codes follow standard semantics (400, 401, 404, 500).
 
 Widget IDs must be registered in `packages/ui/src/widgets/registry.tsx`.
 
-## WebSocket (future)
+## Live updates
 
-Party mode and live queue sync will use a separate WebSocket contract document when implemented. Not part of OpenAPI v0.1.
+Shared Queue invalidations use the OpenAPI-documented server-sent event stream. Party mode remains a future WebSocket feature.
 
 ## Codegen
 

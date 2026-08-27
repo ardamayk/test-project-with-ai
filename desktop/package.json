@@ -4,8 +4,11 @@
   "version": "0.1.0",
   "scripts": {
     "build": "tauri build --no-bundle",
-    "desktop:dev": "tauri dev",
-    "test": "cargo test --manifest-path src-tauri/Cargo.toml"
+    "build:sidecar": "pnpm prepare:mpv && tauri build --no-bundle --config src-tauri/tauri.sidecar.conf.json",
+    "desktop:dev": "pnpm prepare:mpv && tauri dev --config src-tauri/tauri.sidecar.conf.json",
+    "prepare:mpv": "./scripts/prepare-mpv-sidecar.sh",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:mpv": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests::real_pinned_mpv_controls_a_track_and_removes_private_ipc -- --ignored"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

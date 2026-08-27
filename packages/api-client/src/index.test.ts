@@ -38,6 +38,178 @@ describe('createApiClient', () => {
     expectTypeOf<ReorderResponses>().toHaveProperty(409)
     expectTypeOf<RemoveResponses>().toHaveProperty(409)
   })
+
+  it('generates Queue event stream response', () => {
+    type EventResponses = operations['streamPlaybackQueueEvents']['responses']
+
+    expectTypeOf<EventResponses>().toHaveProperty(200)
+  })
+
+  it('subscribes to Queue invalidations and closes the event stream', async () => {
+    const listeners = new Map<string, (event: MessageEvent<string>) => void>()
+    const eventSource = {
+      addEventListener: vi.fn((name: string, listener: (event: MessageEvent<string>) => void) => {
+        listeners.set(name, listener)
+      }),
+      close: vi.fn(),
+      onerror: null,
+    }
+    const eventSourceFactory = vi.fn(() => eventSource)
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(
+      serverHealthResponse(['api.v1', 'playback.queue-events.v1']),
+    )
+    const client = createApiClient({
+      baseUrl: '',
+      queueEventsBaseUrl: async () => 'http://music.test',
+      eventSourceFactory,
+      transport,
+    })
+    const onEvent = vi.fn()
+
+    const unsubscribe = client.subscribePlaybackQueueEvents(onEvent)
+    await vi.waitFor(() => expect(eventSourceFactory).toHaveBeenCalled())
+    listeners.get('queue-invalidated')?.({
+      data: JSON.stringify({ revision: 'opaque-7', sequence: '7', invalidates: ['queue'] }),
+    } as MessageEvent<string>)
+
+    expect(eventSourceFactory).toHaveBeenCalledWith(
+      'http://music.test/api/v1/playback/queue/events',
+    )
+    expect(onEvent).toHaveBeenCalledWith({
+      revision: 'opaque-7',
+      sequence: '7',
+      invalidates: ['queue'],
+    })
+    unsubscribe()
+    expect(eventSource.close).toHaveBeenCalledOnce()
+  })
+
+  it('recovers from a transient capability check failure without remounting', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = vi.fn<typeof fetch>()
+        .mockRejectedValueOnce(new Error('temporary health failure'))
+        .mockRejectedValueOnce(new Error('temporary health failure'))
+        .mockResolvedValueOnce(
+          serverHealthResponse(['api.v1', 'playback.queue-events.v1']),
+        )
+      const eventSourceFactory = vi.fn(() => ({
+        addEventListener: vi.fn(),
+        close: vi.fn(),
+        onerror: null,
+      }))
+      const client = createApiClient({
+        baseUrl: 'http://music.test',
+        transport,
+        eventSourceFactory,
+      })
+
+      const unsubscribe = client.subscribePlaybackQueueEvents(vi.fn(), vi.fn())
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(999)
+      expect(transport).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(transport).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(transport).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(transport).toHaveBeenCalledTimes(3)
+      expect(eventSourceFactory).toHaveBeenCalledOnce()
+      unsubscribe()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not subscribe when Queue events capability is absent', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = vi.fn<typeof fetch>().mockResolvedValue(
+        serverHealthResponse(['api.v1']),
+      )
+      const eventSourceFactory = vi.fn()
+      const onError = vi.fn()
+      const client = createApiClient({
+        baseUrl: 'http://music.test',
+        transport,
+        eventSourceFactory,
+      })
+
+      client.subscribePlaybackQueueEvents(vi.fn(), onError)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(120000)
+
+      expect(onError).toHaveBeenCalledOnce()
+      expect(onError).toHaveBeenCalledWith(
+        new Error(
+          'Music Server does not advertise playback.queue-events.v1; Queue synchronization is disabled.',
+        ),
+      )
+      expect(transport).toHaveBeenCalledOnce()
+      expect(eventSourceFactory).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels a pending capability retry when unsubscribed', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = vi.fn<typeof fetch>().mockRejectedValue(
+        new Error('temporary health failure'),
+      )
+      const eventSourceFactory = vi.fn()
+      const client = createApiClient({
+        baseUrl: 'http://music.test',
+        transport,
+        eventSourceFactory,
+      })
+
+      const unsubscribe = client.subscribePlaybackQueueEvents(vi.fn(), vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      unsubscribe()
+      await vi.advanceTimersByTimeAsync(120000)
+
+      expect(transport).toHaveBeenCalledOnce()
+      expect(eventSourceFactory).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('authenticates Queue event streams when a token is configured', async () => {
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      if (input.toString().endsWith('/api/v1/health')) {
+        return serverHealthResponse(['api.v1', 'playback.queue-events.v1'])
+      }
+      return new Response(
+        'id: 8\nevent: queue-invalidated\ndata: {"revision":"opaque-8","sequence":"8","invalidates":["queue"]}\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      )
+    })
+    const client = createApiClient({
+      baseUrl: 'http://music.test',
+      getToken: () => 'secret-token',
+      transport,
+    })
+    const onEvent = vi.fn()
+
+    const unsubscribe = client.subscribePlaybackQueueEvents(onEvent)
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalled())
+    unsubscribe()
+
+    const eventRequest = transport.mock.calls.find(([input]) =>
+      input.toString().endsWith('/api/v1/playback/queue/events'),
+    )
+    const headers = new Headers(eventRequest?.[1]?.headers)
+    expect(headers.get('Authorization')).toBe('Bearer secret-token')
+    expect(onEvent).toHaveBeenCalledWith({
+      revision: 'opaque-8',
+      sequence: '8',
+      invalidates: ['queue'],
+    })
+  })
   it('builds health URL from base', () => {
     const client = createApiClient({ baseUrl: 'http://localhost:8080' })
     expect(client.getHealth).toBeTypeOf('function')
@@ -163,3 +335,10 @@ describe('createApiClient', () => {
     }
   })
 })
+
+function serverHealthResponse(capabilities: string[]) {
+  return new Response(
+    JSON.stringify({ status: 'ok', version: '0.1.0', capabilities }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  )
+}

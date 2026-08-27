@@ -18,8 +18,9 @@ type QueueItem struct {
 }
 
 type Queue struct {
-	Items    []QueueItem `json:"items"`
-	Revision string      `json:"revision"`
+	Items         []QueueItem `json:"items"`
+	Revision      string      `json:"revision"`
+	EventSequence string      `json:"-"`
 }
 
 type Store struct {
@@ -39,10 +40,13 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	var revision string
+	var eventSequence string
 	if scanErr := tx.QueryRowContext(ctx, `
 		SELECT CAST(COALESCE((
 			SELECT revision FROM playback_queue_state WHERE user_id = ?
-		), 0) AS TEXT)`, userID).Scan(&revision); scanErr != nil {
+		), 0) AS TEXT), CAST(COALESCE((
+			SELECT event_sequence FROM playback_queue_state WHERE user_id = ?
+		), 0) AS TEXT)`, userID, userID).Scan(&revision, &eventSequence); scanErr != nil {
 		return Queue{}, fmt.Errorf("get queue revision: %w", scanErr)
 	}
 
@@ -86,7 +90,7 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 		item.Track = track
 		resolvedItems = append(resolvedItems, item)
 	}
-	return Queue{Items: resolvedItems, Revision: revision}, nil
+	return Queue{Items: resolvedItems, Revision: revision, EventSequence: eventSequence}, nil
 }
 
 func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []string, expectedRevision string) (Queue, error) {
@@ -172,7 +176,7 @@ func advanceRevision(ctx context.Context, tx *sql.Tx, userID, expectedRevision s
 	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE playback_queue_state
-		SET revision = revision + 1
+		SET revision = revision + 1, event_sequence = event_sequence + 1
 		WHERE user_id = ? AND CAST(revision AS TEXT) = ?`, userID, expectedRevision)
 	if err != nil {
 		return err

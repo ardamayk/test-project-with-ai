@@ -9,7 +9,8 @@ use std::time::Duration;
 use url::{Host, Url};
 
 const HEALTH_PATH: &str = "/api/v1/health";
-const REQUIRED_SERVER_CAPABILITIES: &[&str] = &["api.v1"];
+const QUEUE_EVENTS_PATH: &str = "/api/v1/playback/queue/events";
+const REQUIRED_SERVER_CAPABILITIES: &[&str] = &["api.v1", "playback.queue-events.v1"];
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const ALLOWED_REQUEST_HEADERS: &[&str] = &["accept", "authorization", "content-type", "range"];
 
@@ -392,6 +393,39 @@ impl HttpBridge {
         Ok(response)
     }
 
+    pub async fn open_queue_event_stream(
+        &self,
+        origin: &ServerOrigin,
+        last_event_id: Option<&str>,
+    ) -> Result<reqwest::Response, ConnectionError> {
+        let url = self.restricted_url(origin, QUEUE_EVENTS_PATH)?;
+        let mut request = self
+            .streaming_client
+            .get(url)
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        if let Some(last_event_id) = last_event_id {
+            request = request.header("Last-Event-ID", last_event_id);
+        }
+        let response = request.send().await.map_err(|_| {
+            ConnectionError::new(
+                ConnectionErrorCode::Unreachable,
+                "Music Server Queue event stream is unreachable.",
+            )
+        })?;
+        let is_event_stream = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream"));
+        if !response.status().is_success() || !is_event_stream {
+            return Err(ConnectionError::new(
+                ConnectionErrorCode::InvalidResponse,
+                "Music Server Queue event stream returned an invalid response.",
+            ));
+        }
+        Ok(response)
+    }
+
     fn restricted_url(
         &self,
         origin: &ServerOrigin,
@@ -562,7 +596,7 @@ mod tests {
 
     #[tokio::test]
     async fn valid_connection_reports_server_capabilities() {
-        let origin = serve_health(&["api.v1", "optional.future"]);
+        let origin = serve_health(&["api.v1", "playback.queue-events.v1", "optional.future"]);
         let check = HttpBridge::new()
             .expect("create bridge")
             .test_server(&ServerOrigin::parse(&origin).expect("valid origin"))
@@ -570,7 +604,10 @@ mod tests {
             .expect("connection succeeds");
 
         assert_eq!(check.version, "0.1.0-test");
-        assert_eq!(check.capabilities, ["api.v1", "optional.future"]);
+        assert_eq!(
+            check.capabilities,
+            ["api.v1", "playback.queue-events.v1", "optional.future"]
+        );
     }
 
     #[tokio::test]
@@ -620,6 +657,19 @@ mod tests {
 
         assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
         assert!(error.message.contains("api.v1"));
+    }
+
+    #[tokio::test]
+    async fn queue_events_capability_is_required() {
+        let origin = serve_health(&["api.v1"]);
+        let error = HttpBridge::new()
+            .expect("create bridge")
+            .test_server(&ServerOrigin::parse(&origin).expect("valid origin"))
+            .await
+            .expect_err("Queue events capability should be required");
+
+        assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
+        assert!(error.message.contains("playback.queue-events.v1"));
     }
 
     #[test]
