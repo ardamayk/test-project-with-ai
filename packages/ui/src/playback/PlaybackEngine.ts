@@ -1,6 +1,7 @@
 import type { RadioSearchResult, RadioStation, Track } from "@repo/api-client";
 import type {
 	EqualizerPreset,
+	OutputMode,
 	ProcessingProfile,
 	ProcessingState,
 	ReplayGainMode,
@@ -14,6 +15,7 @@ export type PlaybackSource =
 			type: "track";
 			track: Track;
 			playbackUrl: string;
+			queueItemId?: string;
 	  }
 	| {
 			type: "radio-station";
@@ -31,12 +33,21 @@ export type PlaybackSource =
 export type PlaybackStatus = "idle" | "playing" | "paused" | "ended" | "error";
 
 export type PlaybackError = {
-	code: "playback-failed" | "mpv-crash-loop" | "mpv-restart-failed";
+	code:
+		| "playback-failed"
+		| "mpv-crash-loop"
+		| "mpv-restart-failed"
+		| "mpv-restart-unavailable"
+		| "mpv-recovery-state-unavailable"
+		| "mpv-recovery-snapshot-failed"
+		| "mpv-recovery-lifecycle-unavailable"
+		| "mpv-recovery-transition-invalid";
 	message: string;
 };
 
 export type PlaybackSessionState = {
 	source: PlaybackSource | null;
+	outputMode: OutputMode | null;
 	status: PlaybackStatus;
 	currentTime: number;
 	duration: number;
@@ -58,6 +69,10 @@ export interface PlaybackEngine {
 	getState(): PlaybackSessionState;
 	subscribe(listener: PlaybackSessionListener): () => void;
 	subscribeNavigation?(listener: PlaybackNavigationListener): () => void;
+	syncQueueContext?(
+		sources: PlaybackSource[],
+		currentIndex: number | null,
+	): Promise<void>;
 	play(source?: PlaybackSource): Promise<void>;
 	pause(): void;
 	stop(): void;
@@ -75,6 +90,7 @@ export interface PlaybackEngine {
 
 export const DEFAULT_PLAYBACK_SESSION_STATE: PlaybackSessionState = {
 	source: null,
+	outputMode: null,
 	status: "idle",
 	currentTime: 0,
 	duration: 0,

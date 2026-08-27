@@ -31,6 +31,8 @@ export { EQ_FREQUENCIES_HZ } from './playback/processing'
 export type {
   EqualizerPreset,
   EqualizerState,
+  EffectiveReplayGainMode,
+  OutputMode,
   ProcessingProfile,
   ProcessingState,
   ReplayGainMode,
@@ -38,12 +40,18 @@ export type {
 } from './playback/processing'
 export {
   createBrowserPlaybackTelemetry,
+  createFallbackPlaybackTelemetry,
+  describePlaybackTelemetry,
   derivePlaybackTelemetryStatus,
+  deriveReplayGainAvailability,
   formatTelemetryStatus,
+  mergeProcessingState,
 } from './playback/telemetry'
 export type {
   AudioFormatObservation,
   PlaybackTelemetry,
+  PlaybackTelemetryDescriptions,
   PlaybackTelemetryStatus,
+  ReplayGainAvailability,
 } from './playback/telemetry'
 export { defaultPreferences, defaultLayout, defaultTheme } from './widgets/types'

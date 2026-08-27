@@ -3,7 +3,13 @@ export const EQ_FREQUENCIES_HZ = [
 ] as const;
 
 export type ProcessingProfile = "direct" | "processed";
+export type OutputMode = "system";
 export type ReplayGainMode = "off" | "track" | "album";
+export type EffectiveReplayGainMode =
+	| ReplayGainMode
+	| "track-fallback"
+	| "unavailable"
+	| "unknown";
 export type ReplayGainPreference = Exclude<ReplayGainMode, "off">;
 export type EqualizerPreset =
 	| "flat"
@@ -22,6 +28,7 @@ export type ProcessingState = {
 	profile: ProcessingProfile;
 	softwareVolume: number;
 	replayGainMode: ReplayGainMode;
+	effectiveReplayGainMode: EffectiveReplayGainMode;
 	replayGainPreference: ReplayGainPreference | null;
 	equalizer: EqualizerState;
 	effectiveAudioFilters: string[];

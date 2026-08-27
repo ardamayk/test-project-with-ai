@@ -81,6 +81,34 @@ fn relaunch_rebinds_the_source_to_the_new_private_media_proxy() {
 }
 
 #[test]
+fn relaunch_rebinds_catalog_previews_to_the_preview_stream_route() {
+    let snapshot = PlaybackSessionSnapshot::new(
+        Some(json!({
+            "type": "catalog-preview",
+            "result": { "stationUuid": "catalog-1", "name": "Catalog 1" },
+            "playbackUrl": "http://127.0.0.1:43129/expired-token/api/v1/radio/preview/catalog-1/stream"
+        })),
+        0.0,
+        0.8,
+        false,
+        "off",
+    )
+    .expect("valid snapshot");
+
+    let rebound = snapshot
+        .rebind_media_proxy("http://127.0.0.1:43129/new-token")
+        .expect("rebind private proxy");
+
+    assert_eq!(
+        rebound
+            .source()
+            .and_then(|source| source.get("playbackUrl"))
+            .and_then(serde_json::Value::as_str),
+        Some("http://127.0.0.1:43129/new-token/api/v1/radio/preview/catalog-1/stream")
+    );
+}
+
+#[test]
 fn renderer_reload_preserves_background_playback_and_republishes_state() {
     let mut lifecycle = PlaybackLifecycle::new();
 
@@ -161,6 +189,26 @@ fn a_second_consecutive_player_failure_stops_automatic_recovery() {
     };
     assert_eq!(error.code, "mpv-crash-loop");
     assert!(error.message.contains("Quit and reopen the Desktop Client"));
+}
+
+#[test]
+fn stable_playback_resets_the_consecutive_failure_budget() {
+    let snapshot =
+        PlaybackSessionSnapshot::new(None, 0.0, 0.8, false, "off").expect("valid snapshot");
+    let mut lifecycle = PlaybackLifecycle::new();
+
+    let first_failure = lifecycle.unexpected_player_exit(&snapshot, true);
+    lifecycle.player_stabilized();
+    let later_failure = lifecycle.unexpected_player_exit(&snapshot, true);
+
+    assert!(matches!(
+        first_failure.action,
+        PlaybackLifecycleAction::RestartPlayer { .. }
+    ));
+    assert!(matches!(
+        later_failure.action,
+        PlaybackLifecycleAction::RestartPlayer { .. }
+    ));
 }
 
 #[test]

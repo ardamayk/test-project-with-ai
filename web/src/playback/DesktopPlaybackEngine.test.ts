@@ -1,5 +1,4 @@
 import type {
-	PlaybackNavigationListener,
 	PlaybackSessionListener,
 	PlaybackSessionState,
 	PlaybackSource,
@@ -44,17 +43,17 @@ const catalogSource: PlaybackSource = {
 		streamUrl: "https://catalog.example/live.m3u8",
 		tags: [],
 	},
-	playbackUrl: `http://127.0.0.1:43129/${"c".repeat(64)}/api/v1/radio/catalog/catalog-1/stream`,
+	playbackUrl: `http://127.0.0.1:43129/${"c".repeat(64)}/api/v1/radio/preview/catalog-1/stream`,
 	sourceUrl: "https://catalog.example/live.m3u8",
 };
 
 function createBridge() {
 	let listener: PlaybackSessionListener | null = null;
-	let navigationListener: PlaybackNavigationListener | null = null;
 	let state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
 	return {
 		bridge: {
 			rendererReady: vi.fn(async () => state),
+			syncQueueContext: vi.fn(async () => state),
 			play: vi.fn(async (source?: PlaybackSource) => {
 				state = {
 					...state,
@@ -81,18 +80,9 @@ function createBridge() {
 					listener = null;
 				};
 			}),
-			listenNavigation: vi.fn(
-				async (nextListener: PlaybackNavigationListener) => {
-					navigationListener = nextListener;
-					return [() => (navigationListener = null)];
-				},
-			),
 		},
 		emit(nextState: PlaybackSessionState) {
 			listener?.(nextState);
-		},
-		emitNavigation(direction: "previous" | "next") {
-			navigationListener?.(direction);
 		},
 	};
 }
@@ -117,20 +107,15 @@ describe("DesktopPlaybackEngine", () => {
 		expect(native.bridge.setEqualizerPreset).toHaveBeenCalledWith("vocal");
 		engine.destroy();
 	});
-	it("forwards tray navigation through the public playback seam", async () => {
+	it("syncs Queue context through the Rust-owned playback seam", async () => {
 		const native = createBridge();
 		const engine = new DesktopPlaybackEngine(native.bridge);
-		const listener = vi.fn();
-		engine.subscribeNavigation(listener);
+		await engine.syncQueueContext([trackSource], 0);
 
-		await vi.waitFor(() =>
-			expect(native.bridge.listenNavigation).toHaveBeenCalledOnce(),
+		expect(native.bridge.syncQueueContext).toHaveBeenCalledWith(
+			[trackSource],
+			0,
 		);
-		native.emitNavigation("previous");
-		native.emitNavigation("next");
-
-		expect(listener).toHaveBeenNthCalledWith(1, "previous");
-		expect(listener).toHaveBeenNthCalledWith(2, "next");
 		engine.destroy();
 	});
 
@@ -139,6 +124,7 @@ describe("DesktopPlaybackEngine", () => {
 		native.bridge.rendererReady.mockResolvedValueOnce({
 			...DEFAULT_PLAYBACK_SESSION_STATE,
 			source: radioSource,
+			outputMode: "system",
 			status: "playing",
 		});
 		const engine = new DesktopPlaybackEngine(native.bridge);
@@ -146,6 +132,7 @@ describe("DesktopPlaybackEngine", () => {
 		await vi.waitFor(() => {
 			expect(engine.getState()).toMatchObject({
 				source: radioSource,
+				outputMode: "system",
 				status: "playing",
 			});
 		});

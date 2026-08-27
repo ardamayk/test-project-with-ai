@@ -94,7 +94,7 @@ fn playback_source_path(source: &Value) -> Result<String, PlaybackLifecycleError
     let (identifier_pointer, path_prefix) = match source.get("type").and_then(Value::as_str) {
         Some("track") => ("/track/id", "api/v1/tracks"),
         Some("radio-station") => ("/station/id", "api/v1/radio/stations"),
-        Some("catalog-preview") => ("/result/stationUuid", "api/v1/radio/catalog"),
+        Some("catalog-preview") => ("/result/stationUuid", "api/v1/radio/preview"),
         _ => return Err(invalid_source("Playback Source type is unsupported.")),
     };
     let identifier = source
@@ -199,6 +199,13 @@ impl PlaybackLifecycle {
         self.transition(PlaybackLifecycleAction::SurfaceActionableError(
             PlaybackLifecycleFailure::crash_loop(),
         ))
+    }
+
+    pub(crate) fn player_stabilized(&mut self) {
+        self.has_recovery_attempted = false;
+        if self.state == PlaybackLifecycleState::Recovering {
+            self.state = PlaybackLifecycleState::Foreground;
+        }
     }
 
     fn transition(&self, action: PlaybackLifecycleAction) -> PlaybackLifecycleTransition {

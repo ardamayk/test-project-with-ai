@@ -31,17 +31,30 @@ pub struct SourceObservation {
 
 impl SourceObservation {
     pub fn from_playback_source(source: &Value) -> Self {
-        let track = source.get("track");
+        let source_type = source.get("type").and_then(Value::as_str);
+        let metadata = match source_type {
+            Some("track") => source.get("track"),
+            Some("radio-station") => source.get("station"),
+            Some("catalog-preview") => source.get("result"),
+            _ => None,
+        };
+        let is_track = source_type == Some("track");
         Self {
-            codec: track
-                .and_then(|value| value.get("format"))
+            codec: metadata
+                .and_then(|value| value.get(if is_track { "format" } else { "codec" }))
                 .and_then(Value::as_str)
                 .map(str::to_uppercase),
-            bitrate_kbps: observed_u32(track, "bitrateKbps"),
+            bitrate_kbps: observed_u32(metadata, if is_track { "bitrateKbps" } else { "bitrate" }),
             format: AudioFormatObservation {
-                sample_rate_hz: observed_u32(track, "sampleRateHz"),
-                bit_depth: observed_u16(track, "bitDepth"),
-                channels: observed_u16(track, "channels"),
+                sample_rate_hz: is_track
+                    .then(|| observed_u32(metadata, "sampleRateHz"))
+                    .flatten(),
+                bit_depth: is_track
+                    .then(|| observed_u16(metadata, "bitDepth"))
+                    .flatten(),
+                channels: is_track
+                    .then(|| observed_u16(metadata, "channels"))
+                    .flatten(),
             },
         }
     }
@@ -188,6 +201,7 @@ pub struct ProcessingObservation {
     pub profile: String,
     pub software_volume: Option<f64>,
     pub replay_gain_mode: String,
+    pub effective_replay_gain_mode: String,
     pub is_equalizer_enabled: Option<bool>,
 }
 
@@ -197,6 +211,7 @@ impl ProcessingObservation {
             profile: "direct".to_owned(),
             software_volume: Some(1.0),
             replay_gain_mode: "off".to_owned(),
+            effective_replay_gain_mode: "off".to_owned(),
             is_equalizer_enabled: Some(false),
         }
     }
@@ -206,6 +221,7 @@ impl ProcessingObservation {
             profile: "unknown".to_owned(),
             software_volume: None,
             replay_gain_mode: "unknown".to_owned(),
+            effective_replay_gain_mode: "unknown".to_owned(),
             is_equalizer_enabled: None,
         }
     }

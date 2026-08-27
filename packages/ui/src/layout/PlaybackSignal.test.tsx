@@ -40,6 +40,7 @@ const MATCHED_TELEMETRY: PlaybackTelemetry = {
 		profile: "direct",
 		softwareVolume: 1,
 		replayGainMode: "off",
+		effectiveReplayGainMode: "off",
 		isEqualizerEnabled: false,
 	},
 };
@@ -48,6 +49,7 @@ const PROCESSED_STATE: ProcessingState = {
 	profile: "processed",
 	softwareVolume: 0.5,
 	replayGainMode: "off",
+	effectiveReplayGainMode: "off",
 	replayGainPreference: null,
 	equalizer: {
 		isEnabled: false,
@@ -129,6 +131,7 @@ describe("PlaybackSignal", () => {
 		render(
 			<PlaybackSignal
 				telemetry={MATCHED_TELEMETRY}
+				outputMode="system"
 				processingControls={controls}
 			/>,
 		);
@@ -141,6 +144,7 @@ describe("PlaybackSignal", () => {
 		});
 
 		expect(screen.getByText("Processed Profile")).toBeTruthy();
+		expect(screen.getByText("Output Mode: System Output")).toBeTruthy();
 		expect(screen.getByRole("alert").textContent).toContain(
 			"Software volume requires the Processed Profile",
 		);
@@ -156,6 +160,7 @@ describe("PlaybackSignal", () => {
 		expect(controls.setSoftwareVolume).toHaveBeenCalledWith(0.4);
 		expect(controls.applyEqualizerPreset).toHaveBeenCalledWith("vocal");
 		expect(screen.getAllByRole("slider", { name: /Hz gain/ })).toHaveLength(10);
+		expect(screen.getByText("Output Mode: System Output")).toBeTruthy();
 	});
 
 	it("labels active custom equalizer gains as Custom", () => {
@@ -194,6 +199,7 @@ describe("PlaybackSignal", () => {
 			...PROCESSED_STATE,
 			replayGainMode: "album",
 			replayGainPreference: "album",
+			effectiveReplayGainMode: "track-fallback",
 		});
 		render(
 			<PlaybackSignal
@@ -213,5 +219,6 @@ describe("PlaybackSignal", () => {
 		);
 
 		expect(screen.getByText(/Using Track fallback/)).toBeTruthy();
+		expect(screen.getByText(/Effective Track fallback/)).toBeTruthy();
 	});
 });

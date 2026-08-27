@@ -1,6 +1,7 @@
 use earthly_audio_desktop::processing::{
-    EqualizerPreset, FileProcessingSettingsStorage, MpvProcessingConfiguration,
-    ProcessingController, ProcessingProfile, ProcessingSettingsStorage, ReplayGainMode,
+    EffectiveReplayGainMode, EqualizerPreset, FileProcessingSettingsStorage,
+    MpvProcessingConfiguration, OutputMode, ProcessingController, ProcessingProfile,
+    ProcessingSettingsStorage, ReplayGainMode,
 };
 
 struct EmptySettingsStorage;
@@ -37,6 +38,10 @@ fn direct_profile_exposes_unity_processing_to_mpv() {
     let controller = in_memory_controller();
 
     assert_eq!(controller.state().profile, ProcessingProfile::Direct);
+    assert_eq!(
+        controller.state().effective_replay_gain_mode,
+        EffectiveReplayGainMode::Off
+    );
     assert_eq!(
         controller.mpv_configuration(),
         MpvProcessingConfiguration {
@@ -107,6 +112,34 @@ fn user_processing_changes_switch_profile_and_persist() {
             audio_filters: Vec::new(),
         }
     );
+
+    std::fs::remove_file(settings_path).expect("remove settings fixture");
+}
+
+#[test]
+fn processing_mutations_preserve_the_persisted_system_output_mode() {
+    let settings_path = temporary_path("output-mode-settings.json");
+    let mut controller = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+        settings_path.clone(),
+    )))
+    .expect("open audio settings");
+
+    assert_eq!(controller.output_mode(), OutputMode::System);
+    controller
+        .set_software_volume(0.55)
+        .expect("change Processing Profile state");
+    controller
+        .enable_replay_gain(ReplayGainMode::Track)
+        .expect("change ReplayGain state");
+
+    assert_eq!(controller.output_mode(), OutputMode::System);
+    let persisted = std::fs::read_to_string(&settings_path).expect("read audio settings");
+    assert!(persisted.contains(r#""outputMode":"system""#));
+    let restored = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+        settings_path.clone(),
+    )))
+    .expect("restore audio settings");
+    assert_eq!(restored.output_mode(), OutputMode::System);
 
     std::fs::remove_file(settings_path).expect("remove settings fixture");
 }

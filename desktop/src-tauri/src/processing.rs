@@ -13,12 +13,30 @@ pub enum ProcessingProfile {
     Processed,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputMode {
+    #[default]
+    System,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReplayGainMode {
     Off,
     Track,
     Album,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EffectiveReplayGainMode {
+    Off,
+    Track,
+    Album,
+    TrackFallback,
+    Unavailable,
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -45,6 +63,7 @@ pub struct ProcessingState {
     pub profile: ProcessingProfile,
     pub software_volume: f64,
     pub replay_gain_mode: ReplayGainMode,
+    pub effective_replay_gain_mode: EffectiveReplayGainMode,
     pub replay_gain_preference: Option<ReplayGainMode>,
     pub equalizer: EqualizerState,
     pub effective_audio_filters: Vec<String>,
@@ -60,6 +79,8 @@ impl Default for ProcessingState {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedProcessingSettings {
+    #[serde(default)]
+    output_mode: OutputMode,
     profile: ProcessingProfile,
     software_volume: f64,
     replay_gain_mode: ReplayGainMode,
@@ -135,20 +156,29 @@ impl ProcessingSettingsStorage for FileProcessingSettingsStorage {
 
 pub struct ProcessingController {
     storage: Box<dyn ProcessingSettingsStorage>,
+    output_mode: OutputMode,
     state: ProcessingState,
 }
 
 impl ProcessingController {
     pub fn open(storage: Box<dyn ProcessingSettingsStorage>) -> Result<Self, String> {
-        let state = match storage.load()? {
+        let (state, output_mode) = match storage.load()? {
             Some(value) => state_from_json(&value)?,
-            None => default_state(),
+            None => (default_state(), OutputMode::System),
         };
-        Ok(Self { storage, state })
+        Ok(Self {
+            storage,
+            output_mode,
+            state,
+        })
     }
 
     pub fn state(&self) -> &ProcessingState {
         &self.state
+    }
+
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
     }
 
     pub fn set_profile(&mut self, profile: ProcessingProfile) -> Result<(), String> {
@@ -187,6 +217,7 @@ impl ProcessingController {
         self.commit(|state| {
             let is_transition = state.profile == ProcessingProfile::Direct;
             state.replay_gain_mode = mode;
+            state.effective_replay_gain_mode = EffectiveReplayGainMode::Unknown;
             state.replay_gain_preference = Some(mode);
             transition_to_processed(
                 state,
@@ -200,6 +231,7 @@ impl ProcessingController {
     pub fn disable_replay_gain(&mut self) -> Result<(), String> {
         self.commit(|state| {
             state.replay_gain_mode = ReplayGainMode::Off;
+            state.effective_replay_gain_mode = EffectiveReplayGainMode::Off;
             state.transition_notice = None;
             Ok(())
         })
@@ -267,7 +299,7 @@ impl ProcessingController {
     }
 
     fn persist_state(&self, state: &ProcessingState) -> Result<(), String> {
-        let settings = PersistedProcessingSettings::from(state);
+        let settings = PersistedProcessingSettings::from_state(state, self.output_mode);
         let value = serde_json::to_string(&settings)
             .map_err(|error| format!("Failed to serialize Processing Profile settings: {error}"))?;
         self.storage.save(&value)
@@ -299,12 +331,14 @@ fn transition_to_processed(state: &mut ProcessingState, is_transition: bool, not
 fn clear_active_processing(state: &mut ProcessingState) {
     state.software_volume = 1.0;
     state.replay_gain_mode = ReplayGainMode::Off;
+    state.effective_replay_gain_mode = EffectiveReplayGainMode::Off;
     state.equalizer = flat_equalizer();
 }
 
-impl From<&ProcessingState> for PersistedProcessingSettings {
-    fn from(state: &ProcessingState) -> Self {
+impl PersistedProcessingSettings {
+    fn from_state(state: &ProcessingState, output_mode: OutputMode) -> Self {
         Self {
+            output_mode,
             profile: state.profile,
             software_volume: state.software_volume,
             replay_gain_mode: state.replay_gain_mode,
@@ -314,18 +348,26 @@ impl From<&ProcessingState> for PersistedProcessingSettings {
     }
 }
 
-fn state_from_json(value: &str) -> Result<ProcessingState, String> {
+fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode), String> {
     let settings: PersistedProcessingSettings = serde_json::from_str(value)
         .map_err(|error| format!("Failed to parse Processing Profile settings: {error}"))?;
-    Ok(ProcessingState {
-        profile: settings.profile,
-        software_volume: settings.software_volume,
-        replay_gain_mode: settings.replay_gain_mode,
-        replay_gain_preference: settings.replay_gain_preference,
-        equalizer: settings.equalizer,
-        effective_audio_filters: Vec::new(),
-        transition_notice: None,
-    })
+    Ok((
+        ProcessingState {
+            profile: settings.profile,
+            software_volume: settings.software_volume,
+            replay_gain_mode: settings.replay_gain_mode,
+            effective_replay_gain_mode: if settings.replay_gain_mode == ReplayGainMode::Off {
+                EffectiveReplayGainMode::Off
+            } else {
+                EffectiveReplayGainMode::Unknown
+            },
+            replay_gain_preference: settings.replay_gain_preference,
+            equalizer: settings.equalizer,
+            effective_audio_filters: Vec::new(),
+            transition_notice: None,
+        },
+        settings.output_mode,
+    ))
 }
 
 fn default_state() -> ProcessingState {
@@ -333,6 +375,7 @@ fn default_state() -> ProcessingState {
         profile: ProcessingProfile::Direct,
         software_volume: 1.0,
         replay_gain_mode: ReplayGainMode::Off,
+        effective_replay_gain_mode: EffectiveReplayGainMode::Off,
         replay_gain_preference: None,
         equalizer: flat_equalizer(),
         effective_audio_filters: Vec::new(),

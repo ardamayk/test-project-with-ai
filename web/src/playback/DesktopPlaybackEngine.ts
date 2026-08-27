@@ -1,7 +1,6 @@
 import type {
 	EqualizerPreset,
 	PlaybackEngine,
-	PlaybackNavigationListener,
 	PlaybackSessionListener,
 	PlaybackSessionState,
 	PlaybackSource,
@@ -13,12 +12,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const PLAYBACK_STATE_EVENT = "desktop-playback-state";
-const PLAYBACK_NEXT_REQUESTED_EVENT = "desktop-playback-next-requested";
-const PLAYBACK_PREVIOUS_REQUESTED_EVENT = "desktop-playback-previous-requested";
 
 type DesktopPlaybackBridge = {
 	rendererReady(): Promise<PlaybackSessionState>;
 	play(source?: PlaybackSource): Promise<PlaybackSessionState>;
+	syncQueueContext(
+		sources: PlaybackSource[],
+		currentIndex: number | null,
+	): Promise<PlaybackSessionState>;
 	pause(): Promise<PlaybackSessionState>;
 	stop(): Promise<PlaybackSessionState>;
 	togglePlay(): Promise<PlaybackSessionState>;
@@ -35,12 +36,13 @@ type DesktopPlaybackBridge = {
 	toggleShuffle(): Promise<PlaybackSessionState>;
 	cycleRepeatMode(): Promise<PlaybackSessionState>;
 	listen(listener: PlaybackSessionListener): Promise<UnlistenFn>;
-	listenNavigation(listener: PlaybackNavigationListener): Promise<UnlistenFn[]>;
 };
 
 const tauriPlaybackBridge: DesktopPlaybackBridge = {
 	rendererReady: () => invoke("desktop_playback_renderer_ready"),
 	play: (source) => invoke("desktop_playback_play", { source }),
+	syncQueueContext: (sources, currentIndex) =>
+		invoke("desktop_playback_sync_queue_context", { sources, currentIndex }),
 	pause: () => invoke("desktop_playback_pause"),
 	stop: () => invoke("desktop_playback_stop"),
 	togglePlay: () => invoke("desktop_playback_toggle_play"),
@@ -60,19 +62,12 @@ const tauriPlaybackBridge: DesktopPlaybackBridge = {
 		listen<PlaybackSessionState>(PLAYBACK_STATE_EVENT, (event) => {
 			listener(event.payload);
 		}),
-	listenNavigation: (listener) =>
-		Promise.all([
-			listen(PLAYBACK_PREVIOUS_REQUESTED_EVENT, () => listener("previous")),
-			listen(PLAYBACK_NEXT_REQUESTED_EVENT, () => listener("next")),
-		]),
 };
 
 export class DesktopPlaybackEngine implements PlaybackEngine {
 	private state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
 	private readonly listeners = new Set<PlaybackSessionListener>();
-	private readonly navigationListeners = new Set<PlaybackNavigationListener>();
 	private unlisten: UnlistenFn | null = null;
-	private navigationUnlisteners: UnlistenFn[] = [];
 	private isDestroyed = false;
 	private commandRevision = 0;
 
@@ -91,15 +86,23 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 		return () => this.listeners.delete(listener);
 	}
 
-	subscribeNavigation(listener: PlaybackNavigationListener) {
-		this.navigationListeners.add(listener);
-		return () => this.navigationListeners.delete(listener);
-	}
-
 	async play(source?: PlaybackSource) {
 		this.commandRevision += 1;
 		try {
 			this.update(await this.bridge.play(source));
+		} catch (error) {
+			this.updateError(error);
+			throw error;
+		}
+	}
+
+	async syncQueueContext(
+		sources: PlaybackSource[],
+		currentIndex: number | null,
+	) {
+		this.commandRevision += 1;
+		try {
+			this.update(await this.bridge.syncQueueContext(sources, currentIndex));
 		} catch (error) {
 			this.updateError(error);
 			throw error;
@@ -154,10 +157,7 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 		this.isDestroyed = true;
 		this.unlisten?.();
 		this.unlisten = null;
-		for (const unlisten of this.navigationUnlisteners) unlisten();
-		this.navigationUnlisteners = [];
 		this.listeners.clear();
-		this.navigationListeners.clear();
 	}
 
 	private async initialize(initializationRevision: number) {
@@ -168,16 +168,6 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 				return;
 			}
 			this.unlisten = unlisten;
-			const navigationUnlisteners = await this.bridge.listenNavigation(
-				(direction) => {
-					for (const listener of this.navigationListeners) listener(direction);
-				},
-			);
-			if (this.isDestroyed) {
-				for (const stopListening of navigationUnlisteners) stopListening();
-				return;
-			}
-			this.navigationUnlisteners = navigationUnlisteners;
 			const state = await this.bridge.rendererReady();
 			if (this.commandRevision === initializationRevision) this.update(state);
 		} catch (error) {

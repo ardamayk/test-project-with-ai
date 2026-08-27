@@ -60,6 +60,24 @@ fn native_telemetry_keeps_source_decoder_system_device_and_processing_independen
 }
 
 #[test]
+fn radio_sources_publish_available_codec_and_bitrate_metadata() {
+    let station = telemetry::SourceObservation::from_playback_source(&json!({
+        "type": "radio-station",
+        "station": { "codec": "aac+", "bitrate": 192 }
+    }));
+    let catalog = telemetry::SourceObservation::from_playback_source(&json!({
+        "type": "catalog-preview",
+        "result": { "codec": "ogg", "bitrate": 256 }
+    }));
+
+    assert_eq!(station.codec.as_deref(), Some("AAC+"));
+    assert_eq!(station.bitrate_kbps, Some(192));
+    assert_eq!(catalog.codec.as_deref(), Some("OGG"));
+    assert_eq!(catalog.bitrate_kbps, Some(256));
+    assert_eq!(catalog.format, AudioFormatObservation::unknown());
+}
+
+#[test]
 fn missing_pipewire_evidence_remains_unknown() {
     let observed = PlaybackTelemetry::native_system_output(
         telemetry::SourceObservation::unknown(),

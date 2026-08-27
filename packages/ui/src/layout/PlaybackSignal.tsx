@@ -4,17 +4,23 @@ import { useState } from "react";
 import {
 	EQ_FREQUENCIES_HZ,
 	type EqualizerPreset,
+	type OutputMode,
 	type ProcessingState,
 	type ReplayGainPreference,
 } from "../playback/processing";
 import {
 	derivePlaybackTelemetryStatus,
+	deriveReplayGainAvailability,
+	describePlaybackTelemetry,
 	formatTelemetryStatus,
+	mergeProcessingState,
 	type PlaybackTelemetry,
+	type PlaybackTelemetryDescriptions,
 } from "../playback/telemetry";
 
 type PlaybackSignalProps = {
 	telemetry: PlaybackTelemetry;
+	outputMode?: OutputMode;
 	processingControls?: PlaybackProcessingControls;
 	replayGainMetadata?: Track["replayGain"];
 };
@@ -31,12 +37,13 @@ export type PlaybackProcessingControls = {
 
 export function PlaybackSignal({
 	telemetry,
+	outputMode,
 	processingControls,
 	replayGainMetadata,
 }: PlaybackSignalProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const processingState = processingControls?.state ?? null;
-	const effectiveTelemetry = withProcessingState(telemetry, processingState);
+	const effectiveTelemetry = mergeProcessingState(telemetry, processingState);
 	const status = derivePlaybackTelemetryStatus(effectiveTelemetry);
 	const statusLabel = formatTelemetryStatus(status);
 
@@ -54,6 +61,7 @@ export function PlaybackSignal({
 			{isOpen ? (
 				<PlaybackSignalDialog
 					telemetry={effectiveTelemetry}
+					outputMode={outputMode}
 					processingControls={processingControls}
 					processingState={processingState}
 					replayGainMetadata={replayGainMetadata}
@@ -66,6 +74,7 @@ export function PlaybackSignal({
 
 function PlaybackSignalDialog({
 	telemetry,
+	outputMode,
 	processingControls,
 	processingState,
 	replayGainMetadata,
@@ -74,6 +83,7 @@ function PlaybackSignalDialog({
 	processingState: ProcessingState | null;
 	onClose: () => void;
 }) {
+	const descriptions = describePlaybackTelemetry(telemetry);
 	return (
 		<div
 			role="dialog"
@@ -82,28 +92,9 @@ function PlaybackSignalDialog({
 			className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
 		>
 			<div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-2xl">
-				<header className="mb-4 flex items-start justify-between gap-4">
-					<div>
-						<h2 className="font-semibold text-base">Playback signal path</h2>
-						<p className="text-muted-foreground text-xs">
-							Observed values stay separate from unavailable information.
-						</p>
-					</div>
-					<button
-						type="button"
-						aria-label="Close signal path"
-						onClick={onClose}
-					>
-						<X className="size-4" />
-					</button>
-				</header>
-				<div className="grid gap-2 sm:grid-cols-5">
-					<SignalLayer title="Source" value={formatSource(telemetry)} />
-					<SignalLayer title="Decoder" value={formatDecoder(telemetry)} />
-					<SignalLayer title="System" value={formatSystem(telemetry)} />
-					<SignalLayer title="Device" value={formatDevice(telemetry)} />
-					<SignalLayer title="Processing" value={formatProcessing(telemetry)} />
-				</div>
+				<SignalDialogHeader onClose={onClose} />
+				<SignalPathLayers descriptions={descriptions} />
+				{outputMode ? <OutputModeDisplay outputMode={outputMode} /> : null}
 				{processingControls && processingState ? (
 					<ProcessingControls
 						controller={processingControls}
@@ -112,6 +103,44 @@ function PlaybackSignalDialog({
 					/>
 				) : null}
 			</div>
+		</div>
+	);
+}
+
+function OutputModeDisplay({ outputMode }: { outputMode: OutputMode }) {
+	return (
+		<p className="mt-3 text-muted-foreground text-xs">
+			Output Mode: {outputMode === "system" ? "System Output" : "Unknown"}
+		</p>
+	);
+}
+
+function SignalDialogHeader({ onClose }: { onClose: () => void }) {
+	return (
+		<header className="mb-4 flex items-start justify-between gap-4">
+			<div>
+				<h2 className="font-semibold text-base">Playback signal path</h2>
+				<p className="text-muted-foreground text-xs">
+					Observed values stay separate from unavailable information.
+				</p>
+			</div>
+			<button type="button" aria-label="Close signal path" onClick={onClose}>
+				<X className="size-4" />
+			</button>
+		</header>
+	);
+}
+
+function SignalPathLayers({
+	descriptions,
+}: {
+	descriptions: PlaybackTelemetryDescriptions;
+}) {
+	return (
+		<div className="grid gap-2 sm:grid-cols-5">
+			{Object.entries(descriptions).map(([title, value]) => (
+				<SignalLayer key={title} title={capitalize(title)} value={value} />
+			))}
 		</div>
 	);
 }
@@ -366,115 +395,19 @@ function ReplayGainAvailability({
 	metadata?: Track["replayGain"];
 	state: ProcessingState;
 }) {
-	const isTrackAvailable = hasTrackGain(metadata);
-	const isAlbumAvailable = hasAlbumGain(metadata);
-	const isUsingFallback =
-		state.replayGainMode === "album" && !isAlbumAvailable && isTrackAvailable;
+	const { isTrackAvailable, isAlbumAvailable, isUsingTrackFallback } =
+		deriveReplayGainAvailability(metadata, state.effectiveReplayGainMode);
 	return (
 		<p className="mt-3 text-muted-foreground text-xs">
 			Track ReplayGain metadata:{" "}
 			{isTrackAvailable ? "Available" : "Unavailable"}
 			{" · "}Album ReplayGain metadata:{" "}
 			{isAlbumAvailable ? "Available" : "Unavailable"}
-			{isUsingFallback ? " · Using Track fallback" : null}
+			{isUsingTrackFallback ? " · Using Track fallback" : null}
 		</p>
 	);
-}
-function withProcessingState(
-	telemetry: PlaybackTelemetry,
-	state: ProcessingState | null,
-): PlaybackTelemetry {
-	if (!state) return telemetry;
-	return {
-		...telemetry,
-		processing: {
-			profile: state.profile,
-			softwareVolume: state.softwareVolume,
-			replayGainMode: state.replayGainMode,
-			isEqualizerEnabled: state.equalizer.isEnabled,
-		},
-	};
-}
-
-function formatSource(telemetry: PlaybackTelemetry) {
-	return joinKnown([
-		telemetry.source.codec,
-		telemetry.source.bitrateKbps
-			? `${telemetry.source.bitrateKbps} kbps`
-			: null,
-		formatAudioFormat(telemetry.source.format),
-	]);
-}
-
-function formatDecoder(telemetry: PlaybackTelemetry) {
-	return joinKnown([
-		telemetry.decoder.pcmFormat?.toUpperCase() ?? null,
-		formatAudioFormat(telemetry.decoder.format),
-	]);
-}
-
-function formatSystem(telemetry: PlaybackTelemetry) {
-	const labels = {
-		pipewire: "PipeWire",
-		"browser-managed": "Browser managed",
-		bypassed: "Bypassed",
-		unknown: "Unknown",
-	};
-	return joinKnown([
-		labels[telemetry.system.kind],
-		formatAudioFormat(telemetry.system.format),
-	]);
-}
-
-function formatDevice(telemetry: PlaybackTelemetry) {
-	return joinKnown([
-		telemetry.device.name,
-		formatAudioFormat(telemetry.device.format),
-	]);
-}
-
-function formatProcessing(telemetry: PlaybackTelemetry) {
-	return joinKnown([
-		capitalize(telemetry.processing.profile),
-		telemetry.processing.softwareVolume === null
-			? null
-			: `Volume ${Math.round(telemetry.processing.softwareVolume * 100)}%`,
-		telemetry.processing.replayGainMode === "unknown"
-			? null
-			: `ReplayGain ${capitalize(telemetry.processing.replayGainMode)}`,
-		telemetry.processing.isEqualizerEnabled === null
-			? null
-			: `EQ ${telemetry.processing.isEqualizerEnabled ? "On" : "Off"}`,
-	]);
-}
-
-function formatAudioFormat(format: PlaybackTelemetry["source"]["format"]) {
-	if (
-		format.sampleRateHz === null &&
-		format.bitDepth === null &&
-		format.channels === null
-	)
-		return null;
-	return joinKnown([
-		format.sampleRateHz ? `${format.sampleRateHz / 1000} kHz` : null,
-		format.bitDepth ? `${format.bitDepth}-bit` : null,
-		format.channels ? `${format.channels} ch` : null,
-	]);
-}
-
-function joinKnown(values: Array<string | null>) {
-	const known = values.filter((value): value is string => Boolean(value));
-	return known.length > 0 ? known.join(" · ") : "Unknown";
 }
 
 function capitalize(value: string) {
 	return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function hasTrackGain(metadata?: Track["replayGain"]) {
-	return metadata?.trackGainDb !== null && metadata?.trackGainDb !== undefined;
-}
-
-function hasAlbumGain(metadata?: Track["replayGain"]) {
-	return metadata?.albumGainDb !== null && metadata?.albumGainDb !== undefined;
 }

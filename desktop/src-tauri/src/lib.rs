@@ -2,6 +2,9 @@ mod connection;
 mod media_proxy;
 mod playback;
 mod playback_lifecycle;
+mod playback_navigation;
+#[cfg(test)]
+mod playback_test_support;
 mod playback_tray;
 pub mod processing;
 mod queue_events;
@@ -33,8 +36,6 @@ const CONNECTION_FILE_NAME: &str = "server-connection.json";
 const PLAYBACK_SNAPSHOT_FILE_NAME: &str = "playback-session.json";
 const PROCESSING_SETTINGS_FILE_NAME: &str = "processing-settings.json";
 const PLAYBACK_STATE_EVENT: &str = "desktop-playback-state";
-const PLAYBACK_NEXT_REQUESTED_EVENT: &str = "desktop-playback-next-requested";
-const PLAYBACK_PREVIOUS_REQUESTED_EVENT: &str = "desktop-playback-previous-requested";
 const CONNECTION_CHANGED_EVENT: &str = "server-connection-changed";
 const QUEUE_EVENTS_ERROR_EVENT: &str = "desktop-queue-events-error";
 const QUEUE_INVALIDATED_EVENT: &str = "desktop-queue-invalidated";
@@ -194,6 +195,32 @@ fn desktop_playback_toggle_play(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.toggle_play()
+}
+
+#[tauri::command]
+fn desktop_playback_sync_queue_context(
+    state: State<'_, AppState>,
+    sources: Vec<Value>,
+    current_index: Option<usize>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    for source in &sources {
+        validate_playback_source(source, state.media_proxy.base_url())?;
+    }
+    state.playback.sync_queue_context(sources, current_index)
+}
+
+#[tauri::command]
+fn desktop_playback_previous(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.previous()
+}
+
+#[tauri::command]
+fn desktop_playback_next(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.next()
 }
 
 #[tauri::command]
@@ -365,11 +392,17 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, id: &str) {
             .map(|_| ())
             .map_err(|error| error.message),
         TRAY_PREVIOUS_ID => app
-            .emit(PLAYBACK_PREVIOUS_REQUESTED_EVENT, ())
-            .map_err(|error| error.to_string()),
+            .state::<AppState>()
+            .playback
+            .previous()
+            .map(|_| ())
+            .map_err(|error| error.message),
         TRAY_NEXT_ID => app
-            .emit(PLAYBACK_NEXT_REQUESTED_EVENT, ())
-            .map_err(|error| error.to_string()),
+            .state::<AppState>()
+            .playback
+            .next()
+            .map(|_| ())
+            .map_err(|error| error.message),
         TRAY_QUIT_ID => quit_playback(app, &app.state::<AppState>()).map_err(|error| error.message),
         _ => Ok(()),
     };
@@ -548,6 +581,9 @@ pub fn run() -> tauri::Result<()> {
                 },
             )
             .map_err(std::io::Error::other)?;
+            playback
+                .set_output_mode(processing.output_mode())
+                .map_err(|error| std::io::Error::other(error.message))?;
             if let Some(snapshot) = saved_playback.as_ref() {
                 playback
                     .restore_paused(snapshot)
@@ -600,6 +636,9 @@ pub fn run() -> tauri::Result<()> {
             desktop_playback_pause,
             desktop_playback_stop,
             desktop_playback_toggle_play,
+            desktop_playback_sync_queue_context,
+            desktop_playback_previous,
+            desktop_playback_next,
             desktop_playback_seek,
             desktop_playback_set_volume,
             desktop_playback_set_processing_profile,

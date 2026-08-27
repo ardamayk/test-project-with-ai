@@ -22,7 +22,7 @@ import { cn } from "../lib/utils";
 import { formatReplayGainAvailability } from "../playback/format-replay-gain";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
 import {
-	createBrowserPlaybackTelemetry,
+	createFallbackPlaybackTelemetry,
 	type PlaybackTelemetry,
 } from "../playback/telemetry";
 import { getQueuePanel } from "../widgets/layout-utils";
@@ -136,6 +136,8 @@ export function PlayerBar({
 	const { preferences, togglePanel } = useLayout();
 	const queuePanelSide = getQueuePanel(preferences.layout.sidebarPosition);
 	const {
+		playbackSource,
+		outputMode,
 		currentTrack,
 		currentRadioStation,
 		radioNowPlaying,
@@ -289,7 +291,7 @@ export function PlayerBar({
 	const playbackTelemetry =
 		telemetry ??
 		observedPlaybackTelemetry ??
-		createDefaultPlaybackTelemetry(currentTrack, currentRadioStation, volume);
+		createFallbackPlaybackTelemetry(playbackSource, volume);
 	const hasActiveSource = currentTrack !== null || currentRadioStation !== null;
 	const processingControls = processingState
 		? {
@@ -564,6 +566,7 @@ export function PlayerBar({
 						hasActiveSource ? (
 							<PlaybackSignal
 								telemetry={playbackTelemetry}
+								outputMode={outputMode ?? undefined}
 								processingControls={processingControls}
 								replayGainMetadata={currentTrack?.replayGain}
 							/>
@@ -581,23 +584,6 @@ export function PlayerBar({
 			) : null}
 		</footer>
 	);
-}
-
-function createDefaultPlaybackTelemetry(
-	track: Track | null,
-	station: RadioStation | null,
-	softwareVolume: number,
-) {
-	const telemetry = createBrowserPlaybackTelemetry(track, softwareVolume);
-	if (!station) return telemetry;
-	return {
-		...telemetry,
-		source: {
-			...telemetry.source,
-			codec: station.codec?.toUpperCase() ?? null,
-			bitrateKbps: station.bitrate ?? null,
-		},
-	};
 }
 
 function Portal({ children }: { children: ReactNode }) {

@@ -181,8 +181,10 @@ function Harness() {
 	);
 }
 
-function renderPlayback(api = createApi()) {
-	const engine = new InMemoryPlaybackEngine();
+function renderPlayback(
+	api = createApi(),
+	engine: InMemoryPlaybackEngine = new InMemoryPlaybackEngine(),
+) {
 	render(
 		<PlaybackProvider api={api} engine={engine}>
 			<Harness />
@@ -224,6 +226,7 @@ describe("PlaybackProvider", () => {
 			type: "track",
 			track,
 			playbackUrl: "/stream/track-1",
+			queueItemId: "item-1",
 		});
 		expect(screen.getByTestId("track").textContent).toBe("Track 1");
 		expect(screen.getByTestId("playing").textContent).toBe("true");
@@ -311,6 +314,30 @@ describe("PlaybackProvider", () => {
 		expect(engine.getState().source).toMatchObject({
 			type: "track",
 			track: { id: "track-2" },
+		});
+	});
+
+	it("delegates Queue context and end advancement to a native engine", async () => {
+		const engine = new InMemoryPlaybackEngine();
+		const syncQueueContext = vi.fn(async () => {});
+		Object.assign(engine, { syncQueueContext });
+		renderPlayback(createApi(), engine);
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+
+		expect(syncQueueContext).toHaveBeenLastCalledWith(
+			[
+				expect.objectContaining({ queueItemId: "item-1" }),
+				expect.objectContaining({ queueItemId: "item-2" }),
+			],
+			0,
+		);
+		await act(async () => engine.finish());
+		expect(engine.getState().status).toBe("ended");
+		expect(engine.getState().source).toMatchObject({
+			track: { id: "track-1" },
 		});
 	});
 
