@@ -10,16 +10,24 @@ import {
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { ThemeSync } from "#/components/theme-sync";
+import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
 import { useLibraryScanSync } from "#/hooks/use-library-scan-sync";
 import { apiClient } from "#/lib/api";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
+import { BrowserPlaybackEngine } from "#/playback/BrowserPlaybackEngine";
 
 const playbackApi: PlaybackApi = {
 	getQueue: () => apiClient.getPlaybackQueue(),
-	replaceQueue: (trackIds) => apiClient.replacePlaybackQueue(trackIds),
-	appendQueueItem: (trackId) => apiClient.appendPlaybackQueueItem(trackId),
-	removeQueueItem: (itemId) => apiClient.removePlaybackQueueItem(itemId),
+	replaceQueue: (trackIds, revision) =>
+		apiClient.replacePlaybackQueue(trackIds, revision),
+	reorderQueue: (itemIds, revision) =>
+		apiClient.reorderPlaybackQueue(itemIds, revision),
+	appendQueueItem: (trackId, revision) =>
+		apiClient.appendPlaybackQueueItem(trackId, revision),
+	removeQueueItem: (itemId, revision) =>
+		apiClient.removePlaybackQueueItem(itemId, revision),
 	getStreamUrl: (trackId) => apiClient.getTrackStreamUrl(trackId),
 	getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
 	getRadioStationStreamUrl: (stationId) =>
@@ -54,7 +62,17 @@ function PlayerBarWithSync() {
 }
 
 function RootLayout() {
+	return (
+		<DesktopConnectionGate>
+			<ConnectedRootLayout />
+		</DesktopConnectionGate>
+	);
+}
+
+function ConnectedRootLayout() {
 	const queryClient = useQueryClient();
+	const [playbackEngine] = useState(() => new BrowserPlaybackEngine());
+	useEffect(() => () => playbackEngine.destroy(), [playbackEngine]);
 	useLibraryScanSync();
 	const preferences = useQuery({
 		queryKey: ["preferences"],
@@ -83,7 +101,7 @@ function RootLayout() {
 		>
 			<div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
 				<ThemeSync />
-				<PlaybackProvider api={playbackApi}>
+				<PlaybackProvider api={playbackApi} engine={playbackEngine}>
 					<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
 						<Outlet />
 					</AppShell>

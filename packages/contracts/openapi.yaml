@@ -297,6 +297,41 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
+    patch:
+      tags: [playback]
+      operationId: reorderPlaybackQueue
+      summary: Reorder playback queue items
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueReorder"
+      responses:
+        "200":
+          description: Updated queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Queue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
   /api/v1/playback/queue/items:
     post:
       tags: [playback]
@@ -323,6 +358,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
   /api/v1/playback/queue/items/{itemId}:
     delete:
       tags: [playback]
@@ -332,6 +373,12 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/queueItemId"
+        - name: If-Match
+          in: header
+          required: true
+          description: Queue Revision on which removal intent is based
+          schema:
+            type: string
       responses:
         "200":
           description: Updated queue
@@ -339,10 +386,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Queue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Queue revision conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueConflictResponse"
   /api/v1/tracks/{trackId}/stream:
     get:
       tags: [playback]
@@ -646,6 +701,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: resource
+          in: query
+          description: Signed HLS resource token emitted by a proxied playlist
+          schema:
+            type: string
       responses:
         "200":
           description: Radio preview stream
@@ -654,8 +714,47 @@ paths:
               schema:
                 type: string
                 format: binary
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+            application/x-mpegurl:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial HLS media resource
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         "400":
           $ref: "#/components/responses/BadRequest"
+        "415":
+          description: DRM-protected HLS is unsupported
+        "502":
+          description: Upstream radio resource failed
   /api/v1/radio/stations/{stationId}/stream:
     get:
       tags: [radio]
@@ -663,6 +762,11 @@ paths:
       summary: Stream radio station through backend proxy
       parameters:
         - $ref: "#/components/parameters/stationId"
+        - name: resource
+          in: query
+          description: Signed HLS resource token emitted by a proxied playlist
+          schema:
+            type: string
       responses:
         "200":
           description: Radio stream
@@ -671,10 +775,45 @@ paths:
               schema:
                 type: string
                 format: binary
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+            application/x-mpegurl:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial HLS media resource
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "415":
+          description: DRM-protected HLS is unsupported
+        "502":
+          description: Upstream radio resource failed
   /api/v1/radio/stations/{stationId}/now-playing:
     get:
       tags: [radio]
@@ -782,13 +921,18 @@ components:
   schemas:
     HealthResponse:
       type: object
-      required: [status, version]
+      required: [status, version, capabilities]
       properties:
         status:
           type: string
           enum: [ok]
         version:
           type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Named server behaviors supported by this release
     User:
       type: object
       required: [id, username]
@@ -971,6 +1115,28 @@ components:
           type: integer
         sizeBytes:
           type: integer
+        replayGain:
+          $ref: "#/components/schemas/ReplayGainMetadata"
+    ReplayGainMetadata:
+      type: object
+      required: [trackGainDb, trackPeak, albumGainDb, albumPeak]
+      properties:
+        trackGainDb:
+          type: number
+          format: double
+          nullable: true
+        trackPeak:
+          type: number
+          format: double
+          nullable: true
+        albumGainDb:
+          type: number
+          format: double
+          nullable: true
+        albumPeak:
+          type: number
+          format: double
+          nullable: true
     TrackList:
       type: object
       required: [items, total]
@@ -1276,25 +1442,51 @@ components:
           $ref: "#/components/schemas/Track"
     Queue:
       type: object
-      required: [items]
+      required: [items, revision]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/QueueItem"
+        revision:
+          type: string
+          description: Opaque version of this Queue state
     QueueReplace:
       type: object
-      required: [trackIds]
+      required: [trackIds, revision]
       properties:
         trackIds:
           type: array
           items:
             type: string
             format: uuid
+        revision:
+          type: string
     QueueItemAppend:
       type: object
-      required: [trackId]
+      required: [trackId, revision]
       properties:
         trackId:
           type: string
           format: uuid
+        revision:
+          type: string
+    QueueReorder:
+      type: object
+      required: [itemIds, revision]
+      properties:
+        itemIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        revision:
+          type: string
+    QueueConflictResponse:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          required: [queue]
+          properties:
+            queue:
+              $ref: "#/components/schemas/Queue"

@@ -44,15 +44,24 @@ export function PageHeader({
 	description,
 	actions,
 	footer,
+	className,
+	innerClassName,
 }: {
 	title: string;
 	description?: string;
 	actions?: ReactNode;
 	footer?: ReactNode;
+	className?: string;
+	innerClassName?: string;
 }) {
 	return (
-		<header className="sticky top-0 z-40 shrink-0 border-border border-b bg-background/80 px-6 py-3 backdrop-blur md:px-8">
-			<div className="flex flex-col gap-2">
+		<header
+			className={cn(
+				"sticky top-0 z-40 shrink-0 border-border border-b bg-background/80 px-6 py-3 backdrop-blur md:px-8",
+				className,
+			)}
+		>
+			<div className={cn("flex flex-col gap-2", innerClassName)}>
 				<div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
 					<div className="min-w-0">
 						<h1 className="font-semibold text-2xl text-heading tracking-normal">

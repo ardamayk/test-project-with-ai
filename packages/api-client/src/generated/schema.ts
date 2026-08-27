@@ -209,7 +209,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Reorder playback queue items */
+        patch: operations["reorderPlaybackQueue"];
         trace?: never;
     };
     "/api/v1/playback/queue/items": {
@@ -496,6 +497,8 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
+            /** @description Named server behaviors supported by this release */
+            capabilities: string[];
         };
         User: {
             /** Format: uuid */
@@ -580,6 +583,17 @@ export interface components {
             bitDepth?: number;
             bitrateKbps?: number;
             sizeBytes?: number;
+            replayGain?: components["schemas"]["ReplayGainMetadata"];
+        };
+        ReplayGainMetadata: {
+            /** Format: double */
+            trackGainDb: number | null;
+            /** Format: double */
+            trackPeak: number | null;
+            /** Format: double */
+            albumGainDb: number | null;
+            /** Format: double */
+            albumPeak: number | null;
         };
         TrackList: {
             items: components["schemas"]["Track"][];
@@ -737,13 +751,24 @@ export interface components {
         };
         Queue: {
             items: components["schemas"]["QueueItem"][];
+            /** @description Opaque version of this Queue state */
+            revision: string;
         };
         QueueReplace: {
             trackIds: string[];
+            revision: string;
         };
         QueueItemAppend: {
             /** Format: uuid */
             trackId: string;
+            revision: string;
+        };
+        QueueReorder: {
+            itemIds: string[];
+            revision: string;
+        };
+        QueueConflictResponse: components["schemas"]["ErrorResponse"] & {
+            queue: components["schemas"]["Queue"];
         };
     };
     responses: {
@@ -1175,6 +1200,50 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
+        };
+    };
+    reorderPlaybackQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueReorder"];
+            };
+        };
+        responses: {
+            /** @description Updated queue */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Queue"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
         };
     };
     appendPlaybackQueueItem: {
@@ -1202,12 +1271,24 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
         };
     };
     removePlaybackQueueItem: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Queue Revision on which removal intent is based */
+                "If-Match": string;
+            };
             path: {
                 itemId: components["parameters"]["queueItemId"];
             };
@@ -1224,8 +1305,18 @@ export interface operations {
                     "application/json": components["schemas"]["Queue"];
                 };
             };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            /** @description Queue revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueConflictResponse"];
+                };
+            };
         };
     };
     streamTrack: {
@@ -1595,7 +1686,10 @@ export interface operations {
     };
     streamRadioPreview: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Signed HLS resource token emitted by a proxied playlist */
+                resource?: string;
+            };
             header?: never;
             path: {
                 stationUuid: string;
@@ -1611,14 +1705,47 @@ export interface operations {
                 };
                 content: {
                     "audio/mpeg": string;
+                    "audio/*": string;
+                    "application/vnd.apple.mpegurl": string;
+                    "application/x-mpegurl": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Partial HLS media resource */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description DRM-protected HLS is unsupported */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream radio resource failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     streamRadioStation: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Signed HLS resource token emitted by a proxied playlist */
+                resource?: string;
+            };
             header?: never;
             path: {
                 stationId: components["parameters"]["stationId"];
@@ -1634,10 +1761,39 @@ export interface operations {
                 };
                 content: {
                     "audio/*": string;
+                    "application/vnd.apple.mpegurl": string;
+                    "application/x-mpegurl": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Partial HLS media resource */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
                 };
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            /** @description DRM-protected HLS is unsupported */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream radio resource failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getRadioNowPlaying: {

@@ -71,13 +71,16 @@ func TestHandlersGetQueueEmpty(t *testing.T) {
 	if len(body.Items) != 0 {
 		t.Fatalf("items = %d, want 0", len(body.Items))
 	}
+	if body.Revision != "0" {
+		t.Fatalf("revision = %q, want 0", body.Revision)
+	}
 }
 
 func TestHandlersReplaceQueue(t *testing.T) {
 	h, _, libStore, db, musicRoot := setupPlaybackHandlers(t)
 	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
 
-	body, _ := json.Marshal(map[string][]string{"trackIds": {trackID}})
+	body, _ := json.Marshal(map[string]any{"trackIds": []string{trackID}, "revision": "0"})
 	req := httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.ReplaceQueue(rec, req)
@@ -91,6 +94,55 @@ func TestHandlersReplaceQueue(t *testing.T) {
 	}
 	if len(queue.Items) != 1 || queue.Items[0].TrackID != trackID {
 		t.Fatalf("queue = %+v", queue.Items)
+	}
+}
+
+func TestHandlersReturnCurrentQueueOnStaleMutation(t *testing.T) {
+	h, store, libStore, db, musicRoot := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
+	if _, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"trackId": trackID, "revision": "0"})
+	rec := httptest.NewRecorder()
+	h.AppendItem(rec, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var conflict struct {
+		Code  string `json:"code"`
+		Queue Queue  `json:"queue"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.Code != "queue_revision_conflict" || conflict.Queue.Revision != "1" || len(conflict.Queue.Items) != 1 {
+		t.Fatalf("conflict = %+v", conflict)
+	}
+}
+
+func TestHandlersReorderQueue(t *testing.T) {
+	h, store, libStore, db, musicRoot := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
+	queue, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"itemIds": []string{queue.Items[0].ID}, "revision": "1"})
+	rec := httptest.NewRecorder()
+	h.ReorderQueue(rec, httptest.NewRequest(http.MethodPatch, "/", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var reordered Queue
+	if err := json.NewDecoder(rec.Body).Decode(&reordered); err != nil {
+		t.Fatal(err)
+	}
+	if reordered.Revision != "2" {
+		t.Fatalf("revision = %q, want 2", reordered.Revision)
 	}
 }
 

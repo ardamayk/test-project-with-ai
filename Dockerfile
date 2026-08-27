@@ -16,7 +16,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /server /app/server
-ENV SERVER_ADDR=:8090
+ENV SERVER_ADDR=127.0.0.1:8090
 ENV DATABASE_PATH=/data/app.db
 EXPOSE 8090
 VOLUME ["/data", "/music"]

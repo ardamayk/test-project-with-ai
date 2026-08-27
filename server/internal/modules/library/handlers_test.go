@@ -47,6 +47,12 @@ func seedTrack(t *testing.T, db *sql.DB, store *Store, musicRoot string) (albumI
 		Genre:        "Pop",
 		SampleRateHz: 96000,
 		BitDepth:     24,
+		ReplayGain: ReplayGainMetadata{
+			TrackGainDB: float64Pointer(-7.25),
+			TrackPeak:   float64Pointer(0.98),
+			AlbumGainDB: float64Pointer(-6.5),
+			AlbumPeak:   float64Pointer(1.01),
+		},
 	}
 	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
 		t.Fatal(err)
@@ -101,8 +107,9 @@ func TestHandlersGetAlbumReturnsGenresAndAudioFormat(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
+	responseBody := rec.Body.Bytes()
 	var body AlbumDetail
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(responseBody, &body); err != nil {
 		t.Fatal(err)
 	}
 	if len(body.Genres) != 1 || body.Genres[0] != "Pop" {
@@ -113,6 +120,23 @@ func TestHandlersGetAlbumReturnsGenresAndAudioFormat(t *testing.T) {
 	}
 	if body.Tracks[0].BitDepth != 24 || body.Tracks[0].SampleRateHz != 96000 {
 		t.Fatalf("audio format = %+v", body.Tracks[0])
+	}
+	assertReplayGainMetadata(t, body.Tracks[0].ReplayGain, ReplayGainMetadata{
+		TrackGainDB: float64Pointer(-7.25),
+		TrackPeak:   float64Pointer(0.98),
+		AlbumGainDB: float64Pointer(-6.5),
+		AlbumPeak:   float64Pointer(1.01),
+	})
+	var contractBody struct {
+		Tracks []struct {
+			ReplayGain map[string]*float64 `json:"replayGain"`
+		} `json:"tracks"`
+	}
+	if err := json.Unmarshal(responseBody, &contractBody); err != nil {
+		t.Fatal(err)
+	}
+	if contractBody.Tracks[0].ReplayGain["trackGainDb"] == nil || contractBody.Tracks[0].ReplayGain["albumPeak"] == nil {
+		t.Fatalf("ReplayGain contract = %s", responseBody)
 	}
 }
 

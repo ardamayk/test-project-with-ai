@@ -30,6 +30,8 @@ const defaultFilters: AlbumFilterState = {
 	genre: "all",
 };
 
+const ALBUMS_CENTERED_CONTAINER_CLASS = "mx-auto w-full max-w-6xl";
+
 export function AlbumsPage() {
 	const [filters, setFilters] = useState<AlbumFilterState>(defaultFilters);
 	const [areFiltersOpen, setAreFiltersOpen] = useState(false);
@@ -74,10 +76,13 @@ export function AlbumsPage() {
 		<PageShell
 			testId="albums-page-shell"
 			contentTestId="albums-page-content"
+			contentClassName="pt-8"
 			header={
 				<PageHeader
 					title="Albums"
 					description="Browse albums in your library"
+					className="pt-7 pb-4"
+					innerClassName={ALBUMS_CENTERED_CONTAINER_CLASS}
 					actions={
 						<>
 							<div className={HEADER_SEARCH_CONTAINER_CLASS}>
@@ -106,25 +111,29 @@ export function AlbumsPage() {
 				/>
 			}
 		>
-			<AlbumFilterDrawer
-				isOpen={areFiltersOpen}
-				artists={artists.data?.items ?? []}
-				genreOptions={genreOptions}
-				filters={filters}
-				resultCount={visibleAlbums.length}
-				onOpenChange={setAreFiltersOpen}
-				onFiltersChange={setFilters}
-			/>
+			<div className={ALBUMS_CENTERED_CONTAINER_CLASS}>
+				<AlbumFilterDrawer
+					isOpen={areFiltersOpen}
+					artists={artists.data?.items ?? []}
+					genreOptions={genreOptions}
+					filters={filters}
+					resultCount={visibleAlbums.length}
+					onOpenChange={setAreFiltersOpen}
+					onFiltersChange={setFilters}
+				/>
 
-			{albums.isLoading ? (
-				<p className="text-foreground text-sm">Loading albums…</p>
-			) : albums.isError ? (
-				<p className="text-destructive text-sm">Failed to load albums</p>
-			) : visibleAlbums.length === 0 ? (
-				<p className="text-foreground text-sm">No albums match your filters.</p>
-			) : (
-				<AlbumGrid albums={visibleAlbums} />
-			)}
+				{albums.isLoading ? (
+					<p className="text-foreground text-sm">Loading albums…</p>
+				) : albums.isError ? (
+					<p className="text-destructive text-sm">Failed to load albums</p>
+				) : visibleAlbums.length === 0 ? (
+					<p className="text-foreground text-sm">
+						No albums match your filters.
+					</p>
+				) : (
+					<AlbumGrid albums={visibleAlbums} />
+				)}
+			</div>
 		</PageShell>
 	);
 }

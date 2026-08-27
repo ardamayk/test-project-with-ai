@@ -13,13 +13,17 @@ const playTrack = vi.fn();
 const deleteTrack = vi.fn();
 let favorite = false;
 
-vi.mock("@repo/ui", () => ({
-	usePlayback: () => ({
-		playTrack,
-		currentTrack: null,
-		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
-	}),
-}));
+vi.mock("@repo/ui", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@repo/ui")>();
+	return {
+		...actual,
+		usePlayback: () => ({
+			playTrack,
+			currentTrack: null,
+			getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
+		}),
+	};
+});
 
 vi.mock("#/hooks/use-favorite-tracks", () => ({
 	useFavoriteTracks: () => ({
@@ -46,6 +50,12 @@ const sampleTrack = {
 	bitDepth: 24,
 	sampleRateHz: 96_000,
 	sizeBytes: 50_059_000,
+	replayGain: {
+		trackGainDb: -7.25,
+		trackPeak: 0.98,
+		albumGainDb: -6.5,
+		albumPeak: 1.01,
+	},
 };
 
 describe("TrackList", () => {
@@ -182,6 +192,14 @@ describe("TrackList", () => {
 		expect(within(dialog).getByText("Bit depth")).toBeTruthy();
 		expect(within(dialog).getByText("Genre")).toBeTruthy();
 		expect(within(dialog).getByText("Size")).toBeTruthy();
+		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
+		expect(within(dialog).getByText("Album ReplayGain")).toBeTruthy();
+		expect(
+			within(dialog).getByText("Available · Gain -7.25 dB · Peak 0.980000"),
+		).toBeTruthy();
+		expect(
+			within(dialog).getByText("Available · Gain -6.50 dB · Peak 1.010000"),
+		).toBeTruthy();
 		expect(within(dialog).getByText("Id")).toBeTruthy();
 		expect(within(dialog).getByText("Taylor Swift")).toBeTruthy();
 		expect(within(dialog).getByText("1989")).toBeTruthy();
@@ -202,6 +220,33 @@ describe("TrackList", () => {
 		fireEvent.click(screen.getByText("Delete track"));
 
 		expect(deleteTrack).toHaveBeenCalledWith("t1", expect.any(Object));
+	});
+
+	it("shows partial and absent ReplayGain Metadata availability", () => {
+		render(
+			<TrackList
+				tracks={[
+					{
+						...sampleTrack,
+						replayGain: {
+							trackGainDb: -4.25,
+							trackPeak: null,
+							albumGainDb: null,
+							albumPeak: null,
+						},
+					},
+				]}
+			/>,
+		);
+
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(screen.getByText("Details"));
+
+		const dialog = screen.getByRole("dialog", { name: "Welcome to New York" });
+		expect(within(dialog).getByText("Available · Gain -4.25 dB")).toBeTruthy();
+		expect(within(dialog).getByText("Unavailable")).toBeTruthy();
 	});
 
 	it("renders custom remove and delete actions together when supplied", () => {

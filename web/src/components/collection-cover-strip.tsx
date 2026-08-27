@@ -98,7 +98,7 @@ export function CollectionCoverStack({
 					coverUrl={apiClient.getAlbumCoverUrl(track.albumId)}
 					title={track.title}
 					className={cn(
-						"absolute rounded-md object-cover text-sm shadow-xl",
+						"absolute rounded-md object-cover text-sm shadow-xl transition duration-200 ease-out hover:z-50 hover:scale-105 hover:rotate-0 hover:shadow-2xl",
 						offsets[index] ?? offsets.at(-1),
 						rotations[index] ?? "rotate-0",
 					)}
@@ -135,6 +135,41 @@ export function CollectionCoverRowStack({
 					title={track.title}
 					className={cn(
 						"absolute top-0 size-[7.5rem] rounded-md border border-background object-cover text-sm shadow-md",
+						offsets[index] ?? offsets.at(-1),
+					)}
+				/>
+			))}
+		</div>
+	);
+}
+
+export function CollectionCoverCardStack({
+	tracks,
+	className,
+}: {
+	tracks: Track[];
+	className?: string;
+}) {
+	const preview = useMemo(() => pickRandomUniqueAlbumTracks(tracks), [tracks]);
+	const offsets = [
+		"right-[48%] top-0 z-40 h-[88%] w-[64%]",
+		"right-[32%] top-0 z-30 h-[88%] w-[64%]",
+		"right-[16%] top-0 z-20 h-[88%] w-[64%]",
+		"right-[0%] top-0 z-10 h-[88%] w-[64%]",
+	];
+
+	return (
+		<div
+			data-testid="playlist-card-cover-stack"
+			className={cn("absolute inset-0 overflow-hidden bg-muted", className)}
+		>
+			{preview.map((track, index) => (
+				<AlbumArt
+					key={`${track.albumId}-${track.id}`}
+					coverUrl={apiClient.getAlbumCoverUrl(track.albumId)}
+					title={track.title}
+					className={cn(
+						"absolute rounded-md border border-background/80 object-cover text-sm shadow-xl transition duration-200 ease-out hover:z-50 hover:scale-105 hover:rotate-0 hover:shadow-2xl",
 						offsets[index] ?? offsets.at(-1),
 					)}
 				/>

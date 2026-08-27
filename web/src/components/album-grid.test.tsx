@@ -39,15 +39,21 @@ describe("AlbumGrid", () => {
 				title: "Kind of Blue",
 				artistName: "Miles Davis",
 				trackCount: 5,
+				year: 1959,
 			},
 		] as Album[];
 
-		render(<AlbumGrid albums={albums} />);
+		const { container } = render(<AlbumGrid albums={albums} />);
 
 		const album = screen.getByRole("link", { name: /Kind of Blue/ });
+		expect(album.className).toContain("aspect-square");
+		expect(album.className).toContain("overflow-hidden");
 		expect(album.className).toContain("duration-300");
 		expect(album.className).toContain("ease-out");
 		expect(album.className).toContain("hover:-translate-y-1");
 		expect(album.className).toContain("hover:shadow-lg");
+		expect(screen.getByText("1959")).toBeTruthy();
+		expect(screen.queryByText(/tracks/)).toBeNull();
+		expect(container.querySelector("[data-album-card-overlay]")).toBeTruthy();
 	});
 });

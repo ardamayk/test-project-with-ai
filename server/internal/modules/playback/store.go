@@ -17,7 +17,8 @@ type QueueItem struct {
 }
 
 type Queue struct {
-	Items []QueueItem `json:"items"`
+	Items    []QueueItem `json:"items"`
+	Revision string      `json:"revision"`
 }
 
 type Store struct {
@@ -30,7 +31,21 @@ func NewStore(db *sql.DB, tracks library.TrackReader) *Store {
 }
 
 func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Queue{}, fmt.Errorf("begin queue read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var revision string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT CAST(COALESCE((
+			SELECT revision FROM playback_queue_state WHERE user_id = ?
+		), 0) AS TEXT)`, userID).Scan(&revision); err != nil {
+		return Queue{}, fmt.Errorf("get queue revision: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, `
 		SELECT pq.id, pq.track_id, pq.position
 		FROM playback_queue pq
 		WHERE pq.user_id = ?
@@ -46,31 +61,50 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 		if err := rows.Scan(&item.ID, &item.TrackID, &item.Position); err != nil {
 			return Queue{}, err
 		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return Queue{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return Queue{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Queue{}, err
+	}
+
+	resolvedItems := make([]QueueItem, 0, len(items))
+	for _, item := range items {
 		track, err := s.tracks.GetTrack(ctx, item.TrackID)
 		if err != nil {
 			continue
 		}
 		item.Track = track
-		items = append(items, item)
+		resolvedItems = append(resolvedItems, item)
 	}
-	return Queue{Items: items}, rows.Err()
+	return Queue{Items: resolvedItems, Revision: revision}, nil
 }
 
-func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []string) (Queue, error) {
+func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []string, expectedRevision string) (Queue, error) {
+	for _, trackID := range trackIDs {
+		if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
+			return Queue{}, library.ErrNotFound
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Queue{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
+		return Queue{}, err
+	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM playback_queue WHERE user_id = ?`, userID); err != nil {
 		return Queue{}, err
 	}
 
 	for i, trackID := range trackIDs {
-		if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
-			return Queue{}, library.ErrNotFound
-		}
 		itemID := uuid.NewString()
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO playback_queue (id, user_id, position, track_id) VALUES (?, ?, ?, ?)`,
@@ -86,13 +120,22 @@ func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []stri
 	return s.GetQueue(ctx, userID)
 }
 
-func (s *Store) AppendItem(ctx context.Context, userID, trackID string) (Queue, error) {
+func (s *Store) AppendItem(ctx context.Context, userID, trackID, expectedRevision string) (Queue, error) {
 	if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
 		return Queue{}, library.ErrNotFound
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Queue{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
+		return Queue{}, err
+	}
 
 	var maxPos sql.NullInt64
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`SELECT MAX(position) FROM playback_queue WHERE user_id = ?`, userID,
 	).Scan(&maxPos); err != nil {
 		return Queue{}, err
@@ -104,17 +147,52 @@ func (s *Store) AppendItem(ctx context.Context, userID, trackID string) (Queue, 
 	}
 
 	itemID := uuid.NewString()
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO playback_queue (id, user_id, position, track_id) VALUES (?, ?, ?, ?)`,
 		itemID, userID, pos, trackID,
 	); err != nil {
 		return Queue{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return Queue{}, err
+	}
 	return s.GetQueue(ctx, userID)
 }
 
-func (s *Store) RemoveItem(ctx context.Context, userID, itemID string) (Queue, error) {
-	res, err := s.db.ExecContext(ctx,
+func advanceRevision(ctx context.Context, tx *sql.Tx, userID, expectedRevision string) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO playback_queue_state (user_id, revision) VALUES (?, 0)`,
+		userID,
+	); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE playback_queue_state
+		SET revision = revision + 1
+		WHERE user_id = ? AND CAST(revision AS TEXT) = ?`, userID, expectedRevision)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrRevisionConflict
+	}
+	return nil
+}
+
+func (s *Store) RemoveItem(ctx context.Context, userID, itemID, expectedRevision string) (Queue, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Queue{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
+		return Queue{}, err
+	}
+	res, err := tx.ExecContext(ctx,
 		`DELETE FROM playback_queue WHERE id = ? AND user_id = ?`, itemID, userID,
 	)
 	if err != nil {
@@ -128,26 +206,105 @@ func (s *Store) RemoveItem(ctx context.Context, userID, itemID string) (Queue, e
 		return Queue{}, ErrNotFound
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM playback_queue WHERE user_id = ? ORDER BY position`, userID)
 	if err != nil {
 		return Queue{}, err
 	}
-	defer rows.Close()
-
-	pos := 0
+	itemIDs := []string{}
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return Queue{}, err
 		}
-		if _, err := s.db.ExecContext(ctx,
-			`UPDATE playback_queue SET position = ? WHERE id = ?`, pos, id,
+		itemIDs = append(itemIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return Queue{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return Queue{}, err
+	}
+	for position, id := range itemIDs {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE playback_queue SET position = ? WHERE id = ?`, position, id,
 		); err != nil {
 			return Queue{}, err
 		}
-		pos++
+	}
+	if err := tx.Commit(); err != nil {
+		return Queue{}, err
 	}
 
 	return s.GetQueue(ctx, userID)
+}
+
+func (s *Store) ReorderItems(ctx context.Context, userID string, itemIDs []string, expectedRevision string) (Queue, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Queue{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
+		return Queue{}, err
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id FROM playback_queue WHERE user_id = ? ORDER BY position`, userID)
+	if err != nil {
+		return Queue{}, err
+	}
+	currentIDs := []string{}
+	for rows.Next() {
+		var itemID string
+		if err := rows.Scan(&itemID); err != nil {
+			_ = rows.Close()
+			return Queue{}, err
+		}
+		currentIDs = append(currentIDs, itemID)
+	}
+	if err := rows.Err(); err != nil {
+		return Queue{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return Queue{}, err
+	}
+	if !sameQueueItems(currentIDs, itemIDs) {
+		return Queue{}, ErrInvalidQueueOrder
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE playback_queue SET position = -position - 1 WHERE user_id = ?`, userID,
+	); err != nil {
+		return Queue{}, err
+	}
+	for position, itemID := range itemIDs {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE playback_queue SET position = ? WHERE id = ? AND user_id = ?`,
+			position, itemID, userID,
+		); err != nil {
+			return Queue{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Queue{}, err
+	}
+	return s.GetQueue(ctx, userID)
+}
+
+func sameQueueItems(currentIDs, requestedIDs []string) bool {
+	if len(currentIDs) != len(requestedIDs) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(currentIDs))
+	for _, itemID := range currentIDs {
+		seen[itemID] = struct{}{}
+	}
+	for _, itemID := range requestedIDs {
+		if _, ok := seen[itemID]; !ok {
+			return false
+		}
+		delete(seen, itemID)
+	}
+	return len(seen) == 0
 }

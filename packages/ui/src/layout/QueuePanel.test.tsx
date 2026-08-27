@@ -1,114 +1,99 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PlaybackProvider, type PlaybackApi } from '../playback/PlaybackProvider'
-import { defaultPreferences } from '../widgets/types'
-import { LayoutProvider } from './LayoutProvider'
-import { QueuePanel } from './QueuePanel'
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	type PlaybackApi,
+	PlaybackProvider,
+} from "../playback/PlaybackProvider";
+import { InMemoryPlaybackEngine } from "../playback/testing/InMemoryPlaybackEngine";
+import { defaultPreferences } from "../widgets/types";
+import { LayoutProvider } from "./LayoutProvider";
+import { QueuePanel } from "./QueuePanel";
 
 const track = {
-  id: 'track-1',
-  title: 'Track 1',
-  artistName: 'Artist',
-  albumId: 'album-1',
-  durationMs: 120000,
-  format: 'opus',
-}
+	id: "track-1",
+	title: "Track 1",
+	artistName: "Artist",
+	albumId: "album-1",
+	durationMs: 120000,
+	format: "opus",
+};
 
 function createApi(): PlaybackApi {
-  return {
-    getQueue: vi.fn(async () => ({
-      items: [{ id: 'item-1', trackId: track.id, position: 0, track }],
-    })),
-    replaceQueue: vi.fn(async () => ({ items: [] })),
-    appendQueueItem: vi.fn(async () => ({ items: [] })),
-    removeQueueItem: vi.fn(async () => ({ items: [] })),
-    getStreamUrl: (trackId) => `/stream/${trackId}`,
-    getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
-    getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
-    getRadioCatalogPreviewStreamUrl: (stationUuid) => `/radio/preview/${stationUuid}`,
-    getRadioNowPlaying: vi.fn(async () => ({})),
-    listPlaylists: vi.fn(async () => ({ items: [], total: 0 })),
-    getPlaylist: vi.fn(async (playlistId: string) => ({
-      id: playlistId,
-      name: 'Playlist',
-      isDefault: false,
-      trackCount: 0,
-      tracks: [],
-    })),
-    createPlaylist: vi.fn(async (name: string) => ({
-      id: 'playlist-1',
-      name,
-      isDefault: false,
-      trackCount: 0,
-    })),
-    addPlaylistTrack: vi.fn(async () => ({
-      id: 'playlist-1',
-      name: 'Playlist',
-      isDefault: false,
-      trackCount: 1,
-      tracks: [track],
-    })),
-    removePlaylistTrack: vi.fn(async () => ({
-      id: 'playlist-1',
-      name: 'Playlist',
-      isDefault: false,
-      trackCount: 0,
-      tracks: [],
-    })),
-  }
+	return {
+		getQueue: vi.fn(async () => ({
+			items: [{ id: "item-1", trackId: track.id, position: 0, track }],
+			revision: "1",
+		})),
+		replaceQueue: vi.fn(async () => ({ items: [], revision: "2" })),
+		reorderQueue: vi.fn(async () => ({ items: [], revision: "2" })),
+		appendQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
+		removeQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
+		getStreamUrl: (trackId) => `/stream/${trackId}`,
+		getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+		getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
+		getRadioCatalogPreviewStreamUrl: (stationUuid) =>
+			`/radio/preview/${stationUuid}`,
+		getRadioNowPlaying: vi.fn(async () => ({})),
+		listPlaylists: vi.fn(async () => ({ items: [], total: 0 })),
+		getPlaylist: vi.fn(async (playlistId: string) => ({
+			id: playlistId,
+			name: "Playlist",
+			isDefault: false,
+			trackCount: 0,
+			tracks: [],
+		})),
+		createPlaylist: vi.fn(async (name: string) => ({
+			id: "playlist-1",
+			name,
+			isDefault: false,
+			trackCount: 0,
+		})),
+		addPlaylistTrack: vi.fn(async () => ({
+			id: "playlist-1",
+			name: "Playlist",
+			isDefault: false,
+			trackCount: 1,
+			tracks: [track],
+		})),
+		removePlaylistTrack: vi.fn(async () => ({
+			id: "playlist-1",
+			name: "Playlist",
+			isDefault: false,
+			trackCount: 0,
+			tracks: [],
+		})),
+	};
 }
 
-class AudioMock extends EventTarget {
-  static instances: AudioMock[] = []
+describe("QueuePanel", () => {
+	afterEach(cleanup);
 
-  currentTime = 0
-  duration = 120
-  paused = true
-  src = ''
-  volume = 1
-  pause = vi.fn()
-  play = vi.fn(async () => {
-    this.paused = false
-    this.dispatchEvent(new Event('play'))
-  })
-  removeAttribute = vi.fn()
+	it("plays a track when left-clicking the queue row", async () => {
+		const engine = new InMemoryPlaybackEngine();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={createApi()} engine={engine}>
+					<QueuePanel />
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
 
-  constructor() {
-    super()
-    AudioMock.instances.push(this)
-  }
-}
+		const title = await screen.findByText("Track 1");
+		const row = title.closest("li");
 
-describe('QueuePanel', () => {
-  const originalAudio = globalThis.Audio
+		await act(async () => {
+			fireEvent.click(row as HTMLElement);
+		});
 
-  beforeEach(() => {
-    AudioMock.instances = []
-    globalThis.Audio = AudioMock as unknown as typeof Audio
-  })
-
-  afterEach(() => {
-    cleanup()
-    globalThis.Audio = originalAudio
-  })
-
-  it('plays a track when left-clicking the queue row', async () => {
-    const { container } = render(
-      <LayoutProvider initialPreferences={defaultPreferences}>
-        <PlaybackProvider api={createApi()}>
-          <QueuePanel />
-        </PlaybackProvider>
-      </LayoutProvider>,
-    )
-
-    const title = await screen.findByText('Track 1')
-    const row = title.closest('li')
-
-    await act(async () => {
-      fireEvent.click(row as HTMLElement)
-    })
-
-    expect(AudioMock.instances[0]?.src).toBe('/stream/track-1')
-    expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce()
-  })
-})
+		expect(engine.getState().source).toMatchObject({
+			type: "track",
+			playbackUrl: "/stream/track-1",
+		});
+	});
+});

@@ -32,29 +32,36 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
 	};
 
 	return (
-		<div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+		<div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8">
 			{albums.map((album) => (
 				<ContextMenu key={album.id}>
 					<ContextMenuTrigger asChild>
 						<Link
 							to="/library/$albumId"
 							params={{ albumId: album.id }}
-							className="group rounded-lg border border-border p-3 transition duration-300 ease-out hover:-translate-y-1 hover:bg-muted/50 hover:shadow-lg"
+							className="group relative aspect-square overflow-hidden rounded-md border border-border bg-card transition duration-300 ease-out hover:-translate-y-1 hover:bg-muted/50 hover:shadow-lg"
 						>
 							<AlbumArt
 								coverUrl={apiClient.getAlbumCoverUrl(album.id)}
 								title={album.title}
-								className="mb-3 aspect-square w-full rounded-md text-2xl"
+								className="absolute inset-0 size-full text-2xl transition duration-300 group-hover:scale-105"
 							/>
-							<p className="truncate font-medium text-heading text-sm group-hover:underline">
-								{album.title}
-							</p>
-							<p className="truncate text-foreground text-xs">
-								{album.artistName}
-								{album.trackCount != null
-									? ` · ${album.trackCount} tracks`
-									: ""}
-							</p>
+							<div
+								data-album-card-overlay
+								className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background/95 via-background/75 to-transparent p-2 text-foreground"
+							>
+								<p className="truncate font-medium text-heading text-xs leading-tight group-hover:underline">
+									{album.title}
+								</p>
+								<p className="truncate text-[11px] text-foreground leading-tight">
+									{album.artistName}
+								</p>
+								{album.year != null ? (
+									<p className="text-[10px] text-caption leading-tight">
+										{album.year}
+									</p>
+								) : null}
+							</div>
 						</Link>
 					</ContextMenuTrigger>
 					<ContextMenuContent>

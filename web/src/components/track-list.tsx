@@ -1,5 +1,5 @@
 import type { Track } from "@repo/api-client";
-import { usePlayback } from "@repo/ui";
+import { formatReplayGainAvailability, usePlayback } from "@repo/ui";
 import { Clock, Heart, Info, ListMinus, Trash2, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useState } from "react";
@@ -258,6 +258,20 @@ function TrackDetailsDialog({
 				["Codec", track.format],
 				["Sample rate", formatSampleRate(track.sampleRateHz)],
 				["Bit depth", track.bitDepth ? `${track.bitDepth}-bit` : null],
+				[
+					"Track ReplayGain",
+					formatReplayGainAvailability(
+						track.replayGain?.trackGainDb,
+						track.replayGain?.trackPeak,
+					),
+				],
+				[
+					"Album ReplayGain",
+					formatReplayGainAvailability(
+						track.replayGain?.albumGainDb,
+						track.replayGain?.albumPeak,
+					),
+				],
 				["Genre", track.genre],
 				["Size", formatBytes(track.sizeBytes)],
 				["Id", track.id],

@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./layout": "./src/layout/index.ts",
+    "./playback/testing": "./src/playback/testing/index.ts",
     "./widgets": "./src/widgets/index.ts"
   },
   "scripts": {
@@ -23,7 +24,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@repo/api-client": "workspace:*",
     "clsx": "^2.1.1",
-    "hls.js": "^1.6.16",
     "lucide-react": "^0.577.0",
     "react-resizable-panels": "^4.12.0",
     "tailwind-merge": "^3.0.2"

@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	AppShell,
 	defaultPreferences,
@@ -8,6 +8,7 @@ import {
 	PlaybackProvider,
 	SidebarNav,
 } from "../index";
+import { InMemoryPlaybackEngine } from "../playback/testing/InMemoryPlaybackEngine";
 
 vi.mock("@tanstack/react-router", () => ({
 	Link: ({
@@ -28,11 +29,12 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const mockPlaybackApi = {
-	getQueue: async () => ({ items: [] }),
-	replaceQueue: async () => ({ items: [] }),
-	appendQueueItem: async () => ({ items: [] }),
-	removeQueueItem: async () => ({ items: [] }),
-	clearQueue: async () => ({ items: [] }),
+	getQueue: async () => ({ items: [], revision: "0" }),
+	replaceQueue: async () => ({ items: [], revision: "1" }),
+	reorderQueue: async () => ({ items: [], revision: "1" }),
+	appendQueueItem: async () => ({ items: [], revision: "1" }),
+	removeQueueItem: async () => ({ items: [], revision: "1" }),
+	clearQueue: async () => ({ items: [], revision: "1" }),
 	getStreamUrl: (id: string) => `/stream/${id}`,
 	getAlbumCoverUrl: (id: string) => `/cover/${id}`,
 	getRadioStationStreamUrl: (id: string) => `/radio/${id}`,
@@ -68,29 +70,16 @@ const mockPlaybackApi = {
 	}),
 };
 
-class AudioMock extends EventTarget {
-	volume = 1;
-	pause = vi.fn();
-	play = vi.fn(async () => {});
-	removeAttribute = vi.fn();
-}
-
 describe("AppShell", () => {
-	const originalAudio = globalThis.Audio;
-
-	beforeEach(() => {
-		globalThis.Audio = AudioMock as unknown as typeof Audio;
-	});
-
-	afterEach(() => {
-		cleanup();
-		globalThis.Audio = originalAudio;
-	});
+	afterEach(cleanup);
 
 	it("renders main content and widgets", () => {
 		render(
 			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider api={mockPlaybackApi}>
+				<PlaybackProvider
+					api={mockPlaybackApi}
+					engine={new InMemoryPlaybackEngine()}
+				>
 					<AppShell>
 						<div>Main content</div>
 					</AppShell>
@@ -102,10 +91,13 @@ describe("AppShell", () => {
 		expect(screen.getByText("Queue")).toBeTruthy();
 	});
 
-	it("does not render a resize handle for the primary nav column", () => {
+	it("does not render resize handles for fixed shell columns", () => {
 		const { container } = render(
 			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider api={mockPlaybackApi}>
+				<PlaybackProvider
+					api={mockPlaybackApi}
+					engine={new InMemoryPlaybackEngine()}
+				>
 					<AppShell>
 						<div>Main content</div>
 					</AppShell>
@@ -115,13 +107,34 @@ describe("AppShell", () => {
 
 		expect(
 			container.querySelectorAll('[data-slot="resizable-handle"]'),
-		).toHaveLength(1);
+		).toHaveLength(0);
+	});
+
+	it("uses a fixed width queue column", () => {
+		const { container } = render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider
+					api={mockPlaybackApi}
+					engine={new InMemoryPlaybackEngine()}
+				>
+					<AppShell>
+						<div>Main content</div>
+					</AppShell>
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+
+		const queueColumn = container.querySelector("[data-queue-column]");
+		expect(queueColumn?.className).toContain("w-80");
 	});
 
 	it("sizes the primary nav column to its content instead of saved panel width", () => {
 		const { container } = render(
 			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider api={mockPlaybackApi}>
+				<PlaybackProvider
+					api={mockPlaybackApi}
+					engine={new InMemoryPlaybackEngine()}
+				>
 					<AppShell>
 						<div>Main content</div>
 					</AppShell>
@@ -137,7 +150,10 @@ describe("AppShell", () => {
 	it("keeps widget content from changing the primary nav column width", () => {
 		const { container } = render(
 			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider api={mockPlaybackApi}>
+				<PlaybackProvider
+					api={mockPlaybackApi}
+					engine={new InMemoryPlaybackEngine()}
+				>
 					<AppShell>
 						<div>Main content</div>
 					</AppShell>
@@ -163,7 +179,10 @@ describe("AppShell", () => {
 
 		render(
 			<LayoutProvider initialPreferences={collapsedQueuePreferences}>
-				<PlaybackProvider api={mockPlaybackApi}>
+				<PlaybackProvider
+					api={mockPlaybackApi}
+					engine={new InMemoryPlaybackEngine()}
+				>
 					<AppShell>
 						<div>Main content</div>
 					</AppShell>

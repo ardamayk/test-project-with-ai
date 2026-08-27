@@ -13,6 +13,7 @@ import {
 	PlaybackProvider,
 	usePlayback,
 } from "../playback/PlaybackProvider";
+import { InMemoryPlaybackEngine } from "../playback/testing/InMemoryPlaybackEngine";
 import { defaultPreferences } from "../widgets/types";
 import { LayoutProvider } from "./LayoutProvider";
 import { PlayerBar } from "./PlayerBar";
@@ -33,6 +34,12 @@ const track = {
 	format: "flac",
 	sampleRateHz: 96000,
 	bitrateKbps: 1411,
+	replayGain: {
+		trackGainDb: -7.25,
+		trackPeak: null,
+		albumGainDb: null,
+		albumPeak: null,
+	},
 };
 
 const radioStation: RadioStation = {
@@ -48,41 +55,24 @@ const radioStation: RadioStation = {
 	position: 0,
 };
 
-class AudioMock extends EventTarget {
-	static instances: AudioMock[] = [];
-
-	currentTime = 0;
-	duration = 120;
-	paused = true;
-	src = "";
-	volume = 1;
-	pause = vi.fn(() => {
-		this.paused = true;
-		this.dispatchEvent(new Event("pause"));
-	});
-	play = vi.fn(async () => {
-		this.paused = false;
-		this.dispatchEvent(new Event("play"));
-	});
-	removeAttribute = vi.fn();
-
-	constructor() {
-		super();
-		AudioMock.instances.push(this);
-	}
-}
-
 const api: PlaybackApi = {
 	getQueue: vi.fn(async () => ({
 		items: [{ id: "item-1", trackId: track.id, position: 0, track }],
+		revision: "1",
 	})),
 	replaceQueue: vi.fn(async () => ({
 		items: [{ id: "item-1", trackId: track.id, position: 0, track }],
+		revision: "2",
+	})),
+	reorderQueue: vi.fn(async () => ({
+		items: [{ id: "item-1", trackId: track.id, position: 0, track }],
+		revision: "2",
 	})),
 	appendQueueItem: vi.fn(async () => ({
 		items: [{ id: "item-1", trackId: track.id, position: 0, track }],
+		revision: "2",
 	})),
-	removeQueueItem: vi.fn(async () => ({ items: [] })),
+	removeQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
 	getStreamUrl: (trackId) => `/stream/${trackId}`,
 	getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
 	getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
@@ -149,7 +139,7 @@ function RadioStarter() {
 function renderPlayerBar(onPlaylistMutated?: () => void) {
 	return render(
 		<LayoutProvider initialPreferences={defaultPreferences}>
-			<PlaybackProvider api={api}>
+			<PlaybackProvider api={api} engine={new InMemoryPlaybackEngine()}>
 				<PlaybackStarter />
 				<RadioStarter />
 				<PlayerBar onPlaylistMutated={onPlaylistMutated} />
@@ -173,18 +163,13 @@ async function openPlaylistSubmenu() {
 }
 
 describe("PlayerBar", () => {
-	const originalAudio = globalThis.Audio;
-
 	beforeEach(() => {
-		AudioMock.instances = [];
-		globalThis.Audio = AudioMock as unknown as typeof Audio;
 		navigate.mockClear();
 	});
 
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
-		globalThis.Audio = originalAudio;
 	});
 
 	it("renders an empty disabled playback state", () => {
@@ -433,6 +418,10 @@ describe("PlayerBar", () => {
 		expect(within(dialog).getByText("Album 1")).toBeTruthy();
 		expect(within(dialog).getByText("1411 kbps")).toBeTruthy();
 		expect(within(dialog).getByText("96 kHz")).toBeTruthy();
+		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
+		expect(within(dialog).getByText("Available · Gain -7.25 dB")).toBeTruthy();
+		expect(within(dialog).getByText("Album ReplayGain")).toBeTruthy();
+		expect(within(dialog).getByText("Unavailable")).toBeTruthy();
 	});
 
 	it("shows active shuffle and repeat states", async () => {

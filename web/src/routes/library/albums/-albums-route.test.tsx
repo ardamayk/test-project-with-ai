@@ -77,6 +77,8 @@ describe("albums route", () => {
 
 		expect(header?.className).toContain("sticky");
 		expect(header?.className).toContain("top-0");
+		expect(header?.className).toContain("pt-7");
+		expect(header?.querySelector(".max-w-6xl")).toBeTruthy();
 		expect(searchInput.closest("header")).toBe(header);
 		expect(searchInput.className).toContain("h-11");
 		expect(searchInput.className).toContain("pl-10");
@@ -86,6 +88,12 @@ describe("albums route", () => {
 		expect(screen.getByTestId("albums-page-content").className).toContain(
 			"[scrollbar-width:none]",
 		);
+		expect(screen.getByTestId("albums-page-content").className).toContain(
+			"pt-8",
+		);
+		expect(
+			screen.getByTestId("albums-page-content").querySelector(".max-w-6xl"),
+		).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "Scan library" })).toBeNull();
 	});

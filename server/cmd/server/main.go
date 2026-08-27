@@ -32,6 +32,10 @@ func main() {
 	slog.SetDefault(logger)
 
 	cfg := config.Load()
+	if err := config.ValidateServerAddress(cfg.Addr); err != nil {
+		slog.Error("unsafe server address", "error", err)
+		os.Exit(1)
+	}
 	ctx := context.Background()
 
 	if len(cfg.MusicPaths) == 0 {

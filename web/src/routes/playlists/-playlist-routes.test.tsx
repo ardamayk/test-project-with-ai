@@ -159,7 +159,7 @@ describe("playlist routes", () => {
 		cleanup();
 	});
 
-	it("links playlist rows to detail pages without card playback actions", async () => {
+	it("links playlist cards to detail pages without card playback actions", async () => {
 		const { container } = renderWithQuery(<PlaylistsPage />);
 
 		const header = await screen.findByRole("heading", { name: "Playlists" });
@@ -170,13 +170,29 @@ describe("playlist routes", () => {
 		expect(screen.getByTestId("playlists-page-content").className).toContain(
 			"[scrollbar-width:none]",
 		);
+		expect(
+			header
+				.closest("header")
+				?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+		).toBeTruthy();
+		expect(
+			screen
+				.getByTestId("playlists-page-content")
+				.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+		).toBeTruthy();
+		expect(
+			screen
+				.getByTestId("playlists-page-content")
+				.querySelector(".xl\\:grid-cols-5"),
+		).toBeTruthy();
 
 		const link = await screen.findByRole("link", {
 			name: /Favorites 4 tracks/,
 		});
 
 		expect(link.getAttribute("href")).toBe("/playlists/p1");
-		expect(link.className).toContain("h-36");
+		expect(link.className).toContain("aspect-square");
+		expect(link.className).toContain("overflow-hidden");
 		expect(link.className).toContain("rounded-md");
 		expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
 		expect(screen.queryByRole("button", { name: "Shuffle" })).toBeNull();
@@ -196,17 +212,34 @@ describe("playlist routes", () => {
 			]),
 		);
 		expect(
-			container.querySelector('[data-testid="playlist-row-cover-stack"]'),
+			container.querySelector("[data-playlist-card-overlay]"),
+		).toBeTruthy();
+		expect(
+			container.querySelector('[data-testid="playlist-card-cover-stack"]'),
 		).toBeTruthy();
 	});
 
 	it("plays queues and removes tracks from playlist detail", async () => {
-		renderWithQuery(<PlaylistDetailContent playlistId="p1" />);
+		const { container } = renderWithQuery(
+			<PlaylistDetailContent playlistId="p1" />,
+		);
 
 		await screen.findByRole("heading", { name: "Favorites" });
 		expect(
 			screen.queryByRole("link", { name: /Back to playlists/ }),
 		).toBeNull();
+		expect(screen.getByTestId("playlist-detail-content").className).toContain(
+			"min-[1801px]:max-w-[1476px]",
+		);
+		const searchInput = screen.getByPlaceholderText("Search Favorites…");
+		expect(
+			searchInput.closest('[data-testid="playlist-track-search"]'),
+		).toBeTruthy();
+		expect(searchInput.closest("header")).toBeNull();
+		expect(
+			container.querySelector('[data-testid="playlist-track-search"]')
+				?.className,
+		).toContain("w-full");
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));
 		expect(mocks.playTrack).toHaveBeenCalledWith("t1", [

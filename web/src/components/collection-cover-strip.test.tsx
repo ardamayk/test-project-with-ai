@@ -1,6 +1,8 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+	CollectionCoverCardStack,
+	CollectionCoverStack,
 	CollectionCoverStrip,
 	pickPreviewTracks,
 	pickRandomUniqueAlbumTracks,
@@ -100,5 +102,46 @@ describe("CollectionCoverStrip", () => {
 
 		expect(selected).toHaveLength(4);
 		expect(new Set(selected.map((track) => track.albumId)).size).toBe(4);
+	});
+
+	it("raises stacked playlist covers on hover", () => {
+		const { container: detailContainer } = render(
+			<CollectionCoverStack tracks={tracks} />,
+		);
+		const { container: cardContainer } = render(
+			<CollectionCoverCardStack tracks={tracks} />,
+		);
+
+		for (const image of [
+			...Array.from(detailContainer.querySelectorAll("img")),
+			...Array.from(cardContainer.querySelectorAll("img")),
+		]) {
+			expect(image.className).toContain("transition");
+			expect(image.className).toContain("hover:z-50");
+			expect(image.className).toContain("hover:scale-105");
+			expect(image.className).toContain("hover:rotate-0");
+		}
+	});
+
+	it("stacks playlist card covers from right to left without a fan rotation", () => {
+		const { container } = render(<CollectionCoverCardStack tracks={tracks} />);
+
+		const images = Array.from(container.querySelectorAll("img"));
+		expect(images).toHaveLength(4);
+		expect(images[0].className).toContain("right-[48%]");
+		expect(images[0].className).toContain("z-40");
+		expect(images[1].className).toContain("right-[32%]");
+		expect(images[1].className).toContain("z-30");
+		expect(images[2].className).toContain("right-[16%]");
+		expect(images[2].className).toContain("z-20");
+		expect(images[3].className).toContain("right-[0%]");
+		expect(images[3].className).toContain("z-10");
+		for (const image of images) {
+			expect(image.className).toContain("top-0");
+			expect(image.className).toContain("h-[88%]");
+			expect(image.className).toContain("w-[64%]");
+			expect(image.className).not.toContain(" -rotate-");
+			expect(image.className).not.toContain(" rotate-");
+		}
 	});
 });

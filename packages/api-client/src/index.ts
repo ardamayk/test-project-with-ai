@@ -2,7 +2,10 @@ import type { components, operations } from './generated/schema'
 
 export type ApiClientConfig = {
   baseUrl: string
+  mediaBaseUrl?: string | (() => string)
+  streamBaseUrl?: string | (() => string)
   getToken?: () => string | undefined
+  transport?: typeof fetch
 }
 
 type Schemas = components['schemas']
@@ -30,8 +33,10 @@ export type DeleteResult = Schemas['DeleteResult']
 export type QueueItem = Schemas['QueueItem']
 export type Queue = Schemas['Queue']
 export type ErrorResponse = Schemas['ErrorResponse']
+export type QueueConflictResponse = Schemas['QueueConflictResponse']
 export type QueueReplace = Schemas['QueueReplace']
 export type QueueItemAppend = Schemas['QueueItemAppend']
+export type QueueReorder = Schemas['QueueReorder']
 export type RadioNowPlaying = Schemas['RadioNowPlaying']
 export type RadioStation = Schemas['RadioStation']
 export type RadioStationList = Schemas['RadioStationList']
@@ -46,7 +51,7 @@ export type RadioImportRequest = Schemas['RadioImportRequest']
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    public readonly body: ErrorResponse,
+    public readonly body: ErrorResponse | QueueConflictResponse,
   ) {
     super(body.message)
     this.name = 'ApiError'
@@ -88,7 +93,17 @@ function buildRadioSearchQuery(params?: RadioSearchParams): string {
 }
 
 export function createApiClient(config: ApiClientConfig) {
-  const { baseUrl, getToken } = config
+  const {
+    baseUrl,
+    mediaBaseUrl = baseUrl,
+    streamBaseUrl = mediaBaseUrl,
+    getToken,
+    transport = globalThis.fetch,
+  } = config
+  const getMediaBaseUrl = () =>
+    typeof mediaBaseUrl === 'function' ? mediaBaseUrl() : mediaBaseUrl
+  const getStreamBaseUrl = () =>
+    typeof streamBaseUrl === 'function' ? streamBaseUrl() : streamBaseUrl
 
   async function request<T>(
     path: string,
@@ -104,7 +119,7 @@ export function createApiClient(config: ApiClientConfig) {
       headers.set('Authorization', `Bearer ${token}`)
     }
 
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await transport(`${baseUrl}${path}`, {
       ...init,
       headers,
     })
@@ -159,19 +174,25 @@ export function createApiClient(config: ApiClientConfig) {
       }),
 
     getPlaybackQueue: () => request<Queue>('/api/v1/playback/queue'),
-    replacePlaybackQueue: (trackIds: string[]) =>
+    replacePlaybackQueue: (trackIds: string[], revision: string) =>
       request<Queue>('/api/v1/playback/queue', {
         method: 'PUT',
-        body: JSON.stringify({ trackIds }),
+        body: JSON.stringify({ trackIds, revision }),
       }),
-    appendPlaybackQueueItem: (trackId: string) =>
+    reorderPlaybackQueue: (itemIds: string[], revision: string) =>
+      request<Queue>('/api/v1/playback/queue', {
+        method: 'PATCH',
+        body: JSON.stringify({ itemIds, revision }),
+      }),
+    appendPlaybackQueueItem: (trackId: string, revision: string) =>
       request<Queue>('/api/v1/playback/queue/items', {
         method: 'POST',
-        body: JSON.stringify({ trackId }),
+        body: JSON.stringify({ trackId, revision }),
       }),
-    removePlaybackQueueItem: (itemId: string) =>
+    removePlaybackQueueItem: (itemId: string, revision: string) =>
       request<Queue>(`/api/v1/playback/queue/items/${itemId}`, {
         method: 'DELETE',
+        headers: { 'If-Match': revision },
       }),
     listPlaylists: () => request<PlaylistList>('/api/v1/playlists'),
     createPlaylist: (body: PlaylistCreate) =>
@@ -226,13 +247,13 @@ export function createApiClient(config: ApiClientConfig) {
         `/api/v1/radio/stations/${stationId}/now-playing`,
       ),
     getRadioStationStreamUrl: (stationId: string) =>
-      `${baseUrl}/api/v1/radio/stations/${stationId}/stream`,
+      `${getStreamBaseUrl()}/api/v1/radio/stations/${stationId}/stream`,
     getRadioCatalogPreviewStreamUrl: (stationUuid: string) =>
-      `${baseUrl}/api/v1/radio/preview/${stationUuid}/stream`,
+      `${getStreamBaseUrl()}/api/v1/radio/preview/${stationUuid}/stream`,
     getTrackStreamUrl: (trackId: string) =>
-      `${baseUrl}/api/v1/tracks/${trackId}/stream`,
+      `${getStreamBaseUrl()}/api/v1/tracks/${trackId}/stream`,
     getAlbumCoverUrl: (albumId: string) =>
-      `${baseUrl}/api/v1/library/albums/${albumId}/cover`,
+      `${getMediaBaseUrl()}/api/v1/library/albums/${albumId}/cover`,
   }
 }
 

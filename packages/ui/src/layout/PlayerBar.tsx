@@ -30,6 +30,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
+import { formatReplayGainAvailability } from "../playback/format-replay-gain";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
@@ -901,6 +902,20 @@ function TrackInfoDialog({
 		["Bitrate", track.bitrateKbps ? `${track.bitrateKbps} kbps` : null],
 		["Sample rate", formatSampleRate(track.sampleRateHz)],
 		["Bit depth", track.bitDepth ? `${track.bitDepth}-bit` : null],
+		[
+			"Track ReplayGain",
+			formatReplayGainAvailability(
+				track.replayGain?.trackGainDb,
+				track.replayGain?.trackPeak,
+			),
+		],
+		[
+			"Album ReplayGain",
+			formatReplayGainAvailability(
+				track.replayGain?.albumGainDb,
+				track.replayGain?.albumPeak,
+			),
+		],
 		["Genre", track.genre],
 		["Size", formatBytes(track.sizeBytes)],
 		["Id", track.id],

@@ -149,6 +149,28 @@ describe("genre routes", () => {
 		expect(synthpop.className).toContain("ease-out");
 		expect(synthpop.className).toContain("hover:-translate-y-1");
 		expect(synthpop.className).toContain("hover:shadow-lg");
+		expect(synthpop.className).toContain("aspect-square");
+		expect(synthpop.className).toContain("overflow-hidden");
+		expect(screen.getByTestId("genres-page-shell").className).toContain(
+			"overflow-hidden",
+		);
+		expect(screen.getByTestId("genres-page-content").className).toContain(
+			"[scrollbar-width:none]",
+		);
+		expect(
+			screen
+				.getByTestId("genres-page-content")
+				.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+		).toBeTruthy();
+		expect(
+			screen
+				.getByTestId("genres-page-content")
+				.querySelector(".xl\\:grid-cols-5"),
+		).toBeTruthy();
+		expect(
+			container.querySelector('[data-testid="playlist-card-cover-stack"]'),
+		).toBeTruthy();
+		expect(container.querySelector("[data-genre-card-overlay]")).toBeTruthy();
 		await waitFor(() => {
 			expect(container.querySelectorAll("img").length).toBeGreaterThanOrEqual(
 				4,
@@ -161,6 +183,9 @@ describe("genre routes", () => {
 
 		await screen.findByRole("heading", { name: "Synthpop" });
 		expect(screen.queryByRole("link", { name: /Back to genres/ })).toBeNull();
+		expect(screen.getByTestId("genre-detail-content").className).toContain(
+			"min-[1801px]:max-w-[1476px]",
+		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));
 		expect(mocks.playTrack).toHaveBeenCalledWith("t1", [
@@ -193,6 +218,10 @@ describe("genre routes", () => {
 		);
 
 		await screen.findByRole("heading", { name: "Synthpop" });
+		expect(screen.getByTestId("genre-track-search")).toBeTruthy();
+		expect(screen.getByPlaceholderText("Search Synthpop…").className).toContain(
+			"h-11",
+		);
 		expect(
 			container
 				.querySelector('[data-testid="collection-cover-stack"]')

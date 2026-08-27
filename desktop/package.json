@@ -1,0 +1,14 @@
+{
+  "name": "@repo/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "tauri build --no-bundle",
+    "desktop:dev": "tauri dev",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "web": "workspace:*"
+  }
+}

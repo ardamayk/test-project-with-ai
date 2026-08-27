@@ -1,38 +1,16 @@
-import type {
-	RadioNowPlaying,
-	RadioSearchResult,
-	RadioStation,
+import {
+	ApiError,
+	type RadioSearchResult,
+	type RadioStation,
 } from "@repo/api-client";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type PlaybackApi,
 	PlaybackProvider,
 	usePlayback,
 } from "./PlaybackProvider";
-
-const hlsMocks = vi.hoisted(() => ({
-	isSupported: vi.fn(() => true),
-	instances: [] as Array<{
-		attachMedia: ReturnType<typeof vi.fn>;
-		destroy: ReturnType<typeof vi.fn>;
-		loadSource: ReturnType<typeof vi.fn>;
-	}>,
-}));
-
-vi.mock("hls.js", () => ({
-	default: class HlsMock {
-		static isSupported = hlsMocks.isSupported;
-		attachMedia = vi.fn();
-		destroy = vi.fn();
-		loadSource = vi.fn();
-
-		constructor() {
-			hlsMocks.instances.push(this);
-		}
-	},
-}));
+import { InMemoryPlaybackEngine } from "./testing/InMemoryPlaybackEngine";
 
 const track = {
 	id: "track-1",
@@ -44,43 +22,10 @@ const track = {
 };
 
 const track2 = {
+	...track,
 	id: "track-2",
 	title: "Track 2",
-	artistName: "Artist",
-	albumId: "album-1",
 	durationMs: 180000,
-	format: "flac",
-};
-
-const playlistApi = {
-	listPlaylists: vi.fn(async () => ({ items: [], total: 0 })),
-	getPlaylist: vi.fn(async (playlistId: string) => ({
-		id: playlistId,
-		name: "Playlist",
-		isDefault: false,
-		trackCount: 0,
-		tracks: [],
-	})),
-	createPlaylist: vi.fn(async (name: string) => ({
-		id: "playlist-1",
-		name,
-		isDefault: false,
-		trackCount: 0,
-	})),
-	addPlaylistTrack: vi.fn(async () => ({
-		id: "playlist-1",
-		name: "Playlist",
-		isDefault: false,
-		trackCount: 1,
-		tracks: [track],
-	})),
-	removePlaylistTrack: vi.fn(async () => ({
-		id: "playlist-1",
-		name: "Playlist",
-		isDefault: false,
-		trackCount: 0,
-		tracks: [],
-	})),
 };
 
 const radioStation: RadioStation = {
@@ -93,476 +38,356 @@ const radioStation: RadioStation = {
 	position: 0,
 };
 
-const hlsRadioStation: RadioStation = {
-	...radioStation,
-	id: "station-hls",
-	streamUrl: "https://example.com/live/chunks.m3u8",
-};
-
-const hlsCatalogResult: RadioSearchResult = {
-	stationUuid: "catalog-hls",
-	name: "Catalog HLS",
-	streamUrl: "https://example.com/catalog/chunks.m3u8",
+const catalogResult: RadioSearchResult = {
+	stationUuid: "catalog-1",
+	name: "Catalog 1",
+	streamUrl: "https://example.com/preview",
 	tags: [],
 };
 
-const radioNowPlaying: RadioNowPlaying = {
-	raw: "Artist - Song",
-	title: "Song",
-	artist: "Artist",
-};
+const queueItems = [
+	{ id: "item-1", trackId: track.id, position: 0, track },
+	{ id: "item-2", trackId: track2.id, position: 1, track: track2 },
+];
 
-const radioApi = {
-	getRadioStationStreamUrl: (stationId: string) => `/radio/${stationId}`,
-	getRadioCatalogPreviewStreamUrl: (stationUuid: string) =>
-		`/radio/preview/${stationUuid}`,
-	getRadioNowPlaying: vi.fn(async () => radioNowPlaying),
-};
-
-class AudioMock extends EventTarget {
-	static instances: AudioMock[] = [];
-
-	currentTime = 0;
-	duration = 120;
-	paused = true;
-	src = "";
-	volume = 1;
-	canPlayType = vi.fn(() => "");
-	pause = vi.fn(() => {
-		this.paused = true;
-		this.dispatchEvent(new Event("pause"));
-	});
-	play = vi.fn(async () => {
-		this.paused = false;
-		this.dispatchEvent(new Event("play"));
-	});
-	removeAttribute = vi.fn((name: string) => {
-		if (name === "src") {
-			this.src = "";
-		}
-	});
-
-	constructor() {
-		super();
-		AudioMock.instances.push(this);
-	}
-}
-
-function createApi(): PlaybackApi {
+function createApi(items = queueItems): PlaybackApi {
 	return {
-		getQueue: vi.fn(async () => ({
-			items: [{ id: "item-1", trackId: track.id, position: 0, track }],
-		})),
-		replaceQueue: vi.fn(async () => ({
-			items: [{ id: "item-1", trackId: track.id, position: 0, track }],
-		})),
-		appendQueueItem: vi.fn(async () => ({
-			items: [{ id: "item-1", trackId: track.id, position: 0, track }],
-		})),
-		removeQueueItem: vi.fn(async () => ({ items: [] })),
-		getStreamUrl: (trackId) => `/stream/${trackId}`,
-		getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
-		...radioApi,
-		...playlistApi,
-	};
-}
-
-function createEmptyQueueApi(): PlaybackApi {
-	return {
-		getQueue: vi.fn(async () => ({ items: [] })),
-		replaceQueue: vi.fn(async () => ({
-			items: [
-				{ id: "item-1", trackId: track.id, position: 0, track },
-				{ id: "item-2", trackId: track2.id, position: 1, track: track2 },
-			],
-		})),
-		appendQueueItem: vi.fn(async () => ({
-			items: [{ id: "item-1", trackId: track.id, position: 0, track }],
-		})),
-		removeQueueItem: vi.fn(async () => ({ items: [] })),
-		getStreamUrl: (trackId) => `/stream/${trackId}`,
-		getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
-		...radioApi,
-		...playlistApi,
-	};
-}
-
-function createAppendAlbumApi(): PlaybackApi {
-	let items = [{ id: "item-1", trackId: track.id, position: 0, track }];
-
-	return {
-		getQueue: vi.fn(async () => ({ items })),
-		replaceQueue: vi.fn(async () => ({ items })),
-		appendQueueItem: vi.fn(async (trackId) => {
-			const nextTrack = trackId === track2.id ? track2 : track;
-			items = [
-				...items,
-				{
-					id: `item-${items.length + 1}`,
-					trackId,
-					position: items.length,
-					track: nextTrack,
-				},
-			];
-			return { items };
-		}),
-		removeQueueItem: vi.fn(async () => ({ items: [] })),
-		getStreamUrl: (trackId) => `/stream/${trackId}`,
-		getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
-		...radioApi,
-		...playlistApi,
-	};
-}
-
-function createPlayNextApi(): PlaybackApi {
-	const items = [
-		{ id: "item-1", trackId: track.id, position: 0, track },
-		{ id: "item-2", trackId: track2.id, position: 1, track: track2 },
-	];
-
-	return {
-		getQueue: vi.fn(async () => ({ items })),
+		getQueue: vi.fn(async () => ({ items, revision: "1" })),
 		replaceQueue: vi.fn(async (trackIds: string[]) => ({
-			items: trackIds.map((trackId, index) => {
-				const nextTrack = trackId === track2.id ? track2 : track;
-				return {
-					id: `item-${index + 1}`,
-					trackId,
-					position: index,
-					track: nextTrack,
-				};
-			}),
+			items: trackIds.map((trackId, position) => ({
+				id: `item-${position + 1}`,
+				trackId,
+				position,
+				track: trackId === track2.id ? track2 : track,
+			})),
+			revision: "2",
 		})),
-		appendQueueItem: vi.fn(async () => ({ items })),
-		removeQueueItem: vi.fn(async () => ({ items: [] })),
+		reorderQueue: vi.fn(async () => ({ items, revision: "2" })),
+		appendQueueItem: vi.fn(async () => ({ items: queueItems, revision: "2" })),
+		removeQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
 		getStreamUrl: (trackId) => `/stream/${trackId}`,
 		getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
-		...radioApi,
-		...playlistApi,
+		getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
+		getRadioCatalogPreviewStreamUrl: (stationUuid) =>
+			`/radio/preview/${stationUuid}`,
+		getRadioNowPlaying: vi.fn(async () => ({ raw: "Artist - Song" })),
+		listPlaylists: vi.fn(async () => ({ items: [], total: 0 })),
+		getPlaylist: vi.fn(async (playlistId: string) => ({
+			id: playlistId,
+			name: "Playlist",
+			isDefault: false,
+			trackCount: 0,
+			tracks: [],
+		})),
+		createPlaylist: vi.fn(async (name: string) => ({
+			id: "playlist-1",
+			name,
+			isDefault: false,
+			trackCount: 0,
+		})),
+		addPlaylistTrack: vi.fn(async () => ({
+			id: "playlist-1",
+			name: "Playlist",
+			isDefault: false,
+			trackCount: 1,
+			tracks: [track],
+		})),
+		removePlaylistTrack: vi.fn(async () => ({
+			id: "playlist-1",
+			name: "Playlist",
+			isDefault: false,
+			trackCount: 0,
+			tracks: [],
+		})),
 	};
 }
 
-function Harness({ children }: { children?: ReactNode }) {
+function Harness() {
 	const playback = usePlayback();
 	return (
 		<div>
-			<span data-testid="volume">{playback.volume}</span>
-			<span data-testid="playing">{String(playback.isPlaying)}</span>
-			<span data-testid="current-track">
-				{playback.currentTrack?.title ?? ""}
-			</span>
-			<span data-testid="current-radio">
+			<span data-testid="track">{playback.currentTrack?.title ?? ""}</span>
+			<span data-testid="radio">
 				{playback.currentRadioStation?.name ?? ""}
 			</span>
-			<span data-testid="radio-now-playing">
-				{playback.radioNowPlaying?.raw ?? ""}
-			</span>
-			<span data-testid="repeat-mode">{playback.repeatMode}</span>
-			<span data-testid="shuffle-enabled">
-				{String(playback.shuffleEnabled)}
-			</span>
-			<button type="button" onClick={() => playback.setVolume(0.3)}>
-				Set volume
-			</button>
+			<span data-testid="playing">{String(playback.isPlaying)}</span>
+			<span data-testid="volume">{playback.volume}</span>
+			<span data-testid="repeat">{playback.repeatMode}</span>
+			<span data-testid="queue-conflict">{playback.queueConflict ?? ""}</span>
 			<button type="button" onClick={() => void playback.playTrack(track.id)}>
-				Play
+				Track
 			</button>
 			<button
 				type="button"
 				onClick={() => void playback.playRadioStation(radioStation)}
 			>
-				Play radio
+				Radio
 			</button>
 			<button
 				type="button"
-				onClick={() => void playback.playRadioStation(hlsRadioStation)}
+				onClick={() => void playback.playRadioCatalogPreview(catalogResult)}
 			>
-				Play HLS radio
+				Preview
 			</button>
-			<button
-				type="button"
-				onClick={() => void playback.playRadioCatalogPreview(hlsCatalogResult)}
-			>
-				Preview HLS radio
+			<button type="button" onClick={() => playback.setVolume(0.3)}>
+				Volume
 			</button>
-			<button
-				type="button"
-				onClick={() => void playback.playTrack(track.id, [track.id, track2.id])}
-			>
-				Play album
+			<button type="button" onClick={playback.cycleRepeatMode}>
+				Repeat
+			</button>
+			<button type="button" onClick={() => void playback.clearQueue()}>
+				Clear
 			</button>
 			<button
 				type="button"
 				onClick={() => void playback.queueTracks([track2.id])}
 			>
-				Queue album
+				Append
 			</button>
-			<button type="button" onClick={playback.cycleRepeatMode}>
-				Repeat
+			<button
+				type="button"
+				onClick={() => void playback.removeFromQueue("item-1")}
+			>
+				Remove
 			</button>
-			<button type="button" onClick={playback.toggleShuffle}>
-				Shuffle
+			<button
+				type="button"
+				onClick={() => void playback.reorderQueue(["item-2", "item-1"])}
+			>
+				Reorder
 			</button>
-			<button type="button" onClick={() => void playback.playNext(track2.id)}>
-				Play next
-			</button>
-			{children}
 		</div>
 	);
 }
 
+function renderPlayback(api = createApi()) {
+	const engine = new InMemoryPlaybackEngine();
+	render(
+		<PlaybackProvider api={api} engine={engine}>
+			<Harness />
+		</PlaybackProvider>,
+	);
+	return { api, engine };
+}
+
+afterEach(cleanup);
+
 describe("PlaybackProvider", () => {
-	const originalAudio = globalThis.Audio;
-
-	beforeEach(() => {
-		AudioMock.instances = [];
-		hlsMocks.instances = [];
-		hlsMocks.isSupported.mockReturnValue(true);
-		globalThis.Audio = AudioMock as unknown as typeof Audio;
-	});
-
-	afterEach(() => {
-		cleanup();
-		globalThis.Audio = originalAudio;
-	});
-
-	it("updates volume without recreating the audio element", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
+	it("maps queued Tracks to PlaybackEngine sources", async () => {
+		const { engine } = renderPlayback();
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
 		);
 
-		await screen.findByTestId("volume");
-		expect(AudioMock.instances).toHaveLength(1);
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Set volume" }).click();
+		expect(engine.getState().source).toEqual({
+			type: "track",
+			track,
+			playbackUrl: "/stream/track-1",
 		});
-
-		expect(screen.getByTestId("volume").textContent).toBe("0.3");
-		expect(AudioMock.instances).toHaveLength(1);
-		expect(AudioMock.instances[0]?.volume).toBe(0.3);
-	});
-
-	it("plays a queued track through the stream URL", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
-		);
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Play" }).click();
-		});
-
-		expect(AudioMock.instances[0]?.src).toBe("/stream/track-1");
-		expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce();
+		expect(screen.getByTestId("track").textContent).toBe("Track 1");
 		expect(screen.getByTestId("playing").textContent).toBe("true");
 	});
 
-	it("plays a radio station without replacing the queue", async () => {
+	it("maps Radio Stations and Catalog Previews without replacing Queue", async () => {
 		const api = createApi();
-		render(
-			<PlaybackProvider api={api}>
-				<Harness />
-			</PlaybackProvider>,
+		const { engine } = renderPlayback(api);
+		await act(async () =>
+			screen.getByRole("button", { name: "Radio" }).click(),
 		);
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Play radio" }).click();
+		expect(engine.getState().source).toMatchObject({
+			type: "radio-station",
+			playbackUrl: "/radio/station-1",
+			sourceUrl: radioStation.streamUrl,
 		});
+		expect(screen.getByTestId("radio").textContent).toBe("Station 1");
 
-		expect(AudioMock.instances[0]?.src).toBe("/radio/station-1");
-		expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce();
+		await act(async () =>
+			screen.getByRole("button", { name: "Preview" }).click(),
+		);
+		expect(engine.getState().source).toMatchObject({
+			type: "catalog-preview",
+			playbackUrl: "/radio/preview/catalog-1",
+			sourceUrl: catalogResult.streamUrl,
+		});
 		expect(api.replaceQueue).not.toHaveBeenCalled();
-		expect(screen.getByTestId("current-track").textContent).toBe("");
-		expect(screen.getByTestId("current-radio").textContent).toBe("Station 1");
-		expect(screen.getByTestId("radio-now-playing").textContent).toBe(
-			"Artist - Song",
-		);
 	});
 
-	it("plays HLS radio streams through hls.js when native HLS is unavailable", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
+	it("delegates Playback Session controls to PlaybackEngine", async () => {
+		const { engine } = renderPlayback();
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
 		);
-
 		await act(async () => {
-			screen.getByRole("button", { name: "Play HLS radio" }).click();
-		});
-
-		expect(hlsMocks.instances).toHaveLength(1);
-		expect(hlsMocks.instances[0]?.loadSource).toHaveBeenCalledWith(
-			"https://example.com/live/chunks.m3u8",
-		);
-		expect(hlsMocks.instances[0]?.attachMedia).toHaveBeenCalledWith(
-			AudioMock.instances[0],
-		);
-		expect(AudioMock.instances[0]?.src).toBe("");
-		expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce();
-	});
-
-	it("prefers hls.js for HLS streams when native support is only maybe", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
-		);
-		AudioMock.instances[0]?.canPlayType.mockReturnValue("maybe");
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Play HLS radio" }).click();
-		});
-
-		expect(hlsMocks.instances).toHaveLength(1);
-		expect(hlsMocks.instances[0]?.loadSource).toHaveBeenCalledWith(
-			"https://example.com/live/chunks.m3u8",
-		);
-		expect(AudioMock.instances[0]?.src).toBe("");
-	});
-
-	it("uses the catalog stream URL for HLS previews", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
-		);
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Preview HLS radio" }).click();
-		});
-
-		expect(hlsMocks.instances).toHaveLength(1);
-		expect(hlsMocks.instances[0]?.loadSource).toHaveBeenCalledWith(
-			"https://example.com/catalog/chunks.m3u8",
-		);
-		expect(AudioMock.instances[0]?.src).toBe("");
-		expect(screen.getByTestId("current-radio").textContent).toBe("Catalog HLS");
-	});
-
-	it("sets the current track when replacing the queue before playback", async () => {
-		render(
-			<PlaybackProvider api={createEmptyQueueApi()}>
-				<Harness />
-			</PlaybackProvider>,
-		);
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Play album" }).click();
-		});
-
-		expect(screen.getByTestId("current-track").textContent).toBe("Track 1");
-		expect(AudioMock.instances[0]?.src).toBe("/stream/track-1");
-	});
-
-	it("appends album tracks without changing the current track", async () => {
-		const api = createAppendAlbumApi();
-		render(
-			<PlaybackProvider api={api}>
-				<Harness />
-			</PlaybackProvider>,
-		);
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Play" }).click();
-		});
-		await act(async () => {
-			screen.getByRole("button", { name: "Queue album" }).click();
-		});
-
-		expect(api.appendQueueItem).toHaveBeenCalledWith(track2.id);
-		expect(screen.getByTestId("current-track").textContent).toBe("Track 1");
-		expect(AudioMock.instances[0]?.src).toBe("/stream/track-1");
-	});
-
-	it("cycles repeat modes and toggles shuffle state", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
-		);
-
-		expect(screen.getByTestId("repeat-mode").textContent).toBe("off");
-		expect(screen.getByTestId("shuffle-enabled").textContent).toBe("false");
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Repeat" }).click();
-		});
-		expect(screen.getByTestId("repeat-mode").textContent).toBe("once");
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Repeat" }).click();
-		});
-		expect(screen.getByTestId("repeat-mode").textContent).toBe("loop");
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Repeat" }).click();
-			screen.getByRole("button", { name: "Shuffle" }).click();
-		});
-		expect(screen.getByTestId("repeat-mode").textContent).toBe("off");
-		expect(screen.getByTestId("shuffle-enabled").textContent).toBe("true");
-	});
-
-	it("replays once then clears repeat once mode", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
-		);
-
-		await act(async () => {
-			screen.getByRole("button", { name: "Play" }).click();
+			screen.getByRole("button", { name: "Volume" }).click();
 			screen.getByRole("button", { name: "Repeat" }).click();
 		});
 
-		await act(async () => {
-			AudioMock.instances[0]?.dispatchEvent(new Event("ended"));
+		expect(engine.getState()).toMatchObject({
+			volume: 0.3,
+			repeatMode: "once",
 		});
-
-		expect(AudioMock.instances[0]?.play).toHaveBeenCalledTimes(2);
-		expect(screen.getByTestId("repeat-mode").textContent).toBe("off");
+		expect(screen.getByTestId("volume").textContent).toBe("0.3");
+		expect(screen.getByTestId("repeat").textContent).toBe("once");
 	});
 
-	it("keeps replaying in repeat loop mode", async () => {
-		render(
-			<PlaybackProvider api={createApi()}>
-				<Harness />
-			</PlaybackProvider>,
+	it("advances Queue after engine reports Track ended", async () => {
+		const { engine } = renderPlayback();
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
 		);
+		await act(async () => engine.finish());
 
-		await act(async () => {
-			screen.getByRole("button", { name: "Play" }).click();
-			screen.getByRole("button", { name: "Repeat" }).click();
-			screen.getByRole("button", { name: "Repeat" }).click();
+		expect(engine.getState().source).toMatchObject({
+			type: "track",
+			track: { id: "track-2" },
 		});
-
-		await act(async () => {
-			AudioMock.instances[0]?.dispatchEvent(new Event("ended"));
-			AudioMock.instances[0]?.dispatchEvent(new Event("ended"));
-		});
-
-		expect(AudioMock.instances[0]?.play).toHaveBeenCalledTimes(3);
-		expect(screen.getByTestId("repeat-mode").textContent).toBe("loop");
 	});
 
-	it("inserts a track after the current queue position via playNext", async () => {
-		const api = createPlayNextApi();
-		render(
-			<PlaybackProvider api={api}>
-				<Harness />
-			</PlaybackProvider>,
+	it("stops local Playback Session when Queue is cleared", async () => {
+		const { engine } = renderPlayback();
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+		await act(async () =>
+			screen.getByRole("button", { name: "Clear" }).click(),
 		);
 
-		await act(async () => {
-			screen.getByRole("button", { name: "Play" }).click();
-		});
-		await act(async () => {
-			screen.getByRole("button", { name: "Play next" }).click();
-		});
+		expect(engine.getState()).toMatchObject({ source: null, status: "idle" });
+		expect(screen.getByTestId("track").textContent).toBe("");
+	});
 
-		expect(api.replaceQueue).toHaveBeenCalledWith([track.id, track2.id]);
+	it("refetches and retries unambiguous append intent once", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: queueItems, revision: "2" });
+		vi.mocked(api.appendQueueItem)
+			.mockRejectedValueOnce(queueConflict("2"))
+			.mockResolvedValueOnce({ items: queueItems, revision: "3" });
+		renderPlayback(api);
+		await act(async () => {});
+
+		await act(async () =>
+			screen.getByRole("button", { name: "Append" }).click(),
+		);
+
+		expect(api.appendQueueItem).toHaveBeenNthCalledWith(1, "track-2", "1");
+		expect(api.appendQueueItem).toHaveBeenNthCalledWith(2, "track-2", "2");
+		expect(api.getQueue).toHaveBeenCalledTimes(2);
+	});
+
+	it("refetches stale remove and treats already-removed intent as satisfied", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: [queueItems[1]], revision: "2" });
+		vi.mocked(api.removeQueueItem).mockRejectedValueOnce(queueConflict("2"));
+		renderPlayback(api);
+
+		await act(async () =>
+			screen.getByRole("button", { name: "Remove" }).click(),
+		);
+
+		expect(api.removeQueueItem).toHaveBeenCalledTimes(1);
+		expect(api.getQueue).toHaveBeenCalledTimes(2);
+	});
+
+	it("refetches and retries remove intent once when item still exists", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: queueItems, revision: "2" });
+		vi.mocked(api.removeQueueItem)
+			.mockRejectedValueOnce(queueConflict("2"))
+			.mockResolvedValueOnce({ items: [queueItems[1]], revision: "3" });
+		renderPlayback(api);
+		await act(async () => {});
+
+		await act(async () =>
+			screen.getByRole("button", { name: "Remove" }).click(),
+		);
+
+		expect(api.removeQueueItem).toHaveBeenNthCalledWith(1, "item-1", "1");
+		expect(api.removeQueueItem).toHaveBeenNthCalledWith(2, "item-1", "2");
+		expect(api.getQueue).toHaveBeenCalledTimes(2);
+	});
+
+	it.each([
+		["replace", "Clear"],
+		["reorder", "Reorder"],
+	] as const)("does not auto-merge %s conflicts and exposes them", async (operation, buttonName) => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: queueItems, revision: "2" });
+		if (operation === "replace") {
+			vi.mocked(api.replaceQueue).mockRejectedValueOnce(queueConflict("2"));
+		} else {
+			vi.mocked(api.reorderQueue).mockRejectedValueOnce(queueConflict("2"));
+		}
+		renderPlayback(api);
+
+		await act(async () =>
+			screen.getByRole("button", { name: buttonName }).click(),
+		);
+
+		const mutation =
+			operation === "replace" ? api.replaceQueue : api.reorderQueue;
+		expect(mutation).toHaveBeenCalledTimes(1);
+		expect(api.getQueue).toHaveBeenCalledTimes(2);
+		expect(screen.getByTestId("queue-conflict").textContent).toContain(
+			"changed",
+		);
+	});
+
+	it.each([
+		["append retry", "Append", true],
+		["remove retry", "Remove", true],
+		["already-satisfied remove", "Remove", false],
+	] as const)("clears stale conflict after %s", async (_scenario, buttonName, shouldRetry) => {
+		const api = createApi();
+		const latestItems = shouldRetry ? queueItems : [queueItems[1]];
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: queueItems, revision: "2" })
+			.mockResolvedValueOnce({ items: latestItems, revision: "3" });
+		vi.mocked(api.reorderQueue).mockRejectedValueOnce(queueConflict("2"));
+		if (buttonName === "Append") {
+			vi.mocked(api.appendQueueItem)
+				.mockRejectedValueOnce(queueConflict("3"))
+				.mockResolvedValueOnce({ items: queueItems, revision: "4" });
+		} else {
+			vi.mocked(api.removeQueueItem).mockRejectedValueOnce(queueConflict("3"));
+			if (shouldRetry) {
+				vi.mocked(api.removeQueueItem).mockResolvedValueOnce({
+					items: [queueItems[1]],
+					revision: "4",
+				});
+			}
+		}
+		renderPlayback(api);
+		await act(async () => {});
+
+		await act(async () =>
+			screen.getByRole("button", { name: "Reorder" }).click(),
+		);
+		expect(screen.getByTestId("queue-conflict").textContent).toContain(
+			"changed",
+		);
+
+		await act(async () =>
+			screen.getByRole("button", { name: buttonName }).click(),
+		);
+
+		expect(screen.getByTestId("queue-conflict").textContent).toBe("");
 	});
 });
+
+function queueConflict(revision: string) {
+	return new ApiError(409, {
+		error: "conflict",
+		code: "queue_revision_conflict",
+		message: "queue changed since supplied revision",
+		queue: { items: queueItems, revision },
+	});
+}

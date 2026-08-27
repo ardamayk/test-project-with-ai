@@ -17,9 +17,12 @@ func NewHandler(cfg config.Config) *Handler {
 }
 
 type healthResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
+	Status       string   `json:"status"`
+	Version      string   `json:"version"`
+	Capabilities []string `json:"capabilities"`
 }
+
+var serverCapabilities = []string{"api.v1"}
 
 type userResponse struct {
 	ID          string `json:"id"`
@@ -28,7 +31,11 @@ type userResponse struct {
 }
 
 func (h *Handler) GetHealth(w http.ResponseWriter, _ *http.Request) {
-	respond.JSON(w, http.StatusOK, healthResponse{Status: "ok", Version: h.version})
+	respond.JSON(w, http.StatusOK, healthResponse{
+		Status:       "ok",
+		Version:      h.version,
+		Capabilities: serverCapabilities,
+	})
 }
 
 func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
