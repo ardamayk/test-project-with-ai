@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -10,6 +11,79 @@ pub const ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE: &str =
 pub trait PipeWireRateAdapter: Send + Sync {
     fn forced_rate_hz(&self) -> Result<Option<u32>, String>;
     fn set_forced_rate_hz(&self, rate_hz: Option<u32>) -> Result<(), String>;
+}
+
+pub trait AdaptiveCleanupMarker: Send + Sync {
+    fn is_required(&self) -> Result<bool, String>;
+    fn mark_required(&self) -> Result<(), String>;
+    fn clear(&self) -> Result<(), String>;
+}
+
+pub struct FileAdaptiveCleanupMarker {
+    path: PathBuf,
+}
+
+impl FileAdaptiveCleanupMarker {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl AdaptiveCleanupMarker for FileAdaptiveCleanupMarker {
+    fn is_required(&self) -> Result<bool, String> {
+        match fs::metadata(&self.path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(format!(
+                "Failed to inspect Adaptive System Rate cleanup marker {}: {error}",
+                self.path.display()
+            )),
+        }
+    }
+
+    fn mark_required(&self) -> Result<(), String> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Failed to create Adaptive System Rate state directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(&self.path, b"cleanup-required\n").map_err(|error| {
+            format!(
+                "Failed to persist Adaptive System Rate cleanup marker {}: {error}",
+                self.path.display()
+            )
+        })
+    }
+
+    fn clear(&self) -> Result<(), String> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!(
+                "Failed to clear Adaptive System Rate cleanup marker {}: {error}",
+                self.path.display()
+            )),
+        }
+    }
+}
+
+struct SessionOnlyCleanupMarker;
+
+impl AdaptiveCleanupMarker for SessionOnlyCleanupMarker {
+    fn is_required(&self) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    fn mark_required(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct CommandPipeWireRateAdapter {
@@ -146,13 +220,22 @@ pub struct AdaptiveSystemRateState {
 
 pub struct AdaptiveSystemRateController {
     adapter: Arc<dyn PipeWireRateAdapter>,
+    cleanup_marker: Arc<dyn AdaptiveCleanupMarker>,
     state: AdaptiveSystemRateState,
 }
 
 impl AdaptiveSystemRateController {
     pub fn new(adapter: Arc<dyn PipeWireRateAdapter>) -> Self {
+        Self::with_cleanup_marker(adapter, Arc::new(SessionOnlyCleanupMarker))
+    }
+
+    pub fn with_cleanup_marker(
+        adapter: Arc<dyn PipeWireRateAdapter>,
+        cleanup_marker: Arc<dyn AdaptiveCleanupMarker>,
+    ) -> Self {
         Self {
             adapter,
+            cleanup_marker,
             state: AdaptiveSystemRateState::default(),
         }
     }
@@ -164,6 +247,17 @@ impl AdaptiveSystemRateController {
         Ok(Self::new(adapter))
     }
 
+    pub fn recover_startup_if_marked(
+        adapter: Arc<dyn PipeWireRateAdapter>,
+        cleanup_marker: Arc<dyn AdaptiveCleanupMarker>,
+    ) -> Result<Self, String> {
+        if cleanup_marker.is_required()? {
+            adapter.set_forced_rate_hz(None)?;
+            cleanup_marker.clear()?;
+        }
+        Ok(Self::with_cleanup_marker(adapter, cleanup_marker))
+    }
+
     pub fn state(&self) -> &AdaptiveSystemRateState {
         &self.state
     }
@@ -172,6 +266,7 @@ impl AdaptiveSystemRateController {
         if !is_confirmed {
             return Err(ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE.to_owned());
         }
+        self.cleanup_marker.mark_required()?;
         self.state.is_enabled = true;
         Ok(())
     }
@@ -191,6 +286,7 @@ impl AdaptiveSystemRateController {
             return Ok(());
         }
         self.reset_force_rate()?;
+        self.cleanup_marker.clear()?;
         self.state = AdaptiveSystemRateState::default();
         Ok(())
     }
@@ -211,10 +307,15 @@ impl AdaptiveSystemRateController {
 
 impl Drop for AdaptiveSystemRateController {
     fn drop(&mut self) {
-        if (self.state.is_enabled || self.state.forced_rate_hz.is_some())
-            && let Err(error) = self.adapter.set_forced_rate_hz(None)
-        {
-            eprintln!("Adaptive System Rate teardown failed: {error}");
+        if self.state.is_enabled || self.state.forced_rate_hz.is_some() {
+            match self.adapter.set_forced_rate_hz(None) {
+                Ok(()) => {
+                    if let Err(error) = self.cleanup_marker.clear() {
+                        eprintln!("Adaptive System Rate teardown marker cleanup failed: {error}");
+                    }
+                }
+                Err(error) => eprintln!("Adaptive System Rate teardown failed: {error}"),
+            }
         }
     }
 }

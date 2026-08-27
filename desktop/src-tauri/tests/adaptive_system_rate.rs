@@ -1,6 +1,6 @@
 use earthly_audio_desktop::adaptive_system_rate::{
-    ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveSystemRateController,
-    CommandPipeWireRateAdapter, PipeWireRateAdapter,
+    ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveCleanupMarker, AdaptiveSystemRateController,
+    CommandPipeWireRateAdapter, FileAdaptiveCleanupMarker, PipeWireRateAdapter,
 };
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -30,6 +30,34 @@ impl PipeWireRateAdapter for RecordedPipeWireRate {
 
 struct FailingResetPipeWireRate;
 
+struct RecordedCleanupMarker {
+    is_required: Mutex<bool>,
+}
+
+impl RecordedCleanupMarker {
+    fn new(is_required: bool) -> Self {
+        Self {
+            is_required: Mutex::new(is_required),
+        }
+    }
+}
+
+impl AdaptiveCleanupMarker for RecordedCleanupMarker {
+    fn is_required(&self) -> Result<bool, String> {
+        Ok(*self.is_required.lock().expect("cleanup marker"))
+    }
+
+    fn mark_required(&self) -> Result<(), String> {
+        *self.is_required.lock().expect("cleanup marker") = true;
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), String> {
+        *self.is_required.lock().expect("cleanup marker") = false;
+        Ok(())
+    }
+}
+
 impl PipeWireRateAdapter for FailingResetPipeWireRate {
     fn forced_rate_hz(&self) -> Result<Option<u32>, String> {
         Ok(Some(96_000))
@@ -54,6 +82,33 @@ fn adaptive_mode_requires_explicit_system_wide_effect_confirmation() {
 
     controller.enable(true).expect("enable confirmed mode");
     assert!(controller.state().is_enabled);
+}
+
+#[test]
+fn confirmed_mode_marks_cleanup_required_until_a_clean_disable() {
+    let marker = Arc::new(RecordedCleanupMarker::new(false));
+    let mut controller = AdaptiveSystemRateController::with_cleanup_marker(
+        Arc::new(RecordedPipeWireRate::default()),
+        marker.clone(),
+    );
+
+    controller.enable(true).expect("enable confirmed mode");
+    assert!(marker.is_required().expect("cleanup marker is set"));
+
+    controller.disable().expect("disable adaptive mode");
+    assert!(!marker.is_required().expect("cleanup marker is clear"));
+}
+
+#[test]
+fn file_cleanup_marker_survives_until_explicitly_cleared() {
+    let path = temporary_path("adaptive-cleanup-marker");
+    let marker = FileAdaptiveCleanupMarker::new(path.clone());
+
+    assert!(!marker.is_required().expect("marker starts absent"));
+    marker.mark_required().expect("persist cleanup marker");
+    assert!(marker.is_required().expect("marker survives on disk"));
+    marker.clear().expect("clear cleanup marker");
+    assert!(!path.exists());
 }
 
 #[test]
@@ -139,6 +194,33 @@ fn startup_recovery_propagates_a_stale_force_rate_reset_failure() {
         };
 
     assert_eq!(error, "controlled PipeWire reset failure");
+}
+
+#[test]
+fn startup_without_an_adaptive_cleanup_marker_does_not_require_pipewire() {
+    let missing_binary = temporary_path("missing-pipewire");
+    let adapter = Arc::new(CommandPipeWireRateAdapter::with_binary(missing_binary));
+    let marker = Arc::new(RecordedCleanupMarker::new(false));
+
+    let controller = AdaptiveSystemRateController::recover_startup_if_marked(adapter, marker)
+        .expect("start without optional PipeWire tools");
+
+    assert_eq!(controller.state(), &Default::default());
+}
+
+#[test]
+fn known_stale_cleanup_failure_blocks_startup_and_keeps_the_marker() {
+    let marker = Arc::new(RecordedCleanupMarker::new(true));
+    let error = match AdaptiveSystemRateController::recover_startup_if_marked(
+        Arc::new(FailingResetPipeWireRate),
+        marker.clone(),
+    ) {
+        Ok(_) => panic!("known stale force-rate must block startup when cleanup fails"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error, "controlled PipeWire reset failure");
+    assert!(marker.is_required().expect("cleanup marker remains set"));
 }
 
 #[test]

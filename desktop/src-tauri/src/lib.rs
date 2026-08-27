@@ -13,7 +13,9 @@ pub mod processing;
 mod queue_events;
 pub mod telemetry;
 
-use adaptive_system_rate::{AdaptiveSystemRateController, CommandPipeWireRateAdapter};
+use adaptive_system_rate::{
+    AdaptiveSystemRateController, CommandPipeWireRateAdapter, FileAdaptiveCleanupMarker,
+};
 use connection::{
     ConnectionCheck, ConnectionError, ConnectionErrorCode, ConnectionStore, HttpBridge,
     HttpRequest, HttpResponse, ServerOrigin,
@@ -45,6 +47,7 @@ use telemetry::CommandPipeWireObserver;
 const CONNECTION_FILE_NAME: &str = "server-connection.json";
 const PLAYBACK_SNAPSHOT_FILE_NAME: &str = "playback-session.json";
 const PROCESSING_SETTINGS_FILE_NAME: &str = "processing-settings.json";
+const ADAPTIVE_CLEANUP_MARKER_FILE_NAME: &str = "adaptive-system-rate.cleanup-required";
 const PLAYBACK_STATE_EVENT: &str = "desktop-playback-state";
 const CONNECTION_CHANGED_EVENT: &str = "server-connection-changed";
 const QUEUE_EVENTS_ERROR_EVENT: &str = "desktop-queue-events-error";
@@ -655,9 +658,12 @@ pub fn run() -> tauri::Result<()> {
         })
         .setup(|app| {
             let config_directory = app.path().app_config_dir()?;
-            let adaptive_system_rate = AdaptiveSystemRateController::recover_startup(Arc::new(
-                CommandPipeWireRateAdapter::new(),
-            ))
+            let adaptive_system_rate = AdaptiveSystemRateController::recover_startup_if_marked(
+                Arc::new(CommandPipeWireRateAdapter::new()),
+                Arc::new(FileAdaptiveCleanupMarker::new(
+                    config_directory.join(ADAPTIVE_CLEANUP_MARKER_FILE_NAME),
+                )),
+            )
             .map_err(std::io::Error::other)?;
             let store = ConnectionStore::new(config_directory.join(CONNECTION_FILE_NAME));
             let playback_snapshot_store =
