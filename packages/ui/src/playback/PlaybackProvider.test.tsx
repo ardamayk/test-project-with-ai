@@ -1,5 +1,6 @@
 import {
 	ApiError,
+	type QueueEvent,
 	type RadioSearchResult,
 	type RadioStation,
 } from "@repo/api-client";
@@ -26,6 +27,13 @@ const track2 = {
 	id: "track-2",
 	title: "Track 2",
 	durationMs: 180000,
+};
+
+const track3 = {
+	...track,
+	id: "track-3",
+	title: "Track 3",
+	durationMs: 240000,
 };
 
 const radioStation: RadioStation = {
@@ -65,6 +73,7 @@ function createApi(items = queueItems): PlaybackApi {
 		reorderQueue: vi.fn(async () => ({ items, revision: "2" })),
 		appendQueueItem: vi.fn(async () => ({ items: queueItems, revision: "2" })),
 		removeQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
+		subscribeQueueEvents: vi.fn(() => vi.fn()),
 		getStreamUrl: (trackId) => `/stream/${trackId}`,
 		getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
 		getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
@@ -119,6 +128,9 @@ function Harness() {
 			<span data-testid="queue-conflict">{playback.queueConflict ?? ""}</span>
 			<button type="button" onClick={() => void playback.playTrack(track.id)}>
 				Track
+			</button>
+			<button type="button" onClick={() => void playback.playTrack(track2.id)}>
+				Track 2
 			</button>
 			<button
 				type="button"
@@ -246,7 +258,7 @@ describe("PlaybackProvider", () => {
 		});
 	});
 
-	it("stops local Playback Session when Queue is cleared", async () => {
+	it("lets current Track finish before stopping after Queue clear", async () => {
 		const { engine } = renderPlayback();
 		await act(async () =>
 			screen.getByRole("button", { name: "Track" }).click(),
@@ -255,8 +267,128 @@ describe("PlaybackProvider", () => {
 			screen.getByRole("button", { name: "Clear" }).click(),
 		);
 
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-1" } },
+			status: "playing",
+		});
+
+		await act(async () => engine.finish());
 		expect(engine.getState()).toMatchObject({ source: null, status: "idle" });
-		expect(screen.getByTestId("track").textContent).toBe("");
+	});
+
+	it("keeps current audio after remote removal and resolves latest Queue when it ends", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: [queueItems[1]], revision: "2" });
+		const { engine } = renderPlayback(api);
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+
+		await notifyQueueEvent(api, {
+			revision: "2",
+			sequence: "2",
+			invalidates: ["queue"],
+		});
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-1" } },
+			status: "playing",
+		});
+
+		await act(async () => engine.finish());
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-2" } },
+			status: "playing",
+		});
+	});
+
+	it("advances from a remotely removed non-head Track to its former successor", async () => {
+		const threeItemQueue = [
+			queueItems[0],
+			queueItems[1],
+			{ id: "item-3", trackId: track3.id, position: 2, track: track3 },
+		];
+		const api = createApi(threeItemQueue);
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: threeItemQueue, revision: "1" })
+			.mockResolvedValueOnce({
+				items: [threeItemQueue[0], threeItemQueue[2]],
+				revision: "2",
+			});
+		const { engine } = renderPlayback(api);
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track 2" }).click(),
+		);
+
+		await notifyQueueEvent(api, {
+			revision: "2",
+			sequence: "2",
+			invalidates: ["queue"],
+		});
+		await act(async () => engine.finish());
+
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-3" } },
+			status: "playing",
+		});
+	});
+
+	it("keeps current audio after remote Queue clear and stops when it ends", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: [], revision: "2" });
+		const { engine } = renderPlayback(api);
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+
+		await notifyQueueEvent(api, {
+			revision: "2",
+			sequence: "2",
+			invalidates: ["queue"],
+		});
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-1" } },
+			status: "playing",
+		});
+
+		await act(async () => engine.finish());
+		expect(engine.getState()).toMatchObject({ source: null, status: "idle" });
+	});
+
+	it("never applies Queue events to device-local Playback Session state", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: [queueItems[1]], revision: "2" });
+		const { engine } = renderPlayback(api);
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+		await act(async () => {
+			engine.seek(42);
+			engine.setVolume(0.3);
+			engine.togglePlay();
+		});
+
+		await notifyQueueEvent(api, {
+			revision: "2",
+			sequence: "2",
+			invalidates: ["queue"],
+		});
+
+		expect(engine.getState()).toMatchObject({
+			source: { type: "track", track: { id: "track-1" } },
+			status: "paused",
+			currentTime: 42,
+			volume: 0.3,
+		});
 	});
 
 	it("refetches and retries unambiguous append intent once", async () => {
@@ -410,5 +542,15 @@ function queueConflict(revision: string) {
 		code: "queue_revision_conflict",
 		message: "queue changed since supplied revision",
 		queue: { items: queueItems, revision },
+	});
+}
+
+async function notifyQueueEvent(api: PlaybackApi, event: QueueEvent) {
+	if (!api.subscribeQueueEvents) {
+		throw new Error("Queue event subscription is unavailable");
+	}
+	const subscribe = vi.mocked(api.subscribeQueueEvents);
+	await act(async () => {
+		subscribe.mock.calls[0]?.[0](event);
 	});
 }

@@ -119,6 +119,8 @@ export function PlaybackProvider({
 	const [session, setSession] = useState<PlaybackSessionState>(() =>
 		engine.getState(),
 	);
+	const currentQueueItemIdRef = useRef<string | null>(null);
+	const currentQueueIndexRef = useRef<number | null>(null);
 	const [radioNowPlaying, setRadioNowPlaying] =
 		useState<RadioNowPlaying | null>(null);
 	apiRef.current = api;
@@ -162,10 +164,14 @@ export function PlaybackProvider({
 
 	const playTrackInternal = useCallback(
 		async (trackId: string, queueOverride?: QueueItem[]) => {
-			const item = (queueOverride ?? queueRef.current).find(
+			const activeQueue = queueOverride ?? queueRef.current;
+			const itemIndex = activeQueue.findIndex(
 				(entry) => entry.track.id === trackId || entry.trackId === trackId,
 			);
+			const item = activeQueue[itemIndex];
 			if (!item) return;
+			currentQueueItemIdRef.current = item.id;
+			currentQueueIndexRef.current = itemIndex;
 			setRadioNowPlaying(null);
 			try {
 				await engine.play({
@@ -181,14 +187,28 @@ export function PlaybackProvider({
 	);
 
 	useEffect(() => {
-		if (session.status !== "ended" || session.source?.type !== "track") return;
-		const endedTrackId = session.source.track.id;
-		const index = queueRef.current.findIndex(
-			(item) => item.track.id === endedTrackId,
+		if (session.source?.type !== "track") return;
+		const itemIndex = queue.findIndex(
+			(item) => item.id === currentQueueItemIdRef.current,
 		);
-		const next = queueRef.current[index + 1];
-		if (next) void playTrackInternal(next.track.id);
-	}, [playTrackInternal, session]);
+		if (itemIndex < 0) return;
+		currentQueueIndexRef.current = itemIndex;
+	}, [queue, session.source]);
+
+	useEffect(() => {
+		if (session.status !== "ended" || session.source?.type !== "track") return;
+		const index = queueRef.current.findIndex(
+			(item) => item.id === currentQueueItemIdRef.current,
+		);
+		const nextIndex =
+			index >= 0 ? index + 1 : (currentQueueIndexRef.current ?? 0);
+		const next = queueRef.current[nextIndex];
+		if (next) {
+			void playTrackInternal(next.track.id);
+			return;
+		}
+		engine.stop();
+	}, [engine, playTrackInternal, session]);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {
@@ -288,11 +308,8 @@ export function PlaybackProvider({
 	);
 
 	const clearQueue = useCallback(async () => {
-		const data = await replaceQueue([]);
-		if (!data) return;
-		setRadioNowPlaying(null);
-		engine.stop();
-	}, [engine, replaceQueue]);
+		await replaceQueue([]);
+	}, [replaceQueue]);
 
 	const value = useMemo<PlaybackContextValue>(
 		() => ({

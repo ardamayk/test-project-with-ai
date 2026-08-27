@@ -1,7 +1,10 @@
+import type { QueueEvent } from "@repo/api-client";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const CONNECTION_CHANGED_EVENT = "server-connection-changed";
+const QUEUE_EVENTS_ERROR_EVENT = "desktop-queue-events-error";
+const QUEUE_INVALIDATED_EVENT = "desktop-queue-invalidated";
 const COVER_PROTOCOL = "earthly-media";
 let mediaProxyBaseUrl: string | null = null;
 
@@ -70,6 +73,31 @@ export function listenForServerConnectionChanges(
 	return listen<ConnectionCheck>(CONNECTION_CHANGED_EVENT, (event) => {
 		callback(event.payload);
 	});
+}
+
+export async function listenForQueueEvents(
+	onEvent: (event: QueueEvent) => void,
+	onError: (error: Error) => void,
+): Promise<UnlistenFn> {
+	const unlistenQueue = await listen<QueueEvent>(
+		QUEUE_INVALIDATED_EVENT,
+		(event) => onEvent(event.payload),
+	);
+	let unlistenError: UnlistenFn | undefined;
+	try {
+		unlistenError = await listen<string>(QUEUE_EVENTS_ERROR_EVENT, (event) => {
+			onError(new Error(`Desktop Queue event stream: ${event.payload}`));
+		});
+		await invoke("desktop_reconnect_queue_events");
+		return () => {
+			unlistenQueue();
+			unlistenError?.();
+		};
+	} catch (error) {
+		unlistenQueue();
+		unlistenError?.();
+		throw error;
+	}
 }
 
 export async function desktopFetch(

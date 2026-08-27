@@ -18,6 +18,7 @@ import {
 	getMediaProxyBaseUrl,
 	getServerConnection,
 	initializeMediaProxy,
+	listenForQueueEvents,
 	listenForServerConnectionChanges,
 	saveServerConnection,
 	testServerConnection,
@@ -100,6 +101,43 @@ describe("desktop bridge", () => {
 			"server-connection-changed",
 			expect.any(Function),
 		);
+	});
+
+	it("subscribes to native Queue events and errors", async () => {
+		const listeners = new Map<string, (event: { payload: unknown }) => void>();
+		const unlistenQueue = vi.fn();
+		const unlistenError = vi.fn();
+		listenMock.mockImplementation(
+			async (name: string, callback: (event: { payload: unknown }) => void) => {
+				listeners.set(name, callback);
+				return name === "desktop-queue-invalidated"
+					? unlistenQueue
+					: unlistenError;
+			},
+		);
+		const onEvent = vi.fn();
+		const onError = vi.fn();
+
+		const unsubscribe = await listenForQueueEvents(onEvent, onError);
+		expect(invokeMock).toHaveBeenCalledWith("desktop_reconnect_queue_events");
+		listeners.get("desktop-queue-invalidated")?.({
+			payload: { revision: "opaque-2", sequence: "2", invalidates: ["queue"] },
+		});
+		listeners.get("desktop-queue-events-error")?.({
+			payload: "connection lost",
+		});
+
+		expect(onEvent).toHaveBeenCalledWith({
+			revision: "opaque-2",
+			sequence: "2",
+			invalidates: ["queue"],
+		});
+		expect(onError).toHaveBeenCalledWith(
+			new Error("Desktop Queue event stream: connection lost"),
+		);
+		unsubscribe();
+		expect(unlistenQueue).toHaveBeenCalledOnce();
+		expect(unlistenError).toHaveBeenCalledOnce();
 	});
 
 	it("initializes the tokenized loopback media proxy URL", async () => {

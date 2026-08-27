@@ -38,6 +38,74 @@ describe('createApiClient', () => {
     expectTypeOf<ReorderResponses>().toHaveProperty(409)
     expectTypeOf<RemoveResponses>().toHaveProperty(409)
   })
+
+  it('generates Queue event stream response', () => {
+    type EventResponses = operations['streamPlaybackQueueEvents']['responses']
+
+    expectTypeOf<EventResponses>().toHaveProperty(200)
+  })
+
+  it('subscribes to Queue invalidations and closes the event stream', async () => {
+    const listeners = new Map<string, (event: MessageEvent<string>) => void>()
+    const eventSource = {
+      addEventListener: vi.fn((name: string, listener: (event: MessageEvent<string>) => void) => {
+        listeners.set(name, listener)
+      }),
+      close: vi.fn(),
+      onerror: null,
+    }
+    const eventSourceFactory = vi.fn(() => eventSource)
+    const client = createApiClient({
+      baseUrl: '',
+      queueEventsBaseUrl: async () => 'http://music.test',
+      eventSourceFactory,
+    })
+    const onEvent = vi.fn()
+
+    const unsubscribe = client.subscribePlaybackQueueEvents(onEvent)
+    await vi.waitFor(() => expect(eventSourceFactory).toHaveBeenCalled())
+    listeners.get('queue-invalidated')?.({
+      data: JSON.stringify({ revision: 'opaque-7', sequence: '7', invalidates: ['queue'] }),
+    } as MessageEvent<string>)
+
+    expect(eventSourceFactory).toHaveBeenCalledWith(
+      'http://music.test/api/v1/playback/queue/events',
+    )
+    expect(onEvent).toHaveBeenCalledWith({
+      revision: 'opaque-7',
+      sequence: '7',
+      invalidates: ['queue'],
+    })
+    unsubscribe()
+    expect(eventSource.close).toHaveBeenCalledOnce()
+  })
+
+  it('authenticates Queue event streams when a token is configured', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        'id: 8\nevent: queue-invalidated\ndata: {"revision":"opaque-8","sequence":"8","invalidates":["queue"]}\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      ),
+    )
+    const client = createApiClient({
+      baseUrl: 'http://music.test',
+      getToken: () => 'secret-token',
+      transport,
+    })
+    const onEvent = vi.fn()
+
+    const unsubscribe = client.subscribePlaybackQueueEvents(onEvent)
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalled())
+    unsubscribe()
+
+    const headers = new Headers(transport.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('Authorization')).toBe('Bearer secret-token')
+    expect(onEvent).toHaveBeenCalledWith({
+      revision: 'opaque-8',
+      sequence: '8',
+      invalidates: ['queue'],
+    })
+  })
   it('builds health URL from base', () => {
     const client = createApiClient({ baseUrl: 'http://localhost:8080' })
     expect(client.getHealth).toBeTypeOf('function')

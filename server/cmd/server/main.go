@@ -80,7 +80,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Range"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -127,6 +127,9 @@ func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 }
 
 func isStreamPath(path string) bool {
+	if path == "/api/v1/playback/queue/events" {
+		return true
+	}
 	return strings.HasSuffix(path, "/stream") &&
 		(strings.HasPrefix(path, "/api/v1/tracks/") || strings.HasPrefix(path, "/api/v1/radio/stations/"))
 }

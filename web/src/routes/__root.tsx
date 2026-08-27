@@ -16,7 +16,7 @@ import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
 import { useLibraryScanSync } from "#/hooks/use-library-scan-sync";
 import { apiClient } from "#/lib/api";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
-import { BrowserPlaybackEngine } from "#/playback/BrowserPlaybackEngine";
+import { createPlaybackEngine } from "#/playback/create-playback-engine";
 
 const playbackApi: PlaybackApi = {
 	getQueue: () => apiClient.getPlaybackQueue(),
@@ -28,6 +28,8 @@ const playbackApi: PlaybackApi = {
 		apiClient.appendPlaybackQueueItem(trackId, revision),
 	removeQueueItem: (itemId, revision) =>
 		apiClient.removePlaybackQueueItem(itemId, revision),
+	subscribeQueueEvents: (onEvent, onError) =>
+		apiClient.subscribePlaybackQueueEvents(onEvent, onError),
 	getStreamUrl: (trackId) => apiClient.getTrackStreamUrl(trackId),
 	getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
 	getRadioStationStreamUrl: (stationId) =>
@@ -71,7 +73,7 @@ function RootLayout() {
 
 function ConnectedRootLayout() {
 	const queryClient = useQueryClient();
-	const [playbackEngine] = useState(() => new BrowserPlaybackEngine());
+	const [playbackEngine] = useState(createPlaybackEngine);
 	useEffect(() => () => playbackEngine.destroy(), [playbackEngine]);
 	useLibraryScanSync();
 	const preferences = useQuery({

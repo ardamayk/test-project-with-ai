@@ -2,6 +2,8 @@
 
 Linux Tauri development client. It builds the shared React source from `web/` and embeds those assets; it never loads UI assets from a Music Server.
 
+Native playback requires the pinned mpv `0.41.0` executable at `/usr/bin/mpv`. Set `EARTHLY_AUDIO_MPV_PATH` to another path containing that exact version when needed. The Desktop Client starts one audio-only `--idle=yes` child with `--no-config`, so user mpv configuration is never loaded. Rust owns its private JSON IPC socket inside a random `0700` directory, changes the socket to `0600`, and removes the whole endpoint when the application exits.
+
 Start the separate Music Server on loopback, then launch the Desktop Client:
 
 ```bash

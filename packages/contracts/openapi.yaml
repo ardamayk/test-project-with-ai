@@ -398,6 +398,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QueueConflictResponse"
+  /api/v1/playback/queue/events:
+    get:
+      tags: [playback]
+      operationId: streamPlaybackQueueEvents
+      summary: Stream Queue invalidation events
+      description: >-
+        Emits queue-invalidated server-sent events. Event IDs carry the persisted
+        event sequence, while data carries that sequence and the latest Queue
+        Revision so reconnecting clients can detect stale state and refetch the
+        Queue.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Queue event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/QueueEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/v1/tracks/{trackId}/stream:
     get:
       tags: [playback]
@@ -1451,6 +1472,23 @@ components:
         revision:
           type: string
           description: Opaque version of this Queue state
+    QueueEvent:
+      type: object
+      required: [revision, sequence, invalidates]
+      properties:
+        revision:
+          type: string
+          description: Latest Queue Revision when this event was emitted
+        sequence:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Monotonically increasing event order, independent from opaque Queue Revision semantics
+        invalidates:
+          type: array
+          description: Shared resources clients must refetch
+          items:
+            type: string
+            enum: [queue]
     QueueReplace:
       type: object
       required: [trackIds, revision]

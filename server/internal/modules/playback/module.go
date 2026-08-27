@@ -13,7 +13,7 @@ type Module struct {
 
 func NewModule(db *sql.DB, tracks library.TrackAccess) *Module {
 	store := NewStore(db, tracks)
-	return &Module{handlers: NewHandlers(store, tracks)}
+	return &Module{handlers: NewHandlers(store, tracks, NewQueueEventBroker())}
 }
 
 func (m *Module) Name() string {
@@ -26,5 +26,6 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Patch("/api/v1/playback/queue", m.handlers.ReorderQueue)
 	r.Post("/api/v1/playback/queue/items", m.handlers.AppendItem)
 	r.Delete("/api/v1/playback/queue/items/{itemId}", m.handlers.RemoveItem)
+	r.Get("/api/v1/playback/queue/events", m.handlers.StreamQueueEvents)
 	r.Get("/api/v1/tracks/{trackId}/stream", m.handlers.StreamTrack)
 }
