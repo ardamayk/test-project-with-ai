@@ -1,6 +1,8 @@
 import type { RadioSearchResult, RadioStation, Track } from "@repo/api-client";
 import type {
 	EqualizerPreset,
+	OutputDevice,
+	OutputDeviceIssue,
 	OutputMode,
 	ProcessingProfile,
 	ProcessingState,
@@ -48,6 +50,9 @@ export type PlaybackError = {
 export type PlaybackSessionState = {
 	source: PlaybackSource | null;
 	outputMode: OutputMode | null;
+	availableOutputDevices: OutputDevice[];
+	selectedOutputDevice: OutputDevice | null;
+	outputDeviceIssue: OutputDeviceIssue | null;
 	status: PlaybackStatus;
 	currentTime: number;
 	duration: number;
@@ -85,6 +90,10 @@ export interface PlaybackEngine {
 	setReplayGainMode?(mode: ReplayGainMode): void;
 	setEqualizerPreset?(preset: Exclude<EqualizerPreset, "custom">): void;
 	setEqualizerGain?(index: number, value: number): void;
+	refreshOutputDevices?(): void;
+	selectDirectAlsaOutput?(deviceId: string): void;
+	fallbackToSystemOutput?(): void;
+	enableAdaptiveSystemRate?(isConfirmed: boolean): void;
 	toggleShuffle(): void;
 	cycleRepeatMode(): void;
 	destroy(): void;
@@ -93,6 +102,9 @@ export interface PlaybackEngine {
 export const DEFAULT_PLAYBACK_SESSION_STATE: PlaybackSessionState = {
 	source: null,
 	outputMode: null,
+	availableOutputDevices: [],
+	selectedOutputDevice: null,
+	outputDeviceIssue: null,
 	status: "idle",
 	currentTime: 0,
 	duration: 0,

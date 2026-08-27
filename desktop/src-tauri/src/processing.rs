@@ -14,10 +14,12 @@ pub enum ProcessingProfile {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum OutputMode {
     #[default]
     System,
+    DirectAlsa,
+    AdaptiveSystemRate,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -81,6 +83,8 @@ impl Default for ProcessingState {
 struct PersistedProcessingSettings {
     #[serde(default)]
     output_mode: OutputMode,
+    #[serde(default)]
+    selected_output_device_id: Option<String>,
     profile: ProcessingProfile,
     software_volume: f64,
     replay_gain_mode: ReplayGainMode,
@@ -157,18 +161,20 @@ impl ProcessingSettingsStorage for FileProcessingSettingsStorage {
 pub struct ProcessingController {
     storage: Box<dyn ProcessingSettingsStorage>,
     output_mode: OutputMode,
+    selected_output_device_id: Option<String>,
     state: ProcessingState,
 }
 
 impl ProcessingController {
     pub fn open(storage: Box<dyn ProcessingSettingsStorage>) -> Result<Self, String> {
-        let (state, output_mode) = match storage.load()? {
+        let (state, output_mode, selected_output_device_id) = match storage.load()? {
             Some(value) => state_from_json(&value)?,
-            None => (default_state(), OutputMode::System),
+            None => (default_state(), OutputMode::System, None),
         };
         Ok(Self {
             storage,
             output_mode,
+            selected_output_device_id,
             state,
         })
     }
@@ -179,6 +185,33 @@ impl ProcessingController {
 
     pub fn output_mode(&self) -> OutputMode {
         self.output_mode
+    }
+
+    pub fn selected_output_device_id(&self) -> Option<&str> {
+        self.selected_output_device_id.as_deref()
+    }
+
+    pub fn set_output_mode(&mut self, output_mode: OutputMode) -> Result<(), String> {
+        self.persist_settings(
+            &self.state,
+            output_mode,
+            self.selected_output_device_id.as_deref(),
+        )?;
+        self.output_mode = output_mode;
+        Ok(())
+    }
+
+    pub fn select_output_device(&mut self, device_id: &str) -> Result<(), String> {
+        self.persist_settings(&self.state, self.output_mode, Some(device_id))?;
+        self.selected_output_device_id = Some(device_id.to_owned());
+        Ok(())
+    }
+
+    pub fn select_direct_alsa_output(&mut self, device_id: &str) -> Result<(), String> {
+        self.persist_settings(&self.state, OutputMode::DirectAlsa, Some(device_id))?;
+        self.output_mode = OutputMode::DirectAlsa;
+        self.selected_output_device_id = Some(device_id.to_owned());
+        Ok(())
     }
 
     pub fn set_profile(&mut self, profile: ProcessingProfile) -> Result<(), String> {
@@ -299,7 +332,21 @@ impl ProcessingController {
     }
 
     fn persist_state(&self, state: &ProcessingState) -> Result<(), String> {
-        let settings = PersistedProcessingSettings::from_state(state, self.output_mode);
+        self.persist_settings(
+            state,
+            self.output_mode,
+            self.selected_output_device_id.as_deref(),
+        )
+    }
+
+    fn persist_settings(
+        &self,
+        state: &ProcessingState,
+        output_mode: OutputMode,
+        selected_output_device_id: Option<&str>,
+    ) -> Result<(), String> {
+        let settings =
+            PersistedProcessingSettings::from_state(state, output_mode, selected_output_device_id);
         let value = serde_json::to_string(&settings)
             .map_err(|error| format!("Failed to serialize Processing Profile settings: {error}"))?;
         self.storage.save(&value)
@@ -336,9 +383,14 @@ fn clear_active_processing(state: &mut ProcessingState) {
 }
 
 impl PersistedProcessingSettings {
-    fn from_state(state: &ProcessingState, output_mode: OutputMode) -> Self {
+    fn from_state(
+        state: &ProcessingState,
+        output_mode: OutputMode,
+        selected_output_device_id: Option<&str>,
+    ) -> Self {
         Self {
             output_mode,
+            selected_output_device_id: selected_output_device_id.map(str::to_owned),
             profile: state.profile,
             software_volume: state.software_volume,
             replay_gain_mode: state.replay_gain_mode,
@@ -348,9 +400,11 @@ impl PersistedProcessingSettings {
     }
 }
 
-fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode), String> {
+fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode, Option<String>), String> {
     let settings: PersistedProcessingSettings = serde_json::from_str(value)
         .map_err(|error| format!("Failed to parse Processing Profile settings: {error}"))?;
+    let output_mode = settings.output_mode;
+    let selected_output_device_id = settings.selected_output_device_id.clone();
     Ok((
         ProcessingState {
             profile: settings.profile,
@@ -366,7 +420,8 @@ fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode), String>
             effective_audio_filters: Vec::new(),
             transition_notice: None,
         },
-        settings.output_mode,
+        output_mode,
+        selected_output_device_id,
     ))
 }
 

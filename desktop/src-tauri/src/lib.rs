@@ -1,5 +1,7 @@
+pub mod adaptive_system_rate;
 mod connection;
 mod media_proxy;
+pub mod output_device;
 mod playback;
 mod playback_app_actions;
 mod playback_lifecycle;
@@ -11,6 +13,7 @@ pub mod processing;
 mod queue_events;
 pub mod telemetry;
 
+use adaptive_system_rate::{AdaptiveSystemRateController, CommandPipeWireRateAdapter};
 use connection::{
     ConnectionCheck, ConnectionError, ConnectionErrorCode, ConnectionStore, HttpBridge,
     HttpRequest, HttpResponse, ServerOrigin,
@@ -25,8 +28,8 @@ use playback_tray::{
     PlaybackTray, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
 };
 use processing::{
-    EqualizerPreset, FileProcessingSettingsStorage, ProcessingController, ProcessingProfile,
-    ReplayGainMode, mpv_configuration_for,
+    EqualizerPreset, FileProcessingSettingsStorage, OutputMode, ProcessingController,
+    ProcessingProfile, ReplayGainMode, mpv_configuration_for,
 };
 use queue_events::QueueEventService;
 use serde::Serialize;
@@ -284,6 +287,100 @@ fn desktop_playback_set_equalizer_gain(
     update_processing(&state, |processing| {
         processing.set_equalizer_gain(index, value)
     })
+}
+
+#[tauri::command]
+fn desktop_playback_refresh_output_devices(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.refresh_output_devices()
+}
+
+#[tauri::command]
+fn desktop_playback_select_direct_alsa_output(
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let playback_state = state.playback.select_direct_alsa_output(&device_id)?;
+    if playback_state.output_mode == OutputMode::DirectAlsa {
+        if let Err(error) = processing.select_direct_alsa_output(&device_id) {
+            if let Err(rollback_error) = state.playback.fallback_to_system_output() {
+                eprintln!(
+                    "Direct ALSA Output rollback failed after persistence error: {}",
+                    rollback_error.message
+                );
+            }
+            return Err(PlaybackCommandError::new(error));
+        }
+    }
+    Ok(playback_state)
+}
+
+#[tauri::command]
+fn desktop_playback_fallback_to_system_output(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let previous_mode = processing.output_mode();
+    let previous_device_id = processing.selected_output_device_id().map(str::to_owned);
+    let playback_state = state.playback.fallback_to_system_output()?;
+    if let Err(error) = processing.set_output_mode(OutputMode::System) {
+        restore_native_output_mode(
+            &state.playback,
+            previous_mode,
+            previous_device_id.as_deref(),
+        );
+        return Err(PlaybackCommandError::new(error));
+    }
+    Ok(playback_state)
+}
+
+#[tauri::command]
+fn desktop_playback_enable_adaptive_system_rate(
+    state: State<'_, AppState>,
+    is_confirmed: bool,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let playback_state = state.playback.enable_adaptive_system_rate(is_confirmed)?;
+    if let Err(error) = processing.set_output_mode(OutputMode::AdaptiveSystemRate) {
+        if let Err(rollback_error) = state.playback.fallback_to_system_output() {
+            eprintln!(
+                "Adaptive System Rate rollback failed after persistence error: {}",
+                rollback_error.message
+            );
+        }
+        return Err(PlaybackCommandError::new(error));
+    }
+    Ok(playback_state)
+}
+
+fn restore_native_output_mode(
+    playback: &PlaybackController,
+    output_mode: OutputMode,
+    device_id: Option<&str>,
+) {
+    let result = match (output_mode, device_id) {
+        (OutputMode::DirectAlsa, Some(device_id)) => {
+            playback.select_direct_alsa_output(device_id).map(|_| ())
+        }
+        (OutputMode::AdaptiveSystemRate, _) => {
+            playback.enable_adaptive_system_rate(true).map(|_| ())
+        }
+        _ => playback.fallback_to_system_output().map(|_| ()),
+    };
+    if let Err(error) = result {
+        eprintln!("Output Mode rollback failed: {}", error.message);
+    }
 }
 
 fn update_processing(
@@ -564,17 +661,30 @@ pub fn run() -> tauri::Result<()> {
                 .transpose()
                 .map_err(std::io::Error::other)?;
             let playback_lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
-            let processing =
+            let mut processing =
                 ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
                     config_directory.join(PROCESSING_SETTINGS_FILE_NAME),
                 )))
                 .map_err(std::io::Error::other)?;
+            if processing.output_mode() == OutputMode::AdaptiveSystemRate {
+                processing
+                    .set_output_mode(OutputMode::System)
+                    .map_err(std::io::Error::other)?;
+            }
             let playback_tray = PlaybackTray::start(app.handle(), handle_tray_menu_event)?;
             let playback_event_tray = playback_tray.clone();
             let app_handle = app.handle().clone();
+            let adaptive_rate_adapter = Arc::new(CommandPipeWireRateAdapter::new());
+            let adaptive_system_rate =
+                AdaptiveSystemRateController::recover_startup(adaptive_rate_adapter.clone())
+                    .unwrap_or_else(|error| {
+                        eprintln!("Adaptive System Rate startup recovery failed: {error}");
+                        AdaptiveSystemRateController::new(adaptive_rate_adapter)
+                    });
             let playback = PlaybackController::start_default_with_lifecycle(
                 playback_lifecycle.clone(),
                 Arc::new(CommandPipeWireObserver::new()),
+                adaptive_system_rate,
                 move |state| {
                     if let Err(error) = playback_event_tray.update(
                         state.source.as_ref(),
@@ -588,9 +698,22 @@ pub fn run() -> tauri::Result<()> {
                 },
             )
             .map_err(std::io::Error::other)?;
-            playback
-                .set_output_mode(processing.output_mode())
-                .map_err(|error| std::io::Error::other(error.message))?;
+            playback.refresh_output_devices().unwrap_or_else(|error| {
+                eprintln!(
+                    "Raw ALSA hardware startup enumeration failed: {}",
+                    error.message
+                );
+                playback.state().unwrap_or_default()
+            });
+            if processing.output_mode() == OutputMode::DirectAlsa
+                && let Some(device_id) = processing.selected_output_device_id()
+                && let Err(error) = playback.select_direct_alsa_output(device_id)
+            {
+                eprintln!(
+                    "Saved Direct ALSA Output could not be restored: {}",
+                    error.message
+                );
+            }
             if let Some(snapshot) = saved_playback.as_ref() {
                 playback
                     .restore_paused(snapshot)
@@ -652,6 +775,10 @@ pub fn run() -> tauri::Result<()> {
             desktop_playback_set_replay_gain,
             desktop_playback_set_equalizer_preset,
             desktop_playback_set_equalizer_gain,
+            desktop_playback_refresh_output_devices,
+            desktop_playback_select_direct_alsa_output,
+            desktop_playback_fallback_to_system_output,
+            desktop_playback_enable_adaptive_system_rate,
             desktop_playback_toggle_shuffle,
             desktop_playback_cycle_repeat_mode
         ])

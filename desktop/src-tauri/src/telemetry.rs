@@ -256,6 +256,32 @@ impl PlaybackTelemetry {
             processing,
         }
     }
+
+    pub fn native_direct_alsa_output(
+        source: SourceObservation,
+        decoder: ObservedMpvProperties,
+        device_name: &str,
+        negotiated_format: Option<AudioFormatObservation>,
+        processing: ProcessingObservation,
+    ) -> Self {
+        let device_format = negotiated_format.unwrap_or_else(AudioFormatObservation::unknown);
+        let is_resampling = compare_sample_rates(&decoder.format, &device_format);
+        Self {
+            source,
+            decoder,
+            system: SystemObservation {
+                kind: SystemObservationKind::Bypassed,
+                format: AudioFormatObservation::unknown(),
+                is_resampling: Some(false),
+            },
+            device: DeviceObservation {
+                name: Some(device_name.to_owned()),
+                format: device_format,
+                is_resampling,
+            },
+            processing,
+        }
+    }
 }
 
 pub fn parse_pw_dump(input: &[u8]) -> Result<Option<PipeWireObservation>, String> {

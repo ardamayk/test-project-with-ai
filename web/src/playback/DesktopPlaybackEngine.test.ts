@@ -74,6 +74,10 @@ function createBridge() {
 			setReplayGainMode: vi.fn(async () => state),
 			setEqualizerPreset: vi.fn(async () => state),
 			setEqualizerGain: vi.fn(async () => state),
+			refreshOutputDevices: vi.fn(async () => state),
+			selectDirectAlsaOutput: vi.fn(async () => state),
+			fallbackToSystemOutput: vi.fn(async () => state),
+			enableAdaptiveSystemRate: vi.fn(async () => state),
 			toggleShuffle: vi.fn(async () => state),
 			cycleRepeatMode: vi.fn(async () => state),
 			listen: vi.fn(async (nextListener: PlaybackSessionListener) => {
@@ -119,6 +123,34 @@ describe("DesktopPlaybackEngine", () => {
 		);
 		expect(native.bridge.setReplayGainMode).toHaveBeenCalledWith("album");
 		expect(native.bridge.setEqualizerPreset).toHaveBeenCalledWith("vocal");
+		engine.destroy();
+	});
+
+	it("forwards Direct ALSA Output controls through the native bridge", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		engine.refreshOutputDevices();
+		engine.selectDirectAlsaOutput("hw:2,0");
+		engine.fallbackToSystemOutput();
+
+		await vi.waitFor(() =>
+			expect(native.bridge.fallbackToSystemOutput).toHaveBeenCalledOnce(),
+		);
+		expect(native.bridge.refreshOutputDevices).toHaveBeenCalledOnce();
+		expect(native.bridge.selectDirectAlsaOutput).toHaveBeenCalledWith("hw:2,0");
+		engine.destroy();
+	});
+
+	it("forwards explicit Adaptive System Rate confirmation to Rust", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		engine.enableAdaptiveSystemRate(true);
+
+		await vi.waitFor(() =>
+			expect(native.bridge.enableAdaptiveSystemRate).toHaveBeenCalledWith(true),
+		);
 		engine.destroy();
 	});
 	it("syncs Queue context through the Rust-owned playback seam", async () => {

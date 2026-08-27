@@ -2,8 +2,11 @@ import type { Track } from "@repo/api-client";
 import { Activity, X } from "lucide-react";
 import { useState } from "react";
 import {
+	ADAPTIVE_SYSTEM_RATE_WARNING,
 	EQ_FREQUENCIES_HZ,
 	type EqualizerPreset,
+	type OutputDevice,
+	type OutputDeviceIssue,
 	type OutputMode,
 	type ProcessingState,
 	type ReplayGainPreference,
@@ -21,8 +24,19 @@ import {
 type PlaybackSignalProps = {
 	telemetry: PlaybackTelemetry;
 	outputMode?: OutputMode;
+	outputControls?: PlaybackOutputControls;
 	processingControls?: PlaybackProcessingControls;
 	replayGainMetadata?: Track["replayGain"];
+};
+
+export type PlaybackOutputControls = {
+	devices: OutputDevice[];
+	selectedDevice: OutputDevice | null;
+	issue: OutputDeviceIssue | null;
+	refreshDevices(): void;
+	selectDirectAlsaOutput(deviceId: string): void;
+	fallbackToSystemOutput(): void;
+	enableAdaptiveSystemRate(isConfirmed: boolean): void;
 };
 
 export type PlaybackProcessingControls = {
@@ -38,6 +52,7 @@ export type PlaybackProcessingControls = {
 export function PlaybackSignal({
 	telemetry,
 	outputMode,
+	outputControls,
 	processingControls,
 	replayGainMetadata,
 }: PlaybackSignalProps) {
@@ -53,7 +68,10 @@ export function PlaybackSignal({
 				type="button"
 				aria-label={`Playback signal: ${statusLabel}`}
 				className="inline-flex h-6 items-center gap-1.5 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-2.5 text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
-				onClick={() => setIsOpen(true)}
+				onClick={() => {
+					outputControls?.refreshDevices();
+					setIsOpen(true);
+				}}
 			>
 				<Activity className="size-3" />
 				{statusLabel}
@@ -62,6 +80,7 @@ export function PlaybackSignal({
 				<PlaybackSignalDialog
 					telemetry={effectiveTelemetry}
 					outputMode={outputMode}
+					outputControls={outputControls}
 					processingControls={processingControls}
 					processingState={processingState}
 					replayGainMetadata={replayGainMetadata}
@@ -75,6 +94,7 @@ export function PlaybackSignal({
 function PlaybackSignalDialog({
 	telemetry,
 	outputMode,
+	outputControls,
 	processingControls,
 	processingState,
 	replayGainMetadata,
@@ -95,6 +115,9 @@ function PlaybackSignalDialog({
 				<SignalDialogHeader onClose={onClose} />
 				<SignalPathLayers descriptions={descriptions} />
 				{outputMode ? <OutputModeDisplay outputMode={outputMode} /> : null}
+				{outputControls && outputMode ? (
+					<OutputControls controls={outputControls} outputMode={outputMode} />
+				) : null}
 				{processingControls && processingState ? (
 					<ProcessingControls
 						controller={processingControls}
@@ -108,10 +131,126 @@ function PlaybackSignalDialog({
 }
 
 function OutputModeDisplay({ outputMode }: { outputMode: OutputMode }) {
+	const labels: Record<OutputMode, string> = {
+		system: "System Output",
+		"direct-alsa": "Direct ALSA Output",
+		"adaptive-system-rate": "Adaptive System Rate",
+	};
 	return (
 		<p className="mt-3 text-muted-foreground text-xs">
-			Output Mode: {outputMode === "system" ? "System Output" : "Unknown"}
+			Output Mode: {labels[outputMode]}
 		</p>
+	);
+}
+
+function OutputControls({
+	controls,
+	outputMode,
+}: {
+	controls: PlaybackOutputControls;
+	outputMode: OutputMode;
+}) {
+	const [isConfirmingAdaptive, setIsConfirmingAdaptive] = useState(false);
+	return (
+		<section className="mt-4 border-border border-t pt-4">
+			<div className="flex flex-wrap items-center gap-2">
+				<strong className="text-sm">Raw ALSA Output Devices</strong>
+				<button
+					type="button"
+					className="rounded-md border border-border px-2 py-1 text-xs"
+					onClick={controls.refreshDevices}
+				>
+					Refresh devices
+				</button>
+			</div>
+			<div className="mt-2 flex flex-wrap gap-2">
+				{controls.devices.map((device) => (
+					<button
+						type="button"
+						key={device.id}
+						className="rounded-md border border-border px-2 py-1 text-xs"
+						onClick={() => controls.selectDirectAlsaOutput(device.id)}
+					>
+						Use {device.name}
+					</button>
+				))}
+			</div>
+			{controls.selectedDevice ? (
+				<p className="mt-2 text-muted-foreground text-xs">
+					Selected: {controls.selectedDevice.name} ({controls.selectedDevice.id}
+					)
+				</p>
+			) : null}
+			{controls.issue ? (
+				<OutputDevicePrompt issue={controls.issue} controls={controls} />
+			) : null}
+			{outputMode === "adaptive-system-rate" ? (
+				<button
+					type="button"
+					className="mt-3 rounded-md border border-border px-2 py-1 text-xs"
+					onClick={controls.fallbackToSystemOutput}
+				>
+					Disable Adaptive System Rate
+				</button>
+			) : (
+				<button
+					type="button"
+					className="mt-3 rounded-md border border-border px-2 py-1 text-xs"
+					onClick={() => setIsConfirmingAdaptive(true)}
+				>
+					Enable Adaptive System Rate
+				</button>
+			)}
+			{isConfirmingAdaptive ? (
+				<div className="mt-3 rounded-md border border-destructive/40 p-3">
+					<p role="alert" className="text-destructive text-xs">
+						{ADAPTIVE_SYSTEM_RATE_WARNING}
+					</p>
+					<div className="mt-2 flex flex-wrap gap-2">
+						<button
+							type="button"
+							className="rounded-md border border-border px-2 py-1 text-xs"
+							onClick={() => {
+								controls.enableAdaptiveSystemRate(true);
+								setIsConfirmingAdaptive(false);
+							}}
+						>
+							Confirm experimental mode
+						</button>
+						<button
+							type="button"
+							className="rounded-md border border-border px-2 py-1 text-xs"
+							onClick={() => setIsConfirmingAdaptive(false)}
+						>
+							Cancel
+						</button>
+					</div>
+				</div>
+			) : null}
+		</section>
+	);
+}
+
+function OutputDevicePrompt({
+	issue,
+	controls,
+}: {
+	issue: OutputDeviceIssue;
+	controls: PlaybackOutputControls;
+}) {
+	return (
+		<div className="mt-3 rounded-md border border-destructive/40 p-3">
+			<p role="alert" className="text-destructive text-xs">
+				{issue.message}
+			</p>
+			<button
+				type="button"
+				className="mt-2 rounded-md border border-border px-2 py-1 text-xs"
+				onClick={controls.fallbackToSystemOutput}
+			>
+				Use System Output
+			</button>
+		</div>
 	);
 }
 

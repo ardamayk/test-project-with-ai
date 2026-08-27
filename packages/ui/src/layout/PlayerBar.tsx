@@ -138,6 +138,9 @@ export function PlayerBar({
 	const {
 		playbackSource,
 		outputMode,
+		availableOutputDevices,
+		selectedOutputDevice,
+		outputDeviceIssue,
 		currentTrack,
 		currentRadioStation,
 		radioNowPlaying,
@@ -161,6 +164,10 @@ export function PlayerBar({
 		setReplayGainMode,
 		setEqualizerPreset,
 		setEqualizerGain,
+		refreshOutputDevices,
+		selectDirectAlsaOutput,
+		fallbackToSystemOutput,
+		enableAdaptiveSystemRate,
 		getAlbumCoverUrl,
 	} = usePlayback();
 	const {
@@ -572,6 +579,19 @@ export function PlayerBar({
 							<PlaybackSignal
 								telemetry={playbackTelemetry}
 								outputMode={outputMode ?? undefined}
+								outputControls={
+									outputMode
+										? {
+												devices: availableOutputDevices,
+												selectedDevice: selectedOutputDevice,
+												issue: outputDeviceIssue,
+												refreshDevices: refreshOutputDevices,
+												selectDirectAlsaOutput,
+												fallbackToSystemOutput,
+												enableAdaptiveSystemRate,
+											}
+										: undefined
+								}
 								processingControls={processingControls}
 								replayGainMetadata={currentTrack?.replayGain}
 							/>

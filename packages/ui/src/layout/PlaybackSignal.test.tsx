@@ -12,6 +12,7 @@ import {
 	type PlaybackTelemetry,
 } from "../playback/telemetry";
 import {
+	type PlaybackOutputControls,
 	type PlaybackProcessingControls,
 	PlaybackSignal,
 } from "./PlaybackSignal";
@@ -192,6 +193,116 @@ describe("PlaybackSignal", () => {
 			).value,
 		).toBe("custom");
 		expect(screen.getByText("Effective mpv EQ: 1 filters")).toBeTruthy();
+	});
+
+	it("requires an explicit choice before falling back from Direct ALSA Output", () => {
+		const outputControls: PlaybackOutputControls = {
+			devices: [{ id: "hw:2,0", name: "USB DAC" }],
+			selectedDevice: { id: "hw:2,0", name: "USB DAC" },
+			issue: {
+				code: "busy-or-unsupported",
+				message:
+					"USB DAC is busy or unsupported. Choose another device or explicitly use System Output.",
+			},
+			refreshDevices: vi.fn(),
+			selectDirectAlsaOutput: vi.fn(),
+			fallbackToSystemOutput: vi.fn(),
+			enableAdaptiveSystemRate: vi.fn(),
+		};
+		render(
+			<PlaybackSignal
+				telemetry={{
+					...MATCHED_TELEMETRY,
+					system: {
+						kind: "bypassed",
+						format: { sampleRateHz: null, bitDepth: null, channels: null },
+						isResampling: false,
+					},
+				}}
+				outputMode="direct-alsa"
+				outputControls={outputControls}
+			/>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Playback signal: Unknown" }),
+		);
+		expect(screen.getByText("Output Mode: Direct ALSA Output")).toBeTruthy();
+		expect(screen.getByRole("alert").textContent).toContain(
+			"explicitly use System Output",
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Use USB DAC" }));
+		fireEvent.click(screen.getByRole("button", { name: "Use System Output" }));
+
+		expect(outputControls.refreshDevices).toHaveBeenCalledOnce();
+		expect(outputControls.selectDirectAlsaOutput).toHaveBeenCalledWith(
+			"hw:2,0",
+		);
+		expect(outputControls.fallbackToSystemOutput).toHaveBeenCalledOnce();
+	});
+
+	it("warns about the system-wide effect before enabling Adaptive System Rate", () => {
+		const outputControls: PlaybackOutputControls = {
+			devices: [],
+			selectedDevice: null,
+			issue: null,
+			refreshDevices: vi.fn(),
+			selectDirectAlsaOutput: vi.fn(),
+			fallbackToSystemOutput: vi.fn(),
+			enableAdaptiveSystemRate: vi.fn(),
+		};
+		render(
+			<PlaybackSignal
+				telemetry={MATCHED_TELEMETRY}
+				outputMode="system"
+				outputControls={outputControls}
+			/>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Playback signal: Format matched" }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Enable Adaptive System Rate" }),
+		);
+
+		expect(screen.getByRole("alert").textContent).toContain(
+			"every application on the PipeWire graph",
+		);
+		expect(outputControls.enableAdaptiveSystemRate).not.toHaveBeenCalled();
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Confirm experimental mode" }),
+		);
+		expect(outputControls.enableAdaptiveSystemRate).toHaveBeenCalledWith(true);
+	});
+
+	it("lets the user disable Adaptive System Rate explicitly", () => {
+		const outputControls: PlaybackOutputControls = {
+			devices: [],
+			selectedDevice: null,
+			issue: null,
+			refreshDevices: vi.fn(),
+			selectDirectAlsaOutput: vi.fn(),
+			fallbackToSystemOutput: vi.fn(),
+			enableAdaptiveSystemRate: vi.fn(),
+		};
+		render(
+			<PlaybackSignal
+				telemetry={MATCHED_TELEMETRY}
+				outputMode="adaptive-system-rate"
+				outputControls={outputControls}
+			/>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Playback signal: Format matched" }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Disable Adaptive System Rate" }),
+		);
+
+		expect(outputControls.fallbackToSystemOutput).toHaveBeenCalledOnce();
 	});
 
 	it("shows Album metadata availability and observed Track fallback", () => {
