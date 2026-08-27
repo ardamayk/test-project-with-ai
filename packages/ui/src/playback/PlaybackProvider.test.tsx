@@ -4,7 +4,7 @@ import {
 	type RadioSearchResult,
 	type RadioStation,
 } from "@repo/api-client";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type PlaybackApi,
@@ -122,6 +122,9 @@ function Harness() {
 			<span data-testid="radio">
 				{playback.currentRadioStation?.name ?? ""}
 			</span>
+			<span data-testid="now-playing">
+				{playback.radioNowPlaying?.raw ?? ""}
+			</span>
 			<span data-testid="playing">{String(playback.isPlaying)}</span>
 			<span data-testid="volume">{playback.volume}</span>
 			<span data-testid="repeat">{playback.repeatMode}</span>
@@ -191,6 +194,26 @@ function renderPlayback(api = createApi()) {
 afterEach(cleanup);
 
 describe("PlaybackProvider", () => {
+	it("plays previous and next Queue items from native tray navigation", async () => {
+		const { engine } = renderPlayback();
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+
+		await act(async () => engine.navigate("next"));
+		expect(engine.getState().source).toMatchObject({
+			type: "track",
+			track: { id: "track-2" },
+		});
+
+		await act(async () => engine.navigate("previous"));
+		expect(engine.getState().source).toMatchObject({
+			type: "track",
+			track: { id: "track-1" },
+		});
+	});
+
 	it("maps queued Tracks to PlaybackEngine sources", async () => {
 		const { engine } = renderPlayback();
 		await act(async () =>
@@ -206,9 +229,14 @@ describe("PlaybackProvider", () => {
 		expect(screen.getByTestId("playing").textContent).toBe("true");
 	});
 
-	it("maps Radio Stations and Catalog Previews without replacing Queue", async () => {
+	it("plays Radio Stations and Catalog Previews without changing Queue", async () => {
 		const api = createApi();
 		const { engine } = renderPlayback(api);
+		await act(async () => {});
+		const queueBeforePlayback = screen.getByTestId("queue").textContent;
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
 		await act(async () =>
 			screen.getByRole("button", { name: "Radio" }).click(),
 		);
@@ -217,7 +245,14 @@ describe("PlaybackProvider", () => {
 			playbackUrl: "/radio/station-1",
 			sourceUrl: radioStation.streamUrl,
 		});
+		expect(screen.getByTestId("track").textContent).toBe("");
 		expect(screen.getByTestId("radio").textContent).toBe("Station 1");
+		await waitFor(() => {
+			expect(screen.getByTestId("now-playing").textContent).toBe(
+				"Artist - Song",
+			);
+		});
+		expect(api.getRadioNowPlaying).toHaveBeenCalledWith(radioStation.id);
 
 		await act(async () =>
 			screen.getByRole("button", { name: "Preview" }).click(),
@@ -227,7 +262,25 @@ describe("PlaybackProvider", () => {
 			playbackUrl: "/radio/preview/catalog-1",
 			sourceUrl: catalogResult.streamUrl,
 		});
+		expect(screen.getByTestId("track").textContent).toBe("");
+		expect(screen.getByTestId("radio").textContent).toBe("Catalog 1");
+		expect(screen.getByTestId("now-playing").textContent).toBe("");
+		expect(api.getRadioNowPlaying).toHaveBeenCalledTimes(1);
+		expect(screen.getByTestId("queue").textContent).toBe(queueBeforePlayback);
 		expect(api.replaceQueue).not.toHaveBeenCalled();
+		expect(api.appendQueueItem).not.toHaveBeenCalled();
+		expect(api.removeQueueItem).not.toHaveBeenCalled();
+		expect(api.reorderQueue).not.toHaveBeenCalled();
+
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+		expect(engine.getState().source).toMatchObject({
+			type: "track",
+			track: { id: track.id },
+		});
+		expect(screen.getByTestId("radio").textContent).toBe("");
+		expect(screen.getByTestId("queue").textContent).toBe(queueBeforePlayback);
 	});
 
 	it("delegates Playback Session controls to PlaybackEngine", async () => {

@@ -1,6 +1,8 @@
 import {
 	DEFAULT_PLAYBACK_SESSION_STATE,
 	type PlaybackEngine,
+	type PlaybackNavigationDirection,
+	type PlaybackNavigationListener,
 	type PlaybackSessionListener,
 	type PlaybackSessionState,
 	type PlaybackSource,
@@ -9,6 +11,7 @@ import {
 export class InMemoryPlaybackEngine implements PlaybackEngine {
 	private state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
 	private readonly listeners = new Set<PlaybackSessionListener>();
+	private readonly navigationListeners = new Set<PlaybackNavigationListener>();
 
 	getState() {
 		return this.state;
@@ -17,6 +20,15 @@ export class InMemoryPlaybackEngine implements PlaybackEngine {
 	subscribe(listener: PlaybackSessionListener) {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
+	}
+
+	subscribeNavigation(listener: PlaybackNavigationListener) {
+		this.navigationListeners.add(listener);
+		return () => this.navigationListeners.delete(listener);
+	}
+
+	navigate(direction: PlaybackNavigationDirection) {
+		for (const listener of this.navigationListeners) listener(direction);
 	}
 
 	async play(source?: PlaybackSource) {

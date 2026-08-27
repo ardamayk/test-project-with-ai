@@ -7,6 +7,8 @@ export { formatReplayGainAvailability } from './playback/format-replay-gain'
 export type {
   PlaybackEngine,
   PlaybackError,
+  PlaybackNavigationDirection,
+  PlaybackNavigationListener,
   PlaybackSessionListener,
   PlaybackSessionState,
   PlaybackSource,
@@ -25,4 +27,23 @@ export type {
   PlaylistLibraryApi,
   RadioPlaybackApi,
 } from './playback/PlaybackProvider'
+export { EQ_FREQUENCIES_HZ } from './playback/processing'
+export type {
+  EqualizerPreset,
+  EqualizerState,
+  ProcessingProfile,
+  ProcessingState,
+  ReplayGainMode,
+  ReplayGainPreference,
+} from './playback/processing'
+export {
+  createBrowserPlaybackTelemetry,
+  derivePlaybackTelemetryStatus,
+  formatTelemetryStatus,
+} from './playback/telemetry'
+export type {
+  AudioFormatObservation,
+  PlaybackTelemetry,
+  PlaybackTelemetryStatus,
+} from './playback/telemetry'
 export { defaultPreferences, defaultLayout, defaultTheme } from './widgets/types'

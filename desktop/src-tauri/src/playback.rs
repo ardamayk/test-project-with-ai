@@ -1,3 +1,13 @@
+use crate::playback_lifecycle::{
+    PlaybackLifecycle, PlaybackLifecycleAction, PlaybackSessionSnapshot,
+};
+use crate::processing::{
+    AppliedMpvProcessingConfiguration, MpvProcessingConfiguration, ProcessingState, ReplayGainMode,
+};
+use crate::telemetry::{
+    ObservedMpvProperties, PipeWireObservation, PipeWireObserver, PlaybackTelemetry,
+    ProcessingObservation, SourceObservation,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
@@ -18,6 +28,11 @@ const MPV_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const MPV_PINNED_VERSION: &str = include_str!("../mpv-version.txt");
 const MPV_START_TIMEOUT: Duration = Duration::from_secs(3);
 const MPV_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
+const PLAYBACK_FAILED_MESSAGE: &str = "Playback failed. Check the source and try again.";
+#[cfg(not(test))]
+const PATH_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const PATH_REFRESH_INTERVAL: Duration = Duration::from_millis(20);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +70,8 @@ pub(crate) struct PlaybackSessionState {
     shuffle_enabled: bool,
     repeat_mode: RepeatMode,
     error: Option<PlaybackStateError>,
+    pub(crate) processing: ProcessingState,
+    telemetry: PlaybackTelemetry,
 }
 
 impl Default for PlaybackSessionState {
@@ -68,6 +85,13 @@ impl Default for PlaybackSessionState {
             shuffle_enabled: false,
             repeat_mode: RepeatMode::Off,
             error: None,
+            processing: ProcessingState::default(),
+            telemetry: PlaybackTelemetry::native_system_output(
+                SourceObservation::unknown(),
+                ObservedMpvProperties::unknown(),
+                None,
+                ProcessingObservation::unknown(),
+            ),
         }
     }
 }
@@ -76,7 +100,7 @@ impl Default for PlaybackSessionState {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PlaybackCommandError {
     code: &'static str,
-    message: String,
+    pub(crate) message: String,
 }
 
 impl PlaybackCommandError {
@@ -92,8 +116,10 @@ pub(crate) enum MpvEvent {
     Time(f64),
     Duration(f64),
     Paused(bool),
+    Decoder(ObservedMpvProperties),
     Ended,
     Error(String),
+    ExitedUnexpectedly(String),
 }
 
 pub(crate) trait MpvProcessAdapter: Send + Sync {
@@ -101,6 +127,16 @@ pub(crate) trait MpvProcessAdapter: Send + Sync {
     fn set_paused(&self, is_paused: bool) -> Result<(), String>;
     fn seek(&self, seconds: f64) -> Result<(), String>;
     fn set_volume(&self, value: f64) -> Result<(), String>;
+    fn apply_processing(
+        &self,
+        configuration: &MpvProcessingConfiguration,
+    ) -> Result<AppliedMpvProcessingConfiguration, String> {
+        Ok(AppliedMpvProcessingConfiguration {
+            volume_percent: configuration.volume_percent,
+            replay_gain_mode: configuration.replay_gain_mode,
+            audio_filters: configuration.audio_filters.clone(),
+        })
+    }
     fn stop(&self) -> Result<(), String>;
     fn shutdown(&self);
 }
@@ -108,7 +144,7 @@ pub(crate) trait MpvProcessAdapter: Send + Sync {
 enum MpvWorkerRequest {
     Command {
         command: Value,
-        response: Sender<Result<(), String>>,
+        response: Sender<Result<Value, String>>,
     },
     Shutdown,
 }
@@ -153,10 +189,12 @@ impl RealMpvProcess {
     fn observe_properties(&self) -> Result<(), String> {
         self.command(json!(["observe_property", 1, "time-pos"]))?;
         self.command(json!(["observe_property", 2, "duration"]))?;
-        self.command(json!(["observe_property", 3, "pause"]))
+        self.command(json!(["observe_property", 3, "pause"]))?;
+        self.command(json!(["observe_property", 4, "audio-params"]))
+            .map(|_| ())
     }
 
-    fn command(&self, command: Value) -> Result<(), String> {
+    fn command(&self, command: Value) -> Result<Value, String> {
         let (response_sender, response_receiver) = mpsc::channel();
         self.requests
             .send(MpvWorkerRequest::Command {
@@ -202,22 +240,76 @@ fn resolve_mpv_binary() -> PathBuf {
 impl MpvProcessAdapter for RealMpvProcess {
     fn load(&self, url: &str) -> Result<(), String> {
         self.command(json!(["loadfile", url, "replace"]))
+            .map(|_| ())
     }
 
     fn set_paused(&self, is_paused: bool) -> Result<(), String> {
         self.command(json!(["set_property", "pause", is_paused]))
+            .map(|_| ())
     }
 
     fn seek(&self, seconds: f64) -> Result<(), String> {
         self.command(json!(["seek", seconds, "absolute+exact"]))
+            .map(|_| ())
     }
 
     fn set_volume(&self, value: f64) -> Result<(), String> {
         self.command(json!(["set_property", "volume", value * 100.0]))
+            .map(|_| ())
+    }
+
+    fn apply_processing(
+        &self,
+        configuration: &MpvProcessingConfiguration,
+    ) -> Result<AppliedMpvProcessingConfiguration, String> {
+        let replay_gain = match configuration.replay_gain_mode {
+            ReplayGainMode::Off => "no",
+            ReplayGainMode::Track => "track",
+            ReplayGainMode::Album => "album",
+        };
+        self.command(json!([
+            "set_property",
+            "volume",
+            configuration.volume_percent
+        ]))?;
+        self.command(json!(["set_property", "replaygain", replay_gain]))?;
+        self.command(json!([
+            "set_property",
+            "af",
+            configuration.audio_filters.join(",")
+        ]))?;
+        let volume_percent = self
+            .command(json!(["get_property", "volume"]))?
+            .as_f64()
+            .ok_or_else(|| "Pinned mpv returned an invalid effective volume.".to_owned())?;
+        let replay_gain_mode = match self
+            .command(json!(["get_property_string", "replaygain"]))?
+            .as_str()
+        {
+            Some("no") => ReplayGainMode::Off,
+            Some("track") => ReplayGainMode::Track,
+            Some("album") => ReplayGainMode::Album,
+            _ => return Err("Pinned mpv returned an invalid effective ReplayGain mode.".to_owned()),
+        };
+        let audio_filters = self
+            .command(json!(["get_property_string", "af"]))?
+            .as_str()
+            .ok_or_else(|| "Pinned mpv returned invalid effective audio filters.".to_owned())?
+            .to_owned();
+        let audio_filters = if audio_filters.is_empty() {
+            Vec::new()
+        } else {
+            audio_filters.split(',').map(str::to_owned).collect()
+        };
+        Ok(AppliedMpvProcessingConfiguration {
+            volume_percent,
+            replay_gain_mode,
+            audio_filters,
+        })
     }
 
     fn stop(&self) -> Result<(), String> {
-        self.command(json!(["stop"]))
+        self.command(json!(["stop"])).map(|_| ())
     }
 
     fn shutdown(&self) {
@@ -300,6 +392,7 @@ fn configure_mpv_command(
         .arg("--idle=yes")
         .arg("--no-video")
         .arg("--audio-display=no")
+        .arg("--audio-client-name=Earthly Audio")
         .arg("--force-window=no")
         .arg("--terminal=no")
         .arg("--input-terminal=no")
@@ -353,7 +446,9 @@ fn run_mpv_worker(
     let reader_stream = match stream.try_clone() {
         Ok(stream) => stream,
         Err(error) => {
-            let _ = events.send(MpvEvent::Error(format!("Pinned mpv IPC failed: {error}")));
+            let _ = events.send(MpvEvent::ExitedUnexpectedly(format!(
+                "Pinned mpv IPC failed: {error}"
+            )));
             terminate_mpv(&mut child);
             return;
         }
@@ -374,14 +469,14 @@ fn run_mpv_worker(
         }
         match child.try_wait() {
             Ok(Some(status)) => {
-                let _ = events.send(MpvEvent::Error(format!(
+                let _ = events.send(MpvEvent::ExitedUnexpectedly(format!(
                     "Pinned mpv exited unexpectedly with {status}."
                 )));
                 return;
             }
             Ok(None) => {}
             Err(error) => {
-                let _ = events.send(MpvEvent::Error(format!(
+                let _ = events.send(MpvEvent::ExitedUnexpectedly(format!(
                     "Pinned mpv status could not be read: {error}"
                 )));
                 break;
@@ -398,7 +493,7 @@ fn execute_mpv_command(
     events: &Sender<MpvEvent>,
     request_id: u64,
     command: Value,
-) -> Result<(), String> {
+) -> Result<Value, String> {
     write_mpv_request(stream, request_id, command)?;
     let deadline = Instant::now() + MPV_COMMAND_TIMEOUT;
     while Instant::now() < deadline {
@@ -426,7 +521,7 @@ fn read_mpv_message(
     reader: &mut BufReader<UnixStream>,
     events: &Sender<MpvEvent>,
     request_id: u64,
-) -> Result<Option<Result<(), String>>, String> {
+) -> Result<Option<Result<Value, String>>, String> {
     let mut line = String::new();
     match reader.read_line(&mut line) {
         Ok(0) => Err("Pinned mpv closed its private IPC connection.".to_owned()),
@@ -446,9 +541,9 @@ fn read_mpv_message(
     }
 }
 
-fn mpv_response_result(message: &Value) -> Result<(), String> {
+fn mpv_response_result(message: &Value) -> Result<Value, String> {
     match message.get("error").and_then(Value::as_str) {
-        Some("success") => Ok(()),
+        Some("success") => Ok(message.get("data").cloned().unwrap_or(Value::Null)),
         Some(error) => Err(format!("Pinned mpv rejected command: {error}")),
         None => Err("Pinned mpv returned a command response without status.".to_owned()),
     }
@@ -494,6 +589,11 @@ fn property_event(message: &Value) -> Option<MpvEvent> {
             .get("data")
             .and_then(Value::as_bool)
             .map(MpvEvent::Paused),
+        Some("audio-params") => message
+            .get("data")
+            .filter(|value| value.is_object())
+            .map(ObservedMpvProperties::from_audio_params)
+            .map(MpvEvent::Decoder),
         _ => None,
     }
 }
@@ -511,6 +611,8 @@ fn terminate_mpv(child: &mut Child) {
 }
 
 type StateListener = Arc<dyn Fn(PlaybackSessionState) + Send + Sync>;
+type ProcessStarter =
+    Arc<dyn Fn() -> Result<(Box<dyn MpvProcessAdapter>, Receiver<MpvEvent>), String> + Send + Sync>;
 
 pub(crate) struct PlaybackController {
     process: Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
@@ -521,16 +623,83 @@ pub(crate) struct PlaybackController {
 }
 
 impl PlaybackController {
-    pub(crate) fn start_default(
+    pub(crate) fn start_default_with_lifecycle(
+        lifecycle: Arc<Mutex<PlaybackLifecycle>>,
+        path_observer: Arc<dyn PipeWireObserver>,
         listener: impl Fn(PlaybackSessionState) + Send + Sync + 'static,
     ) -> Result<Self, String> {
-        let (process, events) = RealMpvProcess::start_default()?;
-        Ok(Self::start(process, events, listener))
+        let starter: ProcessStarter = Arc::new(RealMpvProcess::start_default);
+        let (process, events) = starter()?;
+        Ok(Self::start_internal(
+            process,
+            events,
+            lifecycle,
+            Some(starter),
+            Some(path_observer),
+            listener,
+        ))
     }
 
+    #[cfg(test)]
     pub(crate) fn start(
         process: Box<dyn MpvProcessAdapter>,
         events: Receiver<MpvEvent>,
+        listener: impl Fn(PlaybackSessionState) + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_internal(
+            process,
+            events,
+            Arc::new(Mutex::new(PlaybackLifecycle::new())),
+            None,
+            None,
+            listener,
+        )
+    }
+
+    #[cfg(test)]
+    fn start_with_path_observer(
+        process: Box<dyn MpvProcessAdapter>,
+        events: Receiver<MpvEvent>,
+        path_observer: Arc<dyn PipeWireObserver>,
+        listener: impl Fn(PlaybackSessionState) + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_internal(
+            process,
+            events,
+            Arc::new(Mutex::new(PlaybackLifecycle::new())),
+            None,
+            Some(path_observer),
+            listener,
+        )
+    }
+
+    #[cfg(test)]
+    fn start_recoverable(
+        process: Box<dyn MpvProcessAdapter>,
+        events: Receiver<MpvEvent>,
+        lifecycle: Arc<Mutex<PlaybackLifecycle>>,
+        starter: impl Fn() -> Result<(Box<dyn MpvProcessAdapter>, Receiver<MpvEvent>), String>
+        + Send
+        + Sync
+        + 'static,
+        listener: impl Fn(PlaybackSessionState) + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_internal(
+            process,
+            events,
+            lifecycle,
+            Some(Arc::new(starter)),
+            None,
+            listener,
+        )
+    }
+
+    fn start_internal(
+        process: Box<dyn MpvProcessAdapter>,
+        events: Receiver<MpvEvent>,
+        lifecycle: Arc<Mutex<PlaybackLifecycle>>,
+        starter: Option<ProcessStarter>,
+        path_observer: Option<Arc<dyn PipeWireObserver>>,
         listener: impl Fn(PlaybackSessionState) + Send + Sync + 'static,
     ) -> Self {
         let process = Arc::new(Mutex::new(process));
@@ -543,6 +712,9 @@ impl PlaybackController {
             events,
             is_shutdown.clone(),
             listener.clone(),
+            lifecycle,
+            starter,
+            path_observer,
         );
         Self {
             process,
@@ -558,6 +730,25 @@ impl PlaybackController {
             .lock()
             .map(|state| state.clone())
             .map_err(|_| PlaybackCommandError::new("Native playback state is unavailable."))
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.is_shutdown.store(true, Ordering::Release);
+        if let Ok(process) = self.process.lock() {
+            process.shutdown();
+        }
+    }
+
+    pub(crate) fn restore_paused(
+        &self,
+        snapshot: &PlaybackSessionSnapshot,
+    ) -> Result<PlaybackSessionState, PlaybackCommandError> {
+        let action =
+            self.with_process(|process| apply_snapshot_to_process(process, snapshot, false));
+        if let Err(error) = action {
+            return self.fail_native(error);
+        }
+        self.update(|state| restore_snapshot_state(state, snapshot))
     }
 
     pub(crate) fn play(
@@ -579,7 +770,7 @@ impl PlaybackController {
             self.with_process(|process| process.set_paused(false))
         };
         if let Err(error) = action {
-            return self.fail(error);
+            return self.fail_native(error);
         }
         self.update(|state| {
             state.source = Some(next_source.clone());
@@ -591,6 +782,12 @@ impl PlaybackController {
             };
             if source.is_some() {
                 state.duration = track_duration(&next_source);
+                state.telemetry = PlaybackTelemetry::native_system_output(
+                    SourceObservation::from_playback_source(&next_source),
+                    ObservedMpvProperties::unknown(),
+                    None,
+                    processing_observation(&state.processing),
+                );
             }
             state.error = None;
         })
@@ -601,14 +798,14 @@ impl PlaybackController {
             return self.state();
         }
         if let Err(error) = self.with_process(|process| process.set_paused(true)) {
-            return self.fail(error);
+            return self.fail_native(error);
         }
         self.update(|state| state.status = PlaybackStatus::Paused)
     }
 
     pub(crate) fn stop(&self) -> Result<PlaybackSessionState, PlaybackCommandError> {
         if let Err(error) = self.with_process(|process| process.stop()) {
-            return self.fail(error);
+            return self.fail_native(error);
         }
         self.update(|state| {
             state.source = None;
@@ -616,6 +813,12 @@ impl PlaybackController {
             state.current_time = 0.0;
             state.duration = 0.0;
             state.error = None;
+            state.telemetry = PlaybackTelemetry::native_system_output(
+                SourceObservation::unknown(),
+                ObservedMpvProperties::unknown(),
+                None,
+                processing_observation(&state.processing),
+            );
         })
     }
 
@@ -632,23 +835,29 @@ impl PlaybackController {
             return self.fail("Playback seek position must be a non-negative finite number.");
         }
         if let Err(error) = self.with_process(|process| process.seek(seconds)) {
-            return self.fail(error);
+            return self.fail_native(error);
         }
         self.update(|state| state.current_time = seconds)
     }
 
-    pub(crate) fn set_volume(
+    pub(crate) fn apply_processing(
         &self,
-        value: f64,
+        mut processing: ProcessingState,
+        configuration: &MpvProcessingConfiguration,
     ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-        if !value.is_finite() {
-            return self.fail("Playback volume must be a finite number.");
-        }
-        let volume = value.clamp(0.0, 1.0);
-        if let Err(error) = self.with_process(|process| process.set_volume(volume)) {
-            return self.fail(error);
-        }
-        self.update(|state| state.volume = volume)
+        let applied = match self.with_process(|process| process.apply_processing(configuration)) {
+            Ok(applied) => applied,
+            Err(error) => return self.fail_native(error),
+        };
+        processing.software_volume = (applied.volume_percent / 100.0).clamp(0.0, 1.0);
+        processing.replay_gain_mode = applied.replay_gain_mode;
+        processing.equalizer.is_enabled = !applied.audio_filters.is_empty();
+        processing.effective_audio_filters = applied.audio_filters;
+        self.update(|state| {
+            state.volume = processing.software_volume;
+            state.processing = processing.clone();
+            state.telemetry.processing = processing_observation(&processing);
+        })
     }
 
     pub(crate) fn toggle_shuffle(&self) -> Result<PlaybackSessionState, PlaybackCommandError> {
@@ -693,14 +902,56 @@ impl PlaybackController {
         let _ = self.update(|state| set_error_state(state, message.clone()));
         Err(PlaybackCommandError::new(message))
     }
+
+    fn fail_native(
+        &self,
+        detail: impl Into<String>,
+    ) -> Result<PlaybackSessionState, PlaybackCommandError> {
+        report_native_playback_error(&detail.into());
+        self.fail(PLAYBACK_FAILED_MESSAGE)
+    }
+}
+
+fn apply_snapshot_to_process(
+    process: &dyn MpvProcessAdapter,
+    snapshot: &PlaybackSessionSnapshot,
+    should_resume: bool,
+) -> Result<(), String> {
+    process.set_paused(true)?;
+    process.set_volume(snapshot.volume())?;
+    if let Some(source) = snapshot.source() {
+        let url = playback_url(source).map_err(|error| error.message)?;
+        process.load(url)?;
+        process.seek(snapshot.playhead_seconds())?;
+        if should_resume {
+            process.set_paused(false)?;
+        }
+    }
+    Ok(())
+}
+
+fn restore_snapshot_state(state: &mut PlaybackSessionState, snapshot: &PlaybackSessionSnapshot) {
+    state.source = snapshot.source().cloned();
+    state.status = if state.source.is_some() {
+        PlaybackStatus::Paused
+    } else {
+        PlaybackStatus::Idle
+    };
+    state.current_time = snapshot.playhead_seconds();
+    state.duration = state.source.as_ref().map_or(0.0, track_duration);
+    state.volume = snapshot.volume();
+    state.shuffle_enabled = snapshot.is_shuffle_enabled();
+    state.repeat_mode = match snapshot.repeat_mode() {
+        "once" => RepeatMode::Once,
+        "loop" => RepeatMode::Loop,
+        _ => RepeatMode::Off,
+    };
+    state.error = None;
 }
 
 impl Drop for PlaybackController {
     fn drop(&mut self) {
-        self.is_shutdown.store(true, Ordering::Release);
-        if let Ok(process) = self.process.lock() {
-            process.shutdown();
-        }
+        self.shutdown();
         if let Some(event_thread) = self.event_thread.take() {
             let _ = event_thread.join();
         }
@@ -710,14 +961,42 @@ impl Drop for PlaybackController {
 fn spawn_event_thread(
     process: Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
     state: Arc<Mutex<PlaybackSessionState>>,
-    events: Receiver<MpvEvent>,
+    mut events: Receiver<MpvEvent>,
     is_shutdown: Arc<AtomicBool>,
     listener: StateListener,
+    lifecycle: Arc<Mutex<PlaybackLifecycle>>,
+    starter: Option<ProcessStarter>,
+    path_observer: Option<Arc<dyn PipeWireObserver>>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
+        let mut last_path_refresh = Instant::now();
         while !is_shutdown.load(Ordering::Acquire) {
             match events.recv_timeout(EVENT_POLL_INTERVAL) {
-                Ok(event) => handle_mpv_event(&process, &state, event, &listener),
+                Ok(MpvEvent::ExitedUnexpectedly(message)) => {
+                    if let Some(next_events) = recover_after_player_exit(
+                        &process,
+                        &state,
+                        &lifecycle,
+                        starter.as_ref(),
+                        &listener,
+                        message,
+                    ) {
+                        events = next_events;
+                    }
+                }
+                Ok(event) => {
+                    let is_decoder_readiness = matches!(event, MpvEvent::Decoder(_));
+                    let should_refresh_path = matches!(event, MpvEvent::Time(_))
+                        && last_path_refresh.elapsed() >= PATH_REFRESH_INTERVAL
+                        && path_observer.is_some();
+                    handle_mpv_event(&process, &state, event, &listener, path_observer.as_deref());
+                    if is_decoder_readiness {
+                        last_path_refresh = Instant::now();
+                    } else if should_refresh_path {
+                        refresh_pipewire_telemetry(&state, &listener, path_observer.as_deref());
+                        last_path_refresh = Instant::now();
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -725,11 +1004,99 @@ fn spawn_event_thread(
     })
 }
 
+fn recover_after_player_exit(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    lifecycle: &Arc<Mutex<PlaybackLifecycle>>,
+    starter: Option<&ProcessStarter>,
+    listener: &StateListener,
+    message: String,
+) -> Option<Receiver<MpvEvent>> {
+    report_native_playback_error(&message);
+    let current = state.lock().ok()?.clone();
+    let snapshot = PlaybackSessionSnapshot::from_serializable_state(&current).ok()?;
+    let transition = lifecycle
+        .lock()
+        .ok()?
+        .unexpected_player_exit(&snapshot, current.status == PlaybackStatus::Playing);
+    match transition.action {
+        PlaybackLifecycleAction::RestartPlayer {
+            snapshot,
+            should_resume,
+        } => restart_player(process, state, starter?, listener, &snapshot, should_resume),
+        PlaybackLifecycleAction::SurfaceActionableError(error) => {
+            publish_lifecycle_failure(state, listener, error.code, error.message);
+            None
+        }
+        _ => None,
+    }
+}
+
+fn restart_player(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    starter: &ProcessStarter,
+    listener: &StateListener,
+    snapshot: &PlaybackSessionSnapshot,
+    should_resume: bool,
+) -> Option<Receiver<MpvEvent>> {
+    let (next_process, next_events) = match starter() {
+        Ok(started) => started,
+        Err(message) => {
+            publish_lifecycle_failure(state, listener, "mpv-restart-failed", message);
+            return None;
+        }
+    };
+    if let Err(message) = apply_snapshot_to_process(next_process.as_ref(), snapshot, should_resume)
+    {
+        publish_lifecycle_failure(state, listener, "mpv-restart-failed", message);
+        return None;
+    }
+    if let Ok(mut current_process) = process.lock() {
+        *current_process = next_process;
+    } else {
+        publish_lifecycle_failure(
+            state,
+            listener,
+            "mpv-restart-failed",
+            "Native mpv process state is unavailable.".to_owned(),
+        );
+        return None;
+    }
+    if let Ok(next) = update_shared_state(state, |state| {
+        restore_snapshot_state(state, snapshot);
+        if should_resume && state.source.is_some() {
+            state.status = PlaybackStatus::Playing;
+        }
+    }) {
+        listener(next);
+    }
+    Some(next_events)
+}
+
+fn publish_lifecycle_failure(
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    listener: &StateListener,
+    code: &str,
+    message: String,
+) {
+    if let Ok(next) = update_shared_state(state, |state| {
+        state.status = PlaybackStatus::Error;
+        state.error = Some(PlaybackStateError {
+            code: code.to_owned(),
+            message: message.clone(),
+        });
+    }) {
+        listener(next);
+    }
+}
+
 fn handle_mpv_event(
     process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
     state: &Arc<Mutex<PlaybackSessionState>>,
     event: MpvEvent,
     listener: &StateListener,
+    path_observer: Option<&dyn PipeWireObserver>,
 ) {
     let result = match event {
         MpvEvent::Time(value) if value.is_finite() && value >= 0.0 => {
@@ -747,13 +1114,66 @@ fn handle_mpv_event(
                 };
             }
         }),
+        MpvEvent::Decoder(decoder) => {
+            let pipewire = observe_pipewire_path(path_observer);
+            update_shared_state(state, |state| {
+                let source = state
+                    .source
+                    .as_ref()
+                    .map(SourceObservation::from_playback_source)
+                    .unwrap_or_else(SourceObservation::unknown);
+                state.telemetry = PlaybackTelemetry::native_system_output(
+                    source,
+                    decoder.clone(),
+                    pipewire.clone(),
+                    processing_observation(&state.processing),
+                );
+            })
+        }
         MpvEvent::Ended => handle_ended_event(process, state),
         MpvEvent::Error(message) => {
-            update_shared_state(state, |state| set_error_state(state, message.clone()))
+            report_native_playback_error(&message);
+            update_shared_state(state, |state| {
+                set_error_state(state, PLAYBACK_FAILED_MESSAGE.to_owned())
+            })
         }
+        MpvEvent::ExitedUnexpectedly(_) => return,
         MpvEvent::Time(_) | MpvEvent::Duration(_) => return,
     };
     if let Ok(next) = result {
+        listener(next);
+    }
+}
+
+fn observe_pipewire_path(observer: Option<&dyn PipeWireObserver>) -> Option<PipeWireObservation> {
+    match observer?.observe() {
+        Ok(observation) => observation,
+        Err(error) => {
+            eprintln!("PipeWire playback observation failed: {error}");
+            None
+        }
+    }
+}
+
+fn refresh_pipewire_telemetry(
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    listener: &StateListener,
+    observer: Option<&dyn PipeWireObserver>,
+) {
+    let pipewire = observe_pipewire_path(observer);
+    if let Ok(next) = update_shared_state(state, |state| {
+        let source = state
+            .source
+            .as_ref()
+            .map(SourceObservation::from_playback_source)
+            .unwrap_or_else(SourceObservation::unknown);
+        state.telemetry = PlaybackTelemetry::native_system_output(
+            source,
+            state.telemetry.decoder.clone(),
+            pipewire.clone(),
+            processing_observation(&state.processing),
+        );
+    }) {
         listener(next);
     }
 }
@@ -776,7 +1196,10 @@ fn handle_ended_event(
                 process.set_paused(false)
             });
         if let Err(message) = repeat_result {
-            return update_shared_state(state, |state| set_error_state(state, message.clone()));
+            report_native_playback_error(&message);
+            return update_shared_state(state, |state| {
+                set_error_state(state, PLAYBACK_FAILED_MESSAGE.to_owned())
+            });
         }
     }
     update_shared_state(state, |state| {
@@ -815,6 +1238,10 @@ fn set_error_state(state: &mut PlaybackSessionState, message: String) {
     });
 }
 
+fn report_native_playback_error(detail: &str) {
+    eprintln!("Native playback process failed: {detail}");
+}
+
 fn playback_url(source: &Value) -> Result<&str, PlaybackCommandError> {
     source
         .get("playbackUrl")
@@ -834,15 +1261,44 @@ fn track_duration(source: &Value) -> f64 {
         .map_or(0.0, |duration| duration / 1000.0)
 }
 
+fn processing_observation(state: &ProcessingState) -> ProcessingObservation {
+    ProcessingObservation {
+        profile: match state.profile {
+            crate::processing::ProcessingProfile::Direct => "direct",
+            crate::processing::ProcessingProfile::Processed => "processed",
+        }
+        .to_owned(),
+        software_volume: Some(state.software_volume),
+        replay_gain_mode: match state.replay_gain_mode {
+            ReplayGainMode::Off => "off",
+            ReplayGainMode::Track => "track",
+            ReplayGainMode::Album => "album",
+        }
+        .to_owned(),
+        is_equalizer_enabled: Some(state.equalizer.is_enabled),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MpvEvent, MpvProcessAdapter, PlaybackController, PlaybackStatus, RealMpvProcess};
+    use crate::playback_lifecycle::{
+        PlaybackLifecycle, PlaybackSessionSnapshot, PlaybackSnapshotStore,
+    };
+    use crate::processing::{
+        AppliedMpvProcessingConfiguration, MpvProcessingConfiguration, ProcessingState,
+        ReplayGainMode,
+    };
+    use crate::telemetry::{
+        AudioFormatObservation, ObservedMpvProperties, PipeWireObservation, PipeWireObserver,
+        SourceObservation,
+    };
     use serde_json::json;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::process::Command;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -851,6 +1307,111 @@ mod tests {
         loaded_url: Arc<Mutex<Option<String>>>,
         is_shutdown: Arc<AtomicBool>,
         load_error: Option<String>,
+    }
+
+    struct ObservedPipeWirePath {
+        calls: AtomicUsize,
+    }
+
+    struct ObservedProcessingMpv {
+        requested: Arc<Mutex<Option<MpvProcessingConfiguration>>>,
+    }
+
+    impl MpvProcessAdapter for ObservedProcessingMpv {
+        fn load(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn set_paused(&self, _is_paused: bool) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn seek(&self, _seconds: f64) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn set_volume(&self, _value: f64) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn apply_processing(
+            &self,
+            configuration: &MpvProcessingConfiguration,
+        ) -> Result<AppliedMpvProcessingConfiguration, String> {
+            *self.requested.lock().expect("requested processing") = Some(configuration.clone());
+            Ok(AppliedMpvProcessingConfiguration {
+                volume_percent: 37.0,
+                replay_gain_mode: ReplayGainMode::Track,
+                audio_filters: vec!["lavfi=[equalizer=f=1000:g=1.5]".to_owned()],
+            })
+        }
+
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    impl PipeWireObserver for ObservedPipeWirePath {
+        fn observe(&self) -> Result<Option<PipeWireObservation>, String> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Some(PipeWireObservation {
+                graph_format: AudioFormatObservation {
+                    sample_rate_hz: Some(96_000),
+                    bit_depth: Some(24),
+                    channels: Some(2),
+                },
+                is_graph_resampling: Some(false),
+                device_name: Some("Routed USB DAC".to_owned()),
+                device_format: AudioFormatObservation {
+                    sample_rate_hz: Some(96_000),
+                    bit_depth: Some(24),
+                    channels: Some(2),
+                },
+                is_device_resampling: Some(false),
+            }))
+        }
+    }
+
+    #[derive(Default)]
+    struct RestoredProcessState {
+        loaded_url: Option<String>,
+        is_paused: bool,
+        playhead_seconds: f64,
+        volume: f64,
+    }
+
+    struct RestorableMpvProcess {
+        state: Arc<Mutex<RestoredProcessState>>,
+    }
+
+    impl MpvProcessAdapter for RestorableMpvProcess {
+        fn load(&self, url: &str) -> Result<(), String> {
+            self.state.lock().expect("process state").loaded_url = Some(url.to_owned());
+            Ok(())
+        }
+
+        fn set_paused(&self, is_paused: bool) -> Result<(), String> {
+            self.state.lock().expect("process state").is_paused = is_paused;
+            Ok(())
+        }
+
+        fn seek(&self, seconds: f64) -> Result<(), String> {
+            self.state.lock().expect("process state").playhead_seconds = seconds;
+            Ok(())
+        }
+
+        fn set_volume(&self, value: f64) -> Result<(), String> {
+            self.state.lock().expect("process state").volume = value;
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn shutdown(&self) {}
     }
 
     impl MpvProcessAdapter for FakeMpvProcess {
@@ -925,6 +1486,307 @@ mod tests {
     }
 
     #[test]
+    fn replacing_or_stopping_a_source_clears_stale_path_observations() {
+        let (event_sender, event_receiver) = std::sync::mpsc::channel();
+        let process = FakeMpvProcess {
+            loaded_url: Arc::new(Mutex::new(None)),
+            is_shutdown: Arc::new(AtomicBool::new(false)),
+            load_error: None,
+        };
+        let controller = PlaybackController::start(Box::new(process), event_receiver, |_| {});
+        let first_source = json!({
+            "type": "track",
+            "track": { "id": "track-1", "title": "Track 1", "durationMs": 120000 },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+        });
+        let next_source = json!({
+            "type": "track",
+            "track": { "id": "track-2", "title": "Track 2", "durationMs": 90000 },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-2/stream"
+        });
+
+        controller
+            .play(Some(first_source))
+            .expect("play first Track");
+        event_sender
+            .send(MpvEvent::Decoder(ObservedMpvProperties::from_audio_params(
+                &json!({ "format": "s24", "samplerate": 96000, "channel-count": 2 }),
+            )))
+            .expect("decoder event");
+        wait_for_state(&controller, |state| {
+            state.telemetry.decoder.format.sample_rate_hz == Some(96_000)
+        });
+
+        let replaced = controller
+            .play(Some(next_source))
+            .expect("play replacement Track");
+        assert_eq!(replaced.telemetry.decoder, ObservedMpvProperties::unknown());
+
+        let stopped = controller.stop().expect("stop playback");
+        assert_eq!(stopped.telemetry.source, SourceObservation::unknown());
+        assert_eq!(stopped.telemetry.decoder, ObservedMpvProperties::unknown());
+        assert_eq!(stopped.telemetry.system.format.sample_rate_hz, None);
+        assert_eq!(stopped.telemetry.device.name, None);
+    }
+
+    #[test]
+    fn pipewire_path_is_sampled_after_decoder_readiness_and_refreshed_during_playback() {
+        let (event_sender, event_receiver) = std::sync::mpsc::channel();
+        let process = FakeMpvProcess {
+            loaded_url: Arc::new(Mutex::new(None)),
+            is_shutdown: Arc::new(AtomicBool::new(false)),
+            load_error: None,
+        };
+        let observer = Arc::new(ObservedPipeWirePath {
+            calls: AtomicUsize::new(0),
+        });
+        let controller = PlaybackController::start_with_path_observer(
+            Box::new(process),
+            event_receiver,
+            observer.clone(),
+            |_| {},
+        );
+        let source = json!({
+            "type": "track",
+            "track": { "id": "track-1", "title": "Track 1", "durationMs": 120000 },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+        });
+
+        let loading = controller.play(Some(source)).expect("load Track");
+        assert_eq!(observer.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(loading.telemetry.device.name, None);
+
+        event_sender
+            .send(MpvEvent::Decoder(ObservedMpvProperties::from_audio_params(
+                &json!({ "format": "s24", "samplerate": 96000, "channel-count": 2 }),
+            )))
+            .expect("decoder readiness");
+        let observed = wait_for_state(&controller, |state| {
+            state.telemetry.device.name.as_deref() == Some("Routed USB DAC")
+        });
+
+        assert_eq!(observer.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(observed.telemetry.system.format.bit_depth, Some(24));
+
+        thread::sleep(super::PATH_REFRESH_INTERVAL + Duration::from_millis(10));
+        event_sender.send(MpvEvent::Time(1.0)).expect("time event");
+        wait_for_state(&controller, |_| observer.calls.load(Ordering::Relaxed) == 2);
+        assert_eq!(observer.calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn processing_state_reports_effective_mpv_results_without_changing_output_mode() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let requested = Arc::new(Mutex::new(None));
+        let controller = PlaybackController::start(
+            Box::new(ObservedProcessingMpv {
+                requested: requested.clone(),
+            }),
+            event_receiver,
+            |_| {},
+        );
+        let mut processing = ProcessingState::default();
+        processing.profile = crate::processing::ProcessingProfile::Processed;
+        processing.software_volume = 0.4;
+        processing.replay_gain_mode = ReplayGainMode::Album;
+        processing.equalizer.is_enabled = true;
+        let configuration = MpvProcessingConfiguration {
+            volume_percent: 40.0,
+            replay_gain_mode: ReplayGainMode::Album,
+            audio_filters: vec!["lavfi=[equalizer=f=1000:g=2]".to_owned()],
+        };
+        let output_mode = controller
+            .state()
+            .expect("initial state")
+            .telemetry
+            .system
+            .kind;
+
+        let observed = controller
+            .apply_processing(processing, &configuration)
+            .expect("apply processing");
+
+        assert_eq!(
+            *requested.lock().expect("requested processing"),
+            Some(configuration)
+        );
+        assert_eq!(observed.processing.software_volume, 0.37);
+        assert_eq!(observed.processing.replay_gain_mode, ReplayGainMode::Track);
+        assert!(observed.processing.equalizer.is_enabled);
+        assert_eq!(
+            observed.processing.effective_audio_filters,
+            ["lavfi=[equalizer=f=1000:g=1.5]"]
+        );
+        assert_eq!(observed.telemetry.processing.software_volume, Some(0.37));
+        assert_eq!(observed.telemetry.system.kind, output_mode);
+    }
+
+    #[test]
+    fn persisted_session_restores_source_and_playhead_paused() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let process_state = Arc::new(Mutex::new(RestoredProcessState::default()));
+        let process = RestorableMpvProcess {
+            state: process_state.clone(),
+        };
+        let controller = PlaybackController::start(Box::new(process), event_receiver, |_| {});
+        let source = json!({
+            "type": "track",
+            "track": { "id": "track-1", "title": "Track 1", "durationMs": 120000 },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+        });
+        let snapshot = PlaybackSessionSnapshot::new(Some(source.clone()), 41.5, 0.65, true, "loop")
+            .expect("valid snapshot");
+
+        let restored = controller
+            .restore_paused(&snapshot)
+            .expect("restore paused session");
+        let process = process_state.lock().expect("process state");
+
+        assert_eq!(restored.source, Some(source));
+        assert_eq!(restored.status, PlaybackStatus::Paused);
+        assert_eq!(restored.current_time, 41.5);
+        assert_eq!(restored.volume, 0.65);
+        assert!(restored.shuffle_enabled);
+        assert_eq!(restored.repeat_mode, super::RepeatMode::Loop);
+        assert!(process.is_paused);
+        assert_eq!(process.playhead_seconds, 41.5);
+        assert_eq!(process.volume, 0.65);
+    }
+
+    #[test]
+    fn player_crash_recovers_once_then_surfaces_an_actionable_error() {
+        let (initial_event_sender, initial_events) = std::sync::mpsc::channel();
+        let initial_process_state = Arc::new(Mutex::new(RestoredProcessState::default()));
+        let initial_process = RestorableMpvProcess {
+            state: initial_process_state,
+        };
+        let (recovery_event_sender, recovery_events) = std::sync::mpsc::channel();
+        let recovery_events = Arc::new(Mutex::new(Some(recovery_events)));
+        let recovered_process_state = Arc::new(Mutex::new(RestoredProcessState::default()));
+        let starter_calls = Arc::new(Mutex::new(0_u8));
+        let lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
+        let controller = PlaybackController::start_recoverable(
+            Box::new(initial_process),
+            initial_events,
+            lifecycle,
+            {
+                let recovery_events = recovery_events.clone();
+                let process_state = recovered_process_state.clone();
+                let starter_calls = starter_calls.clone();
+                move || {
+                    *starter_calls.lock().expect("starter calls") += 1;
+                    let events = recovery_events
+                        .lock()
+                        .expect("recovery events")
+                        .take()
+                        .ok_or_else(|| "recovery budget exhausted".to_owned())?;
+                    Ok((
+                        Box::new(RestorableMpvProcess {
+                            state: process_state.clone(),
+                        }) as Box<dyn MpvProcessAdapter>,
+                        events,
+                    ))
+                }
+            },
+            |_| {},
+        );
+        let source = json!({
+            "type": "track",
+            "track": { "id": "track-1", "title": "Track 1", "durationMs": 120000 },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+        });
+        controller.play(Some(source.clone())).expect("play Track");
+        controller.seek(27.5).expect("seek Track");
+
+        initial_event_sender
+            .send(MpvEvent::ExitedUnexpectedly("fixture crash".to_owned()))
+            .expect("first crash");
+        let recovered = wait_for_state(&controller, |state| {
+            state.status == PlaybackStatus::Playing
+                && state.current_time == 27.5
+                && *starter_calls.lock().expect("starter calls") == 1
+        });
+
+        assert_eq!(recovered.source, Some(source));
+        assert_eq!(*starter_calls.lock().expect("starter calls"), 1);
+        assert!(
+            !recovered_process_state
+                .lock()
+                .expect("recovered process")
+                .is_paused
+        );
+
+        recovery_event_sender
+            .send(MpvEvent::ExitedUnexpectedly(
+                "fixture crash again".to_owned(),
+            ))
+            .expect("second crash");
+        let failed = wait_for_state(&controller, |state| state.status == PlaybackStatus::Error);
+
+        assert_eq!(*starter_calls.lock().expect("starter calls"), 1);
+        assert!(
+            failed
+                .error
+                .as_ref()
+                .is_some_and(|error| error.message.contains("Quit and reopen the Desktop Client"))
+        );
+    }
+
+    #[test]
+    fn radio_and_catalog_sources_load_proxy_urls_as_continuous_streams() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let loaded_url = Arc::new(Mutex::new(None));
+        let process = FakeMpvProcess {
+            loaded_url: loaded_url.clone(),
+            is_shutdown: Arc::new(AtomicBool::new(false)),
+            load_error: None,
+        };
+        let controller = PlaybackController::start(Box::new(process), event_receiver, |_| {});
+        let radio_source = json!({
+            "type": "radio-station",
+            "station": {
+                "id": "station-1",
+                "name": "Controlled MP3",
+                "streamUrl": "https://radio.example/live.mp3"
+            },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/radio/stations/station-1/stream",
+            "sourceUrl": "https://radio.example/live.mp3"
+        });
+        let catalog_source = json!({
+            "type": "catalog-preview",
+            "result": {
+                "stationUuid": "catalog-1",
+                "name": "Controlled HLS",
+                "streamUrl": "https://catalog.example/live.m3u8"
+            },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/radio/catalog/catalog-1/stream",
+            "sourceUrl": "https://catalog.example/live.m3u8"
+        });
+
+        let radio = controller
+            .play(Some(radio_source.clone()))
+            .expect("play saved Radio Station");
+        assert_eq!(radio.source, Some(radio_source));
+        assert_eq!(radio.status, PlaybackStatus::Playing);
+        assert_eq!(radio.duration, 0.0);
+        assert_eq!(
+            loaded_url.lock().expect("loaded URL").as_deref(),
+            Some("http://127.0.0.1:43129/token/api/v1/radio/stations/station-1/stream")
+        );
+
+        let preview = controller
+            .play(Some(catalog_source.clone()))
+            .expect("play Catalog Preview");
+        assert_eq!(preview.source, Some(catalog_source));
+        assert_eq!(preview.status, PlaybackStatus::Playing);
+        assert_eq!(preview.duration, 0.0);
+        assert_eq!(
+            loaded_url.lock().expect("loaded URL").as_deref(),
+            Some("http://127.0.0.1:43129/token/api/v1/radio/catalog/catalog-1/stream")
+        );
+    }
+
+    #[test]
     fn controls_ended_and_errors_flow_through_native_state() {
         let (event_sender, event_receiver) = std::sync::mpsc::channel();
         let is_shutdown = Arc::new(AtomicBool::new(false));
@@ -953,7 +1815,7 @@ mod tests {
         assert_eq!(ended.current_time, 25.0);
         assert_eq!(
             failed.error.as_ref().map(|error| error.message.as_str()),
-            Some("decoder failed")
+            Some("Playback failed. Check the source and try again.")
         );
         drop(controller);
         assert!(is_shutdown.load(Ordering::Acquire));
@@ -977,11 +1839,14 @@ mod tests {
         let error = controller.play(Some(source)).expect_err("load must fail");
         let state = controller.state().expect("playback state");
 
-        assert_eq!(error.message, "fixture load failed");
+        assert_eq!(
+            error.message,
+            "Playback failed. Check the source and try again."
+        );
         assert_eq!(state.status, PlaybackStatus::Error);
         assert_eq!(
             state.error.as_ref().map(|error| error.message.as_str()),
-            Some("fixture load failed")
+            Some("Playback failed. Check the source and try again.")
         );
     }
 
@@ -1027,6 +1892,21 @@ mod tests {
             0o600
         );
         let controller = PlaybackController::start(process, events, |_| {});
+        let mut processed = ProcessingState::default();
+        processed.profile = crate::processing::ProcessingProfile::Processed;
+        processed.software_volume = 0.37;
+        processed.replay_gain_mode = ReplayGainMode::Album;
+        processed.equalizer.is_enabled = true;
+        let applied = controller
+            .apply_processing(
+                processed,
+                &MpvProcessingConfiguration {
+                    volume_percent: 37.0,
+                    replay_gain_mode: ReplayGainMode::Album,
+                    audio_filters: vec!["equalizer=f=1000:t=q:w=1:g=2".to_owned()],
+                },
+            )
+            .expect("observe effective mpv processing");
         let source = json!({
             "type": "track",
             "track": { "id": "fixture", "title": "Fixture", "durationMs": 1000 },
@@ -1038,11 +1918,56 @@ mod tests {
         controller.pause().expect("pause fixture");
         controller.seek(0.5).expect("seek fixture");
 
+        assert_eq!(applied.processing.software_volume, 0.37);
+        assert_eq!(applied.processing.replay_gain_mode, ReplayGainMode::Album);
+        assert!(applied.processing.equalizer.is_enabled);
+        assert!(!applied.processing.effective_audio_filters.is_empty());
         assert_eq!(playing.status, PlaybackStatus::Playing);
         assert!(playing.duration > 0.9);
         drop(controller);
         assert!(!ipc_directory.exists());
         fs::remove_file(fixture_path).expect("remove WAV fixture");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires the pinned Linux mpv executable and desktop audio lifecycle"]
+    fn linux_background_playback_continues_until_clean_explicit_quit() {
+        let fixture_path = temporary_path("background-track.wav");
+        let snapshot_path = temporary_path("playback-session.json");
+        fs::write(&fixture_path, silent_wav()).expect("write WAV fixture");
+        let (process, events, ipc_directory) =
+            RealMpvProcess::start(super::resolve_mpv_binary(), vec!["--ao=null".to_owned()])
+                .expect("start pinned mpv");
+        let controller = PlaybackController::start(process, events, |_| {});
+        let source = json!({
+            "type": "track",
+            "track": { "id": "fixture", "title": "Fixture", "durationMs": 1000 },
+            "playbackUrl": fixture_path.to_string_lossy()
+        });
+        controller.play(Some(source)).expect("play fixture");
+        let before_close = wait_for_state(&controller, |state| state.current_time > 0.0);
+        let mut lifecycle = PlaybackLifecycle::new();
+
+        lifecycle.close_main_window();
+        let background = wait_for_state(&controller, |state| {
+            state.current_time > before_close.current_time
+        });
+        let snapshot = PlaybackSessionSnapshot::from_serializable_state(&background)
+            .expect("snapshot background playback");
+        lifecycle
+            .explicit_quit(
+                &PlaybackSnapshotStore::new(snapshot_path.clone()),
+                &snapshot,
+            )
+            .expect("persist explicit Quit");
+        controller.shutdown();
+        drop(controller);
+
+        assert!(snapshot_path.exists());
+        assert!(!ipc_directory.exists());
+        fs::remove_file(fixture_path).expect("remove WAV fixture");
+        fs::remove_file(snapshot_path).expect("remove snapshot fixture");
     }
 
     #[test]

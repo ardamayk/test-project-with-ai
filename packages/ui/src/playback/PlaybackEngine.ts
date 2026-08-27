@@ -1,4 +1,11 @@
 import type { RadioSearchResult, RadioStation, Track } from "@repo/api-client";
+import type {
+	EqualizerPreset,
+	ProcessingProfile,
+	ProcessingState,
+	ReplayGainMode,
+} from "./processing";
+import type { PlaybackTelemetry } from "./telemetry";
 
 export type RepeatMode = "off" | "once" | "loop";
 
@@ -24,7 +31,7 @@ export type PlaybackSource =
 export type PlaybackStatus = "idle" | "playing" | "paused" | "ended" | "error";
 
 export type PlaybackError = {
-	code: "playback-failed";
+	code: "playback-failed" | "mpv-crash-loop" | "mpv-restart-failed";
 	message: string;
 };
 
@@ -37,19 +44,30 @@ export type PlaybackSessionState = {
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	error: PlaybackError | null;
+	processing?: ProcessingState;
+	telemetry?: PlaybackTelemetry;
 };
 
 export type PlaybackSessionListener = (state: PlaybackSessionState) => void;
+export type PlaybackNavigationDirection = "previous" | "next";
+export type PlaybackNavigationListener = (
+	direction: PlaybackNavigationDirection,
+) => void;
 
 export interface PlaybackEngine {
 	getState(): PlaybackSessionState;
 	subscribe(listener: PlaybackSessionListener): () => void;
+	subscribeNavigation?(listener: PlaybackNavigationListener): () => void;
 	play(source?: PlaybackSource): Promise<void>;
 	pause(): void;
 	stop(): void;
 	togglePlay(): void;
 	seek(seconds: number): void;
 	setVolume(value: number): void;
+	setProcessingProfile?(profile: ProcessingProfile): void;
+	setReplayGainMode?(mode: ReplayGainMode): void;
+	setEqualizerPreset?(preset: Exclude<EqualizerPreset, "custom">): void;
+	setEqualizerGain?(index: number, value: number): void;
 	toggleShuffle(): void;
 	cycleRepeatMode(): void;
 	destroy(): void;

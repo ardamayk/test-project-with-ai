@@ -181,6 +181,9 @@ describe("PlayerBar", () => {
 			(screen.getByRole("button", { name: "Play" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
+		expect(
+			screen.queryByRole("button", { name: /Playback signal:/ }),
+		).toBeNull();
 	});
 
 	it("shows the current track after playback starts", async () => {
@@ -271,6 +274,25 @@ describe("PlayerBar", () => {
 				.disabled,
 		).toBe(true);
 		expect(screen.getByRole("menuitem", { name: "Details" })).toBeTruthy();
+	});
+
+	it("opens browser-managed Playback Telemetry from the compact player status", async () => {
+		renderPlayerBar();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Playback signal: Processed" }),
+		);
+
+		const dialog = screen.getByRole("dialog", { name: "Playback signal path" });
+		expect(within(dialog).getByText(/Browser managed/)).toBeTruthy();
+		const device = within(dialog).getByRole("heading", {
+			name: "Device",
+		}).parentElement;
+		expect(device?.textContent).toContain("Unknown");
+		expect(device?.textContent).not.toContain("96 kHz");
 	});
 
 	it("shows live radio progress instead of track time", async () => {

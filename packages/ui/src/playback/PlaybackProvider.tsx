@@ -24,6 +24,13 @@ import type {
 	PlaybackSessionState,
 	RepeatMode,
 } from "./PlaybackEngine";
+import type {
+	EqualizerPreset,
+	ProcessingProfile,
+	ProcessingState,
+	ReplayGainMode,
+} from "./processing";
+import type { PlaybackTelemetry } from "./telemetry";
 import {
 	type PlaybackQueueApi,
 	useSynchronizedQueue,
@@ -74,6 +81,8 @@ type PlaybackContextValue = {
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	playbackError: PlaybackError | null;
+	processingState: ProcessingState | null;
+	playbackTelemetry: PlaybackTelemetry | null;
 	queueConflict: string | null;
 	playTrack: (trackId: string, queueTrackIds?: string[]) => Promise<void>;
 	playRadioStation: (station: RadioStation) => Promise<void>;
@@ -86,6 +95,10 @@ type PlaybackContextValue = {
 	cycleRepeatMode: () => void;
 	seek: (seconds: number) => void;
 	setVolume: (value: number) => void;
+	setProcessingProfile: (profile: ProcessingProfile) => void;
+	setReplayGainMode: (mode: ReplayGainMode) => void;
+	setEqualizerPreset: (preset: Exclude<EqualizerPreset, "custom">) => void;
+	setEqualizerGain: (index: number, value: number) => void;
 	removeFromQueue: (itemId: string) => Promise<void>;
 	reorderQueue: (itemIds: string[]) => Promise<void>;
 	clearQueue: () => Promise<void>;
@@ -137,31 +150,33 @@ export function PlaybackProvider({
 		() => getCurrentRadioStation(session),
 		[session.source],
 	);
+	const radioNowPlayingStationId =
+		session.source?.type === "radio-station" ? session.source.station.id : null;
 
 	const refreshRadioNowPlaying = useCallback(async () => {
-		if (!currentRadioStation) return;
+		if (!radioNowPlayingStationId) return;
 		try {
 			const data = await apiRef.current.getRadioNowPlaying(
-				currentRadioStation.id,
+				radioNowPlayingStationId,
 			);
 			setRadioNowPlaying(data);
 		} catch (error) {
 			console.warn("Failed to refresh radio now playing", {
-				stationId: currentRadioStation.id,
+				stationId: radioNowPlayingStationId,
 				error,
 			});
 		}
-	}, [currentRadioStation]);
+	}, [radioNowPlayingStationId]);
 
 	useEffect(() => {
-		if (!currentRadioStation) return undefined;
+		if (!radioNowPlayingStationId) return undefined;
 		void refreshRadioNowPlaying();
 		const intervalId = window.setInterval(
 			() => void refreshRadioNowPlaying(),
 			30000,
 		);
 		return () => window.clearInterval(intervalId);
-	}, [currentRadioStation, refreshRadioNowPlaying]);
+	}, [radioNowPlayingStationId, refreshRadioNowPlaying]);
 
 	const playQueueItemInternal = useCallback(
 		async (item: QueueItem, queueOverride?: QueueItem[]) => {
@@ -183,6 +198,19 @@ export function PlaybackProvider({
 		},
 		[engine],
 	);
+
+	useEffect(() => {
+		if (!engine.subscribeNavigation) return undefined;
+		return engine.subscribeNavigation((direction) => {
+			const currentIndex = queueRef.current.findIndex(
+				(item) => item.id === currentQueueItemIdRef.current,
+			);
+			if (currentIndex < 0) return;
+			const offset = direction === "previous" ? -1 : 1;
+			const item = queueRef.current[currentIndex + offset];
+			if (item) void playQueueItemInternal(item);
+		});
+	}, [engine, playQueueItemInternal]);
 
 	const playTrackInternal = useCallback(
 		async (trackId: string, queueOverride?: QueueItem[]) => {
@@ -348,6 +376,8 @@ export function PlaybackProvider({
 			shuffleEnabled: session.shuffleEnabled,
 			repeatMode: session.repeatMode,
 			playbackError: session.error,
+			processingState: session.processing ?? null,
+			playbackTelemetry: session.telemetry ?? null,
 			queueConflict,
 			playTrack,
 			playRadioStation,
@@ -360,6 +390,11 @@ export function PlaybackProvider({
 			cycleRepeatMode: () => engine.cycleRepeatMode(),
 			seek: (seconds) => engine.seek(seconds),
 			setVolume: (value) => engine.setVolume(value),
+			setProcessingProfile: (profile) => engine.setProcessingProfile?.(profile),
+			setReplayGainMode: (mode) => engine.setReplayGainMode?.(mode),
+			setEqualizerPreset: (preset) => engine.setEqualizerPreset?.(preset),
+			setEqualizerGain: (index, value) =>
+				engine.setEqualizerGain?.(index, value),
 			removeFromQueue,
 			reorderQueue,
 			clearQueue,

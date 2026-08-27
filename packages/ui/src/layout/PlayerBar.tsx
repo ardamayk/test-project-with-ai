@@ -21,9 +21,14 @@ import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
 import { formatReplayGainAvailability } from "../playback/format-replay-gain";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
+import {
+	createBrowserPlaybackTelemetry,
+	type PlaybackTelemetry,
+} from "../playback/telemetry";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
+import { PlaybackSignal } from "./PlaybackSignal";
 import { PlaybackControls, VolumeAndQueueControls } from "./PlayerBarControls";
 
 const RECENT_PLAYLISTS_KEY = "navidrome-recent-playlists";
@@ -108,8 +113,10 @@ type MenuPosition = {
 
 export function PlayerBar({
 	onPlaylistMutated,
+	telemetry,
 }: {
 	onPlaylistMutated?: () => void;
+	telemetry?: PlaybackTelemetry;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -143,6 +150,12 @@ export function PlayerBar({
 		cycleRepeatMode,
 		seek,
 		setVolume,
+		processingState,
+		playbackTelemetry: observedPlaybackTelemetry,
+		setProcessingProfile,
+		setReplayGainMode,
+		setEqualizerPreset,
+		setEqualizerGain,
 		playQueueIndex,
 		queue,
 		getAlbumCoverUrl,
@@ -273,6 +286,22 @@ export function PlayerBar({
 	const qualityLabel = isRadioPlaying
 		? formatRadioQualityLabel(currentRadioStation)
 		: formatQualityLabel(currentTrack);
+	const playbackTelemetry =
+		telemetry ??
+		observedPlaybackTelemetry ??
+		createDefaultPlaybackTelemetry(currentTrack, currentRadioStation, volume);
+	const hasActiveSource = currentTrack !== null || currentRadioStation !== null;
+	const processingControls = processingState
+		? {
+				state: processingState,
+				setProfile: setProcessingProfile,
+				setSoftwareVolume: setVolume,
+				enableReplayGain: setReplayGainMode,
+				disableReplayGain: () => setReplayGainMode("off"),
+				applyEqualizerPreset: setEqualizerPreset,
+				setEqualizerGain,
+			}
+		: undefined;
 	const sortedPlaylists = useMemo(
 		() =>
 			[...playlists].sort((a, b) => {
@@ -531,6 +560,15 @@ export function PlayerBar({
 					qualityLabel={qualityLabel}
 					isLossless={isLosslessFormat(currentTrack?.format)}
 					volume={volume}
+					signalControl={
+						hasActiveSource ? (
+							<PlaybackSignal
+								telemetry={playbackTelemetry}
+								processingControls={processingControls}
+								replayGainMetadata={currentTrack?.replayGain}
+							/>
+						) : undefined
+					}
 					onToggleQueue={() => togglePanel(queuePanelSide)}
 					onVolumeChange={setVolume}
 				/>
@@ -543,6 +581,23 @@ export function PlayerBar({
 			) : null}
 		</footer>
 	);
+}
+
+function createDefaultPlaybackTelemetry(
+	track: Track | null,
+	station: RadioStation | null,
+	softwareVolume: number,
+) {
+	const telemetry = createBrowserPlaybackTelemetry(track, softwareVolume);
+	if (!station) return telemetry;
+	return {
+		...telemetry,
+		source: {
+			...telemetry.source,
+			codec: station.codec?.toUpperCase() ?? null,
+			bitrateKbps: station.bitrate ?? null,
+		},
+	};
 }
 
 function Portal({ children }: { children: ReactNode }) {

@@ -11,6 +11,7 @@ import {
 	SkipForward,
 	Volume2,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 import type { RepeatMode } from "../playback/PlaybackProvider";
 
@@ -261,6 +262,7 @@ type VolumeAndQueueControlsProps = {
 	qualityLabel: string;
 	isLossless: boolean;
 	volume: number;
+	signalControl?: ReactNode;
 	onToggleQueue: () => void;
 	onVolumeChange: (value: number) => void;
 };
@@ -269,6 +271,7 @@ export function VolumeAndQueueControls({
 	qualityLabel,
 	isLossless,
 	volume,
+	signalControl,
 	onToggleQueue,
 	onVolumeChange,
 }: VolumeAndQueueControlsProps) {
@@ -278,6 +281,7 @@ export function VolumeAndQueueControls({
 			aria-label="Volume and queue"
 			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
+			{signalControl}
 			<button
 				type="button"
 				className="hidden size-5 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] sm:inline-flex"
