@@ -54,7 +54,11 @@ func main() {
 		slog.Error("database init failed", "error", err)
 		os.Exit(1)
 	}
-	defer sqlDB.Close()
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			slog.Error("database close failed", "error", err)
+		}
+	}()
 
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)

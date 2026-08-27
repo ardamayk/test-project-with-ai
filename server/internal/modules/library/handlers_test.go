@@ -233,7 +233,11 @@ func TestHandlersDeleteTrackNotFound(t *testing.T) {
 
 func TestHandlersTriggerScanWithoutMusicPaths(t *testing.T) {
 	db := openMemoryDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 
 	store := NewStore(db)
 	svc := NewService(store, config.Config{})

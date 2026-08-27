@@ -33,9 +33,9 @@ func (r *ScanRunner) Run(jobID string) {
 	for _, file := range files {
 		scanned++
 		seenPaths[file.Metadata.Path] = struct{}{}
-		isAdded, isUpdated, err := r.store.UpsertFromScan(ctx, file.Metadata)
-		if err != nil {
-			slog.Error("library scan upsert failed", "path", file.Metadata.Path, "error", err)
+		isAdded, isUpdated, upsertErr := r.store.UpsertFromScan(ctx, file.Metadata)
+		if upsertErr != nil {
+			slog.Error("library scan upsert failed", "path", file.Metadata.Path, "error", upsertErr)
 			continue
 		}
 		if isAdded {

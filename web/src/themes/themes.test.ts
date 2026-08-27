@@ -65,7 +65,7 @@ describe("theme registry", () => {
 
 	it("orders palette colors dark → light", () => {
 		for (const preset of THEME_PRESET_REGISTRY) {
-			expect(isDarkToLightOrder(preset.colors as HexColor[])).toBe(true);
+			expect(isDarkToLightOrder(preset.colors)).toBe(true);
 		}
 	});
 
@@ -122,7 +122,7 @@ describe("theme slot contract", () => {
 
 	it("meets minimum contrast for default dark/light text on shell surfaces", () => {
 		for (const preset of THEME_PRESET_REGISTRY) {
-			const colors = preset.colors as HexColor[];
+			const colors = preset.colors;
 			const dark = themeSlotContract.dark;
 			const light = themeSlotContract.light;
 

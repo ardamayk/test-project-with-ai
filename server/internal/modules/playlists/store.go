@@ -71,7 +71,7 @@ func (s *Store) ListPlaylists(ctx context.Context, userID string) (PlaylistList,
 	if err != nil {
 		return PlaylistList{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []Playlist{}
 	for rows.Next() {
@@ -125,7 +125,7 @@ func (s *Store) GetPlaylist(ctx context.Context, userID, playlistID string) (Pla
 	if err != nil {
 		return PlaylistDetail{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	tracks := []library.Track{}
 	for rows.Next() {

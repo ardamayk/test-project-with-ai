@@ -1,8 +1,8 @@
-[data-theme-preset='tokyo-night'] {
-  --theme-1: #1a1b26;
-  --theme-2: #24283b;
-  --theme-3: #414868;
-  --theme-4: #565f89;
-  --theme-5: #a9b1d6;
-  --theme-6: #e8eaf5;
+[data-theme-preset="tokyo-night"] {
+	--theme-1: #1a1b26;
+	--theme-2: #24283b;
+	--theme-3: #414868;
+	--theme-4: #565f89;
+	--theme-5: #a9b1d6;
+	--theme-6: #e8eaf5;
 }

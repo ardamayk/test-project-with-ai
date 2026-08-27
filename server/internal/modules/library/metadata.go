@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +53,7 @@ func readFileMetadata(path string, format string, info os.FileInfo) (FileMetadat
 	if err != nil {
 		return meta, fmt.Errorf("open file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	m, err := tag.ReadFrom(f)
 	if err != nil {
@@ -134,19 +133,4 @@ func parseReplayGainPeak(value string) *float64 {
 		return nil
 	}
 	return parsed
-}
-
-func parseFilenameArtistAlbum(path string) (artist, album, title string) {
-	base := filepath.Base(path)
-	if idx := strings.LastIndex(base, "."); idx >= 0 {
-		base = base[:idx]
-	}
-	parts := strings.Split(base, " - ")
-	if len(parts) >= 3 {
-		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(strings.Join(parts[2:], " - "))
-	}
-	if len(parts) == 2 {
-		return "Unknown Artist", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-	}
-	return "Unknown Artist", "Unknown Album", base
 }

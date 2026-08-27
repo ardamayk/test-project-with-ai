@@ -112,7 +112,7 @@ func (s *Store) ListArtists(ctx context.Context, limit, offset int, q string) (A
 	if err != nil {
 		return ArtistList{}, fmt.Errorf("list artists: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []Artist{}
 	for rows.Next() {
@@ -158,7 +158,7 @@ func (s *Store) ListAlbums(ctx context.Context, limit, offset int, artistID, q s
 	if err != nil {
 		return AlbumList{}, fmt.Errorf("list albums: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []Album{}
 	for rows.Next() {
@@ -211,7 +211,7 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 	if err != nil {
 		return AlbumDetail{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	a.Tracks = []Track{}
 	for rows.Next() {
@@ -281,7 +281,7 @@ func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (Tr
 	if err != nil {
 		return TrackList{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []Track{}
 	for rows.Next() {
@@ -682,7 +682,7 @@ func (s *Store) MarkSeenPaths(ctx context.Context, paths map[string]struct{}) (r
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var id, path string

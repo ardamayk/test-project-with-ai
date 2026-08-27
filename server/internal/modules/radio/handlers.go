@@ -1,6 +1,7 @@
 package radio
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,8 +15,8 @@ import (
 type Searcher interface {
 	Search(r *http.Request) (SearchResultList, error)
 	LookupStation(r *http.Request, stationUUID string) (SearchResult, error)
-	Countries() (CatalogOptionList, error)
-	Tags() (CatalogOptionList, error)
+	Countries(ctx context.Context) (CatalogOptionList, error)
+	Tags(ctx context.Context) (CatalogOptionList, error)
 }
 
 type Streamer interface {
@@ -58,7 +59,7 @@ func (h *Handlers) CreateStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body StationCreate
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
@@ -95,7 +96,7 @@ func (h *Handlers) PatchStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body StationPatch
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
@@ -142,12 +143,12 @@ func (h *Handlers) SearchStations(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, results)
 }
 
-func (h *Handlers) ListCatalogCountries(w http.ResponseWriter, _ *http.Request) {
+func (h *Handlers) ListCatalogCountries(w http.ResponseWriter, r *http.Request) {
 	if h.searcher == nil {
 		respond.Error(w, http.StatusServiceUnavailable, "unavailable", "radio search unavailable")
 		return
 	}
-	results, err := h.searcher.Countries()
+	results, err := h.searcher.Countries(r.Context())
 	if err != nil {
 		respond.Error(w, http.StatusBadGateway, "bad_gateway", err.Error())
 		return
@@ -155,12 +156,12 @@ func (h *Handlers) ListCatalogCountries(w http.ResponseWriter, _ *http.Request) 
 	respond.JSON(w, http.StatusOK, results)
 }
 
-func (h *Handlers) ListCatalogTags(w http.ResponseWriter, _ *http.Request) {
+func (h *Handlers) ListCatalogTags(w http.ResponseWriter, r *http.Request) {
 	if h.searcher == nil {
 		respond.Error(w, http.StatusServiceUnavailable, "unavailable", "radio search unavailable")
 		return
 	}
-	results, err := h.searcher.Tags()
+	results, err := h.searcher.Tags(r.Context())
 	if err != nil {
 		respond.Error(w, http.StatusBadGateway, "bad_gateway", err.Error())
 		return
@@ -180,7 +181,7 @@ func (h *Handlers) ImportStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body importRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
@@ -303,11 +304,11 @@ func (h *Handlers) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 		respond.JSON(w, http.StatusOK, NowPlaying{})
 		return
 	}
-	if _, err := h.store.GetStation(r.Context(), userID, stationID); errors.Is(err, ErrNotFound) {
+	if _, stationErr := h.store.GetStation(r.Context(), userID, stationID); errors.Is(stationErr, ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "radio station not found")
 		return
-	} else if err != nil {
-		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+	} else if stationErr != nil {
+		respond.Error(w, http.StatusInternalServerError, "internal_error", stationErr.Error())
 		return
 	}
 	if now, ok := h.cache.Get(stationID); ok {

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
 
 func TestScanBackfillsAlbumCoverFromFlac(t *testing.T) {
@@ -16,8 +15,7 @@ func TestScanBackfillsAlbumCoverFromFlac(t *testing.T) {
 		t.Skip("sample flac not present")
 	}
 
-	db := testutil.OpenMigratedDB(t)
-	defer db.Close()
+	db := setupLibraryDB(t)
 
 	absPath, _ := filepath.Abs(flacPath)
 	store := library.NewStore(db)

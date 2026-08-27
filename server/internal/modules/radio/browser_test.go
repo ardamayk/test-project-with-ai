@@ -1,11 +1,77 @@
 package radio
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestRadioBrowserSearchUsesRequestContext(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if !errors.Is(request.Context().Err(), context.Canceled) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`[]`)),
+			}, nil
+		}
+		return nil, request.Context().Err()
+	})}
+	client := NewRadioBrowserClient("https://radio.test", httpClient)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://server.test/api/v1/radio/search", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Search(request)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Search() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRadioBrowserCatalogUsesRequestContext(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, request.Context().Err()
+	})}
+	client := NewRadioBrowserClient("https://radio.test", httpClient)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.Countries(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Countries() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRadioBrowserClientBoundsUnconfiguredHTTPClient(t *testing.T) {
+	var requestTimeout time.Duration
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		deadline, hasDeadline := request.Context().Deadline()
+		if !hasDeadline {
+			t.Fatal("outbound request has no deadline")
+		}
+		requestTimeout = time.Until(deadline)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+		}, nil
+	})}
+	client := NewRadioBrowserClient("https://radio.test", httpClient)
+
+	if _, err := client.SearchURL("/"); err != nil {
+		t.Fatal(err)
+	}
+	if requestTimeout <= 9*time.Second || requestTimeout > 10*time.Second {
+		t.Fatalf("outbound request timeout = %s, want approximately 10s", requestTimeout)
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -147,14 +213,14 @@ func TestRadioBrowserCatalogOptions(t *testing.T) {
 	})}
 
 	client := NewRadioBrowserClient("https://radio.test", httpClient)
-	countries, err := client.Countries()
+	countries, err := client.Countries(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if countries.Total != 1 || countries.Items[0].Code != "CH" {
 		t.Fatalf("countries = %+v", countries)
 	}
-	tags, err := client.Tags()
+	tags, err := client.Tags(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package radio
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 )
 
 const RadioBrowserSource = "radio-browser"
+
+const radioBrowserRequestTimeout = 10 * time.Second
 
 type SearchResult struct {
 	StationUUID      string   `json:"stationUuid"`
@@ -53,16 +56,24 @@ type RadioBrowserClient struct {
 
 func NewRadioBrowserClient(baseURL string, httpClient *http.Client) *RadioBrowserClient {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = http.DefaultClient
 	}
-	return &RadioBrowserClient{baseURL: strings.TrimRight(baseURL, "/"), httpClient: httpClient}
+	boundedClient := *httpClient
+	if boundedClient.Timeout <= 0 || boundedClient.Timeout > radioBrowserRequestTimeout {
+		boundedClient.Timeout = radioBrowserRequestTimeout
+	}
+	return &RadioBrowserClient{baseURL: strings.TrimRight(baseURL, "/"), httpClient: &boundedClient}
 }
 
 func (c *RadioBrowserClient) Search(r *http.Request) (SearchResultList, error) {
-	return c.SearchURL(r.URL.String())
+	return c.searchURL(r.Context(), r.URL.String())
 }
 
 func (c *RadioBrowserClient) SearchURL(rawURL string) (SearchResultList, error) {
+	return c.searchURL(context.Background(), rawURL)
+}
+
+func (c *RadioBrowserClient) searchURL(ctx context.Context, rawURL string) (SearchResultList, error) {
 	parsed, _ := url.Parse(rawURL)
 	rawQuery := url.Values{}
 	if parsed != nil {
@@ -87,13 +98,13 @@ func (c *RadioBrowserClient) SearchURL(rawURL string) (SearchResultList, error) 
 	}
 	if strings.EqualFold(rawQuery.Get("codec"), "AAC") || strings.EqualFold(rawQuery.Get("codecGroup"), "aac") {
 		params.Del("codec")
-		return c.searchAACFamily(params, rawQuery)
+		return c.searchAACFamily(ctx, params, rawQuery)
 	}
-	return c.fetchSearch("/json/stations/search?" + params.Encode())
+	return c.fetchSearch(ctx, "/json/stations/search?"+params.Encode())
 }
 
 func (c *RadioBrowserClient) LookupStation(r *http.Request, stationUUID string) (SearchResult, error) {
-	results, err := c.fetchSearch("/json/stations/byuuid/" + url.PathEscape(stationUUID))
+	results, err := c.fetchSearch(r.Context(), "/json/stations/byuuid/"+url.PathEscape(stationUUID))
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -103,8 +114,8 @@ func (c *RadioBrowserClient) LookupStation(r *http.Request, stationUUID string) 
 	return results.Items[0], nil
 }
 
-func (c *RadioBrowserClient) fetchSearch(path string) (SearchResultList, error) {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+func (c *RadioBrowserClient) fetchSearch(ctx context.Context, path string) (SearchResultList, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return SearchResultList{}, err
 	}
@@ -113,7 +124,9 @@ func (c *RadioBrowserClient) fetchSearch(path string) (SearchResultList, error) 
 	if err != nil {
 		return SearchResultList{}, err
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return SearchResultList{}, fmt.Errorf("radio browser status %d", res.StatusCode)
 	}
@@ -128,7 +141,7 @@ func (c *RadioBrowserClient) fetchSearch(path string) (SearchResultList, error) 
 	return SearchResultList{Items: items, Total: len(items)}, nil
 }
 
-func (c *RadioBrowserClient) searchAACFamily(params url.Values, rawQuery url.Values) (SearchResultList, error) {
+func (c *RadioBrowserClient) searchAACFamily(ctx context.Context, params url.Values, rawQuery url.Values) (SearchResultList, error) {
 	limit, _ := strconv.Atoi(boundedQueryInt(rawQuery.Get("limit"), 40, 1, 100))
 	offset, _ := strconv.Atoi(boundedQueryInt(rawQuery.Get("offset"), 0, 0, 100000))
 	upstreamLimit := offset + limit
@@ -138,7 +151,7 @@ func (c *RadioBrowserClient) searchAACFamily(params url.Values, rawQuery url.Val
 		nextParams.Set("codec", codec)
 		nextParams.Set("limit", strconv.Itoa(upstreamLimit))
 		nextParams.Set("offset", "0")
-		results, err := c.fetchSearch("/json/stations/search?" + nextParams.Encode())
+		results, err := c.fetchSearch(ctx, "/json/stations/search?"+nextParams.Encode())
 		if err != nil {
 			return SearchResultList{}, err
 		}
@@ -157,9 +170,9 @@ func (c *RadioBrowserClient) searchAACFamily(params url.Values, rawQuery url.Val
 	return SearchResultList{Items: allItems[offset:end], Total: end - offset}, nil
 }
 
-func (c *RadioBrowserClient) Countries() (CatalogOptionList, error) {
+func (c *RadioBrowserClient) Countries(ctx context.Context) (CatalogOptionList, error) {
 	var raw []radioBrowserCatalogOption
-	if err := c.fetchJSON("/json/countries?order=name&reverse=false", &raw); err != nil {
+	if err := c.fetchJSON(ctx, "/json/countries?order=name&reverse=false", &raw); err != nil {
 		return CatalogOptionList{}, err
 	}
 	items := make([]CatalogOption, 0, len(raw))
@@ -169,9 +182,9 @@ func (c *RadioBrowserClient) Countries() (CatalogOptionList, error) {
 	return CatalogOptionList{Items: items, Total: len(items)}, nil
 }
 
-func (c *RadioBrowserClient) Tags() (CatalogOptionList, error) {
+func (c *RadioBrowserClient) Tags(ctx context.Context) (CatalogOptionList, error) {
 	var raw []radioBrowserCatalogOption
-	if err := c.fetchJSON("/json/tags?order=name&reverse=false", &raw); err != nil {
+	if err := c.fetchJSON(ctx, "/json/tags?order=name&reverse=false", &raw); err != nil {
 		return CatalogOptionList{}, err
 	}
 	items := make([]CatalogOption, 0, len(raw))
@@ -181,8 +194,8 @@ func (c *RadioBrowserClient) Tags() (CatalogOptionList, error) {
 	return CatalogOptionList{Items: items, Total: len(items)}, nil
 }
 
-func (c *RadioBrowserClient) fetchJSON(path string, target any) error {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+func (c *RadioBrowserClient) fetchJSON(ctx context.Context, path string, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
@@ -191,7 +204,9 @@ func (c *RadioBrowserClient) fetchJSON(path string, target any) error {
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return fmt.Errorf("radio browser status %d", res.StatusCode)
 	}

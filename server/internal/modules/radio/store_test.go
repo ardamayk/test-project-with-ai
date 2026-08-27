@@ -22,11 +22,11 @@ func TestStoreCreatesAndListsUserStations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateStation(ctx, "user-2", StationCreate{
+	if _, createErr := store.CreateStation(ctx, "user-2", StationCreate{
 		Name:      "Other User Station",
 		StreamURL: "https://example.com/other.mp3",
-	}); err != nil {
-		t.Fatal(err)
+	}); createErr != nil {
+		t.Fatal(createErr)
 	}
 	second, err := store.CreateStation(ctx, "user-1", StationCreate{
 		Name:       "FIP",
@@ -125,5 +125,60 @@ func TestStoreUpdatesStationMetadata(t *testing.T) {
 	}
 	if got := updated.Tags; len(got) != 2 || got[0] != "jazz" || got[1] != "public" {
 		t.Fatalf("tags = %#v", got)
+	}
+}
+
+func TestStoreRejectsInvalidStationURLsOnCreate(t *testing.T) {
+	store := NewStore(testutil.OpenMigratedDB(t))
+	testCases := []struct {
+		name  string
+		input StationCreate
+	}{
+		{name: "stream URL scheme", input: StationCreate{Name: "Station", StreamURL: "file:///tmp/audio.mp3"}},
+		{name: "stream URL host", input: StationCreate{Name: "Station", StreamURL: "https://"}},
+		{name: "homepage URL scheme", input: StationCreate{Name: "Station", StreamURL: "https://radio.example/live", HomepageURL: "javascript:alert(1)"}},
+		{name: "homepage URL format", input: StationCreate{Name: "Station", StreamURL: "https://radio.example/live", HomepageURL: "not a URI"}},
+		{name: "favicon URL scheme", input: StationCreate{Name: "Station", StreamURL: "https://radio.example/live", FaviconURL: "data:image/png;base64,AAAA"}},
+		{name: "favicon URL format", input: StationCreate{Name: "Station", StreamURL: "https://radio.example/live", FaviconURL: "://missing-scheme"}},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := store.CreateStation(context.Background(), "user-1", testCase.input); err == nil {
+				t.Fatal("CreateStation() error = nil, want URL validation error")
+			}
+		})
+	}
+}
+
+func TestStoreRejectsInvalidStationURLsOnUpdate(t *testing.T) {
+	store := NewStore(testutil.OpenMigratedDB(t))
+	station, err := store.CreateStation(context.Background(), "user-1", StationCreate{
+		Name:        "Station",
+		StreamURL:   "https://radio.example/live",
+		HomepageURL: "https://radio.example",
+		FaviconURL:  "https://radio.example/favicon.ico",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsafeStreamURL := "http://127.0.0.1/private"
+	unsafeHomepageURL := "file:///tmp/homepage.html"
+	unsafeFaviconURL := "javascript:alert(1)"
+	testCases := []struct {
+		name  string
+		patch StationPatch
+	}{
+		{name: "stream URL", patch: StationPatch{StreamURL: &unsafeStreamURL}},
+		{name: "homepage URL", patch: StationPatch{HomepageURL: &unsafeHomepageURL}},
+		{name: "favicon URL", patch: StationPatch{FaviconURL: &unsafeFaviconURL}},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := store.UpdateStation(context.Background(), "user-1", station.ID, testCase.patch); err == nil {
+				t.Fatal("UpdateStation() error = nil, want URL validation error")
+			}
+		})
 	}
 }

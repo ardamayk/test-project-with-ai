@@ -3,6 +3,7 @@ package playback
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -38,11 +39,11 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	var revision string
-	if err := tx.QueryRowContext(ctx, `
+	if scanErr := tx.QueryRowContext(ctx, `
 		SELECT CAST(COALESCE((
 			SELECT revision FROM playback_queue_state WHERE user_id = ?
-		), 0) AS TEXT)`, userID).Scan(&revision); err != nil {
-		return Queue{}, fmt.Errorf("get queue revision: %w", err)
+		), 0) AS TEXT)`, userID).Scan(&revision); scanErr != nil {
+		return Queue{}, fmt.Errorf("get queue revision: %w", scanErr)
 	}
 
 	rows, err := tx.QueryContext(ctx, `
@@ -53,7 +54,7 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	if err != nil {
 		return Queue{}, fmt.Errorf("get queue: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := []QueueItem{}
 	for rows.Next() {
@@ -76,8 +77,11 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	resolvedItems := make([]QueueItem, 0, len(items))
 	for _, item := range items {
 		track, err := s.tracks.GetTrack(ctx, item.TrackID)
-		if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
 			continue
+		}
+		if err != nil {
+			return Queue{}, fmt.Errorf("resolve queue track %q: %w", item.TrackID, err)
 		}
 		item.Track = track
 		resolvedItems = append(resolvedItems, item)
@@ -96,8 +100,8 @@ func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []stri
 		return Queue{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
-		return Queue{}, err
+	if revisionErr := advanceRevision(ctx, tx, userID, expectedRevision); revisionErr != nil {
+		return Queue{}, revisionErr
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM playback_queue WHERE user_id = ?`, userID); err != nil {
@@ -130,8 +134,8 @@ func (s *Store) AppendItem(ctx context.Context, userID, trackID, expectedRevisio
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
-		return Queue{}, err
+	if revisionErr := advanceRevision(ctx, tx, userID, expectedRevision); revisionErr != nil {
+		return Queue{}, revisionErr
 	}
 
 	var maxPos sql.NullInt64
@@ -189,8 +193,8 @@ func (s *Store) RemoveItem(ctx context.Context, userID, itemID, expectedRevision
 		return Queue{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
-		return Queue{}, err
+	if revisionErr := advanceRevision(ctx, tx, userID, expectedRevision); revisionErr != nil {
+		return Queue{}, revisionErr
 	}
 	res, err := tx.ExecContext(ctx,
 		`DELETE FROM playback_queue WHERE id = ? AND user_id = ?`, itemID, userID,
@@ -245,8 +249,8 @@ func (s *Store) ReorderItems(ctx context.Context, userID string, itemIDs []strin
 		return Queue{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := advanceRevision(ctx, tx, userID, expectedRevision); err != nil {
-		return Queue{}, err
+	if revisionErr := advanceRevision(ctx, tx, userID, expectedRevision); revisionErr != nil {
+		return Queue{}, revisionErr
 	}
 
 	rows, err := tx.QueryContext(ctx,

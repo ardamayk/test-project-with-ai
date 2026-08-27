@@ -3,6 +3,7 @@ package playback
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 
 type fakeTrackAccess struct {
 	tracks map[string]library.Track
+	errors map[string]error
 }
 
 func TestStoreAtomicallyAcceptsOnlyOneConcurrentClientMutation(t *testing.T) {
@@ -59,11 +61,64 @@ func TestStoreAtomicallyAcceptsOnlyOneConcurrentClientMutation(t *testing.T) {
 }
 
 func (f fakeTrackAccess) GetTrack(_ context.Context, trackID string) (library.Track, error) {
+	if err := f.errors[trackID]; err != nil {
+		return library.Track{}, err
+	}
 	track, ok := f.tracks[trackID]
 	if !ok {
 		return library.Track{}, library.ErrNotFound
 	}
 	return track, nil
+}
+
+func TestStoreGetQueueReturnsTrackResolutionErrors(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.OpenMigratedDB(t)
+	testutil.InsertTrack(t, db, "track-1")
+	trackReadError := errors.New("library unavailable")
+	trackAccess := fakeTrackAccess{
+		tracks: map[string]library.Track{
+			"track-1": {ID: "track-1", Title: "First"},
+		},
+		errors: map[string]error{},
+	}
+	store := NewStore(db, trackAccess)
+	if _, err := store.AppendItem(ctx, "user-1", "track-1", "0"); err != nil {
+		t.Fatal(err)
+	}
+	trackAccess.errors["track-1"] = trackReadError
+
+	_, err := store.GetQueue(ctx, "user-1")
+	if !errors.Is(err, trackReadError) {
+		t.Fatalf("err = %v, want wrapped track read error", err)
+	}
+	if !strings.Contains(err.Error(), `resolve queue track "track-1"`) {
+		t.Fatalf("err = %v, want queue track context", err)
+	}
+}
+
+func TestStoreGetQueueSkipsConfirmedMissingTracks(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.OpenMigratedDB(t)
+	testutil.InsertTrack(t, db, "track-1")
+	trackAccess := fakeTrackAccess{
+		tracks: map[string]library.Track{
+			"track-1": {ID: "track-1", Title: "First"},
+		},
+	}
+	store := NewStore(db, trackAccess)
+	if _, err := store.AppendItem(ctx, "user-1", "track-1", "0"); err != nil {
+		t.Fatal(err)
+	}
+	delete(trackAccess.tracks, "track-1")
+
+	queue, err := store.GetQueue(ctx, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queue.Revision != "1" || len(queue.Items) != 0 {
+		t.Fatalf("queue = %+v, want empty queue at revision 1", queue)
+	}
 }
 
 func (f fakeTrackAccess) GetTrackFilePath(_ context.Context, trackID string) (string, error) {
@@ -105,31 +160,49 @@ func TestStoreUsesTrackAccessInterface(t *testing.T) {
 	}
 }
 
-func TestStoreRejectsStaleAppendWithoutOverwritingConcurrentQueue(t *testing.T) {
-	ctx := context.Background()
-	store := setupPlaybackStore(t, map[string]library.Track{
-		"track-1": {ID: "track-1", Title: "First"},
-		"track-2": {ID: "track-2", Title: "Second"},
-	})
+func TestStoreRejectsEveryStaleMutationWithoutChangingQueue(t *testing.T) {
+	tests := map[string]func(*Store, Queue) error{
+		"replace": func(store *Store, _ Queue) error {
+			_, err := store.ReplaceQueue(context.Background(), "user-1", []string{"track-2"}, "0")
+			return err
+		},
+		"append": func(store *Store, _ Queue) error {
+			_, err := store.AppendItem(context.Background(), "user-1", "track-2", "0")
+			return err
+		},
+		"reorder": func(store *Store, queue Queue) error {
+			_, err := store.ReorderItems(context.Background(), "user-1", []string{queue.Items[0].ID}, "0")
+			return err
+		},
+		"remove": func(store *Store, queue Queue) error {
+			_, err := store.RemoveItem(context.Background(), "user-1", queue.Items[0].ID, "0")
+			return err
+		},
+	}
 
-	first, err := store.AppendItem(ctx, "user-1", "track-1", "0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = store.AppendItem(ctx, "user-1", "track-2", "0")
-	if err != ErrRevisionConflict {
-		t.Fatalf("err = %v, want ErrRevisionConflict", err)
-	}
-	current, err := store.GetQueue(ctx, "user-1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := setupPlaybackStore(t, map[string]library.Track{
+				"track-1": {ID: "track-1", Title: "First"},
+				"track-2": {ID: "track-2", Title: "Second"},
+			})
+			initial, err := store.AppendItem(ctx, "user-1", "track-1", "0")
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	if first.Revision != "1" || current.Revision != "1" {
-		t.Fatalf("revisions = %q, %q, want 1", first.Revision, current.Revision)
-	}
-	if len(current.Items) != 1 || current.Items[0].TrackID != "track-1" {
-		t.Fatalf("queue = %+v, want only track-1", current.Items)
+			if mutationErr := mutate(store, initial); !errors.Is(mutationErr, ErrRevisionConflict) {
+				t.Fatalf("err = %v, want ErrRevisionConflict", mutationErr)
+			}
+			current, err := store.GetQueue(ctx, "user-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.Revision != "1" || len(current.Items) != 1 || current.Items[0].TrackID != "track-1" {
+				t.Fatalf("queue changed after stale mutation: %+v", current)
+			}
+		})
 	}
 }
 
@@ -138,7 +211,6 @@ func TestStoreAppliesAllMutationsAgainstExpectedRevision(t *testing.T) {
 	store := setupPlaybackStore(t, map[string]library.Track{
 		"track-1": {ID: "track-1", Title: "First"},
 		"track-2": {ID: "track-2", Title: "Second"},
-		"track-3": {ID: "track-3", Title: "Third"},
 	})
 
 	queue, err := store.ReplaceQueue(ctx, "user-1", []string{"track-1", "track-2"}, "0")
@@ -163,15 +235,6 @@ func TestStoreAppliesAllMutationsAgainstExpectedRevision(t *testing.T) {
 	}
 	if queue.Revision != "3" || len(queue.Items) != 1 || queue.Items[0].Position != 0 {
 		t.Fatalf("removed queue = %+v, revision %q", queue.Items, queue.Revision)
-	}
-
-	_, err = store.ReplaceQueue(ctx, "user-1", []string{"track-3"}, "2")
-	if err != ErrRevisionConflict {
-		t.Fatalf("stale replace err = %v, want ErrRevisionConflict", err)
-	}
-	_, err = store.ReorderItems(ctx, "user-1", []string{queue.Items[0].ID}, "2")
-	if err != ErrRevisionConflict {
-		t.Fatalf("stale reorder err = %v, want ErrRevisionConflict", err)
 	}
 }
 

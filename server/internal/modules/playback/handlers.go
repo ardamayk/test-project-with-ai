@@ -44,7 +44,7 @@ func (h *Handlers) ReplaceQueue(w http.ResponseWriter, r *http.Request) {
 		TrackIDs []string `json:"trackIds"`
 		Revision string   `json:"revision"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
@@ -80,7 +80,7 @@ func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
 		TrackID  string `json:"trackId"`
 		Revision string `json:"revision"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
@@ -147,7 +147,7 @@ func (h *Handlers) ReorderQueue(w http.ResponseWriter, r *http.Request) {
 		ItemIDs  []string `json:"itemIds"`
 		Revision string   `json:"revision"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}

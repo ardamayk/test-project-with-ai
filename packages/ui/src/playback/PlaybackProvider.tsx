@@ -2,14 +2,12 @@ import type {
 	Playlist,
 	PlaylistDetail,
 	PlaylistList,
-	Queue,
 	QueueItem,
 	RadioNowPlaying,
 	RadioSearchResult,
 	RadioStation,
 	Track,
 } from "@repo/api-client";
-import { ApiError } from "@repo/api-client";
 import {
 	createContext,
 	type ReactNode,
@@ -26,16 +24,13 @@ import type {
 	PlaybackSessionState,
 	RepeatMode,
 } from "./PlaybackEngine";
+import {
+	type PlaybackQueueApi,
+	useSynchronizedQueue,
+} from "./use-synchronized-queue";
 
 export type { RepeatMode } from "./PlaybackEngine";
-
-export type PlaybackQueueApi = {
-	getQueue: () => Promise<Queue>;
-	replaceQueue: (trackIds: string[], revision: string) => Promise<Queue>;
-	reorderQueue: (itemIds: string[], revision: string) => Promise<Queue>;
-	appendQueueItem: (trackId: string, revision: string) => Promise<Queue>;
-	removeQueueItem: (itemId: string, revision: string) => Promise<Queue>;
-};
+export type { PlaybackQueueApi } from "./use-synchronized-queue";
 
 export type PlaybackAssetApi = {
 	getStreamUrl: (trackId: string) => string;
@@ -111,10 +106,16 @@ export function PlaybackProvider({
 	engine: PlaybackEngine;
 }) {
 	const apiRef = useRef(api);
-	const queueRef = useRef<QueueItem[]>([]);
-	const queueRevisionRef = useRef("0");
-	const [queue, setQueueState] = useState<QueueItem[]>([]);
-	const [queueConflict, setQueueConflict] = useState<string | null>(null);
+	const {
+		queue,
+		queueRef,
+		queueConflict,
+		refreshQueue,
+		appendQueueItem,
+		replaceQueue,
+		removeFromQueue,
+		reorderQueue,
+	} = useSynchronizedQueue(api);
 	const [session, setSession] = useState<PlaybackSessionState>(() =>
 		engine.getState(),
 	);
@@ -122,74 +123,10 @@ export function PlaybackProvider({
 		useState<RadioNowPlaying | null>(null);
 	apiRef.current = api;
 
-	const setQueue = useCallback((data: Queue) => {
-		queueRef.current = data.items;
-		queueRevisionRef.current = data.revision;
-		setQueueState(data.items);
-	}, []);
-
-	const refreshQueue = useCallback(async () => {
-		const data = await apiRef.current.getQueue();
-		setQueue(data);
-	}, [setQueue]);
-
-	const appendQueueItem = useCallback(
-		async (trackId: string): Promise<Queue> => {
-			try {
-				const data = await apiRef.current.appendQueueItem(
-					trackId,
-					queueRevisionRef.current,
-				);
-				setQueue(data);
-				setQueueConflict(null);
-				return data;
-			} catch (error) {
-				if (!isQueueConflict(error)) throw error;
-				const current = await apiRef.current.getQueue();
-				setQueue(current);
-				const retried = await apiRef.current.appendQueueItem(
-					trackId,
-					current.revision,
-				);
-				setQueue(retried);
-				setQueueConflict(null);
-				return retried;
-			}
-		},
-		[setQueue],
-	);
-
-	const replaceQueue = useCallback(
-		async (trackIds: string[]): Promise<Queue | undefined> => {
-			try {
-				const data = await apiRef.current.replaceQueue(
-					trackIds,
-					queueRevisionRef.current,
-				);
-				setQueue(data);
-				setQueueConflict(null);
-				return data;
-			} catch (error) {
-				if (!isQueueConflict(error)) throw error;
-				const current = await apiRef.current.getQueue();
-				setQueue(current);
-				setQueueConflict(
-					"Queue changed in another Playback Client. Review replacement and try again.",
-				);
-				return undefined;
-			}
-		},
-		[setQueue],
-	);
-
 	useEffect(() => {
 		setSession(engine.getState());
 		return engine.subscribe(setSession);
 	}, [engine]);
-
-	useEffect(() => {
-		void refreshQueue();
-	}, [refreshQueue]);
 
 	const currentTrack =
 		session.source?.type === "track" ? session.source.track : null;
@@ -350,55 +287,6 @@ export function PlaybackProvider({
 		[currentTrack, replaceQueue],
 	);
 
-	const removeFromQueue = useCallback(
-		async (itemId: string) => {
-			try {
-				const data = await apiRef.current.removeQueueItem(
-					itemId,
-					queueRevisionRef.current,
-				);
-				setQueue(data);
-				setQueueConflict(null);
-			} catch (error) {
-				if (!isQueueConflict(error)) throw error;
-				const current = await apiRef.current.getQueue();
-				setQueue(current);
-				if (!current.items.some((item) => item.id === itemId)) {
-					setQueueConflict(null);
-					return;
-				}
-				const retried = await apiRef.current.removeQueueItem(
-					itemId,
-					current.revision,
-				);
-				setQueue(retried);
-				setQueueConflict(null);
-			}
-		},
-		[setQueue],
-	);
-
-	const reorderQueue = useCallback(
-		async (itemIds: string[]) => {
-			try {
-				const data = await apiRef.current.reorderQueue(
-					itemIds,
-					queueRevisionRef.current,
-				);
-				setQueue(data);
-				setQueueConflict(null);
-			} catch (error) {
-				if (!isQueueConflict(error)) throw error;
-				const current = await apiRef.current.getQueue();
-				setQueue(current);
-				setQueueConflict(
-					"Queue changed in another Playback Client. Review order and try again.",
-				);
-			}
-		},
-		[setQueue],
-	);
-
 	const clearQueue = useCallback(async () => {
 		const data = await replaceQueue([]);
 		if (!data) return;
@@ -516,12 +404,4 @@ function getCurrentRadioStation(
 		isFavorite: false,
 		position: -1,
 	};
-}
-
-function isQueueConflict(error: unknown): error is ApiError {
-	return (
-		error instanceof ApiError &&
-		error.status === 409 &&
-		error.body.code === "queue_revision_conflict"
-	);
 }

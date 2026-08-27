@@ -97,29 +97,76 @@ func TestHandlersReplaceQueue(t *testing.T) {
 	}
 }
 
-func TestHandlersReturnCurrentQueueOnStaleMutation(t *testing.T) {
-	h, store, libStore, db, musicRoot := setupPlaybackHandlers(t)
-	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
-	if _, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0"); err != nil {
-		t.Fatal(err)
-	}
+type staleHandlerMutation func(*Handlers, Queue, string) *httptest.ResponseRecorder
 
+func staleReplace(handlers *Handlers, _ Queue, trackID string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]any{"trackIds": []string{trackID}, "revision": "0"})
+	recorder := httptest.NewRecorder()
+	handlers.ReplaceQueue(recorder, httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)))
+	return recorder
+}
+
+func staleAppend(handlers *Handlers, _ Queue, trackID string) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(map[string]string{"trackId": trackID, "revision": "0"})
-	rec := httptest.NewRecorder()
-	h.AppendItem(rec, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+	recorder := httptest.NewRecorder()
+	handlers.AppendItem(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+	return recorder
+}
 
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+func staleReorder(handlers *Handlers, queue Queue, _ string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]any{"itemIds": []string{queue.Items[0].ID}, "revision": "0"})
+	recorder := httptest.NewRecorder()
+	handlers.ReorderQueue(recorder, httptest.NewRequest(http.MethodPatch, "/", bytes.NewReader(body)))
+	return recorder
+}
+
+func staleRemove(handlers *Handlers, queue Queue, _ string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodDelete, "/", nil)
+	request.Header.Set("If-Match", "0")
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("itemId", queue.Items[0].ID)
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	recorder := httptest.NewRecorder()
+	handlers.RemoveItem(recorder, request)
+	return recorder
+}
+
+func assertQueueConflict(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body %s", recorder.Code, recorder.Body.String())
 	}
 	var conflict struct {
 		Code  string `json:"code"`
 		Queue Queue  `json:"queue"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&conflict); err != nil {
+	if err := json.NewDecoder(recorder.Body).Decode(&conflict); err != nil {
 		t.Fatal(err)
 	}
 	if conflict.Code != "queue_revision_conflict" || conflict.Queue.Revision != "1" || len(conflict.Queue.Items) != 1 {
 		t.Fatalf("conflict = %+v", conflict)
+	}
+}
+
+func TestHandlersReturnCurrentQueueForEveryStaleMutation(t *testing.T) {
+	tests := map[string]staleHandlerMutation{
+		"replace": staleReplace,
+		"append":  staleAppend,
+		"reorder": staleReorder,
+		"remove":  staleRemove,
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			handlers, store, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
+			trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+			queue, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			assertQueueConflict(t, mutate(handlers, queue, trackID))
+		})
 	}
 }
 

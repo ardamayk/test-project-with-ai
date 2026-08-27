@@ -103,8 +103,8 @@ func TestAddAndRemoveTrackAreIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID); err != nil {
-		t.Fatal(err)
+	if _, addErr := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID); addErr != nil {
+		t.Fatal(addErr)
 	}
 	detail, err := store.AddTrack(context.Background(), "user-1", favorites.ID, trackID)
 	if err != nil {
@@ -138,8 +138,8 @@ func TestRemoveLastTrackDeletesUserPlaylist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AddTrack(context.Background(), "user-1", playlist.ID, trackID); err != nil {
-		t.Fatal(err)
+	if _, addErr := store.AddTrack(context.Background(), "user-1", playlist.ID, trackID); addErr != nil {
+		t.Fatal(addErr)
 	}
 
 	detail, err := store.RemoveTrack(context.Background(), "user-1", playlist.ID, trackID)

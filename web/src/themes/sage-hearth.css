@@ -1,8 +1,8 @@
-[data-theme-preset='sage-hearth'] {
-  --theme-1: #241f1b;
-  --theme-2: #2e2824;
-  --theme-3: #5a6b58;
-  --theme-4: #7fa87e;
-  --theme-5: #c9b89e;
-  --theme-6: #faf4e8;
+[data-theme-preset="sage-hearth"] {
+	--theme-1: #241f1b;
+	--theme-2: #2e2824;
+	--theme-3: #5a6b58;
+	--theme-4: #7fa87e;
+	--theme-5: #c9b89e;
+	--theme-6: #faf4e8;
 }

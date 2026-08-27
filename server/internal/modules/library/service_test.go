@@ -16,6 +16,11 @@ func setupServiceDB(t *testing.T) (*Service, *Store, *sql.DB, string) {
 	t.Helper()
 	musicRoot := t.TempDir()
 	db := openMemoryDB(t)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 	store := NewStore(db)
 	svc := NewService(store, config.Config{MusicPaths: []string{musicRoot}})
 	return svc, store, db, musicRoot
@@ -23,7 +28,11 @@ func setupServiceDB(t *testing.T) (*Service, *Store, *sql.DB, string) {
 
 func TestServiceMusicPathsConfigured(t *testing.T) {
 	db := openMemoryDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 
 	withPaths := NewService(NewStore(db), config.Config{MusicPaths: []string{"/music"}})
 	if !withPaths.MusicPathsConfigured() {
@@ -75,8 +84,7 @@ func TestServiceDeleteTrackRespectsMusicRoots(t *testing.T) {
 }
 
 func TestServiceListTracksSearchesAlbumAndGenre(t *testing.T) {
-	svc, store, db, musicRoot := setupServiceDB(t)
-	defer db.Close()
+	svc, store, _, musicRoot := setupServiceDB(t)
 
 	now := time.Now()
 	metas := []FileMetadata{

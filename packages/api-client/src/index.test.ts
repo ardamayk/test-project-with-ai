@@ -26,6 +26,18 @@ describe('createApiClient', () => {
 
     expectTypeOf<RemoveQueueResponses>().toHaveProperty(400)
   })
+
+  it('generates conflict responses for every Queue mutation', () => {
+    type ReplaceResponses = operations['replacePlaybackQueue']['responses']
+    type AppendResponses = operations['appendPlaybackQueueItem']['responses']
+    type ReorderResponses = operations['reorderPlaybackQueue']['responses']
+    type RemoveResponses = operations['removePlaybackQueueItem']['responses']
+
+    expectTypeOf<ReplaceResponses>().toHaveProperty(409)
+    expectTypeOf<AppendResponses>().toHaveProperty(409)
+    expectTypeOf<ReorderResponses>().toHaveProperty(409)
+    expectTypeOf<RemoveResponses>().toHaveProperty(409)
+  })
   it('builds health URL from base', () => {
     const client = createApiClient({ baseUrl: 'http://localhost:8080' })
     expect(client.getHealth).toBeTypeOf('function')
@@ -123,5 +135,31 @@ describe('createApiClient', () => {
       itemIds: ['item-1'],
       revision: '1',
     })
+  })
+
+  it('decodes conflict responses for every Queue mutation', async () => {
+    const conflict = {
+      error: 'conflict',
+      code: 'queue_revision_conflict',
+      message: 'queue changed since supplied revision',
+      queue: { items: [], revision: '2' },
+    }
+    const transport = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response(JSON.stringify(conflict), { status: 409 }),
+    )
+    const client = createApiClient({ baseUrl: '', transport })
+    const mutations = [
+      () => client.replacePlaybackQueue(['track-1'], '1'),
+      () => client.appendPlaybackQueueItem('track-1', '1'),
+      () => client.reorderPlaybackQueue([], '1'),
+      () => client.removePlaybackQueueItem('item-1', '1'),
+    ]
+
+    for (const mutation of mutations) {
+      await expect(mutation()).rejects.toMatchObject({
+        status: 409,
+        body: conflict,
+      })
+    }
   })
 })

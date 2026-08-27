@@ -26,14 +26,14 @@ func (f fakeSearcher) LookupStation(_ *http.Request, stationUUID string) (Search
 	return result, nil
 }
 
-func (f fakeSearcher) Countries() (CatalogOptionList, error) {
+func (f fakeSearcher) Countries(_ context.Context) (CatalogOptionList, error) {
 	return CatalogOptionList{
 		Items: []CatalogOption{{Name: "Switzerland", Code: "CH", StationCount: 10}},
 		Total: 1,
 	}, nil
 }
 
-func (f fakeSearcher) Tags() (CatalogOptionList, error) {
+func (f fakeSearcher) Tags(_ context.Context) (CatalogOptionList, error) {
 	return CatalogOptionList{
 		Items: []CatalogOption{{Name: "jazz", StationCount: 7}},
 		Total: 1,

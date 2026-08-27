@@ -44,7 +44,7 @@ func ServeTrackFile(w http.ResponseWriter, r *http.Request, filePath string) err
 		}
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", contentTypeForPath(filePath))

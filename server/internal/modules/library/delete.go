@@ -60,7 +60,7 @@ func (s *Store) DeleteAlbum(ctx context.Context, albumID string, removeFile func
 	if err != nil {
 		return DeleteResult{}, fmt.Errorf("list album tracks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	trackIDs := []string{}
 	result := DeleteResult{}

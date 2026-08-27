@@ -32,7 +32,10 @@ vi.mock("@tanstack/react-router", async () => {
 			to: string;
 			params?: Record<string, string>;
 		}) => (
-			<a href={params ? to.replace("$stationId", params.stationId) : to} {...props}>
+			<a
+				href={params ? to.replace("$stationId", params.stationId) : to}
+				{...props}
+			>
 				{children}
 			</a>
 		),

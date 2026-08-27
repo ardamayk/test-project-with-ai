@@ -1,4 +1,4 @@
-import type { RadioStation, RadioStationPatch } from "@repo/api-client";
+import type { RadioStationPatch } from "@repo/api-client";
 import { usePlayback } from "@repo/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -30,7 +30,11 @@ function RadioStationDetailPage() {
 	return <RadioStationDetailContent stationId={stationId} />;
 }
 
-export function RadioStationDetailContent({ stationId }: { stationId: string }) {
+export function RadioStationDetailContent({
+	stationId,
+}: {
+	stationId: string;
+}) {
 	const queryClient = useQueryClient();
 	const { playRadioStation, currentRadioStation } = usePlayback();
 	const station = useQuery({
@@ -82,7 +86,9 @@ export function RadioStationDetailContent({ stationId }: { stationId: string }) 
 	});
 
 	if (station.isLoading) {
-		return <div className="p-6 text-foreground text-sm">Loading station...</div>;
+		return (
+			<div className="p-6 text-foreground text-sm">Loading station...</div>
+		);
 	}
 
 	if (station.isError || !station.data) {
@@ -106,10 +112,7 @@ export function RadioStationDetailContent({ stationId }: { stationId: string }) 
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto p-6">
-			<Link
-				to="/radio"
-				className="text-foreground text-sm hover:text-heading"
-			>
+			<Link to="/radio" className="text-foreground text-sm hover:text-heading">
 				Back to radio
 			</Link>
 
@@ -190,7 +193,9 @@ export function RadioStationDetailContent({ stationId }: { stationId: string }) 
 					id="radio-detail-country"
 					label="Country"
 					value={form.country}
-					onChange={(country) => setForm((current) => ({ ...current, country }))}
+					onChange={(country) =>
+						setForm((current) => ({ ...current, country }))
+					}
 				/>
 				<MetadataField
 					id="radio-detail-language"

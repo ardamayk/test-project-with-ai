@@ -53,3 +53,5 @@ jobs:
         run: pnpm --filter web exec playwright install chromium --with-deps
       - name: E2E tests
         run: pnpm test:e2e
+      - name: HLS browser integration
+        run: pnpm test:e2e:hls

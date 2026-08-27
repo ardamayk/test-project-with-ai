@@ -14,12 +14,17 @@ import (
 
 func setupLibraryDB(t *testing.T) *sql.DB {
 	t.Helper()
-	return testutil.OpenMigratedDB(t)
+	db := testutil.OpenMigratedDB(t)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+	return db
 }
 
 func TestAlbumArtistGroupsFeaturedTrackUnderAlbumArtist(t *testing.T) {
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
@@ -77,7 +82,6 @@ func TestDeleteTrackRemovesDatabaseRowsAndFile(t *testing.T) {
 	}
 
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
@@ -127,7 +131,6 @@ func TestDeleteAlbumRemovesTracksAndFiles(t *testing.T) {
 	}
 
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
@@ -179,7 +182,6 @@ func TestDeleteTrackRemovesQueueAndEmptyAlbum(t *testing.T) {
 	}
 
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{
@@ -241,7 +243,6 @@ func TestDeleteTrackRemovesEmptyUserPlaylist(t *testing.T) {
 	}
 
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{

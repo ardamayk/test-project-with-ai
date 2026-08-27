@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -95,7 +96,9 @@ func (s *Store) ListStations(ctx context.Context, userID string) (StationList, e
 	if err != nil {
 		return StationList{}, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	items := []Station{}
 	for rows.Next() {
@@ -125,11 +128,16 @@ func (s *Store) GetStation(ctx context.Context, userID, stationID string) (Stati
 func (s *Store) CreateStation(ctx context.Context, userID string, input StationCreate) (Station, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.StreamURL = strings.TrimSpace(input.StreamURL)
+	input.HomepageURL = strings.TrimSpace(input.HomepageURL)
+	input.FaviconURL = strings.TrimSpace(input.FaviconURL)
 	if input.Name == "" {
 		return Station{}, fmt.Errorf("station name is required")
 	}
 	if input.StreamURL == "" {
 		return Station{}, fmt.Errorf("streamUrl is required")
+	}
+	if err := validateStationURLs(input.StreamURL, input.HomepageURL, input.FaviconURL); err != nil {
+		return Station{}, err
 	}
 	if input.Source == "" {
 		input.Source = ManualSource
@@ -149,8 +157,8 @@ func (s *Store) CreateStation(ctx context.Context, userID string, input StationC
 			source, external_id, is_favorite, position
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, userID, input.Name, input.StreamURL, strings.TrimSpace(input.HomepageURL),
-		strings.TrimSpace(input.FaviconURL), strings.TrimSpace(input.Country), strings.TrimSpace(input.Language),
+		id, userID, input.Name, input.StreamURL, input.HomepageURL,
+		input.FaviconURL, strings.TrimSpace(input.Country), strings.TrimSpace(input.Language),
 		tags, strings.TrimSpace(input.Codec), input.Bitrate, strings.TrimSpace(input.Source),
 		strings.TrimSpace(input.ExternalID), boolInt(input.IsFavorite), position,
 	)
@@ -236,6 +244,9 @@ func (s *Store) UpdateStation(ctx context.Context, userID, stationID string, pat
 	if current.StreamURL == "" {
 		return Station{}, fmt.Errorf("streamUrl is required")
 	}
+	if validationErr := validateStationURLs(current.StreamURL, current.HomepageURL, current.FaviconURL); validationErr != nil {
+		return Station{}, validationErr
+	}
 	tags, err := encodeTags(current.Tags)
 	if err != nil {
 		return Station{}, err
@@ -253,6 +264,30 @@ func (s *Store) UpdateStation(ctx context.Context, userID, stationID string, pat
 		return Station{}, err
 	}
 	return s.GetStation(ctx, userID, stationID)
+}
+
+func validateStationURLs(streamURL, homepageURL, faviconURL string) error {
+	if err := ValidateStreamURL(streamURL); err != nil {
+		return fmt.Errorf("invalid streamUrl: %w", err)
+	}
+	if err := validateOptionalHTTPURL("homepageUrl", homepageURL); err != nil {
+		return err
+	}
+	return validateOptionalHTTPURL("faviconUrl", faviconURL)
+}
+
+func validateOptionalHTTPURL(field, rawURL string) error {
+	if rawURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", field, err)
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return fmt.Errorf("invalid %s: must be an absolute HTTP(S) URI", field)
+	}
+	return nil
 }
 
 func (s *Store) DeleteStation(ctx context.Context, userID, stationID string) error {

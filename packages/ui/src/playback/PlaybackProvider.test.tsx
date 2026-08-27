@@ -106,6 +106,9 @@ function Harness() {
 	const playback = usePlayback();
 	return (
 		<div>
+			<span data-testid="queue">
+				{playback.queue.map((item) => item.track.id).join(",")}
+			</span>
 			<span data-testid="track">{playback.currentTrack?.title ?? ""}</span>
 			<span data-testid="radio">
 				{playback.currentRadioStation?.name ?? ""}
@@ -337,6 +340,24 @@ describe("PlaybackProvider", () => {
 		expect(api.getQueue).toHaveBeenCalledTimes(2);
 		expect(screen.getByTestId("queue-conflict").textContent).toContain(
 			"changed",
+		);
+	});
+
+	it("keeps the latest server Queue after an ambiguous reorder conflict", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: [queueItems[1]], revision: "2" });
+		vi.mocked(api.reorderQueue).mockRejectedValueOnce(queueConflict("2"));
+		renderPlayback(api);
+
+		await act(async () =>
+			screen.getByRole("button", { name: "Reorder" }).click(),
+		);
+
+		expect(screen.getByTestId("queue").textContent).toBe("track-2");
+		expect(screen.getByTestId("queue-conflict").textContent).toContain(
+			"Review order",
 		);
 	});
 

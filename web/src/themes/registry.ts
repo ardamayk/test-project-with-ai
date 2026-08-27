@@ -1,12 +1,13 @@
 import type { ThemePreferences } from "@repo/api-client";
+import type { HexColor } from "./palette-utils";
 
 export type ThemePalette = readonly [
-	string,
-	string,
-	string,
-	string,
-	string,
-	string,
+	HexColor,
+	HexColor,
+	HexColor,
+	HexColor,
+	HexColor,
+	HexColor,
 ];
 
 export type ThemePresetId = ThemePreferences["preset"];

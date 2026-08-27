@@ -26,14 +26,14 @@ func WalkMusicPaths(paths []string) ([]ScannedFile, error) {
 		}
 		if !info.IsDir() {
 			if format, ok := isSupportedFile(info.Name()); ok {
-				abs, err := filepath.Abs(root)
-				if err != nil {
+				abs, absolutePathErr := filepath.Abs(root)
+				if absolutePathErr != nil {
 					abs = root
 				}
 				if _, dup := seen[abs]; !dup {
-					meta, err := readFileMetadata(abs, format, info)
-					if err != nil {
-						return nil, err
+					meta, metadataErr := readFileMetadata(abs, format, info)
+					if metadataErr != nil {
+						return nil, metadataErr
 					}
 					files = append(files, ScannedFile{Metadata: meta})
 					seen[abs] = struct{}{}
@@ -53,20 +53,20 @@ func WalkMusicPaths(paths []string) ([]ScannedFile, error) {
 			if !ok {
 				return nil
 			}
-			abs, err := filepath.Abs(path)
-			if err != nil {
+			abs, absolutePathErr := filepath.Abs(path)
+			if absolutePathErr != nil {
 				abs = path
 			}
 			if _, dup := seen[abs]; dup {
 				return nil
 			}
-			info, err := d.Info()
-			if err != nil {
-				return err
+			info, infoErr := d.Info()
+			if infoErr != nil {
+				return infoErr
 			}
-			meta, err := readFileMetadata(abs, format, info)
-			if err != nil {
-				return err
+			meta, metadataErr := readFileMetadata(abs, format, info)
+			if metadataErr != nil {
+				return metadataErr
 			}
 			files = append(files, ScannedFile{Metadata: meta})
 			seen[abs] = struct{}{}

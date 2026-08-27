@@ -1,6 +1,6 @@
-import { useLayout, ThemeProvider } from '@repo/ui'
+import { ThemeProvider, useLayout } from "@repo/ui";
 
 export function ThemeSync() {
-  const { preferences } = useLayout()
-  return <ThemeProvider theme={preferences.theme} />
+	const { preferences } = useLayout();
+	return <ThemeProvider theme={preferences.theme} />;
 }

@@ -240,6 +240,20 @@ describe("PlayerBar", () => {
 		);
 	});
 
+	it("toggles the active Playback Session from the primary control", async () => {
+		renderPlayerBar();
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+
+		expect(screen.getByRole("button", { name: "Play" })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "Play" }));
+		expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+	});
+
 	it("renders bitrate and sample rate quality details with track actions menu", async () => {
 		renderPlayerBar();
 		await openActionsMenu();

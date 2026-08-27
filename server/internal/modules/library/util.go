@@ -2,7 +2,6 @@ package library
 
 import (
 	"strings"
-	"unicode"
 )
 
 var supportedExtensions = map[string]string{
@@ -46,8 +45,4 @@ func sanitizeName(name string, fallback string) string {
 		return fallback
 	}
 	return name
-}
-
-func isLetterOrDigit(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }

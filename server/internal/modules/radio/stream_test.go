@@ -2,6 +2,7 @@ package radio
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -13,6 +14,32 @@ import (
 	"testing"
 	"time"
 )
+
+func TestStreamProxyErrorsUseAPIErrorContract(t *testing.T) {
+	proxy := &StreamProxy{client: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected upstream request")
+		return nil, nil
+	})}}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/radio/stations/station-1/stream?url=https%3A%2F%2Fpublic.example%2Farbitrary", nil)
+	recorder := httptest.NewRecorder()
+
+	proxy.Stream(recorder, request, Station{ID: "station-1", StreamURL: "https://radio.example/index.m3u8"})
+
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", contentType)
+	}
+	var response struct {
+		Error   string `json:"error"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v; body = %q", err, recorder.Body.String())
+	}
+	if response.Error != "bad_request" || response.Code != "bad_request" || response.Message != "invalid HLS resource token" {
+		t.Fatalf("response = %+v", response)
+	}
+}
 
 func TestValidateStreamURLBlocksLocalTargets(t *testing.T) {
 	for _, rawURL := range []string{

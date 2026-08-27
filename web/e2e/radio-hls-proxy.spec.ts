@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+type BrowserPlaybackEngineModule = typeof import("../src/playback/BrowserPlaybackEngine");
+
 test("browser HLS playback completes nested requests through Music Server proxy", async ({
 	page,
 }) => {
@@ -24,9 +26,12 @@ test("browser HLS playback completes nested requests through Music Server proxy"
 
 	await page.goto("/e2e/fixtures/hls.html");
 	await page.evaluate(async (playbackUrl) => {
-		const { BrowserPlaybackEngine } = await import(
-			"/src/playback/BrowserPlaybackEngine.ts"
+		const browserPlaybackEngineModulePath: string =
+			"/src/playback/BrowserPlaybackEngine.ts";
+		const browserPlaybackEngineModule: BrowserPlaybackEngineModule = await import(
+			browserPlaybackEngineModulePath,
 		);
+		const { BrowserPlaybackEngine } = browserPlaybackEngineModule;
 		const engine = new BrowserPlaybackEngine();
 		Object.assign(window, { hlsFixtureEngine: engine });
 		void engine

@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ardam/navidrome-replacement/server/internal/api/respond"
 )
 
 const nowPlayingStaleAfter = 60 * time.Second
@@ -260,21 +262,21 @@ func newSecureStreamTransportWithResolver(lookupIPAddresses func(context.Context
 
 func (p *StreamProxy) Stream(w http.ResponseWriter, r *http.Request, station Station) {
 	if _, hasCallerSuppliedURL := r.URL.Query()["url"]; hasCallerSuppliedURL {
-		http.Error(w, "invalid HLS resource token", http.StatusBadRequest)
+		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid HLS resource token")
 		return
 	}
 	streamURL, err := p.resolveStreamURL(r, station)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respond.Error(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	if err := ValidateStreamURL(streamURL); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if validationErr := ValidateStreamURL(streamURL); validationErr != nil {
+		respond.Error(w, http.StatusBadRequest, "bad_request", validationErr.Error())
 		return
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, streamURL, nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respond.Error(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	req.Header.Set("Icy-MetaData", "1")
@@ -283,12 +285,14 @@ func (p *StreamProxy) Stream(w http.ResponseWriter, r *http.Request, station Sta
 	}
 	res, err := p.client.Do(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		respond.Error(w, http.StatusBadGateway, "bad_gateway", err.Error())
 		return
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		http.Error(w, fmt.Sprintf("stream status %d", res.StatusCode), http.StatusBadGateway)
+		respond.Error(w, http.StatusBadGateway, "bad_gateway", fmt.Sprintf("stream status %d", res.StatusCode))
 		return
 	}
 	if isHLSPlaylist(res) {
@@ -309,11 +313,11 @@ func (p *StreamProxy) resolveStreamURL(r *http.Request, station Station) (string
 func (p *StreamProxy) writeHLSPlaylist(w http.ResponseWriter, response *http.Response, proxyPath, stationID string) {
 	playlist, err := io.ReadAll(io.LimitReader(response.Body, maxHLSPlaylistBytes+1))
 	if err != nil {
-		http.Error(w, "failed to read HLS playlist", http.StatusBadGateway)
+		respond.Error(w, http.StatusBadGateway, "bad_gateway", "failed to read HLS playlist")
 		return
 	}
 	if len(playlist) > maxHLSPlaylistBytes {
-		http.Error(w, "HLS playlist exceeds size limit", http.StatusBadGateway)
+		respond.Error(w, http.StatusBadGateway, "bad_gateway", "HLS playlist exceeds size limit")
 		return
 	}
 	rewritten, err := p.rewriteHLSPlaylist(playlist, response.Request.URL, proxyPath, stationID)
@@ -322,7 +326,11 @@ func (p *StreamProxy) writeHLSPlaylist(w http.ResponseWriter, response *http.Res
 		if errors.Is(err, errUnsupportedHLSDRM) {
 			status = http.StatusUnsupportedMediaType
 		}
-		http.Error(w, err.Error(), status)
+		code := "bad_gateway"
+		if status == http.StatusUnsupportedMediaType {
+			code = "unsupported_media_type"
+		}
+		respond.Error(w, status, code, err.Error())
 		return
 	}
 	copyStreamHeaders(w, response.Header)
@@ -339,7 +347,9 @@ func (p *StreamProxy) writeAudioStream(w http.ResponseWriter, r *http.Request, r
 			p.cache.Set(station.ID, now)
 			_ = p.store.UpdateNowPlaying(r.Context(), station.ID, now)
 		})
-		defer reader.Close()
+		defer func() {
+			_ = reader.Close()
+		}()
 	}
 	_, _ = io.Copy(w, reader)
 }

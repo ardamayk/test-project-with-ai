@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
 
 func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
@@ -19,8 +18,7 @@ func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
 		t.Skip("sample flac not present")
 	}
 
-	db := testutil.OpenMigratedDB(t)
-	defer db.Close()
+	db := setupLibraryDB(t)
 
 	store := library.NewStore(db)
 	files, err := library.WalkMusicPaths([]string{musicDir})
@@ -59,8 +57,8 @@ func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
 		t.Fatal(err)
 	}
 	var genres []string
-	if err := json.Unmarshal([]byte(genresJSON), &genres); err != nil {
-		t.Fatal(err)
+	if unmarshalErr := json.Unmarshal([]byte(genresJSON), &genres); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
 	}
 	if len(genres) != 1 || genres[0] != meta.Genre {
 		t.Fatalf("album genres = %#v, want [%q]", genres, meta.Genre)
@@ -83,7 +81,6 @@ func TestScanStoresTrackAndAlbumGenresFromFlac(t *testing.T) {
 
 func TestRescanWithMissingGenrePreservesExistingTrackAndAlbumGenre(t *testing.T) {
 	db := setupLibraryDB(t)
-	defer db.Close()
 
 	store := library.NewStore(db)
 	meta := library.FileMetadata{

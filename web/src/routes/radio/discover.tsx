@@ -1426,7 +1426,7 @@ function useVisibilityRef(
 	stationUuid: string,
 	onVisibilityChange: (stationUuid: string, isVisible: boolean) => void,
 ) {
-	const ref = useRef<HTMLElement | null>(null);
+	const ref = useRef<HTMLButtonElement | null>(null);
 
 	useEffect(() => {
 		const node = ref.current;

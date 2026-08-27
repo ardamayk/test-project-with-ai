@@ -27,7 +27,10 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	goose.SetDialect("sqlite")
+	if err := goose.SetDialect("sqlite"); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("set migration dialect: %w", err)
+	}
 	if err := goose.Up(sqlDB, migrationsDir); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)

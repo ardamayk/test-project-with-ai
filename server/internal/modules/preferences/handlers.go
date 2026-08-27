@@ -29,7 +29,7 @@ func (m *Module) handlePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var patch UserPreferences
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+	if decodeErr := json.NewDecoder(r.Body).Decode(&patch); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
