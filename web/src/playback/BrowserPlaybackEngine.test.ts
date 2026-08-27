@@ -40,6 +40,19 @@ playbackEngineContract("browser", () => {
 });
 
 describe("BrowserPlaybackEngine", () => {
+	it("publishes Previous and Next through the browser queue fallback seam", () => {
+		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
+		const listener = vi.fn();
+		engine.subscribeNavigation(listener);
+
+		engine.previous();
+		engine.next();
+
+		expect(listener).toHaveBeenNthCalledWith(1, "previous");
+		expect(listener).toHaveBeenNthCalledWith(2, "next");
+		engine.destroy();
+	});
+
 	it("uses hls.js for proxied HLS Radio Stations", async () => {
 		const hls = {
 			attachMedia: vi.fn(),
@@ -90,7 +103,7 @@ describe("BrowserPlaybackEngine", () => {
 					streamUrl: "https://example.com/live",
 					tags: [],
 				},
-				playbackUrl: "/api/v1/radio/catalog/catalog-1/stream",
+				playbackUrl: "/api/v1/radio/preview/catalog-1/stream",
 				sourceUrl: "https://example.com/live",
 			}),
 		).rejects.toThrow("codec unavailable");

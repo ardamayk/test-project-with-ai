@@ -1,5 +1,6 @@
 import type {
 	PlaybackEngine,
+	PlaybackNavigationListener,
 	PlaybackSessionListener,
 	PlaybackSessionState,
 	PlaybackSource,
@@ -51,6 +52,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	private readonly media: BrowserPlaybackMedia;
 	private readonly hlsFactory: BrowserHlsFactory;
 	private readonly listeners = new Set<PlaybackSessionListener>();
+	private readonly navigationListeners = new Set<PlaybackNavigationListener>();
 	private state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
 	private hls: BrowserHls | null = null;
 
@@ -68,6 +70,19 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	subscribe(listener: PlaybackSessionListener) {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
+	}
+
+	subscribeNavigation(listener: PlaybackNavigationListener) {
+		this.navigationListeners.add(listener);
+		return () => this.navigationListeners.delete(listener);
+	}
+
+	previous() {
+		this.publishNavigation("previous");
+	}
+
+	next() {
+		this.publishNavigation("next");
 	}
 
 	async play(source?: PlaybackSource) {
@@ -160,6 +175,11 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.removeMediaListeners();
 		this.media.removeAttribute("src");
 		this.listeners.clear();
+		this.navigationListeners.clear();
+	}
+
+	private publishNavigation(direction: "previous" | "next") {
+		for (const listener of this.navigationListeners) listener(direction);
 	}
 
 	private readonly handleTimeUpdate = () => {

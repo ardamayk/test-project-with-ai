@@ -1,6 +1,7 @@
 mod connection;
 mod media_proxy;
 mod playback;
+mod playback_app_actions;
 mod playback_lifecycle;
 mod playback_navigation;
 #[cfg(test)]
@@ -16,7 +17,10 @@ use connection::{
 };
 use media_proxy::MediaProxy;
 use playback::{PlaybackCommandError, PlaybackController, PlaybackSessionState, PlaybackStatus};
-use playback_lifecycle::{PlaybackLifecycle, PlaybackSessionSnapshot, PlaybackSnapshotStore};
+use playback_app_actions::{
+    DesktopPlaybackAction, DesktopPlaybackShell, dispatch_desktop_playback_action,
+};
+use playback_lifecycle::{PlaybackLifecycle, PlaybackSnapshotStore};
 use playback_tray::{
     PlaybackTray, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
 };
@@ -162,7 +166,7 @@ fn desktop_playback_quit(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), PlaybackCommandError> {
-    quit_playback(&app, &state)
+    dispatch_application_action(&app, &state, DesktopPlaybackAction::Quit)
 }
 
 #[tauri::command]
@@ -367,58 +371,34 @@ fn state_error() -> ConnectionError {
     )
 }
 
-fn quit_playback(app: &tauri::AppHandle, state: &AppState) -> Result<(), PlaybackCommandError> {
-    let playback_state = state.playback.state()?;
-    let snapshot = PlaybackSessionSnapshot::from_serializable_state(&playback_state)
-        .map_err(|error| PlaybackCommandError::new(error.to_string()))?;
-    state
-        .playback_lifecycle
-        .lock()
-        .map_err(|_| PlaybackCommandError::new("Playback lifecycle state is unavailable."))?
-        .explicit_quit(&state.playback_snapshot_store, &snapshot)
-        .map_err(|error| PlaybackCommandError::new(error.to_string()))?;
-    state.playback.shutdown();
-    app.exit(0);
-    Ok(())
-}
-
 fn handle_tray_menu_event(app: &tauri::AppHandle, id: &str) {
-    let result = match id {
-        TRAY_OPEN_ID => open_main_window(app),
-        TRAY_TOGGLE_ID => app
-            .state::<AppState>()
-            .playback
-            .toggle_play()
-            .map(|_| ())
-            .map_err(|error| error.message),
-        TRAY_PREVIOUS_ID => app
-            .state::<AppState>()
-            .playback
-            .previous()
-            .map(|_| ())
-            .map_err(|error| error.message),
-        TRAY_NEXT_ID => app
-            .state::<AppState>()
-            .playback
-            .next()
-            .map(|_| ())
-            .map_err(|error| error.message),
-        TRAY_QUIT_ID => quit_playback(app, &app.state::<AppState>()).map_err(|error| error.message),
-        _ => Ok(()),
+    let action = match id {
+        TRAY_OPEN_ID => DesktopPlaybackAction::OpenMainWindow,
+        TRAY_TOGGLE_ID => DesktopPlaybackAction::TogglePlay,
+        TRAY_PREVIOUS_ID => DesktopPlaybackAction::Previous,
+        TRAY_NEXT_ID => DesktopPlaybackAction::Next,
+        TRAY_QUIT_ID => DesktopPlaybackAction::Quit,
+        _ => return,
     };
+    let state = app.state::<AppState>();
+    let result = dispatch_application_action(app, &state, action).map_err(|error| error.message);
     if let Err(error) = result {
         eprintln!("Desktop playback tray action '{id}' failed: {error}");
     }
 }
 
-fn open_main_window(app: &tauri::AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Desktop main window is unavailable.".to_owned())?;
-    window
-        .show()
-        .and_then(|_| window.set_focus())
-        .map_err(|error| error.to_string())
+fn dispatch_application_action(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    action: DesktopPlaybackAction,
+) -> Result<(), PlaybackCommandError> {
+    dispatch_desktop_playback_action(
+        action,
+        &state.playback,
+        &state.playback_lifecycle,
+        &state.playback_snapshot_store,
+        &TauriDesktopPlaybackShell { app },
+    )
 }
 
 fn handle_main_window_close(window: &tauri::Window, event: &WindowEvent) {
@@ -429,15 +409,42 @@ fn handle_main_window_close(window: &tauri::Window, event: &WindowEvent) {
         return;
     };
     api.prevent_close();
-    if let Err(error) = window.hide() {
-        eprintln!("Desktop main window could not be hidden: {error}");
-        return;
-    }
     let state = window.state::<AppState>();
-    if let Ok(mut lifecycle) = state.playback_lifecycle.lock() {
-        lifecycle.close_main_window();
-    } else {
-        eprintln!("Playback lifecycle state is unavailable after main window close.");
+    if let Err(error) = dispatch_application_action(
+        window.app_handle(),
+        &state,
+        DesktopPlaybackAction::CloseMainWindow,
+    ) {
+        eprintln!("Desktop main window close action failed: {}", error.message);
+    }
+}
+
+struct TauriDesktopPlaybackShell<'a> {
+    app: &'a tauri::AppHandle,
+}
+
+impl DesktopPlaybackShell for TauriDesktopPlaybackShell<'_> {
+    fn show_main_window(&self) -> Result<(), String> {
+        let window = self
+            .app
+            .get_webview_window("main")
+            .ok_or_else(|| "Desktop main window is unavailable.".to_owned())?;
+        window
+            .show()
+            .and_then(|_| window.set_focus())
+            .map_err(|error| error.to_string())
+    }
+
+    fn hide_main_window(&self) -> Result<(), String> {
+        self.app
+            .get_webview_window("main")
+            .ok_or_else(|| "Desktop main window is unavailable.".to_owned())?
+            .hide()
+            .map_err(|error| error.to_string())
+    }
+
+    fn exit(&self) {
+        self.app.exit(0);
     }
 }
 

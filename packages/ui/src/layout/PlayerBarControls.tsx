@@ -26,14 +26,13 @@ type PlaybackControlsProps = {
 	hasCurrentTrack: boolean;
 	currentTime: number;
 	effectiveDuration: number;
-	currentIndex: number;
-	queueLength: number;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	onTogglePlay: () => void;
 	onToggleShuffle: () => void;
 	onCycleRepeatMode: () => void;
-	onPlayQueueIndex: (index: number) => void;
+	onPrevious: () => void;
+	onNext: () => void;
 	onSeek: (seconds: number) => void;
 };
 
@@ -53,14 +52,13 @@ function TransportControls({
 	isPlaying,
 	hasPlayableSource,
 	hasCurrentTrack,
-	currentIndex,
-	queueLength,
 	shuffleEnabled,
 	repeatMode,
 	onTogglePlay,
 	onToggleShuffle,
 	onCycleRepeatMode,
-	onPlayQueueIndex,
+	onPrevious,
+	onNext,
 }: PlaybackControlsProps) {
 	return (
 		<div className="flex items-center gap-6">
@@ -71,9 +69,8 @@ function TransportControls({
 			/>
 			<QueueNavigationButton
 				label="Previous"
-				targetIndex={currentIndex - 1}
-				disabled={currentIndex <= 0}
-				onPlay={onPlayQueueIndex}
+				disabled={!hasCurrentTrack}
+				onPlay={onPrevious}
 			/>
 			<PrimaryPlaybackButton
 				isPlaying={isPlaying}
@@ -82,9 +79,8 @@ function TransportControls({
 			/>
 			<QueueNavigationButton
 				label="Next"
-				targetIndex={currentIndex + 1}
-				disabled={currentIndex < 0 || currentIndex >= queueLength - 1}
-				onPlay={onPlayQueueIndex}
+				disabled={!hasCurrentTrack}
+				onPlay={onNext}
 			/>
 			<RepeatButton
 				repeatMode={repeatMode}
@@ -97,14 +93,12 @@ function TransportControls({
 
 function QueueNavigationButton({
 	label,
-	targetIndex,
 	disabled,
 	onPlay,
 }: {
 	label: "Previous" | "Next";
-	targetIndex: number;
 	disabled: boolean;
-	onPlay: (index: number) => void;
+	onPlay: () => void;
 }) {
 	const Icon = label === "Previous" ? SkipBack : SkipForward;
 	return (
@@ -112,7 +106,7 @@ function QueueNavigationButton({
 			type="button"
 			className={CONTROL_BUTTON_CLASS}
 			onClick={() => {
-				if (!disabled) onPlay(targetIndex);
+				if (!disabled) onPlay();
 			}}
 			disabled={disabled}
 			aria-label={label}

@@ -147,7 +147,10 @@ export function PlayerBar({
 		volume,
 		shuffleEnabled,
 		repeatMode,
+		playbackError,
 		togglePlay,
+		navigatePrevious,
+		navigateNext,
 		toggleShuffle,
 		cycleRepeatMode,
 		seek,
@@ -158,8 +161,6 @@ export function PlayerBar({
 		setReplayGainMode,
 		setEqualizerPreset,
 		setEqualizerGain,
-		playQueueIndex,
-		queue,
 		getAlbumCoverUrl,
 	} = usePlayback();
 	const {
@@ -253,9 +254,6 @@ export function PlayerBar({
 		};
 	}, []);
 
-	const currentIndex = queue.findIndex(
-		(item) => item.track.id === currentTrack?.id,
-	);
 	const isRadioPlaying = Boolean(currentRadioStation);
 	const hasPlayableSource = Boolean(currentTrack || currentRadioStation);
 	const radioTitle =
@@ -439,7 +437,15 @@ export function PlayerBar({
 	};
 
 	return (
-		<footer className="h-[72px] border-[var(--shell-subtle-border)] border-t bg-player px-6 pt-px text-player-foreground shadow-[0px_-10px_40px_0px_rgba(0,0,0,0.3)] backdrop-blur-[12px]">
+		<footer className="relative h-[72px] border-[var(--shell-subtle-border)] border-t bg-player px-6 pt-px text-player-foreground shadow-[0px_-10px_40px_0px_rgba(0,0,0,0.3)] backdrop-blur-[12px]">
+			{playbackError ? (
+				<p
+					role="alert"
+					className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2 rounded-md border border-destructive/40 bg-popover px-3 py-2 text-destructive text-sm shadow-lg"
+				>
+					{playbackError.message}
+				</p>
+			) : null}
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">
 				<section
 					aria-label="Now playing"
@@ -547,14 +553,13 @@ export function PlayerBar({
 					hasCurrentTrack={Boolean(currentTrack)}
 					currentTime={currentTime}
 					effectiveDuration={effectiveDuration}
-					currentIndex={currentIndex}
-					queueLength={queue.length}
 					shuffleEnabled={shuffleEnabled}
 					repeatMode={repeatMode}
 					onTogglePlay={togglePlay}
 					onToggleShuffle={toggleShuffle}
 					onCycleRepeatMode={cycleRepeatMode}
-					onPlayQueueIndex={(index) => void playQueueIndex(index)}
+					onPrevious={navigatePrevious}
+					onNext={navigateNext}
 					onSeek={seek}
 				/>
 

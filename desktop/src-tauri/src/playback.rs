@@ -1247,7 +1247,7 @@ fn recover_after_player_exit(
         Err(failure) => {
             report_native_playback_error(&format!(
                 "recovery failed [{}]: {}",
-                failure.code, failure.message
+                failure.code, failure.diagnostic
             ));
             if let Err(error) =
                 publish_lifecycle_failure(state, listener, failure.code, failure.message)
@@ -1265,14 +1265,45 @@ fn recover_after_player_exit(
 struct RecoveryFailure {
     code: &'static str,
     message: String,
+    diagnostic: String,
 }
 
 impl RecoveryFailure {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    fn internal(code: &'static str, diagnostic: impl Into<String>) -> Self {
         Self {
             code,
-            message: message.into(),
+            message: recovery_public_message(code).to_owned(),
+            diagnostic: diagnostic.into(),
         }
+    }
+
+    fn actionable(code: &'static str, message: String) -> Self {
+        Self {
+            code,
+            diagnostic: message.clone(),
+            message,
+        }
+    }
+}
+
+fn recovery_public_message(code: &str) -> &'static str {
+    match code {
+        "mpv-recovery-state-unavailable" => {
+            "Native playback could not recover because Playback Session state is unavailable. Restart the Desktop Client."
+        }
+        "mpv-recovery-snapshot-failed" => {
+            "Native playback could not preserve the interrupted session. Quit and reopen the Desktop Client to try again."
+        }
+        "mpv-recovery-lifecycle-unavailable" => {
+            "Native playback could not recover because lifecycle state is unavailable. Restart the Desktop Client."
+        }
+        "mpv-restart-unavailable" => {
+            "Native playback cannot restart in this session. Restart the Desktop Client."
+        }
+        "mpv-recovery-transition-invalid" => {
+            "Native playback could not complete recovery. Quit and reopen the Desktop Client to try again."
+        }
+        _ => "Native playback could not restart. Quit and reopen the Desktop Client to try again.",
     }
 }
 
@@ -1287,7 +1318,7 @@ fn try_recover_after_player_exit(
     let transition = lifecycle
         .lock()
         .map_err(|_| {
-            RecoveryFailure::new(
+            RecoveryFailure::internal(
                 "mpv-recovery-lifecycle-unavailable",
                 "Native playback could not recover because lifecycle state is unavailable. Restart the Desktop Client.",
             )
@@ -1300,13 +1331,13 @@ fn interrupted_session_snapshot(
     state: &Arc<Mutex<PlaybackSessionState>>,
 ) -> Result<(PlaybackSessionSnapshot, bool), RecoveryFailure> {
     let current = state.lock().map_err(|_| {
-        RecoveryFailure::new(
+        RecoveryFailure::internal(
             "mpv-recovery-state-unavailable",
             "Native playback could not recover because its Playback Session state is unavailable. Restart the Desktop Client.",
         )
     })?.clone();
     let snapshot = PlaybackSessionSnapshot::from_serializable_state(&current).map_err(|error| {
-        RecoveryFailure::new(
+        RecoveryFailure::internal(
             "mpv-recovery-snapshot-failed",
             format!("Native playback could not snapshot the interrupted session: {error}"),
         )
@@ -1327,7 +1358,7 @@ fn apply_recovery_transition(
             should_resume,
         } => {
             let starter = starter.ok_or_else(|| {
-                RecoveryFailure::new(
+                RecoveryFailure::internal(
                     "mpv-restart-unavailable",
                     "Native playback cannot restart mpv in this session. Restart the Desktop Client.",
                 )
@@ -1335,9 +1366,9 @@ fn apply_recovery_transition(
             restart_player(process, state, starter, listener, &snapshot, should_resume).map(Some)
         }
         PlaybackLifecycleAction::SurfaceActionableError(error) => {
-            Err(RecoveryFailure::new(error.code, error.message))
+            Err(RecoveryFailure::actionable(error.code, error.message))
         }
-        invalid_action => Err(RecoveryFailure::new(
+        invalid_action => Err(RecoveryFailure::internal(
             "mpv-recovery-transition-invalid",
             format!(
                 "Native playback recovery produced an invalid lifecycle action: {invalid_action:?}"
@@ -1355,13 +1386,13 @@ fn restart_player(
     should_resume: bool,
 ) -> Result<Receiver<MpvEvent>, RecoveryFailure> {
     let (next_process, next_events) =
-        starter().map_err(|message| RecoveryFailure::new("mpv-restart-failed", message))?;
+        starter().map_err(|message| RecoveryFailure::internal("mpv-restart-failed", message))?;
     if let Err(message) = apply_snapshot_to_process(next_process.as_ref(), snapshot, should_resume)
     {
-        return Err(RecoveryFailure::new("mpv-restart-failed", message));
+        return Err(RecoveryFailure::internal("mpv-restart-failed", message));
     }
     *process.lock().map_err(|_| {
-        RecoveryFailure::new(
+        RecoveryFailure::internal(
             "mpv-restart-failed",
             "Native mpv process state is unavailable.",
         )
@@ -1372,7 +1403,7 @@ fn restart_player(
             state.status = PlaybackStatus::Playing;
         }
     })
-    .map_err(|error| RecoveryFailure::new("mpv-recovery-state-unavailable", error.message))?;
+    .map_err(|error| RecoveryFailure::internal("mpv-recovery-state-unavailable", error.message))?;
     listener(next);
     Ok(next_events)
 }
@@ -1716,6 +1747,9 @@ fn effective_replay_gain_mode(
 #[cfg(test)]
 mod tests {
     use super::{MpvEvent, MpvProcessAdapter, PlaybackController, PlaybackStatus, RealMpvProcess};
+    use crate::playback_app_actions::{
+        DesktopPlaybackAction, DesktopPlaybackShell, dispatch_desktop_playback_action,
+    };
     use crate::playback_lifecycle::{
         PlaybackLifecycle, PlaybackSessionSnapshot, PlaybackSnapshotStore,
     };
@@ -1742,6 +1776,27 @@ mod tests {
         loaded_url: Arc<Mutex<Option<String>>>,
         is_shutdown: Arc<AtomicBool>,
         load_error: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct TestDesktopPlaybackShell {
+        is_hidden: AtomicBool,
+        has_exited: AtomicBool,
+    }
+
+    impl DesktopPlaybackShell for TestDesktopPlaybackShell {
+        fn show_main_window(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn hide_main_window(&self) -> Result<(), String> {
+            self.is_hidden.store(true, Ordering::Release);
+            Ok(())
+        }
+
+        fn exit(&self) {
+            self.has_exited.store(true, Ordering::Release);
+        }
     }
 
     struct ObservedPipeWirePath {
@@ -2273,6 +2328,44 @@ mod tests {
     }
 
     #[test]
+    fn restart_internal_details_are_not_published_in_the_playback_session() {
+        let (event_sender, events) = std::sync::mpsc::channel();
+        let lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
+        let controller = PlaybackController::start_recoverable(
+            Box::new(RestorableMpvProcess {
+                state: Arc::new(Mutex::new(RestoredProcessState::default())),
+            }),
+            events,
+            lifecycle,
+            || Err("private IPC /tmp/secret.sock rejected token abc123".to_owned()),
+            |_| {},
+        );
+        controller
+            .play(Some(json!({
+                "type": "track",
+                "track": { "id": "track-1", "title": "Track 1" },
+                "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+            })))
+            .expect("play Track");
+
+        event_sender
+            .send(MpvEvent::ExitedUnexpectedly(
+                "private child status".to_owned(),
+            ))
+            .expect("crash event");
+        let failed = wait_for_state(&controller, |state| state.status == PlaybackStatus::Error);
+        let error = failed.error.expect("actionable recovery error");
+
+        assert_eq!(error.code, "mpv-restart-failed");
+        assert_eq!(
+            error.message,
+            "Native playback could not restart. Quit and reopen the Desktop Client to try again."
+        );
+        assert!(!error.message.contains("secret"));
+        assert!(!error.message.contains("token"));
+    }
+
+    #[test]
     fn poisoned_recovery_lifecycle_publishes_an_actionable_error() {
         let (event_sender, events) = std::sync::mpsc::channel();
         let lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
@@ -2614,23 +2707,34 @@ mod tests {
         });
         controller.play(Some(source)).expect("play fixture");
         let before_close = wait_for_state(&controller, |state| state.current_time > 0.0);
-        let mut lifecycle = PlaybackLifecycle::new();
+        let lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
+        let snapshot_store = PlaybackSnapshotStore::new(snapshot_path.clone());
+        let shell = TestDesktopPlaybackShell::default();
 
-        lifecycle.close_main_window();
+        dispatch_desktop_playback_action(
+            DesktopPlaybackAction::CloseMainWindow,
+            &controller,
+            &lifecycle,
+            &snapshot_store,
+            &shell,
+        )
+        .expect("dispatch actual close action");
         let background = wait_for_state(&controller, |state| {
             state.current_time > before_close.current_time
         });
-        let snapshot = PlaybackSessionSnapshot::from_serializable_state(&background)
-            .expect("snapshot background playback");
-        lifecycle
-            .explicit_quit(
-                &PlaybackSnapshotStore::new(snapshot_path.clone()),
-                &snapshot,
-            )
-            .expect("persist explicit Quit");
-        controller.shutdown();
+        dispatch_desktop_playback_action(
+            DesktopPlaybackAction::Quit,
+            &controller,
+            &lifecycle,
+            &snapshot_store,
+            &shell,
+        )
+        .expect("dispatch actual tray Quit action");
         drop(controller);
 
+        assert!(shell.is_hidden.load(Ordering::Acquire));
+        assert!(shell.has_exited.load(Ordering::Acquire));
+        assert!(background.current_time > before_close.current_time);
         assert!(snapshot_path.exists());
         assert!(!ipc_directory.exists());
         fs::remove_file(fixture_path).expect("remove WAV fixture");

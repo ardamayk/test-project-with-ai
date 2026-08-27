@@ -74,6 +74,8 @@ export interface PlaybackEngine {
 		currentIndex: number | null,
 	): Promise<void>;
 	play(source?: PlaybackSource): Promise<void>;
+	previous(): void;
+	next(): void;
 	pause(): void;
 	stop(): void;
 	togglePlay(): void;

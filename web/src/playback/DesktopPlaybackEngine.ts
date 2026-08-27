@@ -20,6 +20,8 @@ type DesktopPlaybackBridge = {
 		sources: PlaybackSource[],
 		currentIndex: number | null,
 	): Promise<PlaybackSessionState>;
+	previous(): Promise<PlaybackSessionState>;
+	next(): Promise<PlaybackSessionState>;
 	pause(): Promise<PlaybackSessionState>;
 	stop(): Promise<PlaybackSessionState>;
 	togglePlay(): Promise<PlaybackSessionState>;
@@ -43,6 +45,8 @@ const tauriPlaybackBridge: DesktopPlaybackBridge = {
 	play: (source) => invoke("desktop_playback_play", { source }),
 	syncQueueContext: (sources, currentIndex) =>
 		invoke("desktop_playback_sync_queue_context", { sources, currentIndex }),
+	previous: () => invoke("desktop_playback_previous"),
+	next: () => invoke("desktop_playback_next"),
 	pause: () => invoke("desktop_playback_pause"),
 	stop: () => invoke("desktop_playback_stop"),
 	togglePlay: () => invoke("desktop_playback_toggle_play"),
@@ -107,6 +111,14 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 			this.updateError(error);
 			throw error;
 		}
+	}
+
+	previous() {
+		this.runCommand(() => this.bridge.previous());
+	}
+
+	next() {
+		this.runCommand(() => this.bridge.next());
 	}
 
 	pause() {

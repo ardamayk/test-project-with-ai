@@ -54,6 +54,8 @@ function createBridge() {
 		bridge: {
 			rendererReady: vi.fn(async () => state),
 			syncQueueContext: vi.fn(async () => state),
+			previous: vi.fn(async () => state),
+			next: vi.fn(async () => state),
 			play: vi.fn(async (source?: PlaybackSource) => {
 				state = {
 					...state,
@@ -88,6 +90,18 @@ function createBridge() {
 }
 
 describe("DesktopPlaybackEngine", () => {
+	it("forwards previous and next controls to Rust-owned navigation", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		engine.previous();
+		engine.next();
+
+		await vi.waitFor(() => expect(native.bridge.next).toHaveBeenCalledOnce());
+		expect(native.bridge.previous).toHaveBeenCalledOnce();
+		engine.destroy();
+	});
+
 	it("forwards Processing Profile controls through the native bridge", async () => {
 		const native = createBridge();
 		const engine = new DesktopPlaybackEngine(native.bridge);

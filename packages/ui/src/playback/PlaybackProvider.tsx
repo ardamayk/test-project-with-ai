@@ -94,6 +94,8 @@ type PlaybackContextValue = {
 	queueTracks: (trackIds: string[]) => Promise<void>;
 	playQueueIndex: (index: number) => Promise<void>;
 	playNext: (trackId: string) => Promise<void>;
+	navigatePrevious: () => void;
+	navigateNext: () => void;
 	togglePlay: () => void;
 	toggleShuffle: () => void;
 	cycleRepeatMode: () => void;
@@ -416,6 +418,8 @@ export function PlaybackProvider({
 			queueTracks,
 			playQueueIndex,
 			playNext,
+			navigatePrevious: () => engine.previous(),
+			navigateNext: () => engine.next(),
 			togglePlay: () => engine.togglePlay(),
 			toggleShuffle: () => engine.toggleShuffle(),
 			cycleRepeatMode: () => engine.cycleRepeatMode(),
