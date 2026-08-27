@@ -146,7 +146,13 @@ impl PipeWireObserver for CommandPipeWireObserver {
     fn observe(&self) -> Result<Option<PipeWireObservation>, String> {
         let output = match Command::new(&self.binary).arg("-N").output() {
             Ok(output) => output,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!(
+                    "PipeWire observer {} is unavailable; telemetry will remain unknown: {error}",
+                    self.binary.display()
+                );
+                return Ok(None);
+            }
             Err(error) => {
                 return Err(format!(
                     "Failed to run PipeWire observer {}: {error}",

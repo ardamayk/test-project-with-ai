@@ -150,31 +150,26 @@ function OutputControls({
 	controls: PlaybackOutputControls;
 	outputMode: OutputMode;
 }) {
-	const [isConfirmingAdaptive, setIsConfirmingAdaptive] = useState(false);
 	return (
 		<section className="mt-4 border-border border-t pt-4">
-			<div className="flex flex-wrap items-center gap-2">
-				<strong className="text-sm">Raw ALSA Output Devices</strong>
-				<button
-					type="button"
-					className="rounded-md border border-border px-2 py-1 text-xs"
-					onClick={controls.refreshDevices}
-				>
-					Refresh devices
-				</button>
-			</div>
-			<div className="mt-2 flex flex-wrap gap-2">
-				{controls.devices.map((device) => (
-					<button
-						type="button"
-						key={device.id}
-						className="rounded-md border border-border px-2 py-1 text-xs"
-						onClick={() => controls.selectDirectAlsaOutput(device.id)}
-					>
-						Use {device.name}
-					</button>
-				))}
-			</div>
+			<OutputDeviceControls controls={controls} />
+			<AdaptiveSystemRateControls
+				controls={controls}
+				isEnabled={outputMode === "adaptive-system-rate"}
+			/>
+		</section>
+	);
+}
+
+function OutputDeviceControls({
+	controls,
+}: {
+	controls: PlaybackOutputControls;
+}) {
+	return (
+		<>
+			<OutputDeviceHeader onRefresh={controls.refreshDevices} />
+			<OutputDeviceButtons controls={controls} />
 			{controls.selectedDevice ? (
 				<p className="mt-2 text-muted-foreground text-xs">
 					Selected: {controls.selectedDevice.name} ({controls.selectedDevice.id}
@@ -184,50 +179,128 @@ function OutputControls({
 			{controls.issue ? (
 				<OutputDevicePrompt issue={controls.issue} controls={controls} />
 			) : null}
-			{outputMode === "adaptive-system-rate" ? (
+		</>
+	);
+}
+
+function OutputDeviceHeader({ onRefresh }: { onRefresh: () => void }) {
+	return (
+		<div className="flex flex-wrap items-center gap-2">
+			<strong className="text-sm">Raw ALSA Output Devices</strong>
+			<button
+				type="button"
+				className="rounded-md border border-border px-2 py-1 text-xs"
+				onClick={onRefresh}
+			>
+				Refresh devices
+			</button>
+		</div>
+	);
+}
+
+function OutputDeviceButtons({
+	controls,
+}: {
+	controls: PlaybackOutputControls;
+}) {
+	return (
+		<div className="mt-2 flex flex-wrap gap-2">
+			{controls.devices.map((device) => (
 				<button
 					type="button"
-					className="mt-3 rounded-md border border-border px-2 py-1 text-xs"
-					onClick={controls.fallbackToSystemOutput}
+					key={device.id}
+					className="rounded-md border border-border px-2 py-1 text-xs"
+					onClick={() => controls.selectDirectAlsaOutput(device.id)}
 				>
-					Disable Adaptive System Rate
+					Use {device.name}
 				</button>
-			) : (
-				<button
-					type="button"
-					className="mt-3 rounded-md border border-border px-2 py-1 text-xs"
-					onClick={() => setIsConfirmingAdaptive(true)}
-				>
-					Enable Adaptive System Rate
-				</button>
-			)}
-			{isConfirmingAdaptive ? (
-				<div className="mt-3 rounded-md border border-destructive/40 p-3">
-					<p role="alert" className="text-destructive text-xs">
-						{ADAPTIVE_SYSTEM_RATE_WARNING}
-					</p>
-					<div className="mt-2 flex flex-wrap gap-2">
-						<button
-							type="button"
-							className="rounded-md border border-border px-2 py-1 text-xs"
-							onClick={() => {
-								controls.enableAdaptiveSystemRate(true);
-								setIsConfirmingAdaptive(false);
-							}}
-						>
-							Confirm experimental mode
-						</button>
-						<button
-							type="button"
-							className="rounded-md border border-border px-2 py-1 text-xs"
-							onClick={() => setIsConfirmingAdaptive(false)}
-						>
-							Cancel
-						</button>
-					</div>
-				</div>
+			))}
+		</div>
+	);
+}
+
+function AdaptiveSystemRateControls({
+	controls,
+	isEnabled,
+}: {
+	controls: PlaybackOutputControls;
+	isEnabled: boolean;
+}) {
+	const [isConfirming, setIsConfirming] = useState(false);
+	if (isEnabled) {
+		return (
+			<AdaptiveModeButton
+				label="Disable Adaptive System Rate"
+				onClick={controls.fallbackToSystemOutput}
+			/>
+		);
+	}
+	return (
+		<>
+			<AdaptiveModeButton
+				label="Enable Adaptive System Rate"
+				onClick={() => setIsConfirming(true)}
+			/>
+			{isConfirming ? (
+				<AdaptiveSystemRatePrompt
+					onCancel={() => setIsConfirming(false)}
+					onConfirm={() => {
+						controls.enableAdaptiveSystemRate(true);
+						setIsConfirming(false);
+					}}
+				/>
 			) : null}
-		</section>
+		</>
+	);
+}
+
+function AdaptiveModeButton({
+	label,
+	onClick,
+}: {
+	label: string;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			className="mt-3 rounded-md border border-border px-2 py-1 text-xs"
+			onClick={onClick}
+		>
+			{label}
+		</button>
+	);
+}
+
+function AdaptiveSystemRatePrompt({
+	onCancel,
+	onConfirm,
+}: {
+	onCancel: () => void;
+	onConfirm: () => void;
+}) {
+	return (
+		<div className="mt-3 rounded-md border border-destructive/40 p-3">
+			<p role="alert" className="text-destructive text-xs">
+				{ADAPTIVE_SYSTEM_RATE_WARNING}
+			</p>
+			<div className="mt-2 flex flex-wrap gap-2">
+				<button
+					type="button"
+					className="rounded-md border border-border px-2 py-1 text-xs"
+					onClick={onConfirm}
+				>
+					Confirm experimental mode
+				</button>
+				<button
+					type="button"
+					className="rounded-md border border-border px-2 py-1 text-xs"
+					onClick={onCancel}
+				>
+					Cancel
+				</button>
+			</div>
+		</div>
 	);
 }
 

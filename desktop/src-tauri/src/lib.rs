@@ -19,7 +19,10 @@ use connection::{
     HttpRequest, HttpResponse, ServerOrigin,
 };
 use media_proxy::MediaProxy;
-use playback::{PlaybackCommandError, PlaybackController, PlaybackSessionState, PlaybackStatus};
+use playback::{
+    OutputDeviceIssueCode, PlaybackCommandError, PlaybackController, PlaybackSessionState,
+    PlaybackStatus,
+};
 use playback_app_actions::{
     DesktopPlaybackAction, DesktopPlaybackShell, dispatch_desktop_playback_action,
 };
@@ -305,41 +308,43 @@ fn desktop_playback_select_direct_alsa_output(
         .processing
         .lock()
         .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let previous_mode = processing.output_mode();
+    let previous_device_id = processing.selected_output_device_id().map(str::to_owned);
     let playback_state = state.playback.select_direct_alsa_output(&device_id)?;
-    if playback_state.output_mode == OutputMode::DirectAlsa {
-        if let Err(error) = processing.select_direct_alsa_output(&device_id) {
-            if let Err(rollback_error) = state.playback.fallback_to_system_output() {
-                eprintln!(
-                    "Direct ALSA Output rollback failed after persistence error: {}",
-                    rollback_error.message
-                );
-            }
-            return Err(PlaybackCommandError::new(error));
-        }
+    if !is_valid_direct_selection(&playback_state, &device_id) {
+        return Ok(playback_state);
+    }
+    if let Err(error) = processing.select_direct_alsa_output(&device_id) {
+        eprintln!("Direct ALSA Output preference persistence failed: {error}");
+        restore_native_output_mode(
+            &state.playback,
+            previous_mode,
+            previous_device_id.as_deref(),
+        );
+        return Err(PlaybackCommandError::new(
+            "Direct ALSA Output preference could not be saved. The previous Output Mode was restored.",
+        ));
     }
     Ok(playback_state)
+}
+
+fn is_valid_direct_selection(state: &PlaybackSessionState, device_id: &str) -> bool {
+    let is_selected = state
+        .selected_output_device
+        .as_ref()
+        .is_some_and(|device| device.id == device_id);
+    let is_busy_or_unsupported = state
+        .output_device_issue
+        .as_ref()
+        .is_some_and(|issue| issue.code == OutputDeviceIssueCode::BusyOrUnsupported);
+    is_selected && (state.output_mode == OutputMode::DirectAlsa || is_busy_or_unsupported)
 }
 
 #[tauri::command]
 fn desktop_playback_fallback_to_system_output(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-    let mut processing = state
-        .processing
-        .lock()
-        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
-    let previous_mode = processing.output_mode();
-    let previous_device_id = processing.selected_output_device_id().map(str::to_owned);
-    let playback_state = state.playback.fallback_to_system_output()?;
-    if let Err(error) = processing.set_output_mode(OutputMode::System) {
-        restore_native_output_mode(
-            &state.playback,
-            previous_mode,
-            previous_device_id.as_deref(),
-        );
-        return Err(PlaybackCommandError::new(error));
-    }
-    Ok(playback_state)
+    state.playback.fallback_to_system_output()
 }
 
 #[tauri::command]
@@ -353,13 +358,16 @@ fn desktop_playback_enable_adaptive_system_rate(
         .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
     let playback_state = state.playback.enable_adaptive_system_rate(is_confirmed)?;
     if let Err(error) = processing.set_output_mode(OutputMode::AdaptiveSystemRate) {
+        eprintln!("Adaptive System Rate preference persistence failed: {error}");
         if let Err(rollback_error) = state.playback.fallback_to_system_output() {
             eprintln!(
                 "Adaptive System Rate rollback failed after persistence error: {}",
                 rollback_error.message
             );
         }
-        return Err(PlaybackCommandError::new(error));
+        return Err(PlaybackCommandError::new(
+            "Adaptive System Rate preference could not be saved. System Output was restored.",
+        ));
     }
     Ok(playback_state)
 }
@@ -647,6 +655,10 @@ pub fn run() -> tauri::Result<()> {
         })
         .setup(|app| {
             let config_directory = app.path().app_config_dir()?;
+            let adaptive_system_rate = AdaptiveSystemRateController::recover_startup(Arc::new(
+                CommandPipeWireRateAdapter::new(),
+            ))
+            .map_err(std::io::Error::other)?;
             let store = ConnectionStore::new(config_directory.join(CONNECTION_FILE_NAME));
             let playback_snapshot_store =
                 PlaybackSnapshotStore::new(config_directory.join(PLAYBACK_SNAPSHOT_FILE_NAME));
@@ -674,13 +686,6 @@ pub fn run() -> tauri::Result<()> {
             let playback_tray = PlaybackTray::start(app.handle(), handle_tray_menu_event)?;
             let playback_event_tray = playback_tray.clone();
             let app_handle = app.handle().clone();
-            let adaptive_rate_adapter = Arc::new(CommandPipeWireRateAdapter::new());
-            let adaptive_system_rate =
-                AdaptiveSystemRateController::recover_startup(adaptive_rate_adapter.clone())
-                    .unwrap_or_else(|error| {
-                        eprintln!("Adaptive System Rate startup recovery failed: {error}");
-                        AdaptiveSystemRateController::new(adaptive_rate_adapter)
-                    });
             let playback = PlaybackController::start_default_with_lifecycle(
                 playback_lifecycle.clone(),
                 Arc::new(CommandPipeWireObserver::new()),

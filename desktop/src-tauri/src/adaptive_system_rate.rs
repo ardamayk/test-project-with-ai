@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-pub const ADAPTIVE_SYSTEM_RATE_WARNING: &str =
-    "Adaptive System Rate affects audio from every application on the PipeWire graph.";
+pub const ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE: &str =
+    "Explicit confirmation is required to enable Adaptive System Rate.";
 
 pub trait PipeWireRateAdapter: Send + Sync {
     fn forced_rate_hz(&self) -> Result<Option<u32>, String>;
@@ -50,7 +50,6 @@ impl PipeWireRateAdapter for CommandPipeWireRateAdapter {
     fn forced_rate_hz(&self) -> Result<Option<u32>, String> {
         let output = match Command::new(&self.dump_binary).arg("-N").output() {
             Ok(output) => output,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(self.command_error("query", &error.to_string(), true)),
         };
         if !output.status.success() {
@@ -171,7 +170,7 @@ impl AdaptiveSystemRateController {
 
     pub fn enable(&mut self, is_confirmed: bool) -> Result<(), String> {
         if !is_confirmed {
-            return Err(ADAPTIVE_SYSTEM_RATE_WARNING.to_owned());
+            return Err(ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE.to_owned());
         }
         self.state.is_enabled = true;
         Ok(())

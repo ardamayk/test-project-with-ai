@@ -1,6 +1,6 @@
 use earthly_audio_desktop::adaptive_system_rate::{
-    ADAPTIVE_SYSTEM_RATE_WARNING, AdaptiveSystemRateController, CommandPipeWireRateAdapter,
-    PipeWireRateAdapter,
+    ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveSystemRateController,
+    CommandPipeWireRateAdapter, PipeWireRateAdapter,
 };
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -28,6 +28,18 @@ impl PipeWireRateAdapter for RecordedPipeWireRate {
     }
 }
 
+struct FailingResetPipeWireRate;
+
+impl PipeWireRateAdapter for FailingResetPipeWireRate {
+    fn forced_rate_hz(&self) -> Result<Option<u32>, String> {
+        Ok(Some(96_000))
+    }
+
+    fn set_forced_rate_hz(&self, _rate_hz: Option<u32>) -> Result<(), String> {
+        Err("controlled PipeWire reset failure".to_owned())
+    }
+}
+
 #[test]
 fn adaptive_mode_requires_explicit_system_wide_effect_confirmation() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
@@ -37,7 +49,7 @@ fn adaptive_mode_requires_explicit_system_wide_effect_confirmation() {
         .enable(false)
         .expect_err("reject unconfirmed experimental mode");
 
-    assert_eq!(error, ADAPTIVE_SYSTEM_RATE_WARNING);
+    assert_eq!(error, ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE);
     assert!(!controller.state().is_enabled);
 
     controller.enable(true).expect("enable confirmed mode");
@@ -119,6 +131,17 @@ fn startup_recovery_clears_a_rate_left_by_an_abnormal_exit() {
 }
 
 #[test]
+fn startup_recovery_propagates_a_stale_force_rate_reset_failure() {
+    let error =
+        match AdaptiveSystemRateController::recover_startup(Arc::new(FailingResetPipeWireRate)) {
+            Ok(_) => panic!("stale force-rate reset must be safety-critical"),
+            Err(error) => error,
+        };
+
+    assert_eq!(error, "controlled PipeWire reset failure");
+}
+
+#[test]
 fn player_recovery_resets_force_rate_without_forgetting_the_confirmed_mode() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
     let mut controller = AdaptiveSystemRateController::new(adapter.clone());
@@ -179,6 +202,22 @@ fn command_adapter_reads_only_pipewire_force_rate_metadata() {
 
     std::fs::remove_file(script).expect("remove fake pw-metadata");
     std::fs::remove_file(log_path).expect("remove argument log");
+}
+
+#[test]
+fn missing_pipewire_observer_is_not_silently_treated_as_automatic_rate() {
+    let missing_dump = temporary_path("missing-pw-dump");
+    let adapter = CommandPipeWireRateAdapter::with_binaries(
+        PathBuf::from("pw-metadata"),
+        missing_dump.clone(),
+    );
+
+    let error = adapter
+        .forced_rate_hz()
+        .expect_err("surface missing PipeWire observer");
+
+    assert!(error.contains("query PipeWire clock.force-rate"));
+    assert!(error.contains(&missing_dump.display().to_string()));
 }
 
 #[test]

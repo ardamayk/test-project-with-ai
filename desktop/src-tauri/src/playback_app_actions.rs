@@ -62,12 +62,12 @@ fn quit(
     let playback_state = playback.state()?;
     let snapshot = PlaybackSessionSnapshot::from_serializable_state(&playback_state)
         .map_err(|error| PlaybackCommandError::new(error.to_string()))?;
+    playback.shutdown()?;
     lifecycle
         .lock()
         .map_err(|_| PlaybackCommandError::new("Playback lifecycle state is unavailable."))?
         .explicit_quit(snapshot_store, &snapshot)
         .map_err(|error| PlaybackCommandError::new(error.to_string()))?;
-    playback.shutdown();
     shell.exit();
     Ok(())
 }
