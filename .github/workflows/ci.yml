@@ -37,8 +37,11 @@ jobs:
       - name: Lint web
         run: pnpm --filter web check
 
-      - name: Unit tests
-        run: pnpm test
+      - name: Core unit tests
+        run: pnpm test:core
+
+      - name: Desktop unit tests
+        run: pnpm test:desktop
 
       - name: Go test
         working-directory: server

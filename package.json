@@ -6,6 +6,8 @@
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:core": "turbo run test --filter=!@repo/desktop",
+    "test:desktop": "pnpm --filter @repo/desktop test",
     "test:e2e": "turbo run test:e2e --filter=web",
     "test:e2e:hls": "cd server && RUN_HLS_BROWSER_INTEGRATION=1 go test ./internal/modules/radio -run TestBrowserHLSProxyIntegration -count=1 -v",
     "generate": "turbo run generate",
