@@ -36,6 +36,7 @@ const MPV_PINNED_VERSION: &str = include_str!("../mpv-version.txt");
 const MPV_START_TIMEOUT: Duration = Duration::from_secs(3);
 const MPV_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 const PLAYBACK_FAILED_MESSAGE: &str = "Playback failed. Check the source and try again.";
+const ADAPTIVE_CLEANUP_FAILED_MESSAGE: &str = "Playback stopped, but Adaptive System Rate could not reset the system audio rate. Restart the Desktop Client.";
 #[cfg(not(test))]
 const OUTPUT_DEVICE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -1052,52 +1053,25 @@ impl PlaybackController {
             self.reset_adaptive_after_failure("source rate setup");
             return self.fail_native(error);
         }
-        let negotiated_format = match self.start_playback(&next_source, is_new_source) {
-            Ok(format) => format,
-            Err(error) => {
-                self.reset_adaptive_after_failure("mpv playback setup");
-                return self.fail_native(error);
-            }
-        };
-        let state = self.update(|state| {
-            update_playing_state(
-                state,
-                next_source.clone(),
-                is_new_source,
-                negotiated_format.clone(),
-            )
-        })?;
+        if let Err(error) = self.start_playback(&next_source, is_new_source) {
+            self.reset_adaptive_after_failure("mpv playback setup");
+            return self.fail_native(error);
+        }
+        let state =
+            self.update(|state| update_playing_state(state, next_source.clone(), is_new_source))?;
         self.align_queue_to_source(&next_source)?;
         self.mark_player_stable()?;
         Ok(state)
     }
 
-    fn start_playback(
-        &self,
-        source: &Value,
-        should_load: bool,
-    ) -> Result<Option<AudioFormatObservation>, String> {
+    fn start_playback(&self, source: &Value, should_load: bool) -> Result<(), String> {
         if !should_load {
-            return self.with_process(|process| process.set_paused(false).map(|_| None));
+            return self.with_process(|process| process.set_paused(false));
         }
         let url = playback_url(source).map_err(|error| error.message)?;
-        let should_observe_direct =
-            self.state().map_err(|error| error.message)?.output_mode == OutputMode::DirectAlsa;
         self.with_process(|process| {
             process.load(&url)?;
-            process.set_paused(false)?;
-            if !should_observe_direct {
-                return Ok(None);
-            }
-            match process.observe_output_format() {
-                Ok(format) => Ok(format),
-                Err(error) => {
-                    report_native_playback_error(&format!(
-                        "Direct ALSA negotiated format observation unavailable after source load: {error}"
-                    ));
-                    Ok(None)
-                }
-            }
+            process.set_paused(false)
         })
     }
 
@@ -1250,11 +1224,23 @@ impl PlaybackController {
     }
 
     fn enable_adaptive_controller(&self, is_confirmed: bool) -> Result<(), PlaybackCommandError> {
-        self.adaptive_controller()?
+        let result = self
+            .adaptive_controller()?
             .lock()
             .map_err(|_| PlaybackCommandError::new("Adaptive System Rate state is unavailable."))?
-            .enable(is_confirmed)
-            .map_err(PlaybackCommandError::new)
+            .enable(is_confirmed);
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if !is_confirmed => Err(PlaybackCommandError::new(error)),
+            Err(error) => {
+                report_native_playback_error(&format!(
+                    "Adaptive System Rate enable preparation failed: {error}"
+                ));
+                Err(PlaybackCommandError::new(
+                    "Adaptive System Rate could not be enabled because its cleanup safeguard could not be saved. Check Desktop Client storage permissions and try again.",
+                ))
+            }
+        }
     }
 
     fn apply_adaptive_rate_hz(&self, rate_hz: Option<u32>) -> Result<(), String> {
@@ -2382,6 +2368,28 @@ fn handle_mpv_event(
     path_observer: Option<&dyn PipeWireObserver>,
     adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
 ) -> Result<(), PlaybackCommandError> {
+    let next = reduce_mpv_event(
+        process,
+        state,
+        queue,
+        event,
+        path_observer,
+        adaptive_system_rate,
+    )?;
+    if let Some(next) = next {
+        listener(next);
+    }
+    Ok(())
+}
+
+fn reduce_mpv_event(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    queue: &Arc<Mutex<PlaybackQueueContext>>,
+    event: MpvEvent,
+    path_observer: Option<&dyn PipeWireObserver>,
+    adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
+) -> Result<Option<PlaybackSessionState>, PlaybackCommandError> {
     let result = match event {
         MpvEvent::Time(value) if value.is_finite() && value >= 0.0 => {
             update_shared_state(state, |state| state.current_time = value)
@@ -2390,50 +2398,67 @@ fn handle_mpv_event(
             update_shared_state(state, |state| state.duration = value)
         }
         MpvEvent::Paused(is_paused) => update_paused_state(state, is_paused),
-        MpvEvent::Decoder(decoder) => update_decoder_telemetry(state, decoder, path_observer),
-        MpvEvent::Ended => handle_ended_event(process, state, queue, adaptive_system_rate),
-        MpvEvent::Error(message) => {
-            report_native_playback_error(&message);
-            let cleanup =
-                reset_adaptive_after_event_failure(state, adaptive_system_rate, "mpv error event");
-            let direct_device = {
-                let state = state.lock().map_err(|_| {
-                    PlaybackCommandError::new("Native playback state is unavailable.")
-                })?;
-                (state.output_mode == OutputMode::DirectAlsa)
-                    .then(|| state.selected_output_device.clone())
-                    .flatten()
-            };
-            if let Some(device) = direct_device {
-                if let Err(error) = process
-                    .lock()
-                    .map_err(|_| "Native mpv process is unavailable.".to_owned())
-                    .and_then(|process| process.set_paused(true))
-                {
-                    report_native_playback_error(&format!(
-                        "Direct ALSA Output failure could not pause playback: {error}"
-                    ));
-                }
-                let publication = update_shared_state(state, |state| {
-                    state.status = PlaybackStatus::Paused;
-                    state.output_device_issue = Some(busy_or_unsupported_device_issue(&device));
-                });
-                cleanup?;
-                publication
-            } else {
-                let publication = update_shared_state(state, |state| {
-                    set_error_state(state, PLAYBACK_FAILED_MESSAGE.to_owned())
-                });
-                cleanup?;
-                publication
-            }
+        MpvEvent::Decoder(decoder) => {
+            update_decoder_telemetry(process, state, decoder, path_observer)
         }
-        MpvEvent::ExitedUnexpectedly(_) => return Ok(()),
-        MpvEvent::Time(_) | MpvEvent::Duration(_) => return Ok(()),
+        MpvEvent::Ended => handle_ended_event(process, state, queue, adaptive_system_rate),
+        MpvEvent::Error(message) => handle_mpv_error(process, state, adaptive_system_rate, message),
+        MpvEvent::ExitedUnexpectedly(_) | MpvEvent::Time(_) | MpvEvent::Duration(_) => {
+            return Ok(None);
+        }
     };
-    let next = result?;
-    listener(next);
-    Ok(())
+    result.map(Some)
+}
+
+fn handle_mpv_error(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
+    message: String,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    report_native_playback_error(&message);
+    let cleanup =
+        reset_adaptive_after_event_failure(state, adaptive_system_rate, "mpv error event");
+    if cleanup.is_err() {
+        return publish_adaptive_cleanup_failure(state);
+    }
+    match direct_error_device(state)? {
+        Some(device) => publish_direct_mpv_error(process, state, device),
+        None => update_shared_state(state, |state| {
+            set_error_state(state, PLAYBACK_FAILED_MESSAGE.to_owned())
+        }),
+    }
+}
+
+fn direct_error_device(
+    state: &Arc<Mutex<PlaybackSessionState>>,
+) -> Result<Option<OutputDevice>, PlaybackCommandError> {
+    let state = state
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Native playback state is unavailable."))?;
+    Ok((state.output_mode == OutputMode::DirectAlsa)
+        .then(|| state.selected_output_device.clone())
+        .flatten())
+}
+
+fn publish_direct_mpv_error(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    device: OutputDevice,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    if let Err(error) = process
+        .lock()
+        .map_err(|_| "Native mpv process is unavailable.".to_owned())
+        .and_then(|process| process.set_paused(true))
+    {
+        report_native_playback_error(&format!(
+            "Direct ALSA Output failure could not pause playback: {error}"
+        ));
+    }
+    update_shared_state(state, |state| {
+        state.status = PlaybackStatus::Paused;
+        state.output_device_issue = Some(busy_or_unsupported_device_issue(&device));
+    })
 }
 
 fn update_paused_state(
@@ -2452,23 +2477,22 @@ fn update_paused_state(
 }
 
 fn update_decoder_telemetry(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
     state: &Arc<Mutex<PlaybackSessionState>>,
     decoder: ObservedMpvProperties,
     path_observer: Option<&dyn PipeWireObserver>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     let pipewire = observe_pipewire_path(path_observer);
+    let negotiated_format = observe_ready_direct_format(process, state)?;
     update_shared_state(state, |state| {
         if state.output_mode == OutputMode::DirectAlsa
             && let Some(device) = state.selected_output_device.as_ref()
         {
-            let negotiated_format = (state.telemetry.device.format
-                != AudioFormatObservation::unknown())
-            .then(|| state.telemetry.device.format.clone());
             state.telemetry = PlaybackTelemetry::native_direct_alsa_output(
                 source_observation(state.source.as_ref()),
                 decoder.clone(),
                 &device.name,
-                negotiated_format,
+                negotiated_format.clone(),
                 processing_observation(&state.processing),
             );
             return;
@@ -2480,6 +2504,33 @@ fn update_decoder_telemetry(
             pipewire.clone(),
         );
     })
+}
+
+fn observe_ready_direct_format(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
+    state: &Arc<Mutex<PlaybackSessionState>>,
+) -> Result<Option<AudioFormatObservation>, PlaybackCommandError> {
+    let is_direct = state
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Native playback state is unavailable."))?
+        .output_mode
+        == OutputMode::DirectAlsa;
+    if !is_direct {
+        return Ok(None);
+    }
+    let result = process
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Native mpv process is unavailable."))?
+        .observe_output_format();
+    match result {
+        Ok(format) => Ok(format),
+        Err(error) => {
+            report_native_playback_error(&format!(
+                "Direct ALSA ready output format observation failed: {error}"
+            ));
+            Ok(None)
+        }
+    }
 }
 
 fn source_observation(source: Option<&Value>) -> SourceObservation {
@@ -2628,7 +2679,7 @@ fn handle_ended_event(
         .repeat_mode
         .clone();
     if repeat_mode == RepeatMode::Once {
-        return repeat_current_source(process, state);
+        return repeat_current_source(process, state, adaptive_system_rate);
     }
     let next_source = queue
         .lock()
@@ -2645,6 +2696,7 @@ fn handle_ended_event(
 fn repeat_current_source(
     process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
     state: &Arc<Mutex<PlaybackSessionState>>,
+    adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     let result = process
         .lock()
@@ -2654,12 +2706,26 @@ fn repeat_current_source(
             process.set_paused(false)
         });
     if let Err(message) = result {
+        if reset_adaptive_after_event_failure(state, adaptive_system_rate, "Repeat Once restart")
+            .is_err()
+        {
+            report_native_playback_error(&message);
+            return publish_adaptive_cleanup_failure(state);
+        }
         return publish_native_command_failure(state, message);
     }
     update_shared_state(state, |state| {
         state.current_time = 0.0;
         state.status = PlaybackStatus::Playing;
         state.repeat_mode = RepeatMode::Off;
+    })
+}
+
+fn publish_adaptive_cleanup_failure(
+    state: &Arc<Mutex<PlaybackSessionState>>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    update_shared_state(state, |state| {
+        set_error_state(state, ADAPTIVE_CLEANUP_FAILED_MESSAGE.to_owned())
     })
 }
 
@@ -2670,52 +2736,73 @@ fn load_advanced_source(
     adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
     source: Value,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-    let url = playback_url(&source)?;
-    if let Err(error) = apply_adaptive_rate_for_event(state, adaptive_system_rate, &source) {
-        reset_adaptive_after_event_failure(
+    prepare_advanced_source_rate(state, adaptive_system_rate, &source)?;
+    if let Err(message) = start_advanced_source(process, &source) {
+        return publish_advanced_source_failure(state, adaptive_system_rate, message);
+    }
+    align_and_publish_advanced_source(state, queue, source)
+}
+
+fn prepare_advanced_source_rate(
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
+    source: &Value,
+) -> Result<(), PlaybackCommandError> {
+    if let Err(error) = apply_adaptive_rate_for_event(state, adaptive_system_rate, source) {
+        if reset_adaptive_after_event_failure(
             state,
             adaptive_system_rate,
             "automatic queue rate setup",
-        )?;
+        )
+        .is_err()
+        {
+            return Err(PlaybackCommandError::new(ADAPTIVE_CLEANUP_FAILED_MESSAGE));
+        }
         return Err(error);
     }
-    let is_direct = state
-        .lock()
-        .map_err(|_| PlaybackCommandError::new("Native playback state is unavailable."))?
-        .output_mode
-        == OutputMode::DirectAlsa;
-    let result = process
+    Ok(())
+}
+
+fn start_advanced_source(
+    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
+    source: &Value,
+) -> Result<(), String> {
+    let url = playback_url(source).map_err(|error| error.message)?;
+    process
         .lock()
         .map_err(|_| "Native mpv process is unavailable.".to_owned())
         .and_then(|process| {
             process.load(&url)?;
-            process.set_paused(false)?;
-            if is_direct {
-                process.observe_output_format()
-            } else {
-                Ok(None)
-            }
-        });
-    let negotiated_format = match result {
-        Ok(format) => format,
-        Err(message) => {
-            let cleanup = reset_adaptive_after_event_failure(
-                state,
-                adaptive_system_rate,
-                "automatic queue advance",
-            );
-            let publication = publish_native_command_failure(state, message);
-            cleanup?;
-            return publication;
-        }
-    };
+            process.set_paused(false)
+        })
+}
+
+fn publish_advanced_source_failure(
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
+    message: String,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    if reset_adaptive_after_event_failure(state, adaptive_system_rate, "automatic queue advance")
+        .is_err()
+    {
+        report_native_playback_error(&message);
+        return publish_adaptive_cleanup_failure(state);
+    }
+    publish_native_command_failure(state, message)
+}
+
+fn align_and_publish_advanced_source(
+    state: &Arc<Mutex<PlaybackSessionState>>,
+    queue: &Arc<Mutex<PlaybackQueueContext>>,
+    source: Value,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
     queue
         .lock()
         .map_err(|_| PlaybackCommandError::new("Playback Queue context is unavailable."))?
         .align_to_source(&source)
         .map_err(PlaybackCommandError::new)?;
     update_shared_state(state, |state| {
-        set_playing_source(state, source.clone(), negotiated_format.clone())
+        set_playing_source(state, source.clone(), None)
     })
 }
 
@@ -2793,14 +2880,9 @@ fn set_playing_source(
     state.error = None;
 }
 
-fn update_playing_state(
-    state: &mut PlaybackSessionState,
-    source: Value,
-    is_new_source: bool,
-    negotiated_format: Option<AudioFormatObservation>,
-) {
+fn update_playing_state(state: &mut PlaybackSessionState, source: Value, is_new_source: bool) {
     if is_new_source {
-        set_playing_source(state, source, negotiated_format);
+        set_playing_source(state, source, None);
         return;
     }
     state.source = Some(source);
@@ -2912,7 +2994,8 @@ mod tests {
         PATH_REFRESH_INTERVAL, PlaybackController, PlaybackStatus, RealMpvProcess,
     };
     use crate::adaptive_system_rate::{
-        ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveSystemRateController, PipeWireRateAdapter,
+        ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveCleanupMarker,
+        AdaptiveSystemRateController, PipeWireRateAdapter,
     };
     use crate::output_device::{AlsaOutputDeviceAdapter, OutputDevice};
     use crate::playback_app_actions::{
@@ -2976,6 +3059,22 @@ mod tests {
         forced_rate_hz: Mutex<Option<u32>>,
     }
 
+    struct FailingCleanupMarker;
+
+    impl AdaptiveCleanupMarker for FailingCleanupMarker {
+        fn is_required(&self) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn mark_required(&self) -> Result<(), String> {
+            Err("write /home/private-user/.config/secret-marker: permission denied".to_owned())
+        }
+
+        fn clear(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     impl PipeWireRateAdapter for FailingResetPipeWireRate {
         fn forced_rate_hz(&self) -> Result<Option<u32>, String> {
             Ok(*self.forced_rate_hz.lock().expect("PipeWire force-rate"))
@@ -3019,12 +3118,39 @@ mod tests {
     }
 
     struct ReobservedOutputMpv {
+        configured_format: Option<AudioFormatObservation>,
         observed_format: Arc<Mutex<Option<AudioFormatObservation>>>,
         observation_calls: Arc<AtomicUsize>,
     }
 
     struct FailingAdvanceMpv {
         load_calls: AtomicUsize,
+    }
+
+    struct FailingRepeatMpv;
+
+    impl MpvProcessAdapter for FailingRepeatMpv {
+        fn load(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn set_paused(&self, _is_paused: bool) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn seek(&self, _seconds: f64) -> Result<(), String> {
+            Err("controlled Repeat Once seek failure".to_owned())
+        }
+
+        fn set_volume(&self, _value: f64) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn shutdown(&self) {}
     }
 
     impl MpvProcessAdapter for FailingAdvanceMpv {
@@ -3075,7 +3201,7 @@ mod tests {
             &self,
             _configuration: &MpvOutputConfiguration,
         ) -> Result<Option<AudioFormatObservation>, String> {
-            Ok(None)
+            Ok(self.configured_format.clone())
         }
 
         fn observe_output_format(&self) -> Result<Option<AudioFormatObservation>, String> {
@@ -3365,6 +3491,33 @@ mod tests {
             .enable_adaptive_system_rate(true)
             .expect("enable confirmed experimental mode");
         assert_eq!(enabled.output_mode, OutputMode::AdaptiveSystemRate);
+    }
+
+    #[test]
+    fn adaptive_cleanup_marker_failure_returns_a_stable_public_message() {
+        let (_event_sender, events) = std::sync::mpsc::channel();
+        let adaptive = AdaptiveSystemRateController::with_cleanup_marker(
+            Arc::new(RecordedPipeWireRate::default()),
+            Arc::new(FailingCleanupMarker),
+        );
+        let controller = PlaybackController::start_with_adaptive_system_rate(
+            Box::new(FakeMpvProcess {
+                loaded_url: Arc::new(Mutex::new(None)),
+                is_shutdown: Arc::new(AtomicBool::new(false)),
+                load_error: None,
+            }),
+            events,
+            adaptive,
+            |_| {},
+        );
+
+        let error = controller
+            .enable_adaptive_system_rate(true)
+            .expect_err("surface marker persistence failure");
+
+        assert!(error.message.contains("storage permissions"));
+        assert!(!error.message.contains("private-user"));
+        assert!(!error.message.contains("secret-marker"));
     }
 
     #[test]
@@ -3801,6 +3954,63 @@ mod tests {
     }
 
     #[test]
+    fn repeat_once_failure_clears_the_adaptive_rate() {
+        let (event_sender, events) = std::sync::mpsc::channel();
+        let pipewire_rate = Arc::new(RecordedPipeWireRate::default());
+        let controller = PlaybackController::start_with_adaptive_system_rate(
+            Box::new(FailingRepeatMpv),
+            events,
+            AdaptiveSystemRateController::new(pipewire_rate.clone()),
+            |_| {},
+        );
+        controller
+            .enable_adaptive_system_rate(true)
+            .expect("enable adaptive output");
+        controller
+            .play(Some(json!({
+                "type": "track",
+                "track": { "id": "track-1", "title": "Track 1", "sampleRateHz": 96000 },
+                "playbackUrl": "http://127.0.0.1/token/api/v1/tracks/track-1/stream"
+            })))
+            .expect("play source");
+        controller.cycle_repeat_mode().expect("enable Repeat Once");
+
+        event_sender.send(MpvEvent::Ended).expect("ended event");
+        wait_for_state(&controller, |state| state.status == PlaybackStatus::Error);
+
+        assert_eq!(pipewire_rate.forced_rate_hz().expect("safe rate"), None);
+    }
+
+    #[test]
+    fn repeat_once_cleanup_failure_surfaces_stable_context() {
+        let (event_sender, events) = std::sync::mpsc::channel();
+        let controller = PlaybackController::start_with_adaptive_system_rate(
+            Box::new(FailingRepeatMpv),
+            events,
+            AdaptiveSystemRateController::new(Arc::new(FailingResetPipeWireRate::default())),
+            |_| {},
+        );
+        controller
+            .enable_adaptive_system_rate(true)
+            .expect("enable adaptive output");
+        controller
+            .play(Some(json!({
+                "type": "track",
+                "track": { "id": "track-1", "title": "Track 1", "sampleRateHz": 96000 },
+                "playbackUrl": "http://127.0.0.1/token/api/v1/tracks/track-1/stream"
+            })))
+            .expect("play source");
+        controller.cycle_repeat_mode().expect("enable Repeat Once");
+
+        event_sender.send(MpvEvent::Ended).expect("ended event");
+        let failed = wait_for_state(&controller, |state| state.status == PlaybackStatus::Error);
+        let message = &failed.error.expect("cleanup error").message;
+
+        assert!(message.contains("could not reset the system audio rate"));
+        assert!(!message.contains("controlled PipeWire"));
+    }
+
+    #[test]
     fn replacing_or_stopping_a_source_clears_stale_path_observations() {
         let (event_sender, event_receiver) = std::sync::mpsc::channel();
         let process = FakeMpvProcess {
@@ -3997,7 +4207,7 @@ mod tests {
 
     #[test]
     fn direct_alsa_reobserves_the_negotiated_format_for_each_new_source() {
-        let (_event_sender, events) = std::sync::mpsc::channel();
+        let (event_sender, events) = std::sync::mpsc::channel();
         let observed_format = Arc::new(Mutex::new(Some(AudioFormatObservation {
             sample_rate_hz: Some(192_000),
             bit_depth: Some(24),
@@ -4006,6 +4216,11 @@ mod tests {
         let observation_calls = Arc::new(AtomicUsize::new(0));
         let controller = PlaybackController::start_with_output_devices(
             Box::new(ReobservedOutputMpv {
+                configured_format: Some(AudioFormatObservation {
+                    sample_rate_hz: Some(44_100),
+                    bit_depth: Some(16),
+                    channels: Some(2),
+                }),
                 observed_format,
                 observation_calls: observation_calls.clone(),
             }),
@@ -4033,11 +4248,19 @@ mod tests {
             })))
             .expect("play new source");
 
+        assert_eq!(observation_calls.load(Ordering::Acquire), 0);
+        assert_eq!(playing.telemetry.device.format.sample_rate_hz, None,);
+        event_sender
+            .send(MpvEvent::Decoder(ObservedMpvProperties::from_audio_params(
+                &json!({ "format": "s24", "samplerate": 192000, "channel-count": 2 }),
+            )))
+            .expect("audio readiness event");
+        let ready = wait_for_state(&controller, |state| {
+            state.telemetry.device.format.sample_rate_hz == Some(192_000)
+        });
+
         assert_eq!(observation_calls.load(Ordering::Acquire), 1);
-        assert_eq!(
-            playing.telemetry.device.format.sample_rate_hz,
-            Some(192_000)
-        );
+        assert_eq!(ready.telemetry.device.format.sample_rate_hz, Some(192_000));
     }
 
     #[test]
