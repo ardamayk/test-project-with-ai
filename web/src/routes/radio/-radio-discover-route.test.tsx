@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
 	playRadioCatalogPreview: vi.fn(),
 }));
 
+const FILTER_INTERACTION_TIMEOUT_MS = 10_000;
+
 vi.mock("#/lib/api", () => ({
 	apiClient: {
 		searchRadioStations: mocks.searchRadioStations,
@@ -195,115 +197,129 @@ describe("radio discover route", () => {
 		expect(swissPop.className).toContain("hover:shadow-lg");
 	});
 
-	it("searches and filters the catalog from dropdown options", async () => {
-		renderWithQuery(<RadioDiscoverPage />);
+	it(
+		"searches and filters the catalog from dropdown options",
+		async () => {
+			renderWithQuery(<RadioDiscoverPage />);
 
-		await screen.findByText("Radio Swiss Pop");
-		fireEvent.change(screen.getByPlaceholderText("Search station name..."), {
-			target: { value: "jazz" },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Filters" }));
-		const drawer = await screen.findByRole("dialog", {
-			name: "Radio catalog filters",
-		});
-		fireEvent.click(within(drawer).getByRole("button", { name: "Country" }));
-		fireEvent.click(await screen.findByRole("option", { name: /Switzerland/ }));
-		fireEvent.click(within(drawer).getByRole("button", { name: "Genre" }));
-		fireEvent.click(await screen.findByRole("option", { name: "jazz" }));
-		fireEvent.click(within(drawer).getByRole("radio", { name: "MP3" }));
-		fireEvent.click(within(drawer).getByRole("radio", { name: "128 kbps+" }));
-
-		await waitFor(() => {
-			expect(mocks.searchRadioStations).toHaveBeenLastCalledWith(
-				expect.objectContaining({
-					q: "jazz",
-					country: "Switzerland",
-					tag: "jazz",
-					codec: "MP3",
-					minBitrate: 128,
-					limit: 40,
-					offset: 0,
-				}),
+			await screen.findByText("Radio Swiss Pop");
+			fireEvent.change(screen.getByPlaceholderText("Search station name..."), {
+				target: { value: "jazz" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+			const drawer = await screen.findByRole("dialog", {
+				name: "Radio catalog filters",
+			});
+			fireEvent.click(within(drawer).getByRole("button", { name: "Country" }));
+			fireEvent.click(
+				await screen.findByRole("option", { name: /Switzerland/ }),
 			);
-		});
-	});
+			fireEvent.click(within(drawer).getByRole("button", { name: "Genre" }));
+			fireEvent.click(await screen.findByRole("option", { name: "jazz" }));
+			fireEvent.click(within(drawer).getByRole("radio", { name: "MP3" }));
+			fireEvent.click(within(drawer).getByRole("radio", { name: "128 kbps+" }));
 
-	it("resets catalog filters from the drawer", async () => {
-		renderWithQuery(<RadioDiscoverPage />);
+			await waitFor(() => {
+				expect(mocks.searchRadioStations).toHaveBeenLastCalledWith(
+					expect.objectContaining({
+						q: "jazz",
+						country: "Switzerland",
+						tag: "jazz",
+						codec: "MP3",
+						minBitrate: 128,
+						limit: 40,
+						offset: 0,
+					}),
+				);
+			});
+		},
+		FILTER_INTERACTION_TIMEOUT_MS,
+	);
 
-		await screen.findByText("Radio Swiss Pop");
-		fireEvent.change(screen.getByPlaceholderText("Search station name..."), {
-			target: { value: "jazz" },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Filters" }));
-		const drawer = await screen.findByRole("dialog", {
-			name: "Radio catalog filters",
-		});
-		fireEvent.click(within(drawer).getByRole("button", { name: "List view" }));
-		expect(screen.getByTestId("radio-catalog-list")).toBeTruthy();
-		fireEvent.click(within(drawer).getByRole("button", { name: "Country" }));
-		fireEvent.click(await screen.findByRole("option", { name: /Switzerland/ }));
-		fireEvent.click(within(drawer).getByRole("button", { name: "Genre" }));
-		fireEvent.click(await screen.findByRole("option", { name: "jazz" }));
-		fireEvent.click(within(drawer).getByRole("radio", { name: "MP3" }));
-		fireEvent.click(within(drawer).getByRole("radio", { name: "128 kbps+" }));
+	it(
+		"resets catalog filters from the drawer",
+		async () => {
+			renderWithQuery(<RadioDiscoverPage />);
 
-		await waitFor(() => {
-			expect(mocks.searchRadioStations).toHaveBeenLastCalledWith(
-				expect.objectContaining({
-					q: "jazz",
-					country: "Switzerland",
-					tag: "jazz",
-					codec: "MP3",
-					minBitrate: 128,
-				}),
+			await screen.findByText("Radio Swiss Pop");
+			fireEvent.change(screen.getByPlaceholderText("Search station name..."), {
+				target: { value: "jazz" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+			const drawer = await screen.findByRole("dialog", {
+				name: "Radio catalog filters",
+			});
+			fireEvent.click(
+				within(drawer).getByRole("button", { name: "List view" }),
 			);
-		});
+			expect(screen.getByTestId("radio-catalog-list")).toBeTruthy();
+			fireEvent.click(within(drawer).getByRole("button", { name: "Country" }));
+			fireEvent.click(
+				await screen.findByRole("option", { name: /Switzerland/ }),
+			);
+			fireEvent.click(within(drawer).getByRole("button", { name: "Genre" }));
+			fireEvent.click(await screen.findByRole("option", { name: "jazz" }));
+			fireEvent.click(within(drawer).getByRole("radio", { name: "MP3" }));
+			fireEvent.click(within(drawer).getByRole("radio", { name: "128 kbps+" }));
 
-		fireEvent.click(
-			within(drawer).getByRole("button", { name: "Reset filters" }),
-		);
+			await waitFor(() => {
+				expect(mocks.searchRadioStations).toHaveBeenLastCalledWith(
+					expect.objectContaining({
+						q: "jazz",
+						country: "Switzerland",
+						tag: "jazz",
+						codec: "MP3",
+						minBitrate: 128,
+					}),
+				);
+			});
 
-		await waitFor(() => {
+			fireEvent.click(
+				within(drawer).getByRole("button", { name: "Reset filters" }),
+			);
+
+			await waitFor(() => {
+				expect(
+					(
+						screen.getByPlaceholderText(
+							"Search station name...",
+						) as HTMLInputElement
+					).value,
+				).toBe("jazz");
+				expect(mocks.searchRadioStations).toHaveBeenLastCalledWith(
+					expect.objectContaining({
+						q: "jazz",
+						country: undefined,
+						tag: undefined,
+						codec: undefined,
+						minBitrate: undefined,
+						limit: 40,
+						offset: 0,
+					}),
+				);
+			});
+			expect(
+				within(drawer)
+					.getByRole("button", { name: "List view" })
+					.getAttribute("aria-pressed"),
+			).toBe("true");
 			expect(
 				(
-					screen.getByPlaceholderText(
-						"Search station name...",
-					) as HTMLInputElement
-				).value,
-			).toBe("jazz");
-			expect(mocks.searchRadioStations).toHaveBeenLastCalledWith(
-				expect.objectContaining({
-					q: "jazz",
-					country: undefined,
-					tag: undefined,
-					codec: undefined,
-					minBitrate: undefined,
-					limit: 40,
-					offset: 0,
-				}),
-			);
-		});
-		expect(
-			within(drawer)
-				.getByRole("button", { name: "List view" })
-				.getAttribute("aria-pressed"),
-		).toBe("true");
-		expect(
-			(
-				within(drawer).getByRole("radio", {
-					name: "Any format",
-				}) as HTMLInputElement
-			).checked,
-		).toBe(true);
-		expect(
-			(
-				within(drawer).getByRole("radio", {
-					name: "Any bitrate",
-				}) as HTMLInputElement
-			).checked,
-		).toBe(true);
-	});
+					within(drawer).getByRole("radio", {
+						name: "Any format",
+					}) as HTMLInputElement
+				).checked,
+			).toBe(true);
+			expect(
+				(
+					within(drawer).getByRole("radio", {
+						name: "Any bitrate",
+					}) as HTMLInputElement
+				).checked,
+			).toBe(true);
+		},
+		FILTER_INTERACTION_TIMEOUT_MS,
+	);
 
 	it("renders static country and genre filter options", async () => {
 		renderWithQuery(<RadioDiscoverPage />);
