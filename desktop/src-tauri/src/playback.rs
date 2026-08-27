@@ -1007,7 +1007,7 @@ mod tests {
         let fixture_path = temporary_path("controlled-track.wav");
         fs::write(&fixture_path, silent_wav()).expect("write WAV fixture");
         let (process, events, ipc_directory) =
-            RealMpvProcess::start(PathBuf::from("/usr/bin/mpv"), vec!["--ao=null".to_owned()])
+            RealMpvProcess::start(super::resolve_mpv_binary(), vec!["--ao=null".to_owned()])
                 .expect("start pinned mpv");
         assert!(ipc_directory.exists());
         assert_eq!(

@@ -8,7 +8,7 @@ on:
 
 jobs:
   lint-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -20,10 +20,21 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             libayatana-appindicator3-dev \
+            libass-dev \
+            libavcodec-dev \
+            libavfilter-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libplacebo-dev \
             librsvg2-dev \
             libssl-dev \
+            libswresample-dev \
+            libswscale-dev \
             libwebkit2gtk-4.1-dev \
-            libxdo-dev
+            libxdo-dev \
+            meson \
+            ninja-build \
+            pkg-config
 
       - name: Install JS deps
         run: pnpm install
@@ -43,19 +54,37 @@ jobs:
       - name: Desktop unit tests
         run: pnpm test:desktop
 
-      - name: Real mpv integration when pinned mpv is available
+      - name: Build pinned mpv from verified source
         shell: bash
+        env:
+          # Official signed v0.41.0 tag, commit 41f6a645068483470267271e1d09966ca3b9f413.
+          MPV_SOURCE_SHA256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
         run: |
-          if ! command -v mpv >/dev/null; then
-            echo "Skipping real mpv integration: mpv is not installed."
-            exit 0
-          fi
           PINNED_MPV_VERSION="$(tr -d '\r\n' < desktop/src-tauri/mpv-version.txt)"
-          if [[ "$(mpv --version | sed -n '1p')" != "mpv v${PINNED_MPV_VERSION}"* ]]; then
-            echo "Skipping real mpv integration: pinned mpv ${PINNED_MPV_VERSION} is unavailable."
-            exit 0
-          fi
-          pnpm --filter @repo/desktop test:mpv
+          MPV_ARCHIVE="${RUNNER_TEMP}/mpv-${PINNED_MPV_VERSION}.tar.gz"
+          MPV_SOURCE_DIRECTORY="${RUNNER_TEMP}/mpv-${PINNED_MPV_VERSION}"
+          MPV_BINARY_DIRECTORY="${RUNNER_TEMP}/earthly-audio-mpv"
+          curl --fail --location --retry 3 \
+            "https://github.com/mpv-player/mpv/archive/refs/tags/v${PINNED_MPV_VERSION}.tar.gz" \
+            --output "${MPV_ARCHIVE}"
+          echo "${MPV_SOURCE_SHA256}  ${MPV_ARCHIVE}" | sha256sum --check
+          tar --extract --gzip --file "${MPV_ARCHIVE}" --directory "${RUNNER_TEMP}"
+          meson setup "${MPV_SOURCE_DIRECTORY}/build" "${MPV_SOURCE_DIRECTORY}" \
+            --buildtype=release \
+            --auto-features=disabled \
+            -Dbuild-date=false \
+            -Dgl=disabled \
+            -Dlibmpv=false
+          meson compile -C "${MPV_SOURCE_DIRECTORY}/build" ./mpv:executable
+          install -d -m 0755 "${MPV_BINARY_DIRECTORY}"
+          install -m 0755 "${MPV_SOURCE_DIRECTORY}/build/mpv" "${MPV_BINARY_DIRECTORY}/mpv"
+          echo "EARTHLY_AUDIO_MPV_PATH=${MPV_BINARY_DIRECTORY}/mpv" >> "${GITHUB_ENV}"
+
+      - name: Stage pinned mpv sidecar
+        run: pnpm --dir desktop prepare:mpv
+
+      - name: Real mpv integration
+        run: pnpm --filter @repo/desktop test:mpv
 
       - name: Go test
         working-directory: server

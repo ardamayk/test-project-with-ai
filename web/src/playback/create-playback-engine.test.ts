@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPlaybackEngine } from "./create-playback-engine";
-import { DesktopPlaybackEngine } from "./DesktopPlaybackEngine";
+import { DesktopSourceRoutingPlaybackEngine } from "./DesktopSourceRoutingPlaybackEngine";
 
 describe("createPlaybackEngine", () => {
 	afterEach(() => {
@@ -18,7 +18,7 @@ describe("createPlaybackEngine", () => {
 
 		const engine = createPlaybackEngine();
 
-		expect(engine).toBeInstanceOf(DesktopPlaybackEngine);
+		expect(engine).toBeInstanceOf(DesktopSourceRoutingPlaybackEngine);
 		expect(audioConstructor).not.toHaveBeenCalled();
 		engine.destroy();
 	});

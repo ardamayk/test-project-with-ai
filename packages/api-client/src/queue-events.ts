@@ -1,6 +1,8 @@
 import type { components } from './generated/schema'
 
 const QUEUE_EVENT_RECONNECT_DELAY_MS = 1000
+const CAPABILITY_RETRY_INITIAL_DELAY_MS = 1000
+const CAPABILITY_RETRY_MAX_DELAY_MS = 30000
 const QUEUE_EVENTS_PATH = '/api/v1/playback/queue/events'
 export const QUEUE_EVENTS_CAPABILITY = 'playback.queue-events.v1'
 
@@ -35,28 +37,60 @@ export function subscribeQueueEvents(
   const reportError = onError ?? ((error: Error) => {
     console.warn('Queue event stream error', { error })
   })
+  const abortController = new AbortController()
   let unsubscribe: (() => void) | undefined
-  let isClosed = false
-  void config.getCapabilities().then((capabilities) => {
-    if (!capabilities.includes(QUEUE_EVENTS_CAPABILITY)) {
-      reportError(
-        new Error(
-          `Music Server does not advertise ${QUEUE_EVENTS_CAPABILITY}; Queue synchronization is disabled.`,
-        ),
-      )
-      return
-    }
-    if (isClosed) return
-    const cleanup = subscribeSupportedQueueEvents(config, onEvent, reportError)
-    if (isClosed) cleanup()
+  void subscribeAfterCapabilityCheck(
+    config,
+    onEvent,
+    reportError,
+    abortController.signal,
+  ).then((cleanup) => {
+    if (!cleanup) return
+    if (abortController.signal.aborted) cleanup()
     else unsubscribe = cleanup
   }).catch((error) => {
-    if (!isClosed) reportError(toError(error))
+    if (!abortController.signal.aborted) reportError(toError(error))
   })
   return () => {
-    isClosed = true
+    abortController.abort()
     unsubscribe?.()
   }
+}
+
+async function subscribeAfterCapabilityCheck(
+  config: QueueEventSubscription,
+  onEvent: (event: QueueEvent) => void,
+  reportError: (error: Error) => void,
+  signal: AbortSignal,
+): Promise<(() => void) | undefined> {
+  let retryDelayMs = CAPABILITY_RETRY_INITIAL_DELAY_MS
+  while (!signal.aborted) {
+    let capabilities: string[]
+    try {
+      capabilities = await config.getCapabilities()
+    } catch (error) {
+      if (signal.aborted) return undefined
+      reportError(toError(error))
+      await waitForDelay(signal, retryDelayMs)
+      retryDelayMs = Math.min(retryDelayMs * 2, CAPABILITY_RETRY_MAX_DELAY_MS)
+      continue
+    }
+    if (signal.aborted) return undefined
+    if (!capabilities.includes(QUEUE_EVENTS_CAPABILITY)) {
+      reportMissingCapability(reportError)
+      return undefined
+    }
+    return subscribeSupportedQueueEvents(config, onEvent, reportError)
+  }
+  return undefined
+}
+
+function reportMissingCapability(reportError: (error: Error) => void): void {
+  reportError(
+    new Error(
+      `Music Server does not advertise ${QUEUE_EVENTS_CAPABILITY}; Queue synchronization is disabled.`,
+    ),
+  )
 }
 
 function subscribeSupportedQueueEvents(
@@ -153,7 +187,7 @@ async function runFetchLoop(
       if (signal.aborted) return
       reportError(toError(error))
     }
-    await waitForReconnect(signal)
+    await waitForDelay(signal, QUEUE_EVENT_RECONNECT_DELAY_MS)
   }
 }
 
@@ -224,7 +258,7 @@ function buildQueueEventsUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/$/, '')}${QUEUE_EVENTS_PATH}`
 }
 
-function waitForReconnect(signal: AbortSignal): Promise<void> {
+function waitForDelay(signal: AbortSignal, delayMs: number): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) {
       resolve()
@@ -237,7 +271,7 @@ function waitForReconnect(signal: AbortSignal): Promise<void> {
     const timeoutId = setTimeout(() => {
       signal.removeEventListener('abort', handleAbort)
       resolve()
-    }, QUEUE_EVENT_RECONNECT_DELAY_MS)
+    }, delayMs)
     signal.addEventListener('abort', handleAbort, { once: true })
   })
 }

@@ -84,34 +84,98 @@ describe('createApiClient', () => {
     expect(eventSource.close).toHaveBeenCalledOnce()
   })
 
+  it('recovers from a transient capability check failure without remounting', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = vi.fn<typeof fetch>()
+        .mockRejectedValueOnce(new Error('temporary health failure'))
+        .mockRejectedValueOnce(new Error('temporary health failure'))
+        .mockResolvedValueOnce(
+          serverHealthResponse(['api.v1', 'playback.queue-events.v1']),
+        )
+      const eventSourceFactory = vi.fn(() => ({
+        addEventListener: vi.fn(),
+        close: vi.fn(),
+        onerror: null,
+      }))
+      const client = createApiClient({
+        baseUrl: 'http://music.test',
+        transport,
+        eventSourceFactory,
+      })
+
+      const unsubscribe = client.subscribePlaybackQueueEvents(vi.fn(), vi.fn())
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(999)
+      expect(transport).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(transport).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(transport).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(transport).toHaveBeenCalledTimes(3)
+      expect(eventSourceFactory).toHaveBeenCalledOnce()
+      unsubscribe()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not subscribe when Queue events capability is absent', async () => {
-    const transport = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          status: 'ok',
-          version: '0.1.0',
-          capabilities: ['api.v1'],
-        }),
-        { status: 200 },
-      ),
-    )
-    const eventSourceFactory = vi.fn()
-    const onError = vi.fn()
-    const client = createApiClient({
-      baseUrl: 'http://music.test',
-      transport,
-      eventSourceFactory,
-    })
+    vi.useFakeTimers()
+    try {
+      const transport = vi.fn<typeof fetch>().mockResolvedValue(
+        serverHealthResponse(['api.v1']),
+      )
+      const eventSourceFactory = vi.fn()
+      const onError = vi.fn()
+      const client = createApiClient({
+        baseUrl: 'http://music.test',
+        transport,
+        eventSourceFactory,
+      })
 
-    client.subscribePlaybackQueueEvents(vi.fn(), onError)
+      client.subscribePlaybackQueueEvents(vi.fn(), onError)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(120000)
 
-    await vi.waitFor(() => expect(onError).toHaveBeenCalled())
-    expect(onError).toHaveBeenCalledWith(
-      new Error(
-        'Music Server does not advertise playback.queue-events.v1; Queue synchronization is disabled.',
-      ),
-    )
-    expect(eventSourceFactory).not.toHaveBeenCalled()
+      expect(onError).toHaveBeenCalledOnce()
+      expect(onError).toHaveBeenCalledWith(
+        new Error(
+          'Music Server does not advertise playback.queue-events.v1; Queue synchronization is disabled.',
+        ),
+      )
+      expect(transport).toHaveBeenCalledOnce()
+      expect(eventSourceFactory).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels a pending capability retry when unsubscribed', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = vi.fn<typeof fetch>().mockRejectedValue(
+        new Error('temporary health failure'),
+      )
+      const eventSourceFactory = vi.fn()
+      const client = createApiClient({
+        baseUrl: 'http://music.test',
+        transport,
+        eventSourceFactory,
+      })
+
+      const unsubscribe = client.subscribePlaybackQueueEvents(vi.fn(), vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      unsubscribe()
+      await vi.advanceTimersByTimeAsync(120000)
+
+      expect(transport).toHaveBeenCalledOnce()
+      expect(eventSourceFactory).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('authenticates Queue event streams when a token is configured', async () => {
