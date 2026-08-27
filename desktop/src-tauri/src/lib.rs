@@ -1,22 +1,45 @@
 mod connection;
 mod media_proxy;
 mod playback;
+mod playback_app_actions;
+mod playback_lifecycle;
+mod playback_navigation;
+#[cfg(test)]
+mod playback_test_support;
+mod playback_tray;
+pub mod processing;
 mod queue_events;
+pub mod telemetry;
 
 use connection::{
     ConnectionCheck, ConnectionError, ConnectionErrorCode, ConnectionStore, HttpBridge,
     HttpRequest, HttpResponse, ServerOrigin,
 };
 use media_proxy::MediaProxy;
-use playback::{PlaybackCommandError, PlaybackController, PlaybackSessionState};
+use playback::{PlaybackCommandError, PlaybackController, PlaybackSessionState, PlaybackStatus};
+use playback_app_actions::{
+    DesktopPlaybackAction, DesktopPlaybackShell, dispatch_desktop_playback_action,
+};
+use playback_lifecycle::{PlaybackLifecycle, PlaybackSnapshotStore};
+use playback_tray::{
+    PlaybackTray, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
+};
+use processing::{
+    EqualizerPreset, FileProcessingSettingsStorage, ProcessingController, ProcessingProfile,
+    ReplayGainMode, mpv_configuration_for,
+};
 use queue_events::QueueEventService;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
-use tauri::{Emitter, Manager, State};
+use std::sync::{Arc, Mutex, RwLock};
+use tauri::{Emitter, Manager, State, WindowEvent};
+use telemetry::CommandPipeWireObserver;
 
 const CONNECTION_FILE_NAME: &str = "server-connection.json";
+const PLAYBACK_SNAPSHOT_FILE_NAME: &str = "playback-session.json";
+const PROCESSING_SETTINGS_FILE_NAME: &str = "processing-settings.json";
+const PLAYBACK_STATE_EVENT: &str = "desktop-playback-state";
 const CONNECTION_CHANGED_EVENT: &str = "server-connection-changed";
 const QUEUE_EVENTS_ERROR_EVENT: &str = "desktop-queue-events-error";
 const QUEUE_INVALIDATED_EVENT: &str = "desktop-queue-invalidated";
@@ -34,6 +57,10 @@ const COVER_RESPONSE_HEADERS: &[&str] = &[
 
 struct AppState {
     playback: PlaybackController,
+    processing: Mutex<ProcessingController>,
+    playback_lifecycle: Arc<Mutex<PlaybackLifecycle>>,
+    playback_snapshot_store: PlaybackSnapshotStore,
+    _playback_tray: PlaybackTray,
     bridge: Arc<HttpBridge>,
     store: ConnectionStore,
     origin: Arc<RwLock<Option<ServerOrigin>>>,
@@ -119,6 +146,30 @@ fn get_desktop_playback_state(
 }
 
 #[tauri::command]
+fn desktop_playback_renderer_ready(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state
+        .playback_lifecycle
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Playback lifecycle state is unavailable."))?
+        .renderer_attached();
+    let playback_state = state.playback.state()?;
+    app.emit(PLAYBACK_STATE_EVENT, &playback_state)
+        .map_err(|_| PlaybackCommandError::new("Playback state event could not be published."))?;
+    Ok(playback_state)
+}
+
+#[tauri::command]
+fn desktop_playback_quit(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    dispatch_application_action(&app, &state, DesktopPlaybackAction::Quit)
+}
+
+#[tauri::command]
 fn desktop_playback_play(
     state: State<'_, AppState>,
     source: Option<Value>,
@@ -151,6 +202,32 @@ fn desktop_playback_toggle_play(
 }
 
 #[tauri::command]
+fn desktop_playback_sync_queue_context(
+    state: State<'_, AppState>,
+    sources: Vec<Value>,
+    current_index: Option<usize>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    for source in &sources {
+        validate_playback_source(source, state.media_proxy.base_url())?;
+    }
+    state.playback.sync_queue_context(sources, current_index)
+}
+
+#[tauri::command]
+fn desktop_playback_previous(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.previous()
+}
+
+#[tauri::command]
+fn desktop_playback_next(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.next()
+}
+
+#[tauri::command]
 fn desktop_playback_seek(
     state: State<'_, AppState>,
     seconds: f64,
@@ -163,7 +240,97 @@ fn desktop_playback_set_volume(
     state: State<'_, AppState>,
     value: f64,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-    state.playback.set_volume(value)
+    update_processing(&state, |processing| processing.set_software_volume(value))
+}
+
+#[tauri::command]
+fn desktop_playback_set_processing_profile(
+    state: State<'_, AppState>,
+    profile: ProcessingProfile,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    update_processing(&state, |processing| processing.set_profile(profile))
+}
+
+#[tauri::command]
+fn desktop_playback_set_replay_gain(
+    state: State<'_, AppState>,
+    mode: ReplayGainMode,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    update_processing(&state, |processing| {
+        if mode == ReplayGainMode::Off {
+            processing.disable_replay_gain()
+        } else {
+            processing.enable_replay_gain(mode)
+        }
+    })
+}
+
+#[tauri::command]
+fn desktop_playback_set_equalizer_preset(
+    state: State<'_, AppState>,
+    preset: EqualizerPreset,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    update_processing(&state, |processing| {
+        processing.apply_equalizer_preset(preset)
+    })
+}
+
+#[tauri::command]
+fn desktop_playback_set_equalizer_gain(
+    state: State<'_, AppState>,
+    index: usize,
+    value: f64,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    update_processing(&state, |processing| {
+        processing.set_equalizer_gain(index, value)
+    })
+}
+
+fn update_processing(
+    state: &AppState,
+    change: impl FnOnce(&mut ProcessingController) -> Result<(), String>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Processing Profile state is unavailable."))?;
+    let previous_state = processing.state().clone();
+    change(&mut processing).map_err(PlaybackCommandError::new)?;
+    let processing_state = processing.state().clone();
+    let configuration = processing.mpv_configuration();
+    match state
+        .playback
+        .apply_processing(processing_state, &configuration)
+    {
+        Ok(playback_state) => {
+            if let Err(error) = processing.restore(playback_state.processing.clone()) {
+                rollback_processing(&state.playback, &mut processing, previous_state);
+                return Err(PlaybackCommandError::new(error));
+            }
+            Ok(playback_state)
+        }
+        Err(error) => {
+            rollback_processing(&state.playback, &mut processing, previous_state);
+            Err(error)
+        }
+    }
+}
+
+fn rollback_processing(
+    playback: &PlaybackController,
+    processing: &mut ProcessingController,
+    previous_state: processing::ProcessingState,
+) {
+    if let Err(error) = processing.restore(previous_state.clone()) {
+        eprintln!("Processing Profile rollback persistence failed: {error}");
+    }
+    let configuration = mpv_configuration_for(&previous_state);
+    if let Err(error) = playback.apply_processing(previous_state, &configuration) {
+        eprintln!(
+            "Native mpv Processing Profile rollback failed: {}",
+            error.message
+        );
+    }
 }
 
 #[tauri::command]
@@ -202,6 +369,83 @@ fn state_error() -> ConnectionError {
         ConnectionErrorCode::Storage,
         "Desktop connection state is unavailable. Restart the Desktop Client.",
     )
+}
+
+fn handle_tray_menu_event(app: &tauri::AppHandle, id: &str) {
+    let action = match id {
+        TRAY_OPEN_ID => DesktopPlaybackAction::OpenMainWindow,
+        TRAY_TOGGLE_ID => DesktopPlaybackAction::TogglePlay,
+        TRAY_PREVIOUS_ID => DesktopPlaybackAction::Previous,
+        TRAY_NEXT_ID => DesktopPlaybackAction::Next,
+        TRAY_QUIT_ID => DesktopPlaybackAction::Quit,
+        _ => return,
+    };
+    let state = app.state::<AppState>();
+    let result = dispatch_application_action(app, &state, action).map_err(|error| error.message);
+    if let Err(error) = result {
+        eprintln!("Desktop playback tray action '{id}' failed: {error}");
+    }
+}
+
+fn dispatch_application_action(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    action: DesktopPlaybackAction,
+) -> Result<(), PlaybackCommandError> {
+    dispatch_desktop_playback_action(
+        action,
+        &state.playback,
+        &state.playback_lifecycle,
+        &state.playback_snapshot_store,
+        &TauriDesktopPlaybackShell { app },
+    )
+}
+
+fn handle_main_window_close(window: &tauri::Window, event: &WindowEvent) {
+    if window.label() != "main" {
+        return;
+    }
+    let WindowEvent::CloseRequested { api, .. } = event else {
+        return;
+    };
+    api.prevent_close();
+    let state = window.state::<AppState>();
+    if let Err(error) = dispatch_application_action(
+        window.app_handle(),
+        &state,
+        DesktopPlaybackAction::CloseMainWindow,
+    ) {
+        eprintln!("Desktop main window close action failed: {}", error.message);
+    }
+}
+
+struct TauriDesktopPlaybackShell<'a> {
+    app: &'a tauri::AppHandle,
+}
+
+impl DesktopPlaybackShell for TauriDesktopPlaybackShell<'_> {
+    fn show_main_window(&self) -> Result<(), String> {
+        let window = self
+            .app
+            .get_webview_window("main")
+            .ok_or_else(|| "Desktop main window is unavailable.".to_owned())?;
+        window
+            .show()
+            .and_then(|_| window.set_focus())
+            .map_err(|error| error.to_string())
+    }
+
+    fn hide_main_window(&self) -> Result<(), String> {
+        self.app
+            .get_webview_window("main")
+            .ok_or_else(|| "Desktop main window is unavailable.".to_owned())?
+            .hide()
+            .map_err(|error| error.to_string())
+    }
+
+    fn exit(&self) {
+        self.app.exit(0);
+    }
 }
 
 fn cover_http_request(
@@ -295,6 +539,7 @@ fn protocol_error_status(code: ConnectionErrorCode) -> u16 {
 
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        .on_window_event(handle_main_window_close)
         .register_asynchronous_uri_scheme_protocol(COVER_PROTOCOL, |context, request, responder| {
             let state = context.app_handle().state::<AppState>();
             let bridge = state.bridge.clone();
@@ -304,18 +549,56 @@ pub fn run() -> tauri::Result<()> {
             });
         })
         .setup(|app| {
-            let store =
-                ConnectionStore::new(app.path().app_config_dir()?.join(CONNECTION_FILE_NAME));
+            let config_directory = app.path().app_config_dir()?;
+            let store = ConnectionStore::new(config_directory.join(CONNECTION_FILE_NAME));
+            let playback_snapshot_store =
+                PlaybackSnapshotStore::new(config_directory.join(PLAYBACK_SNAPSHOT_FILE_NAME));
+            let saved_playback = playback_snapshot_store
+                .load()
+                .map_err(std::io::Error::other)?;
             let origin = Arc::new(RwLock::new(store.load()?));
             let bridge = Arc::new(HttpBridge::new()?);
             let media_proxy = MediaProxy::start(bridge.clone(), origin.clone())?;
+            let saved_playback = saved_playback
+                .map(|snapshot| snapshot.rebind_media_proxy(media_proxy.base_url()))
+                .transpose()
+                .map_err(std::io::Error::other)?;
+            let playback_lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
+            let processing =
+                ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+                    config_directory.join(PROCESSING_SETTINGS_FILE_NAME),
+                )))
+                .map_err(std::io::Error::other)?;
+            let playback_tray = PlaybackTray::start(app.handle(), handle_tray_menu_event)?;
+            let playback_event_tray = playback_tray.clone();
             let app_handle = app.handle().clone();
-            let playback = PlaybackController::start_default(move |state| {
-                if let Err(error) = app_handle.emit("desktop-playback-state", state) {
-                    eprintln!("Desktop playback state event failed: {error}");
-                }
-            })
+            let playback = PlaybackController::start_default_with_lifecycle(
+                playback_lifecycle.clone(),
+                Arc::new(CommandPipeWireObserver::new()),
+                move |state| {
+                    if let Err(error) = playback_event_tray.update(
+                        state.source.as_ref(),
+                        state.status == PlaybackStatus::Playing,
+                    ) {
+                        eprintln!("Desktop playback tray update failed: {error}");
+                    }
+                    if let Err(error) = app_handle.emit(PLAYBACK_STATE_EVENT, state) {
+                        eprintln!("Desktop playback state event failed: {error}");
+                    }
+                },
+            )
             .map_err(std::io::Error::other)?;
+            playback
+                .set_output_mode(processing.output_mode())
+                .map_err(|error| std::io::Error::other(error.message))?;
+            if let Some(snapshot) = saved_playback.as_ref() {
+                playback
+                    .restore_paused(snapshot)
+                    .map_err(|error| std::io::Error::other(error.message))?;
+            }
+            playback
+                .apply_processing(processing.state().clone(), &processing.mpv_configuration())
+                .map_err(|error| std::io::Error::other(error.message))?;
             let queue_event_app = app.handle().clone();
             let queue_error_app = app.handle().clone();
             let queue_events = QueueEventService::start(
@@ -334,6 +617,10 @@ pub fn run() -> tauri::Result<()> {
             );
             app.manage(AppState {
                 playback,
+                processing: Mutex::new(processing),
+                playback_lifecycle,
+                playback_snapshot_store,
+                _playback_tray: playback_tray,
                 bridge,
                 store,
                 origin,
@@ -350,12 +637,21 @@ pub fn run() -> tauri::Result<()> {
             get_media_proxy_url,
             desktop_reconnect_queue_events,
             get_desktop_playback_state,
+            desktop_playback_renderer_ready,
+            desktop_playback_quit,
             desktop_playback_play,
             desktop_playback_pause,
             desktop_playback_stop,
             desktop_playback_toggle_play,
+            desktop_playback_sync_queue_context,
+            desktop_playback_previous,
+            desktop_playback_next,
             desktop_playback_seek,
             desktop_playback_set_volume,
+            desktop_playback_set_processing_profile,
+            desktop_playback_set_replay_gain,
+            desktop_playback_set_equalizer_preset,
+            desktop_playback_set_equalizer_gain,
             desktop_playback_toggle_shuffle,
             desktop_playback_cycle_repeat_mode
         ])

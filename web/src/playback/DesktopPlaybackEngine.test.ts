@@ -20,12 +20,42 @@ const trackSource: PlaybackSource = {
 	playbackUrl: `http://127.0.0.1:43129/${"a".repeat(64)}/api/v1/tracks/track-1/stream`,
 };
 
+const radioSource: PlaybackSource = {
+	type: "radio-station",
+	station: {
+		id: "station-1",
+		name: "Station 1",
+		streamUrl: "https://radio.example/live.mp3",
+		tags: [],
+		source: "manual",
+		isFavorite: false,
+		position: 0,
+	},
+	playbackUrl: `http://127.0.0.1:43129/${"b".repeat(64)}/api/v1/radio/stations/station-1/stream`,
+	sourceUrl: "https://radio.example/live.mp3",
+};
+
+const catalogSource: PlaybackSource = {
+	type: "catalog-preview",
+	result: {
+		stationUuid: "catalog-1",
+		name: "Catalog 1",
+		streamUrl: "https://catalog.example/live.m3u8",
+		tags: [],
+	},
+	playbackUrl: `http://127.0.0.1:43129/${"c".repeat(64)}/api/v1/radio/preview/catalog-1/stream`,
+	sourceUrl: "https://catalog.example/live.m3u8",
+};
+
 function createBridge() {
 	let listener: PlaybackSessionListener | null = null;
 	let state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
 	return {
 		bridge: {
-			getState: vi.fn(async () => state),
+			rendererReady: vi.fn(async () => state),
+			syncQueueContext: vi.fn(async () => state),
+			previous: vi.fn(async () => state),
+			next: vi.fn(async () => state),
 			play: vi.fn(async (source?: PlaybackSource) => {
 				state = {
 					...state,
@@ -40,6 +70,10 @@ function createBridge() {
 			togglePlay: vi.fn(async () => state),
 			seek: vi.fn(async () => state),
 			setVolume: vi.fn(async () => state),
+			setProcessingProfile: vi.fn(async () => state),
+			setReplayGainMode: vi.fn(async () => state),
+			setEqualizerPreset: vi.fn(async () => state),
+			setEqualizerGain: vi.fn(async () => state),
 			toggleShuffle: vi.fn(async () => state),
 			cycleRepeatMode: vi.fn(async () => state),
 			listen: vi.fn(async (nextListener: PlaybackSessionListener) => {
@@ -56,6 +90,72 @@ function createBridge() {
 }
 
 describe("DesktopPlaybackEngine", () => {
+	it("forwards previous and next controls to Rust-owned navigation", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		engine.previous();
+		engine.next();
+
+		await vi.waitFor(() => expect(native.bridge.next).toHaveBeenCalledOnce());
+		expect(native.bridge.previous).toHaveBeenCalledOnce();
+		engine.destroy();
+	});
+
+	it("forwards Processing Profile controls through the native bridge", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		engine.setProcessingProfile("processed");
+		engine.setReplayGainMode("album");
+		engine.setEqualizerPreset("vocal");
+		engine.setEqualizerGain(3, 2.5);
+
+		await vi.waitFor(() =>
+			expect(native.bridge.setEqualizerGain).toHaveBeenCalledWith(3, 2.5),
+		);
+		expect(native.bridge.setProcessingProfile).toHaveBeenCalledWith(
+			"processed",
+		);
+		expect(native.bridge.setReplayGainMode).toHaveBeenCalledWith("album");
+		expect(native.bridge.setEqualizerPreset).toHaveBeenCalledWith("vocal");
+		engine.destroy();
+	});
+	it("syncs Queue context through the Rust-owned playback seam", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+		await engine.syncQueueContext([trackSource], 0);
+
+		expect(native.bridge.syncQueueContext).toHaveBeenCalledWith(
+			[trackSource],
+			0,
+		);
+		engine.destroy();
+	});
+
+	it("hydrates the Rust-owned session when the renderer becomes ready", async () => {
+		const native = createBridge();
+		native.bridge.rendererReady.mockResolvedValueOnce({
+			...DEFAULT_PLAYBACK_SESSION_STATE,
+			source: radioSource,
+			outputMode: "system",
+			status: "playing",
+		});
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		await vi.waitFor(() => {
+			expect(engine.getState()).toMatchObject({
+				source: radioSource,
+				outputMode: "system",
+				status: "playing",
+			});
+		});
+
+		expect(native.bridge.listen).toHaveBeenCalledOnce();
+		expect(native.bridge.rendererReady).toHaveBeenCalledOnce();
+		engine.destroy();
+	});
+
 	it("plays a Track and projects native timing events", async () => {
 		const native = createBridge();
 		const engine = new DesktopPlaybackEngine(native.bridge);
@@ -77,6 +177,34 @@ describe("DesktopPlaybackEngine", () => {
 			duration: 121.25,
 		});
 		expect(observedStates.at(-1)?.currentTime).toBe(15.5);
+		engine.destroy();
+	});
+
+	it("plays saved Radio Stations through the native bridge proxy URL", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		await engine.play(radioSource);
+
+		expect(native.bridge.play).toHaveBeenCalledWith(radioSource);
+		expect(engine.getState()).toMatchObject({
+			source: radioSource,
+			status: "playing",
+		});
+		engine.destroy();
+	});
+
+	it("plays Catalog Previews through the native bridge proxy URL", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+
+		await engine.play(catalogSource);
+
+		expect(native.bridge.play).toHaveBeenCalledWith(catalogSource);
+		expect(engine.getState()).toMatchObject({
+			source: catalogSource,
+			status: "playing",
+		});
 		engine.destroy();
 	});
 

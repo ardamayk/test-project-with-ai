@@ -8,7 +8,7 @@
     "desktop:dev": "pnpm prepare:mpv && tauri dev --config src-tauri/tauri.sidecar.conf.json",
     "prepare:mpv": "./scripts/prepare-mpv-sidecar.sh",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "test:mpv": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests::real_pinned_mpv_controls_a_track_and_removes_private_ipc -- --ignored"
+    "test:mpv": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests -- --ignored --test-threads=1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

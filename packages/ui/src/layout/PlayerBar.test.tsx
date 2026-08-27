@@ -136,16 +136,20 @@ function RadioStarter() {
 	);
 }
 
-function renderPlayerBar(onPlaylistMutated?: () => void) {
-	return render(
+function renderPlayerBar(
+	onPlaylistMutated?: () => void,
+	engine = new InMemoryPlaybackEngine(),
+) {
+	const result = render(
 		<LayoutProvider initialPreferences={defaultPreferences}>
-			<PlaybackProvider api={api} engine={new InMemoryPlaybackEngine()}>
+			<PlaybackProvider api={api} engine={engine}>
 				<PlaybackStarter />
 				<RadioStarter />
 				<PlayerBar onPlaylistMutated={onPlaylistMutated} />
 			</PlaybackProvider>
 		</LayoutProvider>,
 	);
+	return { ...result, engine };
 }
 
 async function openActionsMenu() {
@@ -181,6 +185,9 @@ describe("PlayerBar", () => {
 			(screen.getByRole("button", { name: "Play" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
+		expect(
+			screen.queryByRole("button", { name: /Playback signal:/ }),
+		).toBeNull();
 	});
 
 	it("shows the current track after playback starts", async () => {
@@ -271,6 +278,25 @@ describe("PlayerBar", () => {
 				.disabled,
 		).toBe(true);
 		expect(screen.getByRole("menuitem", { name: "Details" })).toBeTruthy();
+	});
+
+	it("opens browser-managed Playback Telemetry from the compact player status", async () => {
+		renderPlayerBar();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Playback signal: Processed" }),
+		);
+
+		const dialog = screen.getByRole("dialog", { name: "Playback signal path" });
+		expect(within(dialog).getByText(/Browser managed/)).toBeTruthy();
+		const device = within(dialog).getByRole("heading", {
+			name: "Device",
+		}).parentElement;
+		expect(device?.textContent).toContain("Unknown");
+		expect(device?.textContent).not.toContain("96 kHz");
 	});
 
 	it("shows live radio progress instead of track time", async () => {
@@ -455,5 +481,36 @@ describe("PlayerBar", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Repeat once" }));
 		expect(screen.getByRole("button", { name: "Repeat loop" })).toBeTruthy();
 		expect(screen.getByLabelText("Repeat infinitely")).toBeTruthy();
+	});
+
+	it("routes Previous, Next, and Shuffle through public engine controls", async () => {
+		const engine = new InMemoryPlaybackEngine();
+		const previous = vi.spyOn(engine, "previous");
+		const next = vi.spyOn(engine, "next");
+		const toggleShuffle = vi.spyOn(engine, "toggleShuffle");
+		renderPlayerBar(undefined, engine);
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+		fireEvent.click(screen.getByRole("button", { name: "Next" }));
+		fireEvent.click(screen.getByRole("button", { name: "Shuffle off" }));
+
+		expect(previous).toHaveBeenCalledOnce();
+		expect(next).toHaveBeenCalledOnce();
+		expect(toggleShuffle).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		["mpv-crash-loop", "Native playback stopped after repeated failures."],
+		["mpv-restart-failed", "Native playback could not restart. Try again."],
+	] as const)("renders %s as an actionable alert", async (code, message) => {
+		const engine = new InMemoryPlaybackEngine();
+		renderPlayerBar(undefined, engine);
+
+		await act(async () => engine.fail({ code, message }));
+
+		expect(screen.getByRole("alert").textContent).toContain(message);
 	});
 });

@@ -21,9 +21,14 @@ import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
 import { formatReplayGainAvailability } from "../playback/format-replay-gain";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
+import {
+	createFallbackPlaybackTelemetry,
+	type PlaybackTelemetry,
+} from "../playback/telemetry";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
+import { PlaybackSignal } from "./PlaybackSignal";
 import { PlaybackControls, VolumeAndQueueControls } from "./PlayerBarControls";
 
 const RECENT_PLAYLISTS_KEY = "navidrome-recent-playlists";
@@ -108,8 +113,10 @@ type MenuPosition = {
 
 export function PlayerBar({
 	onPlaylistMutated,
+	telemetry,
 }: {
 	onPlaylistMutated?: () => void;
+	telemetry?: PlaybackTelemetry;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -129,6 +136,8 @@ export function PlayerBar({
 	const { preferences, togglePanel } = useLayout();
 	const queuePanelSide = getQueuePanel(preferences.layout.sidebarPosition);
 	const {
+		playbackSource,
+		outputMode,
 		currentTrack,
 		currentRadioStation,
 		radioNowPlaying,
@@ -138,13 +147,20 @@ export function PlayerBar({
 		volume,
 		shuffleEnabled,
 		repeatMode,
+		playbackError,
 		togglePlay,
+		navigatePrevious,
+		navigateNext,
 		toggleShuffle,
 		cycleRepeatMode,
 		seek,
 		setVolume,
-		playQueueIndex,
-		queue,
+		processingState,
+		playbackTelemetry: observedPlaybackTelemetry,
+		setProcessingProfile,
+		setReplayGainMode,
+		setEqualizerPreset,
+		setEqualizerGain,
 		getAlbumCoverUrl,
 	} = usePlayback();
 	const {
@@ -238,9 +254,6 @@ export function PlayerBar({
 		};
 	}, []);
 
-	const currentIndex = queue.findIndex(
-		(item) => item.track.id === currentTrack?.id,
-	);
 	const isRadioPlaying = Boolean(currentRadioStation);
 	const hasPlayableSource = Boolean(currentTrack || currentRadioStation);
 	const radioTitle =
@@ -273,6 +286,22 @@ export function PlayerBar({
 	const qualityLabel = isRadioPlaying
 		? formatRadioQualityLabel(currentRadioStation)
 		: formatQualityLabel(currentTrack);
+	const playbackTelemetry =
+		telemetry ??
+		observedPlaybackTelemetry ??
+		createFallbackPlaybackTelemetry(playbackSource, volume);
+	const hasActiveSource = currentTrack !== null || currentRadioStation !== null;
+	const processingControls = processingState
+		? {
+				state: processingState,
+				setProfile: setProcessingProfile,
+				setSoftwareVolume: setVolume,
+				enableReplayGain: setReplayGainMode,
+				disableReplayGain: () => setReplayGainMode("off"),
+				applyEqualizerPreset: setEqualizerPreset,
+				setEqualizerGain,
+			}
+		: undefined;
 	const sortedPlaylists = useMemo(
 		() =>
 			[...playlists].sort((a, b) => {
@@ -408,7 +437,15 @@ export function PlayerBar({
 	};
 
 	return (
-		<footer className="h-[72px] border-[var(--shell-subtle-border)] border-t bg-player px-6 pt-px text-player-foreground shadow-[0px_-10px_40px_0px_rgba(0,0,0,0.3)] backdrop-blur-[12px]">
+		<footer className="relative h-[72px] border-[var(--shell-subtle-border)] border-t bg-player px-6 pt-px text-player-foreground shadow-[0px_-10px_40px_0px_rgba(0,0,0,0.3)] backdrop-blur-[12px]">
+			{playbackError ? (
+				<p
+					role="alert"
+					className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2 rounded-md border border-destructive/40 bg-popover px-3 py-2 text-destructive text-sm shadow-lg"
+				>
+					{playbackError.message}
+				</p>
+			) : null}
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">
 				<section
 					aria-label="Now playing"
@@ -516,14 +553,13 @@ export function PlayerBar({
 					hasCurrentTrack={Boolean(currentTrack)}
 					currentTime={currentTime}
 					effectiveDuration={effectiveDuration}
-					currentIndex={currentIndex}
-					queueLength={queue.length}
 					shuffleEnabled={shuffleEnabled}
 					repeatMode={repeatMode}
 					onTogglePlay={togglePlay}
 					onToggleShuffle={toggleShuffle}
 					onCycleRepeatMode={cycleRepeatMode}
-					onPlayQueueIndex={(index) => void playQueueIndex(index)}
+					onPrevious={navigatePrevious}
+					onNext={navigateNext}
 					onSeek={seek}
 				/>
 
@@ -531,6 +567,16 @@ export function PlayerBar({
 					qualityLabel={qualityLabel}
 					isLossless={isLosslessFormat(currentTrack?.format)}
 					volume={volume}
+					signalControl={
+						hasActiveSource ? (
+							<PlaybackSignal
+								telemetry={playbackTelemetry}
+								outputMode={outputMode ?? undefined}
+								processingControls={processingControls}
+								replayGainMetadata={currentTrack?.replayGain}
+							/>
+						) : undefined
+					}
 					onToggleQueue={() => togglePanel(queuePanelSide)}
 					onVolumeChange={setVolume}
 				/>

@@ -22,8 +22,17 @@ import type {
 	PlaybackEngine,
 	PlaybackError,
 	PlaybackSessionState,
+	PlaybackSource,
 	RepeatMode,
 } from "./PlaybackEngine";
+import type {
+	EqualizerPreset,
+	OutputMode,
+	ProcessingProfile,
+	ProcessingState,
+	ReplayGainMode,
+} from "./processing";
+import type { PlaybackTelemetry } from "./telemetry";
 import {
 	type PlaybackQueueApi,
 	useSynchronizedQueue,
@@ -64,6 +73,8 @@ export type PlaybackApi = PlaybackQueueApi &
 
 type PlaybackContextValue = {
 	queue: QueueItem[];
+	playbackSource: PlaybackSource | null;
+	outputMode: OutputMode | null;
 	currentTrack: Track | null;
 	currentRadioStation: RadioStation | null;
 	radioNowPlaying: RadioNowPlaying | null;
@@ -74,6 +85,8 @@ type PlaybackContextValue = {
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	playbackError: PlaybackError | null;
+	processingState: ProcessingState | null;
+	playbackTelemetry: PlaybackTelemetry | null;
 	queueConflict: string | null;
 	playTrack: (trackId: string, queueTrackIds?: string[]) => Promise<void>;
 	playRadioStation: (station: RadioStation) => Promise<void>;
@@ -81,11 +94,17 @@ type PlaybackContextValue = {
 	queueTracks: (trackIds: string[]) => Promise<void>;
 	playQueueIndex: (index: number) => Promise<void>;
 	playNext: (trackId: string) => Promise<void>;
+	navigatePrevious: () => void;
+	navigateNext: () => void;
 	togglePlay: () => void;
 	toggleShuffle: () => void;
 	cycleRepeatMode: () => void;
 	seek: (seconds: number) => void;
 	setVolume: (value: number) => void;
+	setProcessingProfile: (profile: ProcessingProfile) => void;
+	setReplayGainMode: (mode: ReplayGainMode) => void;
+	setEqualizerPreset: (preset: Exclude<EqualizerPreset, "custom">) => void;
+	setEqualizerGain: (index: number, value: number) => void;
 	removeFromQueue: (itemId: string) => Promise<void>;
 	reorderQueue: (itemIds: string[]) => Promise<void>;
 	clearQueue: () => Promise<void>;
@@ -137,31 +156,33 @@ export function PlaybackProvider({
 		() => getCurrentRadioStation(session),
 		[session.source],
 	);
+	const radioNowPlayingStationId =
+		session.source?.type === "radio-station" ? session.source.station.id : null;
 
 	const refreshRadioNowPlaying = useCallback(async () => {
-		if (!currentRadioStation) return;
+		if (!radioNowPlayingStationId) return;
 		try {
 			const data = await apiRef.current.getRadioNowPlaying(
-				currentRadioStation.id,
+				radioNowPlayingStationId,
 			);
 			setRadioNowPlaying(data);
 		} catch (error) {
 			console.warn("Failed to refresh radio now playing", {
-				stationId: currentRadioStation.id,
+				stationId: radioNowPlayingStationId,
 				error,
 			});
 		}
-	}, [currentRadioStation]);
+	}, [radioNowPlayingStationId]);
 
 	useEffect(() => {
-		if (!currentRadioStation) return undefined;
+		if (!radioNowPlayingStationId) return undefined;
 		void refreshRadioNowPlaying();
 		const intervalId = window.setInterval(
 			() => void refreshRadioNowPlaying(),
 			30000,
 		);
 		return () => window.clearInterval(intervalId);
-	}, [currentRadioStation, refreshRadioNowPlaying]);
+	}, [radioNowPlayingStationId, refreshRadioNowPlaying]);
 
 	const playQueueItemInternal = useCallback(
 		async (item: QueueItem, queueOverride?: QueueItem[]) => {
@@ -172,10 +193,15 @@ export function PlaybackProvider({
 			currentQueueIndexRef.current = itemIndex;
 			setRadioNowPlaying(null);
 			try {
+				await engine.syncQueueContext?.(
+					queuePlaybackSources(activeQueue, apiRef.current),
+					itemIndex,
+				);
 				await engine.play({
 					type: "track",
 					track: item.track,
 					playbackUrl: apiRef.current.getStreamUrl(item.trackId),
+					queueItemId: item.id,
 				});
 			} catch {
 				// PlaybackEngine exposes the error through observable session state.
@@ -183,6 +209,35 @@ export function PlaybackProvider({
 		},
 		[engine],
 	);
+
+	useEffect(() => {
+		if (engine.syncQueueContext || !engine.subscribeNavigation)
+			return undefined;
+		return engine.subscribeNavigation((direction) => {
+			const currentIndex = queueRef.current.findIndex(
+				(item) => item.id === currentQueueItemIdRef.current,
+			);
+			if (currentIndex < 0) return;
+			const offset = direction === "previous" ? -1 : 1;
+			const item = queueRef.current[currentIndex + offset];
+			if (item) void playQueueItemInternal(item);
+		});
+	}, [engine, playQueueItemInternal]);
+
+	useEffect(() => {
+		if (!engine.syncQueueContext) return;
+		const currentIndex = queue.findIndex(
+			(item) => item.id === currentQueueItemIdRef.current,
+		);
+		void engine
+			.syncQueueContext(
+				queuePlaybackSources(queue, apiRef.current),
+				currentIndex >= 0 ? currentIndex : null,
+			)
+			.catch((error) => {
+				console.warn("Failed to sync native playback Queue context", { error });
+			});
+	}, [engine, queue]);
 
 	const playTrackInternal = useCallback(
 		async (trackId: string, queueOverride?: QueueItem[]) => {
@@ -197,6 +252,9 @@ export function PlaybackProvider({
 
 	useEffect(() => {
 		if (session.source?.type !== "track") return;
+		if (session.source.queueItemId) {
+			currentQueueItemIdRef.current = session.source.queueItemId;
+		}
 		const itemIndex = queue.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
 		);
@@ -220,6 +278,7 @@ export function PlaybackProvider({
 	}, [engine, queue.length, session.repeatMode, session.source]);
 
 	useEffect(() => {
+		if (engine.syncQueueContext) return;
 		if (session.status !== "ended" || session.source?.type !== "track") return;
 		const index = queueRef.current.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
@@ -338,6 +397,8 @@ export function PlaybackProvider({
 	const value = useMemo<PlaybackContextValue>(
 		() => ({
 			queue,
+			playbackSource: session.source,
+			outputMode: session.outputMode,
 			currentTrack,
 			currentRadioStation,
 			radioNowPlaying,
@@ -348,6 +409,8 @@ export function PlaybackProvider({
 			shuffleEnabled: session.shuffleEnabled,
 			repeatMode: session.repeatMode,
 			playbackError: session.error,
+			processingState: session.processing ?? null,
+			playbackTelemetry: session.telemetry ?? null,
 			queueConflict,
 			playTrack,
 			playRadioStation,
@@ -355,11 +418,18 @@ export function PlaybackProvider({
 			queueTracks,
 			playQueueIndex,
 			playNext,
+			navigatePrevious: () => engine.previous(),
+			navigateNext: () => engine.next(),
 			togglePlay: () => engine.togglePlay(),
 			toggleShuffle: () => engine.toggleShuffle(),
 			cycleRepeatMode: () => engine.cycleRepeatMode(),
 			seek: (seconds) => engine.seek(seconds),
 			setVolume: (value) => engine.setVolume(value),
+			setProcessingProfile: (profile) => engine.setProcessingProfile?.(profile),
+			setReplayGainMode: (mode) => engine.setReplayGainMode?.(mode),
+			setEqualizerPreset: (preset) => engine.setEqualizerPreset?.(preset),
+			setEqualizerGain: (index, value) =>
+				engine.setEqualizerGain?.(index, value),
 			removeFromQueue,
 			reorderQueue,
 			clearQueue,
@@ -407,6 +477,18 @@ export function PlaybackProvider({
 			</PlaylistLibraryContext.Provider>
 		</PlaybackContext.Provider>
 	);
+}
+
+function queuePlaybackSources(
+	queue: QueueItem[],
+	api: PlaybackAssetApi,
+): PlaybackSource[] {
+	return queue.map((item) => ({
+		type: "track",
+		track: item.track,
+		playbackUrl: api.getStreamUrl(item.trackId),
+		queueItemId: item.id,
+	}));
 }
 
 export function usePlayback() {

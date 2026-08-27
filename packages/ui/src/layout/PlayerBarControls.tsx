@@ -11,6 +11,7 @@ import {
 	SkipForward,
 	Volume2,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 import type { RepeatMode } from "../playback/PlaybackProvider";
 
@@ -25,14 +26,13 @@ type PlaybackControlsProps = {
 	hasCurrentTrack: boolean;
 	currentTime: number;
 	effectiveDuration: number;
-	currentIndex: number;
-	queueLength: number;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	onTogglePlay: () => void;
 	onToggleShuffle: () => void;
 	onCycleRepeatMode: () => void;
-	onPlayQueueIndex: (index: number) => void;
+	onPrevious: () => void;
+	onNext: () => void;
 	onSeek: (seconds: number) => void;
 };
 
@@ -52,14 +52,13 @@ function TransportControls({
 	isPlaying,
 	hasPlayableSource,
 	hasCurrentTrack,
-	currentIndex,
-	queueLength,
 	shuffleEnabled,
 	repeatMode,
 	onTogglePlay,
 	onToggleShuffle,
 	onCycleRepeatMode,
-	onPlayQueueIndex,
+	onPrevious,
+	onNext,
 }: PlaybackControlsProps) {
 	return (
 		<div className="flex items-center gap-6">
@@ -70,9 +69,8 @@ function TransportControls({
 			/>
 			<QueueNavigationButton
 				label="Previous"
-				targetIndex={currentIndex - 1}
-				disabled={currentIndex <= 0}
-				onPlay={onPlayQueueIndex}
+				disabled={!hasCurrentTrack}
+				onPlay={onPrevious}
 			/>
 			<PrimaryPlaybackButton
 				isPlaying={isPlaying}
@@ -81,9 +79,8 @@ function TransportControls({
 			/>
 			<QueueNavigationButton
 				label="Next"
-				targetIndex={currentIndex + 1}
-				disabled={currentIndex < 0 || currentIndex >= queueLength - 1}
-				onPlay={onPlayQueueIndex}
+				disabled={!hasCurrentTrack}
+				onPlay={onNext}
 			/>
 			<RepeatButton
 				repeatMode={repeatMode}
@@ -96,14 +93,12 @@ function TransportControls({
 
 function QueueNavigationButton({
 	label,
-	targetIndex,
 	disabled,
 	onPlay,
 }: {
 	label: "Previous" | "Next";
-	targetIndex: number;
 	disabled: boolean;
-	onPlay: (index: number) => void;
+	onPlay: () => void;
 }) {
 	const Icon = label === "Previous" ? SkipBack : SkipForward;
 	return (
@@ -111,7 +106,7 @@ function QueueNavigationButton({
 			type="button"
 			className={CONTROL_BUTTON_CLASS}
 			onClick={() => {
-				if (!disabled) onPlay(targetIndex);
+				if (!disabled) onPlay();
 			}}
 			disabled={disabled}
 			aria-label={label}
@@ -261,6 +256,7 @@ type VolumeAndQueueControlsProps = {
 	qualityLabel: string;
 	isLossless: boolean;
 	volume: number;
+	signalControl?: ReactNode;
 	onToggleQueue: () => void;
 	onVolumeChange: (value: number) => void;
 };
@@ -269,6 +265,7 @@ export function VolumeAndQueueControls({
 	qualityLabel,
 	isLossless,
 	volume,
+	signalControl,
 	onToggleQueue,
 	onVolumeChange,
 }: VolumeAndQueueControlsProps) {
@@ -278,6 +275,7 @@ export function VolumeAndQueueControls({
 			aria-label="Volume and queue"
 			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
+			{signalControl}
 			<button
 				type="button"
 				className="hidden size-5 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] sm:inline-flex"
