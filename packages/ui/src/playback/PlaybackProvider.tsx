@@ -27,6 +27,8 @@ import type {
 } from "./PlaybackEngine";
 import type {
 	EqualizerPreset,
+	OutputDevice,
+	OutputDeviceIssue,
 	OutputMode,
 	ProcessingProfile,
 	ProcessingState,
@@ -75,6 +77,9 @@ type PlaybackContextValue = {
 	queue: QueueItem[];
 	playbackSource: PlaybackSource | null;
 	outputMode: OutputMode | null;
+	availableOutputDevices: OutputDevice[];
+	selectedOutputDevice: OutputDevice | null;
+	outputDeviceIssue: OutputDeviceIssue | null;
 	currentTrack: Track | null;
 	currentRadioStation: RadioStation | null;
 	radioNowPlaying: RadioNowPlaying | null;
@@ -105,6 +110,10 @@ type PlaybackContextValue = {
 	setReplayGainMode: (mode: ReplayGainMode) => void;
 	setEqualizerPreset: (preset: Exclude<EqualizerPreset, "custom">) => void;
 	setEqualizerGain: (index: number, value: number) => void;
+	refreshOutputDevices: () => void;
+	selectDirectAlsaOutput: (deviceId: string) => void;
+	fallbackToSystemOutput: () => void;
+	enableAdaptiveSystemRate: (isConfirmed: boolean) => void;
 	removeFromQueue: (itemId: string) => Promise<void>;
 	reorderQueue: (itemIds: string[]) => Promise<void>;
 	clearQueue: () => Promise<void>;
@@ -399,6 +408,9 @@ export function PlaybackProvider({
 			queue,
 			playbackSource: session.source,
 			outputMode: session.outputMode,
+			availableOutputDevices: session.availableOutputDevices,
+			selectedOutputDevice: session.selectedOutputDevice,
+			outputDeviceIssue: session.outputDeviceIssue,
 			currentTrack,
 			currentRadioStation,
 			radioNowPlaying,
@@ -430,6 +442,12 @@ export function PlaybackProvider({
 			setEqualizerPreset: (preset) => engine.setEqualizerPreset?.(preset),
 			setEqualizerGain: (index, value) =>
 				engine.setEqualizerGain?.(index, value),
+			refreshOutputDevices: () => engine.refreshOutputDevices?.(),
+			selectDirectAlsaOutput: (deviceId) =>
+				engine.selectDirectAlsaOutput?.(deviceId),
+			fallbackToSystemOutput: () => engine.fallbackToSystemOutput?.(),
+			enableAdaptiveSystemRate: (isConfirmed) =>
+				engine.enableAdaptiveSystemRate?.(isConfirmed),
 			removeFromQueue,
 			reorderQueue,
 			clearQueue,

@@ -35,6 +35,10 @@ type DesktopPlaybackBridge = {
 		preset: Exclude<EqualizerPreset, "custom">,
 	): Promise<PlaybackSessionState>;
 	setEqualizerGain(index: number, value: number): Promise<PlaybackSessionState>;
+	refreshOutputDevices(): Promise<PlaybackSessionState>;
+	selectDirectAlsaOutput(deviceId: string): Promise<PlaybackSessionState>;
+	fallbackToSystemOutput(): Promise<PlaybackSessionState>;
+	enableAdaptiveSystemRate(isConfirmed: boolean): Promise<PlaybackSessionState>;
 	toggleShuffle(): Promise<PlaybackSessionState>;
 	cycleRepeatMode(): Promise<PlaybackSessionState>;
 	listen(listener: PlaybackSessionListener): Promise<UnlistenFn>;
@@ -60,6 +64,13 @@ const tauriPlaybackBridge: DesktopPlaybackBridge = {
 		invoke("desktop_playback_set_equalizer_preset", { preset }),
 	setEqualizerGain: (index, value) =>
 		invoke("desktop_playback_set_equalizer_gain", { index, value }),
+	refreshOutputDevices: () => invoke("desktop_playback_refresh_output_devices"),
+	selectDirectAlsaOutput: (deviceId) =>
+		invoke("desktop_playback_select_direct_alsa_output", { deviceId }),
+	fallbackToSystemOutput: () =>
+		invoke("desktop_playback_fallback_to_system_output"),
+	enableAdaptiveSystemRate: (isConfirmed) =>
+		invoke("desktop_playback_enable_adaptive_system_rate", { isConfirmed }),
 	toggleShuffle: () => invoke("desktop_playback_toggle_shuffle"),
 	cycleRepeatMode: () => invoke("desktop_playback_cycle_repeat_mode"),
 	listen: (listener) =>
@@ -155,6 +166,22 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 
 	setEqualizerGain(index: number, value: number) {
 		this.runCommand(() => this.bridge.setEqualizerGain(index, value));
+	}
+
+	refreshOutputDevices() {
+		this.runCommand(() => this.bridge.refreshOutputDevices());
+	}
+
+	selectDirectAlsaOutput(deviceId: string) {
+		this.runCommand(() => this.bridge.selectDirectAlsaOutput(deviceId));
+	}
+
+	fallbackToSystemOutput() {
+		this.runCommand(() => this.bridge.fallbackToSystemOutput());
+	}
+
+	enableAdaptiveSystemRate(isConfirmed: boolean) {
+		this.runCommand(() => this.bridge.enableAdaptiveSystemRate(isConfirmed));
 	}
 
 	toggleShuffle() {

@@ -60,6 +60,27 @@ fn native_telemetry_keeps_source_decoder_system_device_and_processing_independen
 }
 
 #[test]
+fn direct_alsa_telemetry_reports_pipewire_bypass_without_inventing_device_format() {
+    let decoder = ObservedMpvProperties::from_audio_params(
+        &json!({ "format": "s24", "samplerate": 96000, "channel-count": 2 }),
+    );
+
+    let observed = PlaybackTelemetry::native_direct_alsa_output(
+        telemetry::SourceObservation::unknown(),
+        decoder,
+        "USB DAC",
+        None,
+        ProcessingObservation::direct(),
+    );
+
+    assert_eq!(observed.system.kind, SystemObservationKind::Bypassed);
+    assert_eq!(observed.system.format, AudioFormatObservation::unknown());
+    assert_eq!(observed.device.name.as_deref(), Some("USB DAC"));
+    assert_eq!(observed.device.format, AudioFormatObservation::unknown());
+    assert_eq!(observed.device.is_resampling, None);
+}
+
+#[test]
 fn radio_sources_publish_available_codec_and_bitrate_metadata() {
     let station = telemetry::SourceObservation::from_playback_source(&json!({
         "type": "radio-station",

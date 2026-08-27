@@ -3,7 +3,17 @@ export const EQ_FREQUENCIES_HZ = [
 ] as const;
 
 export type ProcessingProfile = "direct" | "processed";
-export type OutputMode = "system";
+export type OutputMode = "system" | "direct-alsa" | "adaptive-system-rate";
+export const ADAPTIVE_SYSTEM_RATE_WARNING =
+	"Adaptive System Rate affects audio from every application on the PipeWire graph.";
+export type OutputDevice = {
+	id: string;
+	name: string;
+};
+export type OutputDeviceIssue = {
+	code: "busy-or-unsupported" | "disconnected";
+	message: string;
+};
 export type ReplayGainMode = "off" | "track" | "album";
 export type EffectiveReplayGainMode =
 	| ReplayGainMode

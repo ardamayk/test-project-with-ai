@@ -144,6 +144,45 @@ fn processing_mutations_preserve_the_persisted_system_output_mode() {
     std::fs::remove_file(settings_path).expect("remove settings fixture");
 }
 
+#[test]
+fn direct_alsa_selection_persists_independently_from_processing() {
+    let settings_path = temporary_path("direct-alsa-output-settings.json");
+    let mut controller = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+        settings_path.clone(),
+    )))
+    .expect("open audio settings");
+
+    controller
+        .select_direct_alsa_output("hw:2,0")
+        .expect("persist Direct ALSA Output and selected DAC");
+    controller
+        .set_software_volume(0.55)
+        .expect("change Processing Profile state");
+
+    let restored = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+        settings_path.clone(),
+    )))
+    .expect("restore audio settings");
+    assert_eq!(restored.output_mode(), OutputMode::DirectAlsa);
+    assert_eq!(restored.selected_output_device_id(), Some("hw:2,0"));
+    assert_eq!(restored.state().profile, ProcessingProfile::Processed);
+
+    std::fs::remove_file(settings_path).expect("remove settings fixture");
+}
+
+#[test]
+fn failed_direct_alsa_persistence_keeps_the_previous_output_selection() {
+    let mut controller = ProcessingController::open(Box::new(FailingSettingsStorage))
+        .expect("open failing storage fixture");
+
+    controller
+        .select_direct_alsa_output("hw:2,0")
+        .expect_err("surface persistence failure");
+
+    assert_eq!(controller.output_mode(), OutputMode::System);
+    assert_eq!(controller.selected_output_device_id(), None);
+}
+
 fn temporary_path(file_name: &str) -> std::path::PathBuf {
     let unique = format!(
         "earthly-audio-{}-{}-{}",

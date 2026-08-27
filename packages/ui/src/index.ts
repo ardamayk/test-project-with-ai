@@ -29,9 +29,11 @@ export type {
 } from './playback/PlaybackProvider'
 export { EQ_FREQUENCIES_HZ } from './playback/processing'
 export type {
+  EffectiveReplayGainMode,
   EqualizerPreset,
   EqualizerState,
-  EffectiveReplayGainMode,
+  OutputDevice,
+  OutputDeviceIssue,
   OutputMode,
   ProcessingProfile,
   ProcessingState,

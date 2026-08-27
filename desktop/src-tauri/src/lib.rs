@@ -1,5 +1,7 @@
+pub mod adaptive_system_rate;
 mod connection;
 mod media_proxy;
+pub mod output_device;
 mod playback;
 mod playback_app_actions;
 mod playback_lifecycle;
@@ -11,12 +13,18 @@ pub mod processing;
 mod queue_events;
 pub mod telemetry;
 
+use adaptive_system_rate::{
+    AdaptiveSystemRateController, CommandPipeWireRateAdapter, FileAdaptiveCleanupMarker,
+};
 use connection::{
     ConnectionCheck, ConnectionError, ConnectionErrorCode, ConnectionStore, HttpBridge,
     HttpRequest, HttpResponse, ServerOrigin,
 };
 use media_proxy::MediaProxy;
-use playback::{PlaybackCommandError, PlaybackController, PlaybackSessionState, PlaybackStatus};
+use playback::{
+    OutputDeviceIssueCode, PlaybackCommandError, PlaybackController, PlaybackSessionState,
+    PlaybackStatus,
+};
 use playback_app_actions::{
     DesktopPlaybackAction, DesktopPlaybackShell, dispatch_desktop_playback_action,
 };
@@ -25,8 +33,8 @@ use playback_tray::{
     PlaybackTray, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
 };
 use processing::{
-    EqualizerPreset, FileProcessingSettingsStorage, ProcessingController, ProcessingProfile,
-    ReplayGainMode, mpv_configuration_for,
+    EqualizerPreset, FileProcessingSettingsStorage, OutputMode, ProcessingController,
+    ProcessingProfile, ReplayGainMode, mpv_configuration_for,
 };
 use queue_events::QueueEventService;
 use serde::Serialize;
@@ -39,6 +47,7 @@ use telemetry::CommandPipeWireObserver;
 const CONNECTION_FILE_NAME: &str = "server-connection.json";
 const PLAYBACK_SNAPSHOT_FILE_NAME: &str = "playback-session.json";
 const PROCESSING_SETTINGS_FILE_NAME: &str = "processing-settings.json";
+const ADAPTIVE_CLEANUP_MARKER_FILE_NAME: &str = "adaptive-system-rate.cleanup-required";
 const PLAYBACK_STATE_EVENT: &str = "desktop-playback-state";
 const CONNECTION_CHANGED_EVENT: &str = "server-connection-changed";
 const QUEUE_EVENTS_ERROR_EVENT: &str = "desktop-queue-events-error";
@@ -284,6 +293,105 @@ fn desktop_playback_set_equalizer_gain(
     update_processing(&state, |processing| {
         processing.set_equalizer_gain(index, value)
     })
+}
+
+#[tauri::command]
+fn desktop_playback_refresh_output_devices(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.refresh_output_devices()
+}
+
+#[tauri::command]
+fn desktop_playback_select_direct_alsa_output(
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let previous_mode = processing.output_mode();
+    let previous_device_id = processing.selected_output_device_id().map(str::to_owned);
+    let playback_state = state.playback.select_direct_alsa_output(&device_id)?;
+    if !is_valid_direct_selection(&playback_state, &device_id) {
+        return Ok(playback_state);
+    }
+    if let Err(error) = processing.select_direct_alsa_output(&device_id) {
+        eprintln!("Direct ALSA Output preference persistence failed: {error}");
+        restore_native_output_mode(
+            &state.playback,
+            previous_mode,
+            previous_device_id.as_deref(),
+        );
+        return Err(PlaybackCommandError::new(
+            "Direct ALSA Output preference could not be saved. The previous Output Mode was restored.",
+        ));
+    }
+    Ok(playback_state)
+}
+
+fn is_valid_direct_selection(state: &PlaybackSessionState, device_id: &str) -> bool {
+    let is_selected = state
+        .selected_output_device
+        .as_ref()
+        .is_some_and(|device| device.id == device_id);
+    let is_busy_or_unsupported = state
+        .output_device_issue
+        .as_ref()
+        .is_some_and(|issue| issue.code == OutputDeviceIssueCode::BusyOrUnsupported);
+    is_selected && (state.output_mode == OutputMode::DirectAlsa || is_busy_or_unsupported)
+}
+
+#[tauri::command]
+fn desktop_playback_fallback_to_system_output(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.fallback_to_system_output()
+}
+
+#[tauri::command]
+fn desktop_playback_enable_adaptive_system_rate(
+    state: State<'_, AppState>,
+    is_confirmed: bool,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let playback_state = state.playback.enable_adaptive_system_rate(is_confirmed)?;
+    if let Err(error) = processing.set_output_mode(OutputMode::AdaptiveSystemRate) {
+        eprintln!("Adaptive System Rate preference persistence failed: {error}");
+        if let Err(rollback_error) = state.playback.fallback_to_system_output() {
+            eprintln!(
+                "Adaptive System Rate rollback failed after persistence error: {}",
+                rollback_error.message
+            );
+        }
+        return Err(PlaybackCommandError::new(
+            "Adaptive System Rate preference could not be saved. System Output was restored.",
+        ));
+    }
+    Ok(playback_state)
+}
+
+fn restore_native_output_mode(
+    playback: &PlaybackController,
+    output_mode: OutputMode,
+    device_id: Option<&str>,
+) {
+    let result = match (output_mode, device_id) {
+        (OutputMode::DirectAlsa, Some(device_id)) => {
+            playback.select_direct_alsa_output(device_id).map(|_| ())
+        }
+        (OutputMode::AdaptiveSystemRate, _) => {
+            playback.enable_adaptive_system_rate(true).map(|_| ())
+        }
+        _ => playback.fallback_to_system_output().map(|_| ()),
+    };
+    if let Err(error) = result {
+        eprintln!("Output Mode rollback failed: {}", error.message);
+    }
 }
 
 fn update_processing(
@@ -550,6 +658,13 @@ pub fn run() -> tauri::Result<()> {
         })
         .setup(|app| {
             let config_directory = app.path().app_config_dir()?;
+            let adaptive_system_rate = AdaptiveSystemRateController::recover_startup_if_marked(
+                Arc::new(CommandPipeWireRateAdapter::new()),
+                Arc::new(FileAdaptiveCleanupMarker::new(
+                    config_directory.join(ADAPTIVE_CLEANUP_MARKER_FILE_NAME),
+                )),
+            )
+            .map_err(std::io::Error::other)?;
             let store = ConnectionStore::new(config_directory.join(CONNECTION_FILE_NAME));
             let playback_snapshot_store =
                 PlaybackSnapshotStore::new(config_directory.join(PLAYBACK_SNAPSHOT_FILE_NAME));
@@ -564,17 +679,23 @@ pub fn run() -> tauri::Result<()> {
                 .transpose()
                 .map_err(std::io::Error::other)?;
             let playback_lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
-            let processing =
+            let mut processing =
                 ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
                     config_directory.join(PROCESSING_SETTINGS_FILE_NAME),
                 )))
                 .map_err(std::io::Error::other)?;
+            if processing.output_mode() == OutputMode::AdaptiveSystemRate {
+                processing
+                    .set_output_mode(OutputMode::System)
+                    .map_err(std::io::Error::other)?;
+            }
             let playback_tray = PlaybackTray::start(app.handle(), handle_tray_menu_event)?;
             let playback_event_tray = playback_tray.clone();
             let app_handle = app.handle().clone();
             let playback = PlaybackController::start_default_with_lifecycle(
                 playback_lifecycle.clone(),
                 Arc::new(CommandPipeWireObserver::new()),
+                adaptive_system_rate,
                 move |state| {
                     if let Err(error) = playback_event_tray.update(
                         state.source.as_ref(),
@@ -588,9 +709,22 @@ pub fn run() -> tauri::Result<()> {
                 },
             )
             .map_err(std::io::Error::other)?;
-            playback
-                .set_output_mode(processing.output_mode())
-                .map_err(|error| std::io::Error::other(error.message))?;
+            playback.refresh_output_devices().unwrap_or_else(|error| {
+                eprintln!(
+                    "Raw ALSA hardware startup enumeration failed: {}",
+                    error.message
+                );
+                playback.state().unwrap_or_default()
+            });
+            if processing.output_mode() == OutputMode::DirectAlsa
+                && let Some(device_id) = processing.selected_output_device_id()
+                && let Err(error) = playback.select_direct_alsa_output(device_id)
+            {
+                eprintln!(
+                    "Saved Direct ALSA Output could not be restored: {}",
+                    error.message
+                );
+            }
             if let Some(snapshot) = saved_playback.as_ref() {
                 playback
                     .restore_paused(snapshot)
@@ -652,6 +786,10 @@ pub fn run() -> tauri::Result<()> {
             desktop_playback_set_replay_gain,
             desktop_playback_set_equalizer_preset,
             desktop_playback_set_equalizer_gain,
+            desktop_playback_refresh_output_devices,
+            desktop_playback_select_direct_alsa_output,
+            desktop_playback_fallback_to_system_output,
+            desktop_playback_enable_adaptive_system_rate,
             desktop_playback_toggle_shuffle,
             desktop_playback_cycle_repeat_mode
         ])
