@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "vite dev --port 3000",
+    "prototype:playback-signal": "vite dev --host 127.0.0.1 --port 4173 --open /playback-signal-prototype.html",
     "generate-routes": "tsr generate",
     "build": "vite build",
     "preview": "vite preview",

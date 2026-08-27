@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Playback Signal UI Prototype</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				font-family:
+					Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+					"Segoe UI", sans-serif;
+				--ink: #f8f2ff;
+				--muted: #a99bbc;
+				--faint: #6f607f;
+				--canvas: #12072d;
+				--panel: #1c0c42;
+				--panel-2: #261052;
+				--line: #53376d;
+				--line-soft: #39244f;
+				--accent: #ff704a;
+				--accent-soft: #4c2038;
+				--gold: #f4bd58;
+				--cyan: #57d8e5;
+				--green: #72dda6;
+				--danger: #ff7f8d;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				min-width: 1120px;
+				min-height: 100vh;
+				background: var(--canvas);
+				color: var(--ink);
+				overflow: hidden;
+			}
+
+			button,
+			input,
+			select {
+				font: inherit;
+			}
+
+			button,
+			select {
+				color: inherit;
+			}
+
+			button {
+				cursor: pointer;
+			}
+
+			.prototype-mark {
+				position: fixed;
+				top: 12px;
+				left: 14px;
+				z-index: 100;
+				border: 1px solid rgba(255, 255, 255, 0.16);
+				border-radius: 999px;
+				background: #090510e8;
+				padding: 7px 13px;
+				font-size: 11px;
+				font-weight: 800;
+				letter-spacing: 0.13em;
+				text-transform: uppercase;
+				box-shadow: 0 8px 30px #0008;
+			}
+
+			.app-shell {
+				display: grid;
+				grid-template-columns: 190px 1fr 240px;
+				grid-template-rows: 1fr 76px;
+				height: 100vh;
+				background:
+					radial-gradient(circle at 35% 0%, #2b1351 0, transparent 35%),
+					var(--canvas);
+			}
+
+			.sidebar,
+			.queue {
+				border-color: #4b275d;
+				background: #1a0b3a;
+			}
+
+			.sidebar {
+				grid-row: 1;
+				border-right: 1px solid;
+				padding: 24px 18px;
+			}
+
+			.brand {
+				font-family: Georgia, serif;
+				font-size: 21px;
+				font-weight: 700;
+			}
+
+			.plan {
+				margin-top: 4px;
+				color: var(--gold);
+				font-size: 10px;
+			}
+
+			.nav-list {
+				display: grid;
+				gap: 7px;
+				margin-top: 26px;
+			}
+
+			.nav-item {
+				border-radius: 8px;
+				padding: 9px 10px;
+				color: #d9cee6;
+				font-size: 13px;
+			}
+
+			.nav-item.active {
+				background: #321354;
+				color: var(--gold);
+			}
+
+			.main-content {
+				grid-column: 2;
+				grid-row: 1;
+				padding: 46px 30px 30px;
+				overflow: hidden;
+			}
+
+			.album-hero {
+				display: grid;
+				grid-template-columns: 150px 1fr;
+				gap: 22px;
+				border: 1px solid #4a2d66;
+				border-radius: 14px;
+				background: #2b1247aa;
+				padding: 18px;
+			}
+
+			.album-art {
+				display: grid;
+				aspect-ratio: 1;
+				place-items: center;
+				border-radius: 10px;
+				background:
+					linear-gradient(135deg, #eb6f47, transparent 55%),
+					linear-gradient(25deg, #5bb7b1, #34255c);
+				font-family: Georgia, serif;
+				font-size: 28px;
+				font-style: italic;
+				box-shadow: inset 0 0 40px #0005;
+			}
+
+			.eyebrow {
+				color: var(--gold);
+				font-size: 10px;
+				font-weight: 800;
+				letter-spacing: 0.12em;
+				text-transform: uppercase;
+			}
+
+			.album-title {
+				margin: 8px 0 2px;
+				font-size: 28px;
+			}
+
+			.album-artist {
+				color: var(--gold);
+				font-size: 14px;
+			}
+
+			.fake-actions {
+				display: flex;
+				gap: 8px;
+				margin-top: 22px;
+			}
+
+			.fake-actions span {
+				border: 1px solid #53346a;
+				border-radius: 7px;
+				padding: 8px 13px;
+				font-size: 12px;
+			}
+
+			.fake-actions span:first-child {
+				border-color: var(--accent);
+				background: var(--accent);
+				color: #1b0829;
+				font-weight: 800;
+			}
+
+			.track-row {
+				display: grid;
+				grid-template-columns: 28px 1fr 55px;
+				margin-top: 26px;
+				border: 1px solid #2fb6e0;
+				border-radius: 6px;
+				padding: 12px;
+				background: #281242;
+				font-size: 12px;
+			}
+
+			.queue {
+				grid-column: 3;
+				grid-row: 1;
+				border-left: 1px solid;
+				padding: 16px;
+			}
+
+			.queue-title {
+				font-size: 13px;
+				font-weight: 800;
+			}
+
+			.queue-track {
+				display: grid;
+				grid-template-columns: 38px 1fr;
+				gap: 10px;
+				margin-top: 24px;
+				font-size: 11px;
+			}
+
+			.queue-thumb {
+				border-radius: 5px;
+				background: linear-gradient(135deg, #e96d47, #59b9b2);
+			}
+
+			.player-bar {
+				grid-column: 1 / -1;
+				grid-row: 2;
+				display: grid;
+				grid-template-columns: 1fr auto 1fr;
+				align-items: center;
+				border-top: 1px solid #58326b;
+				background: #1d0b42;
+				padding: 9px 16px;
+			}
+
+			.now-playing {
+				display: grid;
+				grid-template-columns: 48px 1fr;
+				gap: 10px;
+				align-items: center;
+				font-size: 11px;
+			}
+
+			.now-thumb {
+				aspect-ratio: 1;
+				border-radius: 6px;
+				background: linear-gradient(135deg, #e96d47, #59b9b2);
+			}
+
+			.transport {
+				display: flex;
+				align-items: center;
+				gap: 22px;
+				color: var(--gold);
+			}
+
+			.transport .pause {
+				display: grid;
+				size: 40px;
+				place-items: center;
+				border-radius: 50%;
+				background: var(--accent);
+				color: #1d0b2e;
+				font-weight: 900;
+			}
+
+			.footer-status {
+				display: flex;
+				justify-content: flex-end;
+				gap: 8px;
+			}
+
+			.footer-pill {
+				border: 1px solid #80516e;
+				border-radius: 999px;
+				padding: 6px 10px;
+				color: var(--gold);
+				font-size: 10px;
+			}
+
+			.backdrop {
+				position: fixed;
+				inset: 0;
+				z-index: 20;
+				background: #080510b8;
+				backdrop-filter: blur(2px);
+			}
+
+			.prototype-window {
+				position: fixed;
+				z-index: 30;
+				border: 1px solid #754769;
+				background: #160934;
+				box-shadow: 0 30px 100px #000b;
+			}
+
+			.window-header {
+				display: flex;
+				align-items: flex-start;
+				justify-content: space-between;
+				gap: 24px;
+			}
+
+			.window-header h1 {
+				margin: 0;
+				font-size: 21px;
+				letter-spacing: -0.02em;
+			}
+
+			.window-header p {
+				margin: 6px 0 0;
+				color: var(--muted);
+				font-size: 12px;
+			}
+
+			.close-button {
+				border: 0;
+				background: transparent;
+				color: var(--gold);
+				font-size: 24px;
+			}
+
+			.status-dot {
+				display: inline-block;
+				size: 7px;
+				margin-right: 7px;
+				border-radius: 50%;
+				background: var(--green);
+				box-shadow: 0 0 12px var(--green);
+			}
+
+			.badge {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				border: 1px solid var(--line);
+				border-radius: 999px;
+				padding: 5px 9px;
+				color: var(--muted);
+				font-size: 10px;
+				font-weight: 700;
+			}
+
+			.badge.hot {
+				border-color: #a25354;
+				background: #3b1736;
+				color: #ffd196;
+			}
+
+			.section-label {
+				color: var(--faint);
+				font-size: 10px;
+				font-weight: 800;
+				letter-spacing: 0.12em;
+				text-transform: uppercase;
+			}
+
+			/* Variant A: task-first settings */
+			.variant-a {
+				top: 7vh;
+				left: 50%;
+				width: min(1060px, calc(100vw - 130px));
+				height: min(720px, calc(100vh - 150px));
+				transform: translateX(-50%);
+				border-radius: 18px;
+				overflow: hidden;
+			}
+
+			.a-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				border-bottom: 1px solid var(--line-soft);
+				padding: 20px 24px;
+			}
+
+			.a-header-title {
+				display: flex;
+				align-items: center;
+				gap: 13px;
+			}
+
+			.signal-icon {
+				display: grid;
+				size: 40px;
+				place-items: center;
+				border-radius: 12px;
+				background: #3b174e;
+				color: var(--gold);
+				font-size: 19px;
+			}
+
+			.a-summary {
+				display: flex;
+				gap: 8px;
+			}
+
+			.a-body {
+				display: grid;
+				grid-template-columns: 215px 1fr;
+				height: calc(100% - 81px);
+			}
+
+			.a-nav {
+				border-right: 1px solid var(--line-soft);
+				background: #12072bc7;
+				padding: 20px 12px;
+			}
+
+			.a-nav button {
+				display: grid;
+				grid-template-columns: 30px 1fr;
+				width: 100%;
+				margin-bottom: 6px;
+				border: 0;
+				border-radius: 10px;
+				background: transparent;
+				padding: 11px;
+				text-align: left;
+			}
+
+			.a-nav button.active {
+				background: #34164e;
+				color: #ffd591;
+			}
+
+			.a-nav small {
+				display: block;
+				margin-top: 3px;
+				color: var(--muted);
+				font-size: 10px;
+			}
+
+			.a-content {
+				overflow-y: auto;
+				padding: 26px 30px 100px;
+			}
+
+			.a-content h2 {
+				margin: 4px 0 5px;
+				font-size: 24px;
+			}
+
+			.a-content > p {
+				margin: 0 0 22px;
+				color: var(--muted);
+				font-size: 12px;
+			}
+
+			.mode-list {
+				display: grid;
+				gap: 9px;
+			}
+
+			.mode-row {
+				display: grid;
+				grid-template-columns: 42px 1fr auto;
+				align-items: center;
+				gap: 14px;
+				width: 100%;
+				border: 1px solid var(--line-soft);
+				border-radius: 12px;
+				background: #1d0d3c;
+				padding: 14px;
+				text-align: left;
+			}
+
+			.mode-row.selected {
+				border-color: var(--gold);
+				background: linear-gradient(90deg, #3b193d, #241044);
+				box-shadow: inset 3px 0 var(--gold);
+			}
+
+			.mode-symbol {
+				display: grid;
+				size: 38px;
+				place-items: center;
+				border-radius: 10px;
+				background: #39205a;
+				color: var(--gold);
+				font-weight: 900;
+			}
+
+			.mode-row strong,
+			.mode-row small {
+				display: block;
+			}
+
+			.mode-row small {
+				margin-top: 3px;
+				color: var(--muted);
+				font-size: 11px;
+			}
+
+			.mode-state {
+				color: var(--gold);
+				font-size: 11px;
+				font-weight: 800;
+			}
+
+			.device-field {
+				display: grid;
+				grid-template-columns: 1fr auto;
+				gap: 10px;
+				margin-top: 18px;
+			}
+
+			.device-select {
+				width: 100%;
+				border: 1px solid var(--line);
+				border-radius: 10px;
+				background: #14082f;
+				padding: 12px;
+			}
+
+			.secondary-button {
+				border: 1px solid var(--line);
+				border-radius: 9px;
+				background: transparent;
+				padding: 9px 12px;
+				color: var(--gold);
+				font-size: 11px;
+			}
+
+			.notice {
+				margin-top: 14px;
+				border-left: 3px solid var(--gold);
+				background: #2d173f;
+				padding: 11px 13px;
+				color: #e0cee9;
+				font-size: 11px;
+				line-height: 1.5;
+			}
+
+			.processing-stack {
+				display: grid;
+				gap: 12px;
+			}
+
+			.setting-row {
+				display: grid;
+				grid-template-columns: 1fr auto;
+				align-items: center;
+				border-bottom: 1px solid var(--line-soft);
+				padding: 14px 0;
+			}
+
+			.setting-row small {
+				display: block;
+				margin-top: 4px;
+				color: var(--muted);
+			}
+
+			.segmented {
+				display: inline-flex;
+				border: 1px solid var(--line);
+				border-radius: 9px;
+				background: #100725;
+				padding: 3px;
+			}
+
+			.segmented button {
+				border: 0;
+				border-radius: 6px;
+				background: transparent;
+				padding: 7px 10px;
+				color: var(--muted);
+				font-size: 11px;
+			}
+
+			.segmented button.active {
+				background: #48204d;
+				color: #ffd89a;
+			}
+
+			/* Variant B: signal map */
+			.variant-b {
+				inset: 42px 54px 96px;
+				border-radius: 22px;
+				background:
+					radial-gradient(circle at 50% 35%, #2b1952 0, transparent 38%),
+					#100725;
+				overflow: hidden;
+			}
+
+			.b-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				padding: 22px 28px;
+			}
+
+			.live-path {
+				display: inline-flex;
+				align-items: center;
+				gap: 8px;
+				border-radius: 999px;
+				background: #112c2a;
+				padding: 7px 11px;
+				color: var(--green);
+				font-size: 11px;
+				font-weight: 800;
+			}
+
+			.signal-map {
+				position: relative;
+				display: grid;
+				grid-template-columns: repeat(5, 1fr);
+				gap: 24px;
+				margin: 38px 45px 0;
+			}
+
+			.signal-map::before {
+				position: absolute;
+				top: 50%;
+				left: 6%;
+				width: 88%;
+				height: 2px;
+				background: linear-gradient(90deg, var(--cyan), var(--gold), var(--accent));
+				content: "";
+				box-shadow: 0 0 18px #57d8e577;
+			}
+
+			.signal-node {
+				position: relative;
+				z-index: 1;
+				min-height: 150px;
+				border: 1px solid #5d477a;
+				border-radius: 50%;
+				background: #1b0e39;
+				padding: 30px 14px 20px;
+				text-align: center;
+				box-shadow: 0 0 0 8px #100725;
+			}
+
+			.signal-node.active {
+				border-color: var(--gold);
+				background: #392047;
+				box-shadow: 0 0 0 8px #100725, 0 0 35px #f4bd5844;
+			}
+
+			.node-index {
+				display: block;
+				color: var(--faint);
+				font-size: 9px;
+				letter-spacing: 0.14em;
+			}
+
+			.signal-node strong {
+				display: block;
+				margin-top: 8px;
+				font-size: 13px;
+			}
+
+			.signal-node span:last-child {
+				display: block;
+				margin-top: 8px;
+				color: var(--gold);
+				font-size: 11px;
+				line-height: 1.35;
+			}
+
+			.inspector {
+				position: absolute;
+				right: 28px;
+				bottom: 24px;
+				left: 28px;
+				display: grid;
+				grid-template-columns: 210px 1fr 230px;
+				min-height: 220px;
+				border: 1px solid var(--line);
+				border-radius: 15px;
+				background: #180b35e8;
+				overflow: hidden;
+			}
+
+			.inspector-title {
+				border-right: 1px solid var(--line-soft);
+				padding: 22px;
+			}
+
+			.inspector-title .big-glyph {
+				color: var(--gold);
+				font-size: 34px;
+			}
+
+			.inspector-title h2 {
+				margin: 18px 0 5px;
+				font-size: 19px;
+			}
+
+			.inspector-title p {
+				margin: 0;
+				color: var(--muted);
+				font-size: 11px;
+				line-height: 1.5;
+			}
+
+			.inspector-controls {
+				padding: 20px 24px;
+			}
+
+			.map-mode-row {
+				display: flex;
+				gap: 8px;
+			}
+
+			.map-mode-row button {
+				flex: 1;
+				border: 1px solid var(--line);
+				border-radius: 10px;
+				background: transparent;
+				padding: 11px 8px;
+				font-size: 11px;
+			}
+
+			.map-mode-row button.active {
+				border-color: var(--gold);
+				background: #3b1a3d;
+				color: #ffd28d;
+			}
+
+			.inspector-facts {
+				border-left: 1px solid var(--line-soft);
+				padding: 20px;
+			}
+
+			.fact {
+				display: flex;
+				justify-content: space-between;
+				gap: 10px;
+				border-bottom: 1px solid var(--line-soft);
+				padding: 8px 0;
+				font-size: 10px;
+			}
+
+			.fact span:first-child {
+				color: var(--muted);
+			}
+
+			/* Variant C: dense side console */
+			.variant-c {
+				top: 0;
+				right: 0;
+				bottom: 76px;
+				width: min(720px, 58vw);
+				border-width: 0 0 0 1px;
+				background: #13092c;
+				box-shadow: -30px 0 80px #0009;
+				overflow: hidden;
+			}
+
+			.c-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				border-bottom: 1px solid var(--line-soft);
+				padding: 18px 20px;
+			}
+
+			.c-current {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				font-size: 11px;
+			}
+
+			.c-layout {
+				display: grid;
+				grid-template-columns: 145px 1fr;
+				height: calc(100% - 69px);
+			}
+
+			.c-rail {
+				border-right: 1px solid var(--line-soft);
+				background: #0e0621;
+				padding: 16px 9px;
+			}
+
+			.c-rail button {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				width: 100%;
+				margin-bottom: 4px;
+				border: 0;
+				border-radius: 7px;
+				background: transparent;
+				padding: 9px;
+				color: var(--muted);
+				text-align: left;
+				font-size: 11px;
+			}
+
+			.c-rail button.active {
+				background: #351749;
+				color: #ffd18b;
+			}
+
+			.c-rail em {
+				border-radius: 999px;
+				background: #29133e;
+				padding: 2px 6px;
+				font-size: 9px;
+				font-style: normal;
+			}
+
+			.c-content {
+				overflow-y: auto;
+				padding: 20px 22px 110px;
+			}
+
+			.c-title-row {
+				display: flex;
+				align-items: flex-end;
+				justify-content: space-between;
+				gap: 18px;
+				margin-bottom: 18px;
+			}
+
+			.c-title-row h2 {
+				margin: 4px 0 0;
+				font-size: 20px;
+			}
+
+			.output-strip {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				border: 1px solid var(--line);
+				border-radius: 9px;
+				overflow: hidden;
+			}
+
+			.output-strip button {
+				border: 0;
+				border-right: 1px solid var(--line);
+				background: #180b35;
+				padding: 13px 8px;
+				font-size: 10px;
+			}
+
+			.output-strip button:last-child {
+				border-right: 0;
+			}
+
+			.output-strip button.active {
+				background: var(--accent);
+				color: #1b0928;
+				font-weight: 900;
+			}
+
+			.console-section {
+				margin-top: 18px;
+				border-top: 1px solid var(--line-soft);
+				padding-top: 15px;
+			}
+
+			.console-section h3 {
+				margin: 0 0 10px;
+				font-size: 12px;
+			}
+
+			.search-field {
+				width: 100%;
+				border: 1px solid var(--line);
+				border-radius: 8px;
+				background: #0e0720;
+				padding: 9px 11px;
+				color: var(--ink);
+				font-size: 11px;
+				outline: none;
+			}
+
+			.device-table {
+				width: 100%;
+				margin-top: 10px;
+				border-collapse: collapse;
+				font-size: 10px;
+			}
+
+			.device-table th,
+			.device-table td {
+				border-bottom: 1px solid var(--line-soft);
+				padding: 9px 7px;
+				text-align: left;
+			}
+
+			.device-table th {
+				color: var(--faint);
+				font-size: 9px;
+				letter-spacing: 0.09em;
+				text-transform: uppercase;
+			}
+
+			.device-table tr.selected {
+				background: #32153f;
+			}
+
+			.device-table button {
+				border: 0;
+				background: transparent;
+				color: var(--gold);
+				font-size: 10px;
+			}
+
+			.signal-ledger {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 1px;
+				border: 1px solid var(--line-soft);
+				background: var(--line-soft);
+			}
+
+			.ledger-cell {
+				background: #150a30;
+				padding: 12px;
+				font-size: 10px;
+			}
+
+			.ledger-cell span {
+				display: block;
+				margin-bottom: 5px;
+				color: var(--faint);
+				text-transform: uppercase;
+			}
+
+			/* Prototype controls */
+			.prototype-switcher {
+				position: fixed;
+				bottom: 18px;
+				left: 50%;
+				z-index: 100;
+				display: grid;
+				grid-template-columns: 38px minmax(220px, auto) 38px;
+				align-items: center;
+				transform: translateX(-50%);
+				border: 1px solid #ffffff24;
+				border-radius: 16px;
+				background: #07040df2;
+				box-shadow: 0 16px 50px #000b;
+				overflow: hidden;
+			}
+
+			.prototype-switcher button {
+				height: 50px;
+				border: 0;
+				background: transparent;
+				color: white;
+				font-size: 20px;
+			}
+
+			.prototype-switcher button:hover {
+				background: #ffffff12;
+			}
+
+			.switcher-label {
+				border-right: 1px solid #ffffff18;
+				border-left: 1px solid #ffffff18;
+				padding: 8px 16px;
+				text-align: center;
+			}
+
+			.switcher-label strong,
+			.switcher-label small {
+				display: block;
+			}
+
+			.switcher-label strong {
+				font-size: 12px;
+			}
+
+			.switcher-label small {
+				margin-top: 2px;
+				color: #94899d;
+				font-size: 9px;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+			}
+
+			.prototype-state {
+				position: fixed;
+				right: 15px;
+				bottom: 16px;
+				z-index: 100;
+				width: 260px;
+				border: 1px solid #ffffff1c;
+				border-radius: 12px;
+				background: #07040de8;
+				padding: 10px 12px;
+				box-shadow: 0 12px 40px #0009;
+			}
+
+			.prototype-state strong {
+				display: block;
+				margin-bottom: 5px;
+				color: #b7a9bf;
+				font-size: 9px;
+				letter-spacing: 0.1em;
+				text-transform: uppercase;
+			}
+
+			.prototype-state code {
+				display: block;
+				color: #eee6f2;
+				font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+				font-size: 9px;
+				line-height: 1.45;
+				white-space: pre-wrap;
+			}
+
+			.range {
+				width: 190px;
+				accent-color: var(--accent);
+			}
+
+			@media (max-height: 760px) {
+				.prototype-state {
+					display: none;
+				}
+
+				.variant-a {
+					top: 42px;
+					height: calc(100vh - 130px);
+				}
+
+				.signal-map {
+					margin-top: 18px;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div id="app"></div>
+		<script>
+			// PROTOTYPE — throwaway. Three playback signal UI variants, switchable via ?variant=.
+			const variants = {
+				A: "Task-first settings",
+				B: "Interactive signal map",
+				C: "Studio side console",
+			};
+
+			const devices = [
+				{ id: "hw:2,0", name: "USB Audio", group: "USB", status: "Active" },
+				{ id: "hw:2,1", name: "USB Audio #1", group: "USB", status: "Available" },
+				{ id: "hw:2,2", name: "USB Audio #2", group: "USB", status: "Available" },
+				{ id: "hw:0,3", name: "HDMI 0 — DELL G3223Q", group: "HDMI", status: "Available" },
+				{ id: "hw:0,7", name: "HDMI 1", group: "HDMI", status: "Available" },
+				{ id: "hw:1,0", name: "Built-in Audio", group: "Internal", status: "Busy" },
+			];
+
+			const state = {
+				variant: getVariant(),
+				outputMode: "direct",
+				selectedDevice: "hw:2,0",
+				processingProfile: "processed",
+				softwareVolume: 100,
+				replayGain: "off",
+				equalizer: "off",
+				sectionA: "output",
+				focusB: "device",
+				sectionC: "devices",
+				deviceSearch: "",
+			};
+
+			function getVariant() {
+				const value = new URLSearchParams(window.location.search).get("variant");
+				return Object.hasOwn(variants, value) ? value : "A";
+			}
+
+			function selectedDevice() {
+				return devices.find((device) => device.id === state.selectedDevice) ?? devices[0];
+			}
+
+			function outputLabel() {
+				return {
+					system: "System Output",
+					direct: "Direct ALSA",
+					adaptive: "Adaptive Rate",
+				}[state.outputMode];
+			}
+
+			function appChrome() {
+				return `
+					<div class="prototype-mark">Prototype · throwaway branch</div>
+					<div class="app-shell" aria-hidden="true">
+						<aside class="sidebar">
+							<div class="brand">Earthly Audio</div><div class="plan">Premium Account</div>
+							<div class="nav-list">
+								<div class="nav-item active">◫ &nbsp; Albums</div><div class="nav-item">♙ &nbsp; Artists</div>
+								<div class="nav-item">◇ &nbsp; Genres</div><div class="nav-item">□ &nbsp; Folders</div>
+								<div class="nav-item">◉ &nbsp; Radio Stations</div><div class="nav-item">♪ &nbsp; Tracks</div>
+								<div class="nav-item">☷ &nbsp; Playlists</div>
+							</div>
+						</aside>
+						<main class="main-content">
+							<div class="album-hero"><div class="album-art">The Life</div><div>
+								<div class="eyebrow">Album</div><div class="album-title">The Life of a Showgirl</div>
+								<div class="album-artist">Taylor Swift</div><div class="fake-actions"><span>▷ Play</span><span>Queue album</span><span>Album radio</span></div>
+							</div></div>
+							<div class="track-row"><span>1</span><strong>The Fate of Ophelia</strong><span>3:46</span></div>
+						</main>
+						<aside class="queue"><div class="queue-title">Queue</div><div class="queue-track"><div class="queue-thumb"></div><div><strong>The Fate of Ophelia</strong><br><span style="color:var(--gold)">Taylor Swift</span></div></div></aside>
+						<footer class="player-bar">
+							<div class="now-playing"><div class="now-thumb"></div><div><strong>The Fate of Ophelia</strong><br><span style="color:var(--gold)">Taylor Swift</span></div></div>
+							<div class="transport"><span>↝</span><span>◁</span><span class="pause">Ⅱ</span><span>▷</span><span>↻</span></div>
+							<div class="footer-status"><span class="footer-pill">${outputLabel()}</span><span class="footer-pill">${state.processingProfile === "processed" ? "DSP On" : "Direct"}</span><span class="footer-pill">48 kHz</span></div>
+						</footer>
+					</div>
+					<div class="backdrop"></div>`;
+			}
+
+			function modeRows() {
+				const modes = [
+					["system", "◎", "System Output", "Normal PipeWire routing for everyday playback"],
+					["direct", "↯", "Direct ALSA", "Send audio directly to one raw hardware device"],
+					["adaptive", "≋", "Adaptive System Rate", "Match the PipeWire graph to each source rate"],
+				];
+				return modes.map(([key, symbol, title, description]) => `
+					<button class="mode-row ${state.outputMode === key ? "selected" : ""}" data-action="mode" data-value="${key}">
+						<span class="mode-symbol">${symbol}</span><span><strong>${title}</strong><small>${description}</small></span>
+						<span class="mode-state">${state.outputMode === key ? "● ACTIVE" : "SELECT"}</span>
+					</button>`).join("");
+			}
+
+			function variantAContent() {
+				if (state.sectionA === "processing") {
+					return `<div class="section-label">Device-local DSP</div><h2>Processing</h2><p>Keep routing and signal processing as separate decisions.</p>
+					<div class="processing-stack">
+						<div class="setting-row"><div><strong>Processing profile</strong><small>Direct fixes volume at unity and disables DSP.</small></div>${segmented("profile", [["direct","Direct"],["processed","Processed"]], state.processingProfile)}</div>
+						<div class="setting-row"><div><strong>Software volume</strong><small>${state.softwareVolume}% · changes switch Direct to Processed.</small></div><input class="range" type="range" min="0" max="100" value="${state.softwareVolume}" data-input="volume"></div>
+						<div class="setting-row"><div><strong>ReplayGain</strong><small>Device-local loudness normalization.</small></div>${segmented("replay", [["off","Off"],["track","Track"],["album","Album"]], state.replayGain)}</div>
+						<div class="setting-row"><div><strong>Equalizer</strong><small>Ten-band graphic EQ.</small></div>${segmented("eq", [["off","Off"],["flat","Flat"],["bass","Bass"]], state.equalizer)}</div>
+					</div>`;
+				}
+				if (state.sectionA === "diagnostics") {
+					return `<div class="section-label">Observed signal</div><h2>Diagnostics</h2><p>Unavailable measurements remain unknown instead of copying source metadata.</p>
+					<div class="signal-ledger">
+						${ledger("Source", "FLAC · 48 kHz · 24-bit")}${ledger("Decoder", "Unknown")}${ledger("System", state.outputMode === "direct" ? "Bypassed" : "PipeWire · 48 kHz")}${ledger("Device", selectedDevice().name + " · rate unknown")}${ledger("Processing", state.processingProfile === "processed" ? "Processed · volume " + state.softwareVolume + "%" : "Direct · unity")}${ledger("Result", state.processingProfile === "processed" ? "Processed" : "Unknown")}
+					</div>`;
+				}
+				return `<div class="section-label">Playback destination</div><h2>Choose how audio leaves the app</h2><p>The active route stays identifiable before selecting a device.</p>
+					<div class="mode-list">${modeRows()}</div>
+					${state.outputMode === "direct" ? `<div class="device-field"><select class="device-select" data-input="device">${deviceOptions()}</select><button class="secondary-button">Refresh devices</button></div><div class="notice"><strong>${selectedDevice().name}</strong> uses raw <code>${selectedDevice().id}</code>. PipeWire is bypassed; unavailable negotiated fields stay unknown.</div>` : ""}
+					${state.outputMode === "adaptive" ? `<div class="notice"><strong>Experimental:</strong> this changes the PipeWire graph rate for every application. Explicit confirmation would be required in production.</div>` : ""}`;
+			}
+
+			function variantA() {
+				return `<section class="prototype-window variant-a">
+					<header class="a-header"><div class="a-header-title"><div class="signal-icon">⌁</div><div><strong>Playback</strong><div style="color:var(--muted);font-size:11px;margin-top:3px">Output, processing and diagnostics</div></div></div>
+					<div class="a-summary"><span class="badge hot"><span class="status-dot"></span>${outputLabel()}</span><span class="badge">${selectedDevice().name}</span><span class="badge">${state.processingProfile === "processed" ? "DSP On" : "DSP Off"}</span></div></header>
+					<div class="a-body"><nav class="a-nav">
+						${aNav("output", "↯", "Output", outputLabel())}${aNav("processing", "⌁", "Processing", state.processingProfile)}${aNav("diagnostics", "◉", "Diagnostics", "Live signal path")}
+					</nav><main class="a-content">${variantAContent()}</main></div>
+				</section>`;
+			}
+
+			function aNav(key, symbol, label, detail) {
+				return `<button class="${state.sectionA === key ? "active" : ""}" data-action="section-a" data-value="${key}"><span>${symbol}</span><span><strong>${label}</strong><small>${detail}</small></span></button>`;
+			}
+
+			function variantB() {
+				const nodes = [
+					["source", "01", "Source", "FLAC · 48 kHz · 24-bit"],
+					["decoder", "02", "Decoder", "Unknown"],
+					["system", "03", "System", state.outputMode === "direct" ? "Bypassed" : "PipeWire · 48 kHz"],
+					["device", "04", "Device", selectedDevice().name],
+					["processing", "05", "Processing", state.processingProfile === "processed" ? "DSP active" : "Direct"],
+				];
+				return `<section class="prototype-window variant-b">
+					<header class="b-header"><div class="window-header"><div><h1>Signal map</h1><p>Select a stage to inspect or change it.</p></div></div><div class="live-path"><span class="status-dot"></span> LIVE · ${outputLabel()}</div></header>
+					<div class="signal-map">${nodes.map(([key,index,title,value]) => `<button class="signal-node ${state.focusB === key ? "active" : ""}" data-action="focus-b" data-value="${key}"><span class="node-index">STAGE ${index}</span><strong>${title}</strong><span>${value}</span></button>`).join("")}</div>
+					${bInspector()}
+				</section>`;
+			}
+
+			function bInspector() {
+				const copy = {
+					source: ["Source", "Metadata indexed by the Music Server.", "♫"], decoder: ["Decoder", "Observed mpv decoder output.", "◇"],
+					system: ["System route", "Choose PipeWire, raw ALSA or adaptive graph rate.", "≋"], device: ["Output device", "Select the concrete hardware destination.", "▣"],
+					processing: ["Processing", "Control device-local volume, ReplayGain and EQ.", "⌁"],
+				}[state.focusB];
+				let controls = `<div class="notice">This stage is read-only telemetry. Unknown values remain explicit.</div>`;
+				if (state.focusB === "system") controls = `<div class="section-label">Route policy</div><div class="map-mode-row" style="margin-top:10px">${mapMode("system","System")}${mapMode("direct","Direct ALSA")}${mapMode("adaptive","Adaptive")}</div>${state.outputMode === "adaptive" ? `<div class="notice">Affects the whole PipeWire graph.</div>` : ""}`;
+				if (state.focusB === "device") controls = `<div class="section-label">Raw ALSA destination</div><select class="device-select" style="margin-top:10px" data-input="device">${deviceOptions()}</select><div class="notice"><code>${selectedDevice().id}</code> · ${selectedDevice().status}</div>`;
+				if (state.focusB === "processing") controls = `<div class="section-label">Profile</div><div style="margin-top:10px">${segmented("profile", [["direct","Direct"],["processed","Processed"]], state.processingProfile)}</div><div style="margin-top:12px">${segmented("replay", [["off","RG Off"],["track","Track"],["album","Album"]], state.replayGain)}</div>`;
+				return `<div class="inspector"><div class="inspector-title"><div class="big-glyph">${copy[2]}</div><h2>${copy[0]}</h2><p>${copy[1]}</p></div><div class="inspector-controls">${controls}</div><div class="inspector-facts">
+					<div class="section-label">Current evidence</div>${fact("Output mode", outputLabel())}${fact("Device", selectedDevice().name)}${fact("System", state.outputMode === "direct" ? "Bypassed" : "PipeWire")}${fact("Processing", state.processingProfile)}${fact("Result", state.processingProfile === "processed" ? "Processed" : "Unknown")}
+				</div></div>`;
+			}
+
+			function mapMode(key, label) {
+				return `<button class="${state.outputMode === key ? "active" : ""}" data-action="mode" data-value="${key}">${label}</button>`;
+			}
+
+			function variantCContent() {
+				if (state.sectionC === "processing") {
+					return `<div class="c-title-row"><div><div class="section-label">Local DSP</div><h2>Processing</h2></div><span class="badge hot">${state.processingProfile}</span></div>
+					<div class="setting-row"><div><strong>Profile</strong><small>Processing truthfulness policy</small></div>${segmented("profile", [["direct","Direct"],["processed","Processed"]], state.processingProfile)}</div>
+					<div class="setting-row"><div><strong>Volume</strong><small>${state.softwareVolume}% software gain</small></div><input class="range" type="range" min="0" max="100" value="${state.softwareVolume}" data-input="volume"></div>
+					<div class="setting-row"><div><strong>ReplayGain</strong><small>Track and Album metadata available</small></div>${segmented("replay", [["off","Off"],["track","Track"],["album","Album"]], state.replayGain)}</div>
+					<div class="setting-row"><div><strong>Equalizer</strong><small>10-band graphic EQ</small></div>${segmented("eq", [["off","Off"],["flat","Flat"],["bass","Bass"]], state.equalizer)}</div>`;
+				}
+				if (state.sectionC === "diagnostics") {
+					return `<div class="c-title-row"><div><div class="section-label">Evidence ledger</div><h2>Diagnostics</h2></div><span class="badge"><span class="status-dot"></span>Live</span></div>
+					<div class="signal-ledger">${ledger("Source", "FLAC · 48 kHz · 24-bit")}${ledger("Decoder", "Unknown")}${ledger("System", state.outputMode === "direct" ? "Bypassed" : "PipeWire · 48 kHz")}${ledger("Device", selectedDevice().name)}${ledger("Processing", state.processingProfile + " · " + state.softwareVolume + "%")}${ledger("Result", state.processingProfile === "processed" ? "Processed" : "Unknown")}</div>`;
+				}
+				if (state.sectionC === "output") {
+					return `<div class="c-title-row"><div><div class="section-label">Route policy</div><h2>Output</h2></div><span class="badge hot">${outputLabel()}</span></div>
+					<div class="output-strip">${stripMode("system","System")}${stripMode("direct","Direct ALSA")}${stripMode("adaptive","Adaptive")}</div>
+					<div class="console-section"><h3>Behavior</h3><div class="notice">${state.outputMode === "direct" ? "Raw ALSA routing. PipeWire is bypassed and fallback requires an explicit action." : state.outputMode === "adaptive" ? "Experimental PipeWire rate matching. This affects every application on the graph." : "Standard PipeWire routing follows normal system device policy."}</div></div>
+					<div class="console-section"><h3>Active destination</h3>${fact("Device", selectedDevice().name)}${fact("Identifier", selectedDevice().id)}${fact("Availability", selectedDevice().status)}</div>`;
+				}
+				const query = state.deviceSearch.toLowerCase();
+				const visibleDevices = devices.filter((device) => `${device.name} ${device.id} ${device.group}`.toLowerCase().includes(query));
+				return `<div class="c-title-row"><div><div class="section-label">Hardware endpoints</div><h2>Devices</h2></div><button class="secondary-button">Refresh</button></div>
+					<input class="search-field" type="search" value="${state.deviceSearch}" placeholder="Search name, group or hw identifier" data-input="search">
+					<table class="device-table"><thead><tr><th>Device</th><th>Group</th><th>Raw ID</th><th>Status</th><th></th></tr></thead><tbody>${visibleDevices.map((device) => `<tr class="${state.selectedDevice === device.id ? "selected" : ""}"><td><strong>${device.name}</strong></td><td>${device.group}</td><td><code>${device.id}</code></td><td>${device.status}</td><td><button data-action="device" data-value="${device.id}">${state.selectedDevice === device.id ? "● Active" : "Use"}</button></td></tr>`).join("")}</tbody></table>`;
+			}
+
+			function variantC() {
+				return `<section class="prototype-window variant-c"><header class="c-header"><div><strong>Playback console</strong><div style="color:var(--muted);font-size:10px;margin-top:3px">Native audio controls</div></div><div class="c-current"><span class="status-dot"></span><strong>${outputLabel()}</strong><span style="color:var(--muted)">→</span><span>${selectedDevice().name}</span></div></header>
+					<div class="c-layout"><nav class="c-rail">${cNav("output","Output","#11/#12")}${cNav("devices","Devices",devices.length)}${cNav("processing","Processing",state.processingProfile)}${cNav("diagnostics","Diagnostics","Live")}</nav><main class="c-content">${variantCContent()}</main></div>
+				</section>`;
+			}
+
+			function cNav(key, label, count) {
+				return `<button class="${state.sectionC === key ? "active" : ""}" data-action="section-c" data-value="${key}"><span>${label}</span><em>${count}</em></button>`;
+			}
+
+			function stripMode(key, label) {
+				return `<button class="${state.outputMode === key ? "active" : ""}" data-action="mode" data-value="${key}">${label}</button>`;
+			}
+
+			function segmented(action, options, selected) {
+				return `<span class="segmented">${options.map(([value,label]) => `<button class="${selected === value ? "active" : ""}" data-action="${action}" data-value="${value}">${label}</button>`).join("")}</span>`;
+			}
+
+			function deviceOptions() {
+				return devices.map((device) => `<option value="${device.id}" ${state.selectedDevice === device.id ? "selected" : ""}>${device.name} · ${device.id} · ${device.status}</option>`).join("");
+			}
+
+			function ledger(label, value) {
+				return `<div class="ledger-cell"><span>${label}</span><strong>${value}</strong></div>`;
+			}
+
+			function fact(label, value) {
+				return `<div class="fact"><span>${label}</span><strong>${value}</strong></div>`;
+			}
+
+			function switcher() {
+				return `<div class="prototype-switcher"><button aria-label="Previous variant" data-action="previous">‹</button><div class="switcher-label"><strong>${state.variant} — ${variants[state.variant]}</strong><small>Use ← → or click to compare</small></div><button aria-label="Next variant" data-action="next">›</button></div>`;
+			}
+
+			function statePanel() {
+				const visibleState = {
+					variant: state.variant,
+					outputMode: state.outputMode,
+					device: `${selectedDevice().name} (${selectedDevice().id})`,
+					profile: state.processingProfile,
+					volume: state.softwareVolume,
+					replayGain: state.replayGain,
+					equalizer: state.equalizer,
+				};
+				return `<aside class="prototype-state"><strong>Full prototype state</strong><code>${JSON.stringify(visibleState, null, 2)}</code></aside>`;
+			}
+
+			function render() {
+				const prototype = state.variant === "A" ? variantA() : state.variant === "B" ? variantB() : variantC();
+				document.getElementById("app").innerHTML = appChrome() + prototype + switcher() + statePanel();
+			}
+
+			function cycleVariant(direction) {
+				const keys = Object.keys(variants);
+				const current = keys.indexOf(state.variant);
+				state.variant = keys[(current + direction + keys.length) % keys.length];
+				const url = new URL(window.location.href);
+				url.searchParams.set("variant", state.variant);
+				window.history.replaceState({}, "", url);
+				render();
+			}
+
+			document.addEventListener("click", (event) => {
+				const button = event.target.closest("[data-action]");
+				if (!button) return;
+				const action = button.dataset.action;
+				const value = button.dataset.value;
+				if (action === "previous") return cycleVariant(-1);
+				if (action === "next") return cycleVariant(1);
+				if (action === "mode") state.outputMode = value;
+				if (action === "profile") state.processingProfile = value;
+				if (action === "replay") state.replayGain = value;
+				if (action === "eq") state.equalizer = value;
+				if (action === "device") state.selectedDevice = value;
+				if (action === "section-a") state.sectionA = value;
+				if (action === "focus-b") state.focusB = value;
+				if (action === "section-c") state.sectionC = value;
+				render();
+			});
+
+			document.addEventListener("input", (event) => {
+				const input = event.target.closest("[data-input]");
+				if (!input) return;
+				if (input.dataset.input === "device") state.selectedDevice = input.value;
+				if (input.dataset.input === "volume") state.softwareVolume = Number(input.value);
+				if (input.dataset.input === "search") state.deviceSearch = input.value;
+				render();
+			});
+
+			document.addEventListener("keydown", (event) => {
+				const tag = document.activeElement?.tagName;
+				if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || document.activeElement?.isContentEditable) return;
+				if (event.key === "ArrowLeft") cycleVariant(-1);
+				if (event.key === "ArrowRight") cycleVariant(1);
+			});
+
+			window.addEventListener("popstate", () => {
+				state.variant = getVariant();
+				render();
+			});
+
+			render();
+		</script>
+	</body>
+</html>
