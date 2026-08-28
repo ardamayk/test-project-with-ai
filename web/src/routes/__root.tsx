@@ -10,13 +10,12 @@ import {
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { ThemeSync } from "#/components/theme-sync";
 import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
 import { useLibraryScanSync } from "#/hooks/use-library-scan-sync";
 import { apiClient } from "#/lib/api";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
-import { createPlaybackEngine } from "#/playback/create-playback-engine";
+import { getSharedPlaybackEngine } from "#/playback/shared-playback-engine";
 
 const playbackApi: PlaybackApi = {
 	getQueue: () => apiClient.getPlaybackQueue(),
@@ -73,8 +72,7 @@ function RootLayout() {
 
 function ConnectedRootLayout() {
 	const queryClient = useQueryClient();
-	const [playbackEngine] = useState(createPlaybackEngine);
-	useEffect(() => () => playbackEngine.destroy(), [playbackEngine]);
+	const playbackEngine = getSharedPlaybackEngine();
 	useLibraryScanSync();
 	const preferences = useQuery({
 		queryKey: ["preferences"],

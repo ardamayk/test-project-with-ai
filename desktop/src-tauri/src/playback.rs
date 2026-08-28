@@ -368,11 +368,9 @@ impl MpvProcessAdapter for RealMpvProcess {
         match configuration {
             MpvOutputConfiguration::System => {
                 self.command(json!(["set_property", "audio-device", "auto"]))?;
-                self.command(json!(["set_property", "ao", "pipewire"]))?;
                 Ok(None)
             }
             MpvOutputConfiguration::DirectAlsa { device_id } => {
-                self.command(json!(["set_property", "ao", "alsa"]))?;
                 self.command(json!([
                     "set_property",
                     "audio-device",
@@ -3004,8 +3002,9 @@ fn effective_replay_gain_mode(
 #[cfg(test)]
 mod tests {
     use super::{
-        MpvEvent, MpvOutputConfiguration, MpvProcessAdapter, OutputDeviceIssueCode,
-        PATH_REFRESH_INTERVAL, PlaybackController, PlaybackStatus, RealMpvProcess,
+        MpvEvent, MpvOutputConfiguration, MpvProcessAdapter, MpvWorkerRequest,
+        OutputDeviceIssueCode, PATH_REFRESH_INTERVAL, PlaybackController, PlaybackStatus,
+        RealMpvProcess,
     };
     use crate::adaptive_system_rate::{
         ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveCleanupMarker,
@@ -3041,6 +3040,42 @@ mod tests {
         loaded_url: Arc<Mutex<Option<String>>>,
         is_shutdown: Arc<AtomicBool>,
         load_error: Option<String>,
+    }
+
+    fn record_real_mpv_output_commands(
+        configuration: MpvOutputConfiguration,
+    ) -> Vec<serde_json::Value> {
+        let (request_sender, request_receiver) = std::sync::mpsc::channel();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let recorded_commands = commands.clone();
+        let recorder = thread::spawn(move || {
+            while let Ok(request) = request_receiver.recv() {
+                if let MpvWorkerRequest::Command { command, response } = request {
+                    if command.first().and_then(serde_json::Value::as_str) == Some("set_property") {
+                        recorded_commands
+                            .lock()
+                            .expect("recorded mpv commands")
+                            .push(command);
+                    }
+                    response.send(Ok(json!(null))).expect("record mpv response");
+                }
+            }
+        });
+        let process = RealMpvProcess {
+            requests: request_sender,
+            worker: Mutex::new(None),
+            ipc_directory: temporary_path("record-output-commands"),
+        };
+
+        process
+            .configure_output(&configuration)
+            .expect("configure recorded mpv output");
+        drop(process);
+        recorder.join().expect("join mpv command recorder");
+        Arc::try_unwrap(commands)
+            .expect("release recorded mpv commands")
+            .into_inner()
+            .expect("recorded mpv commands")
     }
 
     #[derive(Clone)]
@@ -4247,6 +4282,20 @@ mod tests {
             state.telemetry.decoder.format.sample_rate_hz == Some(96_000)
         });
         assert_eq!(decoded.telemetry.device.format.sample_rate_hz, Some(96_000));
+    }
+
+    #[test]
+    fn real_mpv_switches_output_by_device_without_pinning_an_audio_driver() {
+        assert_eq!(
+            record_real_mpv_output_commands(MpvOutputConfiguration::DirectAlsa {
+                device_id: "hw:2,0".to_owned(),
+            }),
+            [json!(["set_property", "audio-device", "alsa/hw:2,0"])]
+        );
+        assert_eq!(
+            record_real_mpv_output_commands(MpvOutputConfiguration::System),
+            [json!(["set_property", "audio-device", "auto"])]
+        );
     }
 
     #[test]
