@@ -37,6 +37,7 @@ type DesktopPlaybackBridge = {
 	setEqualizerGain(index: number, value: number): Promise<PlaybackSessionState>;
 	refreshOutputDevices(): Promise<PlaybackSessionState>;
 	selectDirectAlsaOutput(deviceId: string): Promise<PlaybackSessionState>;
+	selectExclusiveOutput(): Promise<PlaybackSessionState>;
 	fallbackToSystemOutput(): Promise<PlaybackSessionState>;
 	enableAdaptiveSystemRate(isConfirmed: boolean): Promise<PlaybackSessionState>;
 	toggleShuffle(): Promise<PlaybackSessionState>;
@@ -67,6 +68,8 @@ const tauriPlaybackBridge: DesktopPlaybackBridge = {
 	refreshOutputDevices: () => invoke("desktop_playback_refresh_output_devices"),
 	selectDirectAlsaOutput: (deviceId) =>
 		invoke("desktop_playback_select_direct_alsa_output", { deviceId }),
+	selectExclusiveOutput: () =>
+		invoke("desktop_playback_select_exclusive_output"),
 	fallbackToSystemOutput: () =>
 		invoke("desktop_playback_fallback_to_system_output"),
 	enableAdaptiveSystemRate: (isConfirmed) =>
@@ -174,6 +177,10 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 
 	selectDirectAlsaOutput(deviceId: string) {
 		this.runCommand(() => this.bridge.selectDirectAlsaOutput(deviceId));
+	}
+
+	selectExclusiveOutput() {
+		this.runCommand(() => this.bridge.selectExclusiveOutput());
 	}
 
 	fallbackToSystemOutput() {

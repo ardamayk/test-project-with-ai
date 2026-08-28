@@ -1,625 +1,133 @@
-import type { Track } from "@repo/api-client";
-import { Activity, X } from "lucide-react";
-import { useState } from "react";
+import { Check, ChevronUp } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "../lib/utils";
 import {
 	ADAPTIVE_SYSTEM_RATE_WARNING,
-	EQ_FREQUENCIES_HZ,
-	type EqualizerPreset,
-	type OutputDevice,
-	type OutputDeviceIssue,
 	type OutputMode,
-	type ProcessingState,
-	type ReplayGainPreference,
 } from "../playback/processing";
-import {
-	derivePlaybackTelemetryStatus,
-	deriveReplayGainAvailability,
-	describePlaybackTelemetry,
-	formatTelemetryStatus,
-	mergeProcessingState,
-	type PlaybackTelemetry,
-	type PlaybackTelemetryDescriptions,
-} from "../playback/telemetry";
 
 type PlaybackSignalProps = {
-	telemetry: PlaybackTelemetry;
-	outputMode?: OutputMode;
-	outputControls?: PlaybackOutputControls;
-	processingControls?: PlaybackProcessingControls;
-	replayGainMetadata?: Track["replayGain"];
+	outputMode: OutputMode;
+	outputControls: PlaybackOutputControls;
 };
 
 export type PlaybackOutputControls = {
-	devices: OutputDevice[];
-	selectedDevice: OutputDevice | null;
-	issue: OutputDeviceIssue | null;
-	refreshDevices(): void;
-	selectDirectAlsaOutput(deviceId: string): void;
-	fallbackToSystemOutput(): void;
+	selectNormalOutput(): void;
+	selectExclusiveOutput(): void;
 	enableAdaptiveSystemRate(isConfirmed: boolean): void;
 };
 
-export type PlaybackProcessingControls = {
-	state: ProcessingState;
-	setProfile(profile: ProcessingState["profile"]): void;
-	setSoftwareVolume(value: number): void;
-	enableReplayGain(mode: ReplayGainPreference): void;
-	disableReplayGain(): void;
-	applyEqualizerPreset(preset: Exclude<EqualizerPreset, "custom">): void;
-	setEqualizerGain(index: number, value: number): void;
-};
+const OUTPUT_OPTIONS: Array<{ mode: OutputMode; label: string }> = [
+	{ mode: "system", label: "Normal" },
+	{ mode: "direct-alsa", label: "Exclusive" },
+	{ mode: "adaptive-system-rate", label: "Adaptive" },
+];
 
 export function PlaybackSignal({
-	telemetry,
 	outputMode,
 	outputControls,
-	processingControls,
-	replayGainMetadata,
 }: PlaybackSignalProps) {
+	const containerRef = useRef<HTMLDivElement>(null);
 	const [isOpen, setIsOpen] = useState(false);
-	const processingState = processingControls?.state ?? null;
-	const effectiveTelemetry = mergeProcessingState(telemetry, processingState);
-	const status = derivePlaybackTelemetryStatus(effectiveTelemetry);
-	const statusLabel = formatTelemetryStatus(status);
+	const [isConfirmingAdaptive, setIsConfirmingAdaptive] = useState(false);
+	const activeLabel = getOutputLabel(outputMode);
+
+	const closeMenu = useCallback(() => {
+		setIsOpen(false);
+		setIsConfirmingAdaptive(false);
+	}, []);
+
+	useEffect(() => {
+		if (!isOpen) return;
+		const closeOnOutsidePointer = (event: MouseEvent) => {
+			if (!containerRef.current?.contains(event.target as Node)) closeMenu();
+		};
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") closeMenu();
+		};
+		document.addEventListener("mousedown", closeOnOutsidePointer);
+		document.addEventListener("keydown", closeOnEscape);
+		return () => {
+			document.removeEventListener("mousedown", closeOnOutsidePointer);
+			document.removeEventListener("keydown", closeOnEscape);
+		};
+	}, [closeMenu, isOpen]);
+
+	const selectMode = (mode: OutputMode) => {
+		if (mode === "system") outputControls.selectNormalOutput();
+		if (mode === "direct-alsa") outputControls.selectExclusiveOutput();
+		if (mode === "adaptive-system-rate") {
+			if (!isConfirmingAdaptive) {
+				setIsConfirmingAdaptive(true);
+				return;
+			}
+			outputControls.enableAdaptiveSystemRate(true);
+		}
+		closeMenu();
+	};
 
 	return (
-		<>
+		<div ref={containerRef} className="relative">
 			<button
 				type="button"
-				aria-label={`Playback signal: ${statusLabel}`}
-				className="inline-flex h-6 items-center gap-1.5 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-2.5 text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
+				aria-label={`Output mode: ${activeLabel}`}
+				aria-haspopup="menu"
+				aria-expanded={isOpen}
+				className="inline-flex h-6 items-center gap-1 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-2.5 text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
 				onClick={() => {
-					outputControls?.refreshDevices();
-					setIsOpen(true);
+					setIsOpen((value) => !value);
+					setIsConfirmingAdaptive(false);
 				}}
 			>
-				<Activity className="size-3" />
-				{statusLabel}
+				{activeLabel}
+				<ChevronUp className="size-3" aria-hidden />
 			</button>
 			{isOpen ? (
-				<PlaybackSignalDialog
-					telemetry={effectiveTelemetry}
-					outputMode={outputMode}
-					outputControls={outputControls}
-					processingControls={processingControls}
-					processingState={processingState}
-					replayGainMetadata={replayGainMetadata}
-					onClose={() => setIsOpen(false)}
-				/>
-			) : null}
-		</>
-	);
-}
-
-function PlaybackSignalDialog({
-	telemetry,
-	outputMode,
-	outputControls,
-	processingControls,
-	processingState,
-	replayGainMetadata,
-	onClose,
-}: PlaybackSignalProps & {
-	processingState: ProcessingState | null;
-	onClose: () => void;
-}) {
-	const descriptions = describePlaybackTelemetry(telemetry);
-	return (
-		<div
-			role="dialog"
-			aria-modal="true"
-			aria-label="Playback signal path"
-			className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
-		>
-			<div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-2xl">
-				<SignalDialogHeader onClose={onClose} />
-				<SignalPathLayers descriptions={descriptions} />
-				{outputMode ? <OutputModeDisplay outputMode={outputMode} /> : null}
-				{outputControls && outputMode ? (
-					<OutputControls controls={outputControls} outputMode={outputMode} />
-				) : null}
-				{processingControls && processingState ? (
-					<ProcessingControls
-						controller={processingControls}
-						state={processingState}
-						replayGainMetadata={replayGainMetadata}
-					/>
-				) : null}
-			</div>
-		</div>
-	);
-}
-
-function OutputModeDisplay({ outputMode }: { outputMode: OutputMode }) {
-	const labels: Record<OutputMode, string> = {
-		system: "System Output",
-		"direct-alsa": "Direct ALSA Output",
-		"adaptive-system-rate": "Adaptive System Rate",
-	};
-	return (
-		<p className="mt-3 text-muted-foreground text-xs">
-			Output Mode: {labels[outputMode]}
-		</p>
-	);
-}
-
-function OutputControls({
-	controls,
-	outputMode,
-}: {
-	controls: PlaybackOutputControls;
-	outputMode: OutputMode;
-}) {
-	return (
-		<section className="mt-4 border-border border-t pt-4">
-			<OutputDeviceControls controls={controls} />
-			<AdaptiveSystemRateControls
-				controls={controls}
-				isEnabled={outputMode === "adaptive-system-rate"}
-			/>
-		</section>
-	);
-}
-
-function OutputDeviceControls({
-	controls,
-}: {
-	controls: PlaybackOutputControls;
-}) {
-	return (
-		<>
-			<OutputDeviceHeader onRefresh={controls.refreshDevices} />
-			<OutputDeviceButtons controls={controls} />
-			{controls.selectedDevice ? (
-				<p className="mt-2 text-muted-foreground text-xs">
-					Selected: {controls.selectedDevice.name} ({controls.selectedDevice.id}
-					)
-				</p>
-			) : null}
-			{controls.issue ? (
-				<OutputDevicePrompt issue={controls.issue} controls={controls} />
-			) : null}
-		</>
-	);
-}
-
-function OutputDeviceHeader({ onRefresh }: { onRefresh: () => void }) {
-	return (
-		<div className="flex flex-wrap items-center gap-2">
-			<strong className="text-sm">Raw ALSA Output Devices</strong>
-			<button
-				type="button"
-				className="rounded-md border border-border px-2 py-1 text-xs"
-				onClick={onRefresh}
-			>
-				Refresh devices
-			</button>
-		</div>
-	);
-}
-
-function OutputDeviceButtons({
-	controls,
-}: {
-	controls: PlaybackOutputControls;
-}) {
-	return (
-		<div className="mt-2 flex flex-wrap gap-2">
-			{controls.devices.map((device) => (
-				<button
-					type="button"
-					key={device.id}
-					className="rounded-md border border-border px-2 py-1 text-xs"
-					onClick={() => controls.selectDirectAlsaOutput(device.id)}
+				<div
+					role="menu"
+					aria-label="Output mode"
+					className="absolute right-0 bottom-full z-50 mb-1.5 w-32 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl"
 				>
-					Use {device.name}
-				</button>
-			))}
-		</div>
-	);
-}
-
-function AdaptiveSystemRateControls({
-	controls,
-	isEnabled,
-}: {
-	controls: PlaybackOutputControls;
-	isEnabled: boolean;
-}) {
-	const [isConfirming, setIsConfirming] = useState(false);
-	if (isEnabled) {
-		return (
-			<AdaptiveModeButton
-				label="Disable Adaptive System Rate"
-				onClick={controls.fallbackToSystemOutput}
-			/>
-		);
-	}
-	return (
-		<>
-			<AdaptiveModeButton
-				label="Enable Adaptive System Rate"
-				onClick={() => setIsConfirming(true)}
-			/>
-			{isConfirming ? (
-				<AdaptiveSystemRatePrompt
-					onCancel={() => setIsConfirming(false)}
-					onConfirm={() => {
-						controls.enableAdaptiveSystemRate(true);
-						setIsConfirming(false);
-					}}
-				/>
+					{OUTPUT_OPTIONS.map((option) => (
+						<button
+							type="button"
+							role="menuitemradio"
+							aria-checked={outputMode === option.mode}
+							key={option.mode}
+							className={cn(
+								"flex h-7 w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-xs hover:bg-muted",
+								outputMode === option.mode &&
+									"bg-muted text-[var(--player-control-primary)]",
+							)}
+							onClick={() => selectMode(option.mode)}
+						>
+							<span className="inline-flex size-3 shrink-0 items-center justify-center">
+								{outputMode === option.mode ? (
+									<Check className="size-3" aria-hidden />
+								) : null}
+							</span>
+							{isConfirmingAdaptive && option.mode === "adaptive-system-rate"
+								? "Confirm Adaptive"
+								: option.label}
+						</button>
+					))}
+					{isConfirmingAdaptive ? (
+						<p
+							role="alert"
+							className="px-1.5 pt-1 pb-0.5 text-[9px] text-muted-foreground leading-tight"
+						>
+							{ADAPTIVE_SYSTEM_RATE_WARNING} Select Adaptive again to confirm.
+						</p>
+					) : null}
+				</div>
 			) : null}
-		</>
-	);
-}
-
-function AdaptiveModeButton({
-	label,
-	onClick,
-}: {
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			className="mt-3 rounded-md border border-border px-2 py-1 text-xs"
-			onClick={onClick}
-		>
-			{label}
-		</button>
-	);
-}
-
-function AdaptiveSystemRatePrompt({
-	onCancel,
-	onConfirm,
-}: {
-	onCancel: () => void;
-	onConfirm: () => void;
-}) {
-	return (
-		<div className="mt-3 rounded-md border border-destructive/40 p-3">
-			<p role="alert" className="text-destructive text-xs">
-				{ADAPTIVE_SYSTEM_RATE_WARNING}
-			</p>
-			<div className="mt-2 flex flex-wrap gap-2">
-				<button
-					type="button"
-					className="rounded-md border border-border px-2 py-1 text-xs"
-					onClick={onConfirm}
-				>
-					Confirm experimental mode
-				</button>
-				<button
-					type="button"
-					className="rounded-md border border-border px-2 py-1 text-xs"
-					onClick={onCancel}
-				>
-					Cancel
-				</button>
-			</div>
 		</div>
 	);
 }
 
-function OutputDevicePrompt({
-	issue,
-	controls,
-}: {
-	issue: OutputDeviceIssue;
-	controls: PlaybackOutputControls;
-}) {
+function getOutputLabel(outputMode: OutputMode) {
 	return (
-		<div className="mt-3 rounded-md border border-destructive/40 p-3">
-			<p role="alert" className="text-destructive text-xs">
-				{issue.message}
-			</p>
-			<button
-				type="button"
-				className="mt-2 rounded-md border border-border px-2 py-1 text-xs"
-				onClick={controls.fallbackToSystemOutput}
-			>
-				Use System Output
-			</button>
-		</div>
+		OUTPUT_OPTIONS.find((option) => option.mode === outputMode)?.label ??
+		"Normal"
 	);
-}
-
-function SignalDialogHeader({ onClose }: { onClose: () => void }) {
-	return (
-		<header className="mb-4 flex items-start justify-between gap-4">
-			<div>
-				<h2 className="font-semibold text-base">Playback signal path</h2>
-				<p className="text-muted-foreground text-xs">
-					Observed values stay separate from unavailable information.
-				</p>
-			</div>
-			<button type="button" aria-label="Close signal path" onClick={onClose}>
-				<X className="size-4" />
-			</button>
-		</header>
-	);
-}
-
-function SignalPathLayers({
-	descriptions,
-}: {
-	descriptions: PlaybackTelemetryDescriptions;
-}) {
-	return (
-		<div className="grid gap-2 sm:grid-cols-5">
-			{Object.entries(descriptions).map(([title, value]) => (
-				<SignalLayer key={title} title={capitalize(title)} value={value} />
-			))}
-		</div>
-	);
-}
-
-function SignalLayer({ title, value }: { title: string; value: string }) {
-	return (
-		<section className="min-w-0 rounded-lg border border-border bg-card/45 p-3">
-			<h3 className="font-medium text-xs">{title}</h3>
-			<p className="mt-1 break-words text-muted-foreground text-[11px]">
-				{value}
-			</p>
-		</section>
-	);
-}
-
-function ProcessingControls({
-	controller,
-	state,
-	replayGainMetadata,
-}: {
-	controller: PlaybackProcessingControls;
-	state: ProcessingState;
-	replayGainMetadata?: Track["replayGain"];
-}) {
-	return (
-		<section className="mt-5 border-border border-t pt-4">
-			<div className="flex flex-wrap items-center gap-2">
-				<ProfileControl controller={controller} state={state} />
-				<ReplayGainControl controller={controller} state={state} />
-			</div>
-			<TransitionNotice notice={state.transitionNotice} />
-			<VolumeAndPresetControls controller={controller} state={state} />
-			<EqualizerBands controller={controller} state={state} />
-			<ReplayGainAvailability metadata={replayGainMetadata} state={state} />
-		</section>
-	);
-}
-
-function ProfileControl({
-	controller,
-	state,
-}: {
-	controller: PlaybackProcessingControls;
-	state: ProcessingState;
-}) {
-	const nextProfile = state.profile === "direct" ? "processed" : "direct";
-	return (
-		<>
-			<strong className="text-sm">
-				{state.profile === "direct" ? "Direct Profile" : "Processed Profile"}
-			</strong>
-			<button
-				type="button"
-				className="rounded-md border border-border px-2 py-1 text-xs"
-				onClick={() => controller.setProfile(nextProfile)}
-			>
-				Use {capitalize(nextProfile)}
-			</button>
-		</>
-	);
-}
-
-function ReplayGainControl({
-	controller,
-	state,
-}: {
-	controller: PlaybackProcessingControls;
-	state: ProcessingState;
-}) {
-	const [isChoosingMode, setIsChoosingMode] = useState(false);
-	const toggle = () => {
-		if (state.replayGainMode !== "off") return controller.disableReplayGain();
-		if (state.replayGainPreference) {
-			return controller.enableReplayGain(state.replayGainPreference);
-		}
-		setIsChoosingMode(true);
-	};
-	return (
-		<>
-			<button
-				type="button"
-				className="rounded-md border border-border px-2 py-1 text-xs"
-				onClick={toggle}
-			>
-				{state.replayGainMode === "off"
-					? "Enable ReplayGain"
-					: "Disable ReplayGain"}
-			</button>
-			{state.replayGainMode !== "off" ? (
-				<span className="text-xs">
-					ReplayGain {capitalize(state.replayGainMode)}
-				</span>
-			) : null}
-			{isChoosingMode ? (
-				<ReplayGainModeChoice
-					onChoose={(mode) => {
-						controller.enableReplayGain(mode);
-						setIsChoosingMode(false);
-					}}
-				/>
-			) : null}
-		</>
-	);
-}
-
-function ReplayGainModeChoice({
-	onChoose,
-}: {
-	onChoose: (mode: ReplayGainPreference) => void;
-}) {
-	return (
-		<div className="mt-3 w-full rounded-lg border border-border p-3">
-			<p className="text-sm">Choose ReplayGain mode</p>
-			<div className="mt-2 flex gap-2">
-				{(["album", "track"] as const).map((mode) => (
-					<button
-						type="button"
-						key={mode}
-						className="rounded-md bg-primary px-2 py-1 text-primary-foreground text-xs"
-						onClick={() => onChoose(mode)}
-					>
-						{capitalize(mode)} mode
-					</button>
-				))}
-			</div>
-		</div>
-	);
-}
-
-function TransitionNotice({ notice }: { notice: string | null }) {
-	return notice ? (
-		<p role="alert" className="mt-3 text-amber-600 text-xs">
-			{notice}
-		</p>
-	) : null;
-}
-
-function VolumeAndPresetControls({
-	controller,
-	state,
-}: {
-	controller: PlaybackProcessingControls;
-	state: ProcessingState;
-}) {
-	return (
-		<div className="mt-4 grid gap-4 sm:grid-cols-2">
-			<label className="grid gap-1 text-xs">
-				Software volume
-				<input
-					type="range"
-					aria-label="Software volume"
-					min="0"
-					max="1"
-					step="0.01"
-					value={state.softwareVolume}
-					onChange={(event) =>
-						controller.setSoftwareVolume(Number(event.target.value))
-					}
-				/>
-			</label>
-			<EqualizerPresetControl controller={controller} state={state} />
-		</div>
-	);
-}
-
-function EqualizerPresetControl({
-	controller,
-	state,
-}: {
-	controller: PlaybackProcessingControls;
-	state: ProcessingState;
-}) {
-	return (
-		<label className="grid gap-1 text-xs">
-			Equalizer preset
-			<select
-				aria-label="Equalizer preset"
-				value={state.equalizer.preset}
-				onChange={(event) =>
-					controller.applyEqualizerPreset(
-						event.target.value as Exclude<EqualizerPreset, "custom">,
-					)
-				}
-			>
-				<option value="custom" disabled>
-					Custom
-				</option>
-				<option value="flat">Flat</option>
-				<option value="bass-boost">Bass boost</option>
-				<option value="vocal">Vocal</option>
-				<option value="treble-boost">Treble boost</option>
-			</select>
-		</label>
-	);
-}
-
-function EqualizerBands({
-	controller,
-	state,
-}: {
-	controller: PlaybackProcessingControls;
-	state: ProcessingState;
-}) {
-	return (
-		<>
-			<div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
-				{EQ_FREQUENCIES_HZ.map((frequency, index) => (
-					<EqualizerBand
-						key={frequency}
-						frequency={frequency}
-						gain={state.equalizer.gainsDb[index] ?? 0}
-						onChange={(value) => controller.setEqualizerGain(index, value)}
-					/>
-				))}
-			</div>
-			<p className="mt-2 text-muted-foreground text-xs">
-				Effective mpv EQ: {state.effectiveAudioFilters.length} filters
-			</p>
-		</>
-	);
-}
-
-function EqualizerBand({
-	frequency,
-	gain,
-	onChange,
-}: {
-	frequency: number;
-	gain: number;
-	onChange: (value: number) => void;
-}) {
-	return (
-		<label className="grid gap-1 text-[10px]">
-			{frequency} Hz
-			<input
-				type="range"
-				aria-label={`${frequency} Hz gain`}
-				min="-12"
-				max="12"
-				step="0.5"
-				value={gain}
-				onChange={(event) => onChange(Number(event.target.value))}
-			/>
-		</label>
-	);
-}
-
-function ReplayGainAvailability({
-	metadata,
-	state,
-}: {
-	metadata?: Track["replayGain"];
-	state: ProcessingState;
-}) {
-	const { isTrackAvailable, isAlbumAvailable, isUsingTrackFallback } =
-		deriveReplayGainAvailability(metadata, state.effectiveReplayGainMode);
-	return (
-		<p className="mt-3 text-muted-foreground text-xs">
-			Track ReplayGain metadata:{" "}
-			{isTrackAvailable ? "Available" : "Unavailable"}
-			{" · "}Album ReplayGain metadata:{" "}
-			{isAlbumAvailable ? "Available" : "Unavailable"}
-			{isUsingTrackFallback ? " · Using Track fallback" : null}
-		</p>
-	);
-}
-
-function capitalize(value: string) {
-	return value.charAt(0).toUpperCase() + value.slice(1);
 }

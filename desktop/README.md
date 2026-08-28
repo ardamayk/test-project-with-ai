@@ -18,3 +18,5 @@ The connection screen accepts `http://localhost`, `http://127.0.0.1`, or IPv6 lo
 The proxy starts with the Desktop Client, rejects redirects and non-media methods, and shuts down with Tauri application state. A second Desktop Client instance or another process occupying port `43129` makes startup fail closed with an actionable error. Bounded command responses retain the 32 MiB safety limit; only HLS manifests are buffered, with a separate 1 MiB limit, so their child URIs can be rewritten safely.
 
 The Desktop Client does not bundle a Go server, database, or server lifecycle.
+
+On Linux, the Player Bar output menu offers Normal, Exclusive, and Adaptive. Normal follows the operating system's active PipeWire output. Exclusive automatically resolves that active output to raw ALSA hardware; it does not show a separate device picker. Outputs without a raw ALSA mapping, including Bluetooth sinks, remain on Normal with an actionable error. Adaptive changes the PipeWire graph rate system-wide and therefore requires confirmation.

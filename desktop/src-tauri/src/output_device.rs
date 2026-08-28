@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -15,6 +16,51 @@ pub enum OutputDeviceError {
     NotRawHardware,
     SelectedDeviceDisconnected(OutputDevice),
     Unavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActiveOutputError {
+    QueryFailed(String),
+    NoActiveOutput,
+    NotAlsaBacked,
+}
+
+pub trait ActiveOutputResolver: Send + Sync {
+    fn resolve(&self) -> Result<OutputDevice, ActiveOutputError>;
+}
+
+pub struct CommandPipeWireActiveOutputResolver {
+    binary: PathBuf,
+}
+
+impl CommandPipeWireActiveOutputResolver {
+    pub fn new() -> Self {
+        Self::with_binary(PathBuf::from("pw-dump"))
+    }
+
+    pub fn with_binary(binary: PathBuf) -> Self {
+        Self { binary }
+    }
+}
+
+impl Default for CommandPipeWireActiveOutputResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ActiveOutputResolver for CommandPipeWireActiveOutputResolver {
+    fn resolve(&self) -> Result<OutputDevice, ActiveOutputError> {
+        let output = Command::new(&self.binary)
+            .arg("-N")
+            .output()
+            .map_err(|error| ActiveOutputError::QueryFailed(error.to_string()))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(ActiveOutputError::QueryFailed(stderr));
+        }
+        parse_active_raw_output(&output.stdout)
+    }
 }
 
 pub trait AlsaOutputDeviceAdapter: Send + Sync {
@@ -143,4 +189,160 @@ fn parse_aplay_device_line(line: &str) -> Option<OutputDevice> {
         id: format!("hw:{card_number},{device_number}"),
         name: description.trim().to_owned(),
     })
+}
+
+fn parse_active_raw_output(input: &[u8]) -> Result<OutputDevice, ActiveOutputError> {
+    let objects: Vec<Value> = serde_json::from_slice(input)
+        .map_err(|error| ActiveOutputError::QueryFailed(error.to_string()))?;
+    let sink_name = default_sink_name(&objects).ok_or(ActiveOutputError::NoActiveOutput)?;
+    let sink = find_sink(&objects, &sink_name).ok_or(ActiveOutputError::NoActiveOutput)?;
+    raw_output_from_sink(sink).ok_or(ActiveOutputError::NotAlsaBacked)
+}
+
+fn default_sink_name(objects: &[Value]) -> Option<String> {
+    let metadata = objects.iter().find(|object| {
+        object
+            .pointer("/props/metadata.name")
+            .and_then(Value::as_str)
+            == Some("default")
+    })?;
+    ["default.audio.sink", "default.configured.audio.sink"]
+        .into_iter()
+        .find_map(|key| metadata_target_name(metadata, key))
+}
+
+fn metadata_target_name(metadata: &Value, key: &str) -> Option<String> {
+    let value = metadata
+        .get("metadata")?
+        .as_array()?
+        .iter()
+        .find_map(|entry| {
+            (entry.get("key")?.as_str()? == key)
+                .then(|| entry.get("value"))
+                .flatten()
+        })?;
+    if let Some(name) = value.get("name").and_then(Value::as_str) {
+        return Some(name.to_owned());
+    }
+    let encoded = value.as_str()?;
+    serde_json::from_str::<Value>(encoded)
+        .ok()?
+        .get("name")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn find_sink<'a>(objects: &'a [Value], name: &str) -> Option<&'a Value> {
+    objects.iter().find(|object| {
+        object
+            .pointer("/info/props/media.class")
+            .and_then(Value::as_str)
+            == Some("Audio/Sink")
+            && object
+                .pointer("/info/props/node.name")
+                .and_then(Value::as_str)
+                == Some(name)
+    })
+}
+
+fn raw_output_from_sink(sink: &Value) -> Option<OutputDevice> {
+    let card = ["api.alsa.pcm.card", "api.alsa.card", "alsa.card"]
+        .into_iter()
+        .find_map(|key| sink_property_u32(sink, key))?;
+    let device = ["api.alsa.pcm.device", "api.alsa.device", "alsa.device"]
+        .into_iter()
+        .find_map(|key| sink_property_u32(sink, key))?;
+    Some(OutputDevice {
+        id: format!("hw:{card},{device}"),
+        name: sink_name(sink).unwrap_or_else(|| format!("ALSA hw:{card},{device}")),
+    })
+}
+
+fn sink_property_u32(sink: &Value, key: &str) -> Option<u32> {
+    let value = sink.pointer(&format!("/info/props/{key}"))?;
+    value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .or_else(|| value.as_str()?.parse().ok())
+}
+
+fn sink_name(sink: &Value) -> Option<String> {
+    ["node.description", "node.nick", "node.name"]
+        .into_iter()
+        .find_map(|key| {
+            sink.pointer(&format!("/info/props/{key}"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ActiveOutputError, OutputDevice, parse_active_raw_output};
+
+    #[test]
+    fn resolves_the_default_pipewire_sink_to_raw_alsa_hardware() {
+        let fixture = br#"[
+            {
+                "type": "PipeWire:Interface:Metadata",
+                "props": { "metadata.name": "default" },
+                "metadata": [
+                    { "key": "default.audio.sink", "value": "{\"name\":\"alsa_output.usb-dac\"}" }
+                ]
+            },
+            {
+                "type": "PipeWire:Interface:Node",
+                "info": { "props": {
+                    "media.class": "Audio/Sink",
+                    "node.name": "alsa_output.usb-dac",
+                    "node.description": "USB DAC",
+                    "api.alsa.pcm.card": "2",
+                    "alsa.device": 0
+                } }
+            }
+        ]"#;
+
+        assert_eq!(
+            parse_active_raw_output(fixture),
+            Ok(OutputDevice {
+                id: "hw:2,0".to_owned(),
+                name: "USB DAC".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_an_active_output_without_raw_alsa_hardware() {
+        let fixture = br#"[
+            {
+                "type": "PipeWire:Interface:Metadata",
+                "props": { "metadata.name": "default" },
+                "metadata": [
+                    { "key": "default.audio.sink", "value": "{\"name\":\"bluez_output.headset\"}" }
+                ]
+            },
+            {
+                "type": "PipeWire:Interface:Node",
+                "info": { "props": {
+                    "media.class": "Audio/Sink",
+                    "node.name": "bluez_output.headset",
+                    "node.description": "Bluetooth Headset"
+                } }
+            }
+        ]"#;
+
+        assert_eq!(
+            parse_active_raw_output(fixture),
+            Err(ActiveOutputError::NotAlsaBacked)
+        );
+    }
+
+    #[test]
+    fn reports_a_missing_default_output() {
+        assert_eq!(
+            parse_active_raw_output(br#"[]"#),
+            Err(ActiveOutputError::NoActiveOutput)
+        );
+    }
 }

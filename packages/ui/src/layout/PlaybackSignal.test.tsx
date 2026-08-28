@@ -6,330 +6,105 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ProcessingState } from "../playback/processing";
-import {
-	createBrowserPlaybackTelemetry,
-	type PlaybackTelemetry,
-} from "../playback/telemetry";
-import {
-	type PlaybackOutputControls,
-	type PlaybackProcessingControls,
-	PlaybackSignal,
-} from "./PlaybackSignal";
+import { type PlaybackOutputControls, PlaybackSignal } from "./PlaybackSignal";
 
-const MATCHED_TELEMETRY: PlaybackTelemetry = {
-	source: {
-		codec: "FLAC",
-		bitrateKbps: 1411,
-		format: { sampleRateHz: 96000, bitDepth: 24, channels: 2 },
-	},
-	decoder: {
-		pcmFormat: "s24",
-		format: { sampleRateHz: 96000, bitDepth: 24, channels: 2 },
-	},
-	system: {
-		kind: "pipewire",
-		format: { sampleRateHz: 96000, bitDepth: 24, channels: 2 },
-		isResampling: false,
-	},
-	device: {
-		name: "USB DAC",
-		format: { sampleRateHz: 96000, bitDepth: 24, channels: 2 },
-		isResampling: false,
-	},
-	processing: {
-		profile: "direct",
-		softwareVolume: 1,
-		replayGainMode: "off",
-		effectiveReplayGainMode: "off",
-		isEqualizerEnabled: false,
-	},
-};
-
-const PROCESSED_STATE: ProcessingState = {
-	profile: "processed",
-	softwareVolume: 0.5,
-	replayGainMode: "off",
-	effectiveReplayGainMode: "off",
-	replayGainPreference: null,
-	equalizer: {
-		isEnabled: false,
-		preset: "flat",
-		gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-	},
-	effectiveAudioFilters: [],
-	transitionNotice: "Software volume requires the Processed Profile.",
-};
-
-function createControls(
-	state: ProcessingState = PROCESSED_STATE,
-): PlaybackProcessingControls {
+function createControls(): PlaybackOutputControls {
 	return {
-		state,
-		setProfile: vi.fn(),
-		setSoftwareVolume: vi.fn(),
-		enableReplayGain: vi.fn(),
-		disableReplayGain: vi.fn(),
-		applyEqualizerPreset: vi.fn(),
-		setEqualizerGain: vi.fn(),
+		selectNormalOutput: vi.fn(),
+		selectExclusiveOutput: vi.fn(),
+		enableAdaptiveSystemRate: vi.fn(),
 	};
 }
 
 describe("PlaybackSignal", () => {
 	afterEach(cleanup);
 
-	it("opens an evidence-only Source to Processing detail view", () => {
-		render(<PlaybackSignal telemetry={MATCHED_TELEMETRY} />);
-
-		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Format matched" }),
-		);
-
-		const dialog = screen.getByRole("dialog", { name: "Playback signal path" });
-		for (const layer of [
-			"Source",
-			"Decoder",
-			"System",
-			"Device",
-			"Processing",
-		]) {
-			expect(within(dialog).getByRole("heading", { name: layer })).toBeTruthy();
-		}
-		expect(within(dialog).getByText(/USB DAC/)).toBeTruthy();
-		expect(within(dialog).queryByText(/bit-perfect/i)).toBeNull();
-	});
-
-	it("labels unavailable browser observations without copying source values", () => {
-		const telemetry = createBrowserPlaybackTelemetry(
-			{
-				format: "flac",
-				bitrateKbps: 1411,
-				sampleRateHz: 96000,
-				bitDepth: 24,
-			} as never,
-			1,
-		);
-		render(<PlaybackSignal telemetry={telemetry} />);
-
-		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Unknown" }),
-		);
-		const dialog = screen.getByRole("dialog", { name: "Playback signal path" });
-		const system = within(dialog).getByRole("heading", {
-			name: "System",
-		}).parentElement;
-		const device = within(dialog).getByRole("heading", {
-			name: "Device",
-		}).parentElement;
-
-		expect(system?.textContent).toContain("Browser managed");
-		expect(device?.textContent).toContain("Unknown");
-		expect(device?.textContent).not.toContain("96 kHz");
-	});
-
-	it("shows and explains processing changes through observable controls", () => {
+	it("opens a compact three-option menu above the active output label", () => {
 		const controls = createControls();
-		render(
-			<PlaybackSignal
-				telemetry={MATCHED_TELEMETRY}
-				outputMode="system"
-				processingControls={controls}
-			/>,
-		);
-		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Processed" }),
-		);
+		render(<PlaybackSignal outputMode="system" outputControls={controls} />);
 
-		fireEvent.change(screen.getByLabelText("Software volume"), {
-			target: { value: "0.4" },
-		});
+		const trigger = screen.getByRole("button", { name: "Output mode: Normal" });
+		fireEvent.click(trigger);
 
-		expect(screen.getByText("Processed Profile")).toBeTruthy();
-		expect(screen.getByText("Output Mode: System Output")).toBeTruthy();
-		expect(screen.getByRole("alert").textContent).toContain(
-			"Software volume requires the Processed Profile",
-		);
-
-		fireEvent.click(screen.getByRole("button", { name: "Enable ReplayGain" }));
-		expect(screen.getByText("Choose ReplayGain mode")).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: "Album mode" }));
-		expect(controls.enableReplayGain).toHaveBeenCalledWith("album");
-
-		fireEvent.change(screen.getByLabelText("Equalizer preset"), {
-			target: { value: "vocal" },
-		});
-		expect(controls.setSoftwareVolume).toHaveBeenCalledWith(0.4);
-		expect(controls.applyEqualizerPreset).toHaveBeenCalledWith("vocal");
-		expect(screen.getAllByRole("slider", { name: /Hz gain/ })).toHaveLength(10);
-		expect(screen.getByText("Output Mode: System Output")).toBeTruthy();
-	});
-
-	it("labels active custom equalizer gains as Custom", () => {
-		const controls = createControls({
-			...PROCESSED_STATE,
-			effectiveAudioFilters: ["equalizer=f=31.25:t=q:w=1:g=3"],
-			equalizer: {
-				isEnabled: true,
-				preset: "custom",
-				gainsDb: [3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-			},
-		});
-		render(
-			<PlaybackSignal
-				telemetry={MATCHED_TELEMETRY}
-				processingControls={controls}
-			/>,
-		);
-
-		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Processed" }),
-		);
-
+		const menu = screen.getByRole("menu", { name: "Output mode" });
+		expect(within(menu).getAllByRole("menuitemradio")).toHaveLength(3);
 		expect(
-			(
-				screen.getByRole("combobox", {
-					name: "Equalizer preset",
-				}) as HTMLSelectElement
-			).value,
-		).toBe("custom");
-		expect(screen.getByText("Effective mpv EQ: 1 filters")).toBeTruthy();
+			within(menu)
+				.getByRole("menuitemradio", { name: "Normal" })
+				.getAttribute("aria-checked"),
+		).toBe("true");
+		expect(
+			within(menu).getByRole("menuitemradio", { name: "Exclusive" }),
+		).toBeTruthy();
+		expect(
+			within(menu).getByRole("menuitemradio", { name: "Adaptive" }),
+		).toBeTruthy();
 	});
 
-	it("requires an explicit choice before falling back from Direct ALSA Output", () => {
-		const outputControls: PlaybackOutputControls = {
-			devices: [{ id: "hw:2,0", name: "USB DAC" }],
-			selectedDevice: { id: "hw:2,0", name: "USB DAC" },
-			issue: {
-				code: "busy-or-unsupported",
-				message:
-					"USB DAC is busy or unsupported. Choose another device or explicitly use System Output.",
-			},
-			refreshDevices: vi.fn(),
-			selectDirectAlsaOutput: vi.fn(),
-			fallbackToSystemOutput: vi.fn(),
-			enableAdaptiveSystemRate: vi.fn(),
-		};
-		render(
-			<PlaybackSignal
-				telemetry={{
-					...MATCHED_TELEMETRY,
-					system: {
-						kind: "bypassed",
-						format: { sampleRateHz: null, bitDepth: null, channels: null },
-						isResampling: false,
-					},
-				}}
-				outputMode="direct-alsa"
-				outputControls={outputControls}
-			/>,
+	it("selects Normal and Exclusive without asking for a device", () => {
+		const controls = createControls();
+		const { rerender } = render(
+			<PlaybackSignal outputMode="direct-alsa" outputControls={controls} />,
 		);
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Unknown" }),
+			screen.getByRole("button", { name: "Output mode: Exclusive" }),
 		);
-		expect(screen.getByText("Output Mode: Direct ALSA Output")).toBeTruthy();
-		expect(screen.getByRole("alert").textContent).toContain(
-			"explicitly use System Output",
-		);
-		fireEvent.click(screen.getByRole("button", { name: "Use USB DAC" }));
-		fireEvent.click(screen.getByRole("button", { name: "Use System Output" }));
+		fireEvent.click(screen.getByRole("menuitemradio", { name: "Normal" }));
+		expect(controls.selectNormalOutput).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("menu", { name: "Output mode" })).toBeNull();
 
-		expect(outputControls.refreshDevices).toHaveBeenCalledOnce();
-		expect(outputControls.selectDirectAlsaOutput).toHaveBeenCalledWith(
-			"hw:2,0",
+		rerender(<PlaybackSignal outputMode="system" outputControls={controls} />);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Output mode: Normal" }),
 		);
-		expect(outputControls.fallbackToSystemOutput).toHaveBeenCalledOnce();
+		fireEvent.click(screen.getByRole("menuitemradio", { name: "Exclusive" }));
+		expect(controls.selectExclusiveOutput).toHaveBeenCalledOnce();
+		expect(screen.queryByText(/USB|HDMI|hw:/i)).toBeNull();
 	});
 
-	it("warns about the system-wide effect before enabling Adaptive System Rate", () => {
-		const outputControls: PlaybackOutputControls = {
-			devices: [],
-			selectedDevice: null,
-			issue: null,
-			refreshDevices: vi.fn(),
-			selectDirectAlsaOutput: vi.fn(),
-			fallbackToSystemOutput: vi.fn(),
-			enableAdaptiveSystemRate: vi.fn(),
-		};
-		render(
-			<PlaybackSignal
-				telemetry={MATCHED_TELEMETRY}
-				outputMode="system"
-				outputControls={outputControls}
-			/>,
-		);
+	it("requires a second Adaptive selection after the system-wide warning", () => {
+		const controls = createControls();
+		render(<PlaybackSignal outputMode="system" outputControls={controls} />);
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Format matched" }),
+			screen.getByRole("button", { name: "Output mode: Normal" }),
 		);
-		fireEvent.click(
-			screen.getByRole("button", { name: "Enable Adaptive System Rate" }),
-		);
+		fireEvent.click(screen.getByRole("menuitemradio", { name: "Adaptive" }));
 
 		expect(screen.getByRole("alert").textContent).toContain(
 			"every application on the PipeWire graph",
 		);
-		expect(outputControls.enableAdaptiveSystemRate).not.toHaveBeenCalled();
+		expect(controls.enableAdaptiveSystemRate).not.toHaveBeenCalled();
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Confirm experimental mode" }),
+			screen.getByRole("menuitemradio", { name: "Confirm Adaptive" }),
 		);
-		expect(outputControls.enableAdaptiveSystemRate).toHaveBeenCalledWith(true);
+		expect(controls.enableAdaptiveSystemRate).toHaveBeenCalledWith(true);
 	});
 
-	it("lets the user disable Adaptive System Rate explicitly", () => {
-		const outputControls: PlaybackOutputControls = {
-			devices: [],
-			selectedDevice: null,
-			issue: null,
-			refreshDevices: vi.fn(),
-			selectDirectAlsaOutput: vi.fn(),
-			fallbackToSystemOutput: vi.fn(),
-			enableAdaptiveSystemRate: vi.fn(),
-		};
+	it("closes on Escape and outside pointer input", () => {
+		const controls = createControls();
 		render(
-			<PlaybackSignal
-				telemetry={MATCHED_TELEMETRY}
-				outputMode="adaptive-system-rate"
-				outputControls={outputControls}
-			/>,
+			<div>
+				<PlaybackSignal
+					outputMode="adaptive-system-rate"
+					outputControls={controls}
+				/>
+				<button type="button">Outside</button>
+			</div>,
 		);
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Format matched" }),
+			screen.getByRole("button", { name: "Output mode: Adaptive" }),
 		);
-		fireEvent.click(
-			screen.getByRole("button", { name: "Disable Adaptive System Rate" }),
-		);
-
-		expect(outputControls.fallbackToSystemOutput).toHaveBeenCalledOnce();
-	});
-
-	it("shows Album metadata availability and observed Track fallback", () => {
-		const controls = createControls({
-			...PROCESSED_STATE,
-			replayGainMode: "album",
-			replayGainPreference: "album",
-			effectiveReplayGainMode: "track-fallback",
-		});
-		render(
-			<PlaybackSignal
-				telemetry={MATCHED_TELEMETRY}
-				processingControls={controls}
-				replayGainMetadata={{
-					trackGainDb: -7.25,
-					trackPeak: 0.9,
-					albumGainDb: null,
-					albumPeak: null,
-				}}
-			/>,
-		);
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("menu", { name: "Output mode" })).toBeNull();
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Processed" }),
+			screen.getByRole("button", { name: "Output mode: Adaptive" }),
 		);
-
-		expect(screen.getByText(/Using Track fallback/)).toBeTruthy();
-		expect(screen.getByText(/Effective Track fallback/)).toBeTruthy();
+		fireEvent.mouseDown(screen.getByRole("button", { name: "Outside" }));
+		expect(screen.queryByRole("menu", { name: "Output mode" })).toBeNull();
 	});
 });

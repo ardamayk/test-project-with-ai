@@ -21,10 +21,6 @@ import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
 import { formatReplayGainAvailability } from "../playback/format-replay-gain";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
-import {
-	createFallbackPlaybackTelemetry,
-	type PlaybackTelemetry,
-} from "../playback/telemetry";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
@@ -113,10 +109,8 @@ type MenuPosition = {
 
 export function PlayerBar({
 	onPlaylistMutated,
-	telemetry,
 }: {
 	onPlaylistMutated?: () => void;
-	telemetry?: PlaybackTelemetry;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -136,10 +130,7 @@ export function PlayerBar({
 	const { preferences, togglePanel } = useLayout();
 	const queuePanelSide = getQueuePanel(preferences.layout.sidebarPosition);
 	const {
-		playbackSource,
 		outputMode,
-		availableOutputDevices,
-		selectedOutputDevice,
 		outputDeviceIssue,
 		currentTrack,
 		currentRadioStation,
@@ -158,14 +149,7 @@ export function PlayerBar({
 		cycleRepeatMode,
 		seek,
 		setVolume,
-		processingState,
-		playbackTelemetry: observedPlaybackTelemetry,
-		setProcessingProfile,
-		setReplayGainMode,
-		setEqualizerPreset,
-		setEqualizerGain,
-		refreshOutputDevices,
-		selectDirectAlsaOutput,
+		selectExclusiveOutput,
 		fallbackToSystemOutput,
 		enableAdaptiveSystemRate,
 		getAlbumCoverUrl,
@@ -293,22 +277,9 @@ export function PlayerBar({
 	const qualityLabel = isRadioPlaying
 		? formatRadioQualityLabel(currentRadioStation)
 		: formatQualityLabel(currentTrack);
-	const playbackTelemetry =
-		telemetry ??
-		observedPlaybackTelemetry ??
-		createFallbackPlaybackTelemetry(playbackSource, volume);
 	const hasActiveSource = currentTrack !== null || currentRadioStation !== null;
-	const processingControls = processingState
-		? {
-				state: processingState,
-				setProfile: setProcessingProfile,
-				setSoftwareVolume: setVolume,
-				enableReplayGain: setReplayGainMode,
-				disableReplayGain: () => setReplayGainMode("off"),
-				applyEqualizerPreset: setEqualizerPreset,
-				setEqualizerGain,
-			}
-		: undefined;
+	const playbackAlert =
+		playbackError?.message ?? outputDeviceIssue?.message ?? null;
 	const sortedPlaylists = useMemo(
 		() =>
 			[...playlists].sort((a, b) => {
@@ -445,12 +416,12 @@ export function PlayerBar({
 
 	return (
 		<footer className="relative h-[72px] border-[var(--shell-subtle-border)] border-t bg-player px-6 pt-px text-player-foreground shadow-[0px_-10px_40px_0px_rgba(0,0,0,0.3)] backdrop-blur-[12px]">
-			{playbackError ? (
+			{playbackAlert ? (
 				<p
 					role="alert"
 					className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2 rounded-md border border-destructive/40 bg-popover px-3 py-2 text-destructive text-sm shadow-lg"
 				>
-					{playbackError.message}
+					{playbackAlert}
 				</p>
 			) : null}
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">
@@ -575,25 +546,14 @@ export function PlayerBar({
 					isLossless={isLosslessFormat(currentTrack?.format)}
 					volume={volume}
 					signalControl={
-						hasActiveSource ? (
+						hasActiveSource && outputMode ? (
 							<PlaybackSignal
-								telemetry={playbackTelemetry}
-								outputMode={outputMode ?? undefined}
-								outputControls={
-									outputMode
-										? {
-												devices: availableOutputDevices,
-												selectedDevice: selectedOutputDevice,
-												issue: outputDeviceIssue,
-												refreshDevices: refreshOutputDevices,
-												selectDirectAlsaOutput,
-												fallbackToSystemOutput,
-												enableAdaptiveSystemRate,
-											}
-										: undefined
-								}
-								processingControls={processingControls}
-								replayGainMetadata={currentTrack?.replayGain}
+								outputMode={outputMode}
+								outputControls={{
+									selectNormalOutput: fallbackToSystemOutput,
+									selectExclusiveOutput,
+									enableAdaptiveSystemRate,
+								}}
 							/>
 						) : undefined
 					}

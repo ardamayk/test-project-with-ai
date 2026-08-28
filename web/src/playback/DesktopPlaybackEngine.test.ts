@@ -76,6 +76,7 @@ function createBridge() {
 			setEqualizerGain: vi.fn(async () => state),
 			refreshOutputDevices: vi.fn(async () => state),
 			selectDirectAlsaOutput: vi.fn(async () => state),
+			selectExclusiveOutput: vi.fn(async () => state),
 			fallbackToSystemOutput: vi.fn(async () => state),
 			enableAdaptiveSystemRate: vi.fn(async () => state),
 			toggleShuffle: vi.fn(async () => state),
@@ -126,19 +127,17 @@ describe("DesktopPlaybackEngine", () => {
 		engine.destroy();
 	});
 
-	it("forwards Direct ALSA Output controls through the native bridge", async () => {
+	it("forwards Normal and automatic Exclusive controls through the native bridge", async () => {
 		const native = createBridge();
 		const engine = new DesktopPlaybackEngine(native.bridge);
 
-		engine.refreshOutputDevices();
-		engine.selectDirectAlsaOutput("hw:2,0");
+		engine.selectExclusiveOutput();
 		engine.fallbackToSystemOutput();
 
 		await vi.waitFor(() =>
 			expect(native.bridge.fallbackToSystemOutput).toHaveBeenCalledOnce(),
 		);
-		expect(native.bridge.refreshOutputDevices).toHaveBeenCalledOnce();
-		expect(native.bridge.selectDirectAlsaOutput).toHaveBeenCalledWith("hw:2,0");
+		expect(native.bridge.selectExclusiveOutput).toHaveBeenCalledOnce();
 		engine.destroy();
 	});
 

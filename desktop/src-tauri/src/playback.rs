@@ -2619,7 +2619,7 @@ fn busy_or_unsupported_device_issue(device: &OutputDevice) -> OutputDeviceIssue 
     OutputDeviceIssue {
         code: OutputDeviceIssueCode::BusyOrUnsupported,
         message: format!(
-            "{} is busy or does not support this source format. Choose another device or explicitly use System Output.",
+            "{} is busy or does not support this source format. Select Normal Output to continue through the system output.",
             device.name
         ),
     }
@@ -2629,7 +2629,7 @@ fn disconnected_device_issue(device: &OutputDevice) -> OutputDeviceIssue {
     OutputDeviceIssue {
         code: OutputDeviceIssueCode::Disconnected,
         message: format!(
-            "{} disconnected. Choose another device or explicitly use System Output.",
+            "{} disconnected. Select Normal Output to continue through the active system output.",
             device.name
         ),
     }
@@ -4378,7 +4378,7 @@ mod tests {
             Some("busy-or-unsupported")
         );
         assert!(prompted.output_device_issue.is_some_and(|issue| {
-            issue.message.contains("System Output") && issue.message.contains("another device")
+            issue.message.contains("Normal Output") && issue.message.contains("system output")
         }));
         assert_eq!(
             configured.lock().expect("output configurations").last(),

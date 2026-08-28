@@ -171,6 +171,43 @@ fn direct_alsa_selection_persists_independently_from_processing() {
 }
 
 #[test]
+fn normal_output_replaces_and_persists_previous_native_modes() {
+    let settings_path = temporary_path("normal-output-settings.json");
+    let mut controller = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+        settings_path.clone(),
+    )))
+    .expect("open audio settings");
+
+    controller
+        .select_direct_alsa_output("hw:2,0")
+        .expect("persist Exclusive Output");
+    controller
+        .set_output_mode(OutputMode::System)
+        .expect("persist Normal Output");
+    assert_eq!(controller.output_mode(), OutputMode::System);
+
+    let mut restored = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+        settings_path.clone(),
+    )))
+    .expect("restore Normal Output");
+    assert_eq!(restored.output_mode(), OutputMode::System);
+    restored
+        .set_output_mode(OutputMode::AdaptiveSystemRate)
+        .expect("persist Adaptive System Rate");
+    restored
+        .set_output_mode(OutputMode::System)
+        .expect("restore Normal Output again");
+
+    let final_state = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
+        settings_path.clone(),
+    )))
+    .expect("restore final Normal Output");
+    assert_eq!(final_state.output_mode(), OutputMode::System);
+
+    std::fs::remove_file(settings_path).expect("remove settings fixture");
+}
+
+#[test]
 fn failed_direct_alsa_persistence_keeps_the_previous_output_selection() {
     let mut controller = ProcessingController::open(Box::new(FailingSettingsStorage))
         .expect("open failing storage fixture");

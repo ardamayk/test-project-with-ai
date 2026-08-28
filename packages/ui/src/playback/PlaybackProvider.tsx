@@ -112,6 +112,7 @@ type PlaybackContextValue = {
 	setEqualizerGain: (index: number, value: number) => void;
 	refreshOutputDevices: () => void;
 	selectDirectAlsaOutput: (deviceId: string) => void;
+	selectExclusiveOutput: () => void;
 	fallbackToSystemOutput: () => void;
 	enableAdaptiveSystemRate: (isConfirmed: boolean) => void;
 	removeFromQueue: (itemId: string) => Promise<void>;
@@ -445,6 +446,7 @@ export function PlaybackProvider({
 			refreshOutputDevices: () => engine.refreshOutputDevices?.(),
 			selectDirectAlsaOutput: (deviceId) =>
 				engine.selectDirectAlsaOutput?.(deviceId),
+			selectExclusiveOutput: () => engine.selectExclusiveOutput?.(),
 			fallbackToSystemOutput: () => engine.fallbackToSystemOutput?.(),
 			enableAdaptiveSystemRate: (isConfirmed) =>
 				engine.enableAdaptiveSystemRate?.(isConfirmed),

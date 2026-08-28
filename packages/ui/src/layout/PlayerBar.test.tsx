@@ -185,9 +185,7 @@ describe("PlayerBar", () => {
 			(screen.getByRole("button", { name: "Play" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
-		expect(
-			screen.queryByRole("button", { name: /Playback signal:/ }),
-		).toBeNull();
+		expect(screen.queryByRole("button", { name: /Output mode:/ })).toBeNull();
 	});
 
 	it("shows the current track after playback starts", async () => {
@@ -280,23 +278,27 @@ describe("PlayerBar", () => {
 		expect(screen.getByRole("menuitem", { name: "Details" })).toBeTruthy();
 	});
 
-	it("opens browser-managed Playback Telemetry from the compact player status", async () => {
-		renderPlayerBar();
+	it("opens compact output modes in the Player Bar and applies Normal", async () => {
+		const engine = new InMemoryPlaybackEngine({ outputMode: "direct-alsa" });
+		const fallbackToSystemOutput = vi.spyOn(engine, "fallbackToSystemOutput");
+		renderPlayerBar(undefined, engine);
 		await act(async () => {
 			screen.getByRole("button", { name: "Start track" }).click();
 		});
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Playback signal: Processed" }),
+			screen.getByRole("button", { name: "Output mode: Exclusive" }),
+		);
+		const menu = screen.getByRole("menu", { name: "Output mode" });
+		expect(within(menu).getAllByRole("menuitemradio")).toHaveLength(3);
+		fireEvent.click(
+			within(menu).getByRole("menuitemradio", { name: "Normal" }),
 		);
 
-		const dialog = screen.getByRole("dialog", { name: "Playback signal path" });
-		expect(within(dialog).getByText(/Browser managed/)).toBeTruthy();
-		const device = within(dialog).getByRole("heading", {
-			name: "Device",
-		}).parentElement;
-		expect(device?.textContent).toContain("Unknown");
-		expect(device?.textContent).not.toContain("96 kHz");
+		expect(fallbackToSystemOutput).toHaveBeenCalledOnce();
+		expect(
+			screen.getByRole("button", { name: "Output mode: Normal" }),
+		).toBeTruthy();
 	});
 
 	it("shows live radio progress instead of track time", async () => {
@@ -373,7 +375,7 @@ describe("PlayerBar", () => {
 		).toBeTruthy();
 		expect(await screen.findByText("Favorites")).toBeTruthy();
 		expect(
-			screen.getByRole("menuitem", { name: "Remove from Favorites" }),
+			await screen.findByRole("menuitem", { name: "Remove from Favorites" }),
 		).toBeTruthy();
 
 		await act(async () => {

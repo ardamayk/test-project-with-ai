@@ -92,6 +92,7 @@ export interface PlaybackEngine {
 	setEqualizerGain?(index: number, value: number): void;
 	refreshOutputDevices?(): void;
 	selectDirectAlsaOutput?(deviceId: string): void;
+	selectExclusiveOutput?(): void;
 	fallbackToSystemOutput?(): void;
 	enableAdaptiveSystemRate?(isConfirmed: boolean): void;
 	toggleShuffle(): void;

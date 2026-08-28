@@ -14,6 +14,10 @@ export class InMemoryPlaybackEngine implements PlaybackEngine {
 	private readonly listeners = new Set<PlaybackSessionListener>();
 	private readonly navigationListeners = new Set<PlaybackNavigationListener>();
 
+	constructor(initialState: Partial<PlaybackSessionState> = {}) {
+		this.state = { ...this.state, ...initialState };
+	}
+
 	getState() {
 		return this.state;
 	}
@@ -83,6 +87,23 @@ export class InMemoryPlaybackEngine implements PlaybackEngine {
 
 	setVolume(value: number) {
 		this.update({ volume: Math.min(1, Math.max(0, value)) });
+	}
+
+	selectExclusiveOutput() {
+		this.update({ outputMode: "direct-alsa", outputDeviceIssue: null });
+	}
+
+	fallbackToSystemOutput() {
+		this.update({ outputMode: "system", outputDeviceIssue: null });
+	}
+
+	enableAdaptiveSystemRate(isConfirmed: boolean) {
+		if (isConfirmed) {
+			this.update({
+				outputMode: "adaptive-system-rate",
+				outputDeviceIssue: null,
+			});
+		}
 	}
 
 	toggleShuffle() {

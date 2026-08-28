@@ -21,6 +21,9 @@ use connection::{
     HttpRequest, HttpResponse, ServerOrigin,
 };
 use media_proxy::MediaProxy;
+use output_device::{
+    ActiveOutputError, ActiveOutputResolver, CommandPipeWireActiveOutputResolver, OutputDevice,
+};
 use playback::{
     OutputDeviceIssueCode, PlaybackCommandError, PlaybackController, PlaybackSessionState,
     PlaybackStatus,
@@ -67,6 +70,7 @@ const COVER_RESPONSE_HEADERS: &[&str] = &[
 struct AppState {
     playback: PlaybackController,
     processing: Mutex<ProcessingController>,
+    active_output_resolver: Arc<dyn ActiveOutputResolver>,
     playback_lifecycle: Arc<Mutex<PlaybackLifecycle>>,
     playback_snapshot_store: PlaybackSnapshotStore,
     _playback_tray: PlaybackTray,
@@ -347,7 +351,23 @@ fn is_valid_direct_selection(state: &PlaybackSessionState, device_id: &str) -> b
 fn desktop_playback_fallback_to_system_output(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-    state.playback.fallback_to_system_output()
+    select_normal_output(&state)
+}
+
+#[tauri::command]
+fn desktop_playback_select_exclusive_output(
+    state: State<'_, AppState>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let device = match state.active_output_resolver.resolve() {
+        Ok(device) => device,
+        Err(error) => {
+            select_normal_output(&state)?;
+            return Err(PlaybackCommandError::new(active_output_error_message(
+                &error,
+            )));
+        }
+    };
+    select_exclusive_output(&state, device)
 }
 
 #[tauri::command]
@@ -392,6 +412,118 @@ fn restore_native_output_mode(
     if let Err(error) = result {
         eprintln!("Output Mode rollback failed: {}", error.message);
     }
+}
+
+fn select_normal_output(state: &AppState) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let previous_mode = processing.output_mode();
+    let previous_device_id = processing.selected_output_device_id().map(str::to_owned);
+    let playback_state = state.playback.fallback_to_system_output()?;
+    if let Err(error) = processing.set_output_mode(OutputMode::System) {
+        restore_native_output_mode(
+            &state.playback,
+            previous_mode,
+            previous_device_id.as_deref(),
+        );
+        return Err(PlaybackCommandError::new(format!(
+            "Normal Output preference could not be saved: {error}"
+        )));
+    }
+    Ok(playback_state)
+}
+
+fn select_exclusive_output(
+    state: &AppState,
+    device: OutputDevice,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let mut processing = state
+        .processing
+        .lock()
+        .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
+    let playback_state = state.playback.select_direct_alsa_output(&device.id)?;
+    if playback_state.output_mode != OutputMode::DirectAlsa {
+        let message = playback_state
+            .output_device_issue
+            .as_ref()
+            .map(|issue| issue.message.clone())
+            .unwrap_or_else(|| "Exclusive Output could not open the active device.".to_owned());
+        state.playback.fallback_to_system_output()?;
+        processing
+            .set_output_mode(OutputMode::System)
+            .map_err(PlaybackCommandError::new)?;
+        return Err(PlaybackCommandError::new(message));
+    }
+    if let Err(error) = processing.select_direct_alsa_output(&device.id) {
+        eprintln!("Exclusive Output preference persistence failed: {error}");
+        if let Err(fallback_error) = state.playback.fallback_to_system_output() {
+            eprintln!(
+                "Normal Output recovery failed after Exclusive persistence error: {}",
+                fallback_error.message
+            );
+        }
+        if let Err(persistence_error) = processing.set_output_mode(OutputMode::System) {
+            eprintln!("Normal Output recovery persistence failed: {persistence_error}");
+        }
+        return Err(PlaybackCommandError::new(
+            "Exclusive Output preference could not be saved. Normal Output was restored.",
+        ));
+    }
+    Ok(playback_state)
+}
+
+fn active_output_error_message(error: &ActiveOutputError) -> String {
+    match error {
+        ActiveOutputError::NoActiveOutput => {
+            "Exclusive Output is unavailable because no active system output was found. Normal Output remains active."
+        }
+        ActiveOutputError::NotAlsaBacked => {
+            "Exclusive Output is unavailable for the active system output. Normal Output remains active."
+        }
+        ActiveOutputError::QueryFailed(_) => {
+            "Exclusive Output could not inspect the active system output. Normal Output remains active."
+        }
+    }
+    .to_owned()
+}
+
+fn restore_saved_exclusive_output(
+    playback: &PlaybackController,
+    processing: &mut ProcessingController,
+    resolver: &dyn ActiveOutputResolver,
+) {
+    let result = resolver
+        .resolve()
+        .map_err(|error| active_output_error_message(&error))
+        .and_then(|device| restore_exclusive_device(playback, processing, &device));
+    if let Err(error) = result {
+        eprintln!("Saved Exclusive Output could not be restored: {error}");
+        if let Err(fallback_error) = playback.fallback_to_system_output() {
+            eprintln!(
+                "Normal Output startup recovery failed: {}",
+                fallback_error.message
+            );
+        }
+        if let Err(persistence_error) = processing.set_output_mode(OutputMode::System) {
+            eprintln!("Normal Output startup persistence failed: {persistence_error}");
+        }
+    }
+}
+
+fn restore_exclusive_device(
+    playback: &PlaybackController,
+    processing: &mut ProcessingController,
+    device: &OutputDevice,
+) -> Result<(), String> {
+    let state = playback
+        .select_direct_alsa_output(&device.id)
+        .map_err(|error| error.message)?;
+    if state.output_mode != OutputMode::DirectAlsa {
+        return Err("the active output could not be opened exclusively".to_owned());
+    }
+    processing.select_direct_alsa_output(&device.id)
 }
 
 fn update_processing(
@@ -679,6 +811,8 @@ pub fn run() -> tauri::Result<()> {
                 .transpose()
                 .map_err(std::io::Error::other)?;
             let playback_lifecycle = Arc::new(Mutex::new(PlaybackLifecycle::new()));
+            let active_output_resolver: Arc<dyn ActiveOutputResolver> =
+                Arc::new(CommandPipeWireActiveOutputResolver::new());
             let mut processing =
                 ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(
                     config_directory.join(PROCESSING_SETTINGS_FILE_NAME),
@@ -716,13 +850,11 @@ pub fn run() -> tauri::Result<()> {
                 );
                 playback.state().unwrap_or_default()
             });
-            if processing.output_mode() == OutputMode::DirectAlsa
-                && let Some(device_id) = processing.selected_output_device_id()
-                && let Err(error) = playback.select_direct_alsa_output(device_id)
-            {
-                eprintln!(
-                    "Saved Direct ALSA Output could not be restored: {}",
-                    error.message
+            if processing.output_mode() == OutputMode::DirectAlsa {
+                restore_saved_exclusive_output(
+                    &playback,
+                    &mut processing,
+                    active_output_resolver.as_ref(),
                 );
             }
             if let Some(snapshot) = saved_playback.as_ref() {
@@ -752,6 +884,7 @@ pub fn run() -> tauri::Result<()> {
             app.manage(AppState {
                 playback,
                 processing: Mutex::new(processing),
+                active_output_resolver,
                 playback_lifecycle,
                 playback_snapshot_store,
                 _playback_tray: playback_tray,
@@ -788,6 +921,7 @@ pub fn run() -> tauri::Result<()> {
             desktop_playback_set_equalizer_gain,
             desktop_playback_refresh_output_devices,
             desktop_playback_select_direct_alsa_output,
+            desktop_playback_select_exclusive_output,
             desktop_playback_fallback_to_system_output,
             desktop_playback_enable_adaptive_system_rate,
             desktop_playback_toggle_shuffle,
