@@ -1,5 +1,6 @@
 pub mod adaptive_system_rate;
 mod connection;
+mod exclusive_output;
 mod media_proxy;
 pub mod output_device;
 mod playback;

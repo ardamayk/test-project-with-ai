@@ -1,4 +1,5 @@
 use crate::adaptive_system_rate::AdaptiveSystemRateController;
+use crate::exclusive_output::{ExclusiveOutputCoordinator, PipeWireExclusiveOutputCoordinator};
 use crate::output_device::{
     AlsaOutputDeviceAdapter, CommandAlsaOutputDeviceAdapter, OutputDevice, OutputDeviceCatalog,
     OutputDeviceError,
@@ -37,6 +38,11 @@ const MPV_START_TIMEOUT: Duration = Duration::from_secs(3);
 const MPV_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 const PLAYBACK_FAILED_MESSAGE: &str = "Playback failed. Check the source and try again.";
 const ADAPTIVE_CLEANUP_FAILED_MESSAGE: &str = "Playback stopped, but Adaptive System Rate could not reset the system audio rate. Restart the Desktop Client.";
+#[cfg(not(test))]
+const DIRECT_OUTPUT_READY_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const DIRECT_OUTPUT_READY_TIMEOUT: Duration = Duration::from_millis(40);
+const DIRECT_OUTPUT_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(not(test))]
 const OUTPUT_DEVICE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -216,6 +222,7 @@ pub(crate) struct RealMpvProcess {
     requests: Sender<MpvWorkerRequest>,
     worker: Mutex<Option<JoinHandle<()>>>,
     ipc_directory: PathBuf,
+    exclusive_output: Arc<dyn ExclusiveOutputCoordinator>,
 }
 
 impl RealMpvProcess {
@@ -238,6 +245,7 @@ impl RealMpvProcess {
                     requests,
                     worker: Mutex::new(Some(worker)),
                     ipc_directory: ipc_directory.clone(),
+                    exclusive_output: Arc::new(PipeWireExclusiveOutputCoordinator::new()),
                 };
                 process.observe_properties()?;
                 Ok((Box::new(process), events, ipc_directory))
@@ -289,6 +297,18 @@ impl RealMpvProcess {
             eprintln!("Pinned mpv worker shutdown failed: worker thread panicked.");
         }
         remove_ipc_directory(&self.ipc_directory, "during mpv shutdown");
+    }
+
+    fn restore_system_output(&self) -> Result<(), String> {
+        let disable_result = self.command(json!(["set_property", "aid", "no"]));
+        let device_result = self.command(json!(["set_property", "audio-device", "auto"]));
+        let release_result = self.exclusive_output.release();
+        let enable_result = self.command(json!(["set_property", "aid", "auto"]));
+        disable_result?;
+        device_result?;
+        release_result?;
+        enable_result?;
+        Ok(())
     }
 }
 
@@ -367,24 +387,35 @@ impl MpvProcessAdapter for RealMpvProcess {
     ) -> Result<Option<AudioFormatObservation>, String> {
         match configuration {
             MpvOutputConfiguration::System => {
-                self.command(json!(["set_property", "audio-device", "auto"]))?;
+                self.restore_system_output()?;
                 Ok(None)
             }
             MpvOutputConfiguration::DirectAlsa { device_id } => {
-                self.command(json!([
-                    "set_property",
-                    "audio-device",
-                    format!("alsa/{device_id}")
-                ]))?;
-                match self.observe_output_format() {
-                    Ok(format) => Ok(format),
-                    Err(error) => {
-                        report_native_playback_error(&format!(
-                            "Direct ALSA negotiated format observation unavailable: {error}"
-                        ));
-                        Ok(None)
-                    }
+                self.command(json!(["set_property", "aid", "no"]))?;
+                if let Err(error) = self.exclusive_output.acquire(device_id) {
+                    return match self.restore_system_output() {
+                        Ok(()) => Err(error),
+                        Err(restore_error) => Err(format!(
+                            "{error} System Output cleanup also failed: {restore_error}"
+                        )),
+                    };
                 }
+                let result = self
+                    .command(json!([
+                        "set_property",
+                        "audio-device",
+                        format!("alsa/{device_id}")
+                    ]))
+                    .and_then(|_| self.command(json!(["set_property", "aid", "auto"])));
+                if let Err(error) = result {
+                    if let Err(restore_error) = self.restore_system_output() {
+                        return Err(format!(
+                            "{error} System Output cleanup also failed: {restore_error}"
+                        ));
+                    }
+                    return Err(error);
+                }
+                Ok(None)
             }
         }
     }
@@ -452,12 +483,18 @@ impl MpvProcessAdapter for RealMpvProcess {
 
     fn shutdown(&self) {
         self.stop_worker();
+        if let Err(error) = self.exclusive_output.release() {
+            eprintln!("Exclusive Output ownership cleanup failed during mpv shutdown: {error}");
+        }
     }
 }
 
 impl Drop for RealMpvProcess {
     fn drop(&mut self) {
         self.stop_worker();
+        if let Err(error) = self.exclusive_output.release() {
+            eprintln!("Exclusive Output ownership cleanup failed during mpv teardown: {error}");
+        }
     }
 }
 
@@ -1349,7 +1386,36 @@ impl PlaybackController {
             Ok(format) => format,
             Err(error) => return self.handle_direct_output_failure(previous, device, error),
         };
+        let negotiated_format = match self
+            .observe_direct_output_if_ready(negotiated_format, previous.source.is_some())
+        {
+            Ok(format) => format,
+            Err(error) => return self.handle_direct_output_failure(previous, device, error),
+        };
         self.publish_direct_output(device, negotiated_format)
+    }
+
+    fn observe_direct_output_if_ready(
+        &self,
+        configured_format: Option<AudioFormatObservation>,
+        has_source: bool,
+    ) -> Result<Option<AudioFormatObservation>, String> {
+        if configured_format.is_some() || !has_source {
+            return Ok(configured_format);
+        }
+        let deadline = Instant::now() + DIRECT_OUTPUT_READY_TIMEOUT;
+        let mut last_error = None;
+        while Instant::now() < deadline {
+            match self.with_process(|process| process.observe_output_format()) {
+                Ok(Some(observed)) => return Ok(Some(observed)),
+                Ok(None) => {}
+                Err(error) => last_error = Some(error),
+            }
+            thread::sleep(DIRECT_OUTPUT_RETRY_INTERVAL);
+        }
+        Err(last_error.unwrap_or_else(|| {
+            "Direct ALSA Output did not report an active audio format.".to_owned()
+        }))
     }
 
     fn select_output_device(&self, device_id: &str) -> Result<OutputDevice, PlaybackCommandError> {
@@ -2458,18 +2524,20 @@ fn publish_direct_mpv_error(
     state: &Arc<Mutex<PlaybackSessionState>>,
     device: OutputDevice,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-    if let Err(error) = process
+    let process = process
         .lock()
-        .map_err(|_| "Native mpv process is unavailable.".to_owned())
-        .and_then(|process| process.set_paused(true))
-    {
-        report_native_playback_error(&format!(
-            "Direct ALSA Output failure could not pause playback: {error}"
-        ));
-    }
+        .map_err(|_| PlaybackCommandError::new("Native mpv process is unavailable."))?;
+    process
+        .set_paused(true)
+        .map_err(PlaybackCommandError::new)?;
+    process
+        .configure_output(&MpvOutputConfiguration::System)
+        .map_err(PlaybackCommandError::new)?;
     update_shared_state(state, |state| {
         state.status = PlaybackStatus::Paused;
+        state.output_mode = OutputMode::System;
         state.output_device_issue = Some(busy_or_unsupported_device_issue(&device));
+        reset_output_telemetry(state);
     })
 }
 
@@ -3010,6 +3078,7 @@ mod tests {
         ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveCleanupMarker,
         AdaptiveSystemRateController, PipeWireRateAdapter,
     };
+    use crate::exclusive_output::ExclusiveOutputCoordinator;
     use crate::output_device::{AlsaOutputDeviceAdapter, OutputDevice};
     use crate::playback_app_actions::{
         DesktopPlaybackAction, DesktopPlaybackShell, dispatch_desktop_playback_action,
@@ -3042,20 +3111,48 @@ mod tests {
         load_error: Option<String>,
     }
 
-    fn record_real_mpv_output_commands(
-        configuration: MpvOutputConfiguration,
-    ) -> Vec<serde_json::Value> {
+    struct RecordedExclusiveOutput {
+        actions: Arc<Mutex<Vec<String>>>,
+        is_active: AtomicBool,
+    }
+
+    impl ExclusiveOutputCoordinator for RecordedExclusiveOutput {
+        fn acquire(&self, device_id: &str) -> Result<(), String> {
+            self.actions
+                .lock()
+                .expect("output actions")
+                .push(format!("reserve:{device_id}"));
+            self.is_active.store(true, Ordering::Release);
+            Ok(())
+        }
+
+        fn release(&self) -> Result<(), String> {
+            if self.is_active.swap(false, Ordering::AcqRel) {
+                self.actions
+                    .lock()
+                    .expect("output actions")
+                    .push("release".to_owned());
+            }
+            Ok(())
+        }
+    }
+
+    fn record_real_mpv_output_actions(configurations: &[MpvOutputConfiguration]) -> Vec<String> {
         let (request_sender, request_receiver) = std::sync::mpsc::channel();
-        let commands = Arc::new(Mutex::new(Vec::new()));
-        let recorded_commands = commands.clone();
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let recorded_actions = actions.clone();
         let recorder = thread::spawn(move || {
             while let Ok(request) = request_receiver.recv() {
                 if let MpvWorkerRequest::Command { command, response } = request {
-                    if command.first().and_then(serde_json::Value::as_str) == Some("set_property") {
-                        recorded_commands
+                    let command_name = command
+                        .as_array()
+                        .and_then(|values| values.first())
+                        .and_then(serde_json::Value::as_str);
+                    if command_name == Some("set_property") {
+                        recorded_actions
                             .lock()
-                            .expect("recorded mpv commands")
-                            .push(command);
+                            .expect("output actions")
+                            .push(format!("mpv:{command}"));
                     }
                     response.send(Ok(json!(null))).expect("record mpv response");
                 }
@@ -3065,17 +3162,23 @@ mod tests {
             requests: request_sender,
             worker: Mutex::new(None),
             ipc_directory: temporary_path("record-output-commands"),
+            exclusive_output: Arc::new(RecordedExclusiveOutput {
+                actions: actions.clone(),
+                is_active: AtomicBool::new(false),
+            }),
         };
 
-        process
-            .configure_output(&configuration)
-            .expect("configure recorded mpv output");
+        for configuration in configurations {
+            process
+                .configure_output(configuration)
+                .expect("configure recorded mpv output");
+        }
         drop(process);
         recorder.join().expect("join mpv command recorder");
-        Arc::try_unwrap(commands)
-            .expect("release recorded mpv commands")
+        Arc::try_unwrap(actions)
+            .expect("release output actions")
             .into_inner()
-            .expect("recorded mpv commands")
+            .expect("output actions")
     }
 
     #[derive(Clone)]
@@ -4285,16 +4388,36 @@ mod tests {
     }
 
     #[test]
-    fn real_mpv_switches_output_by_device_without_pinning_an_audio_driver() {
+    fn real_mpv_reserves_raw_alsa_before_switching_and_releases_it_for_system_output() {
         assert_eq!(
-            record_real_mpv_output_commands(MpvOutputConfiguration::DirectAlsa {
-                device_id: "hw:2,0".to_owned(),
-            }),
-            [json!(["set_property", "audio-device", "alsa/hw:2,0"])]
+            record_real_mpv_output_actions(&[
+                MpvOutputConfiguration::DirectAlsa {
+                    device_id: "hw:2,0".to_owned(),
+                },
+                MpvOutputConfiguration::System,
+            ]),
+            [
+                "mpv:[\"set_property\",\"aid\",\"no\"]",
+                "reserve:hw:2,0",
+                "mpv:[\"set_property\",\"audio-device\",\"alsa/hw:2,0\"]",
+                "mpv:[\"set_property\",\"aid\",\"auto\"]",
+                "mpv:[\"set_property\",\"aid\",\"no\"]",
+                "mpv:[\"set_property\",\"audio-device\",\"auto\"]",
+                "release",
+                "mpv:[\"set_property\",\"aid\",\"auto\"]",
+            ]
         );
         assert_eq!(
-            record_real_mpv_output_commands(MpvOutputConfiguration::System),
-            [json!(["set_property", "audio-device", "auto"])]
+            record_real_mpv_output_actions(&[MpvOutputConfiguration::DirectAlsa {
+                device_id: "hw:2,0".to_owned(),
+            }]),
+            [
+                "mpv:[\"set_property\",\"aid\",\"no\"]",
+                "reserve:hw:2,0",
+                "mpv:[\"set_property\",\"audio-device\",\"alsa/hw:2,0\"]",
+                "mpv:[\"set_property\",\"aid\",\"auto\"]",
+                "release",
+            ]
         );
     }
 
@@ -4480,6 +4603,46 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_selection_waits_for_real_output_before_publishing() {
+        let (_event_sender, events) = std::sync::mpsc::channel();
+        let configured = Arc::new(Mutex::new(Vec::new()));
+        let controller = PlaybackController::start_with_output_devices(
+            Box::new(OutputConfiguredMpv {
+                configured: configured.clone(),
+                is_paused: Arc::new(AtomicBool::new(false)),
+                direct_configuration_error: None,
+                negotiated_format: None,
+            }),
+            events,
+            Box::new(FakeOutputDevices {
+                devices: Arc::new(Mutex::new(vec![OutputDevice {
+                    id: "hw:2,0".to_owned(),
+                    name: "USB DAC".to_owned(),
+                }])),
+            }),
+            |_| {},
+        );
+        controller
+            .play(Some(json!({
+                "type": "track",
+                "track": { "id": "track-1", "title": "Track 1" },
+                "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+            })))
+            .expect("play Track before selecting Exclusive Output");
+
+        let prompted = controller
+            .select_direct_alsa_output("hw:2,0")
+            .expect("restore System Output when Exclusive is not ready");
+
+        assert_eq!(prompted.output_mode, OutputMode::System);
+        assert_eq!(prompted.status, PlaybackStatus::Paused);
+        assert_eq!(
+            configured.lock().expect("output configurations").last(),
+            Some(&MpvOutputConfiguration::System)
+        );
+    }
+
+    #[test]
     fn disconnected_direct_dac_pauses_without_silent_fallback() {
         let (_event_sender, events) = std::sync::mpsc::channel();
         let adapter = FakeOutputDevices {
@@ -4538,8 +4701,9 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_source_format_prompts_without_switching_output_mode() {
+    fn exclusive_output_failure_restores_system_output() {
         let (event_sender, events) = std::sync::mpsc::channel();
+        let configured = Arc::new(Mutex::new(Vec::new()));
         let adapter = FakeOutputDevices {
             devices: Arc::new(Mutex::new(vec![OutputDevice {
                 id: "hw:2,0".to_owned(),
@@ -4548,7 +4712,7 @@ mod tests {
         };
         let controller = PlaybackController::start_with_output_devices(
             Box::new(OutputConfiguredMpv {
-                configured: Arc::new(Mutex::new(Vec::new())),
+                configured: configured.clone(),
                 is_paused: Arc::new(AtomicBool::new(false)),
                 direct_configuration_error: None,
                 negotiated_format: None,
@@ -4566,7 +4730,7 @@ mod tests {
             .expect("mpv format failure");
         let prompted = wait_for_state(&controller, |state| state.output_device_issue.is_some());
 
-        assert_eq!(prompted.output_mode, OutputMode::DirectAlsa);
+        assert_eq!(prompted.output_mode, OutputMode::System);
         assert_eq!(prompted.status, PlaybackStatus::Paused);
         assert_eq!(
             prompted
@@ -4574,6 +4738,10 @@ mod tests {
                 .as_ref()
                 .map(|issue| issue.code.as_str()),
             Some("busy-or-unsupported")
+        );
+        assert_eq!(
+            configured.lock().expect("output configurations").last(),
+            Some(&MpvOutputConfiguration::System)
         );
     }
 
@@ -5184,6 +5352,46 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[ignore = "temporarily disables the active PipeWire card profile and uses ALSA card 2"]
+    fn real_pinned_mpv_returns_from_exclusive_to_system_output() {
+        let fixture_path = temporary_path("exclusive-transition.wav");
+        fs::write(&fixture_path, silent_48khz_stereo_wav()).expect("write WAV fixture");
+        let (process, _events, _ipc_directory) = RealMpvProcess::start(
+            super::resolve_mpv_binary(),
+            vec!["--loop-file=inf".to_owned()],
+        )
+        .expect("start pinned mpv");
+        process
+            .load(&fixture_path.to_string_lossy())
+            .expect("load transition fixture");
+        process.set_paused(false).expect("play transition fixture");
+        wait_for_real_output(process.as_ref(), "initial System Output");
+
+        for transition in 1..=2 {
+            process
+                .configure_output(&MpvOutputConfiguration::DirectAlsa {
+                    device_id: "hw:2,0".to_owned(),
+                })
+                .expect("open Exclusive Output");
+            wait_for_real_output(
+                process.as_ref(),
+                &format!("Exclusive Output transition {transition}"),
+            );
+            process
+                .configure_output(&MpvOutputConfiguration::System)
+                .expect("restore System Output");
+            wait_for_real_output(
+                process.as_ref(),
+                &format!("System Output transition {transition}"),
+            );
+        }
+
+        drop(process);
+        fs::remove_file(fixture_path).expect("remove WAV fixture");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     #[ignore = "requires the pinned Linux mpv executable and desktop audio lifecycle"]
     fn linux_background_playback_continues_until_clean_explicit_quit() {
         let fixture_path = temporary_path("background-track.wav");
@@ -5345,5 +5553,40 @@ mod tests {
         wav.extend_from_slice(&DATA_SIZE.to_le_bytes());
         wav.resize(44 + DATA_SIZE as usize, 0);
         wav
+    }
+
+    fn silent_48khz_stereo_wav() -> Vec<u8> {
+        const SAMPLE_RATE: u32 = 48_000;
+        const CHANNELS: u16 = 2;
+        const BYTES_PER_SAMPLE: u16 = 2;
+        const DATA_SIZE: u32 = SAMPLE_RATE * CHANNELS as u32 * BYTES_PER_SAMPLE as u32;
+        let block_alignment = CHANNELS * BYTES_PER_SAMPLE;
+        let mut wav = Vec::with_capacity(44 + DATA_SIZE as usize);
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + DATA_SIZE).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt \x10\0\0\0\x01\0");
+        wav.extend_from_slice(&CHANNELS.to_le_bytes());
+        wav.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+        wav.extend_from_slice(&(SAMPLE_RATE * block_alignment as u32).to_le_bytes());
+        wav.extend_from_slice(&block_alignment.to_le_bytes());
+        wav.extend_from_slice(&(BYTES_PER_SAMPLE * 8).to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&DATA_SIZE.to_le_bytes());
+        wav.resize(44 + DATA_SIZE as usize, 0);
+        wav
+    }
+
+    fn wait_for_real_output(
+        process: &dyn MpvProcessAdapter,
+        context: &str,
+    ) -> AudioFormatObservation {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(Some(format)) = process.observe_output_format() {
+                return format;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for {context}");
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 }
