@@ -168,6 +168,10 @@ pub(crate) enum MpvEvent {
 
 pub(crate) trait MpvProcessAdapter: Send + Sync {
     fn load(&self, url: &str) -> Result<(), String>;
+    fn load_at(&self, url: &str, start_seconds: f64) -> Result<(), String> {
+        self.load(url)?;
+        self.seek(start_seconds)
+    }
     fn set_paused(&self, is_paused: bool) -> Result<(), String>;
     fn seek(&self, seconds: f64) -> Result<(), String>;
     fn set_volume(&self, value: f64) -> Result<(), String>;
@@ -329,6 +333,17 @@ impl MpvProcessAdapter for RealMpvProcess {
     fn load(&self, url: &str) -> Result<(), String> {
         self.command(json!(["loadfile", url, "replace"]))
             .map(|_| ())
+    }
+
+    fn load_at(&self, url: &str, start_seconds: f64) -> Result<(), String> {
+        self.command(json!([
+            "loadfile",
+            url,
+            "replace",
+            -1,
+            { "start": start_seconds.to_string() }
+        ]))
+        .map(|_| ())
     }
 
     fn set_paused(&self, is_paused: bool) -> Result<(), String> {
@@ -1637,8 +1652,7 @@ fn apply_snapshot_to_process(
     process.set_volume(snapshot.volume())?;
     if let Some(source) = snapshot.source() {
         let url = playback_url(source).map_err(|error| error.message)?;
-        process.load(&url)?;
-        process.seek(snapshot.playhead_seconds())?;
+        process.load_at(&url, snapshot.playhead_seconds())?;
         if should_resume {
             process.set_paused(false)?;
         }
@@ -3363,6 +3377,36 @@ mod tests {
         state: Arc<Mutex<RestoredProcessState>>,
     }
 
+    struct AsynchronousLoadMpvProcess;
+
+    impl MpvProcessAdapter for AsynchronousLoadMpvProcess {
+        fn load(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn load_at(&self, _url: &str, _start_seconds: f64) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn set_paused(&self, _is_paused: bool) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn seek(&self, _seconds: f64) -> Result<(), String> {
+            Err("file has not finished loading".to_owned())
+        }
+
+        fn set_volume(&self, _value: f64) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn shutdown(&self) {}
+    }
+
     impl MpvProcessAdapter for RestorableMpvProcess {
         fn load(&self, url: &str) -> Result<(), String> {
             self.state.lock().expect("process state").loaded_url = Some(url.to_owned());
@@ -4589,6 +4633,29 @@ mod tests {
         assert!(process.is_paused);
         assert_eq!(process.playhead_seconds, 41.5);
         assert_eq!(process.volume, 0.65);
+    }
+
+    #[test]
+    fn paused_snapshot_restore_does_not_seek_before_async_load_is_ready() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let controller =
+            PlaybackController::start(Box::new(AsynchronousLoadMpvProcess), event_receiver, |_| {});
+        let snapshot = PlaybackSessionSnapshot::new(
+            Some(json!({
+                "type": "track",
+                "track": { "id": "track-1", "title": "Track 1", "durationMs": 120000 },
+                "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+            })),
+            41.5,
+            0.65,
+            false,
+            "off",
+        )
+        .expect("valid snapshot");
+
+        controller
+            .restore_paused(&snapshot)
+            .expect("restore paused snapshot without an immediate seek");
     }
 
     #[test]
