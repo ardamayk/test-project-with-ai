@@ -97,13 +97,11 @@ export class InMemoryPlaybackEngine implements PlaybackEngine {
 		this.update({ outputMode: "system", outputDeviceIssue: null });
 	}
 
-	enableAdaptiveSystemRate(isConfirmed: boolean) {
-		if (isConfirmed) {
-			this.update({
-				outputMode: "adaptive-system-rate",
-				outputDeviceIssue: null,
-			});
-		}
+	enableAdaptiveSystemRate() {
+		this.update({
+			outputMode: "adaptive-system-rate",
+			outputDeviceIssue: null,
+		});
 	}
 
 	toggleShuffle() {

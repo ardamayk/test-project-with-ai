@@ -374,13 +374,12 @@ fn desktop_playback_select_exclusive_output(
 #[tauri::command]
 fn desktop_playback_enable_adaptive_system_rate(
     state: State<'_, AppState>,
-    is_confirmed: bool,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     let mut processing = state
         .processing
         .lock()
         .map_err(|_| PlaybackCommandError::new("Output Mode settings are unavailable."))?;
-    let playback_state = state.playback.enable_adaptive_system_rate(is_confirmed)?;
+    let playback_state = state.playback.enable_adaptive_system_rate()?;
     if let Err(error) = processing.set_output_mode(OutputMode::AdaptiveSystemRate) {
         eprintln!("Adaptive System Rate preference persistence failed: {error}");
         if let Err(rollback_error) = state.playback.fallback_to_system_output() {
@@ -405,9 +404,7 @@ fn restore_native_output_mode(
         (OutputMode::DirectAlsa, Some(device_id)) => {
             playback.select_direct_alsa_output(device_id).map(|_| ())
         }
-        (OutputMode::AdaptiveSystemRate, _) => {
-            playback.enable_adaptive_system_rate(true).map(|_| ())
-        }
+        (OutputMode::AdaptiveSystemRate, _) => playback.enable_adaptive_system_rate().map(|_| ()),
         _ => playback.fallback_to_system_output().map(|_| ()),
     };
     if let Err(error) = result {

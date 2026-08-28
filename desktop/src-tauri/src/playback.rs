@@ -1251,10 +1251,9 @@ impl PlaybackController {
 
     pub(crate) fn enable_adaptive_system_rate(
         &self,
-        is_confirmed: bool,
     ) -> Result<PlaybackSessionState, PlaybackCommandError> {
         let source_rate_hz = self.adaptive_source_rate_hz()?;
-        self.enable_adaptive_controller(is_confirmed)?;
+        self.enable_adaptive_controller()?;
         if let Err(error) = self.configure_system_output() {
             return self.fail_adaptive_setup(error);
         }
@@ -1273,15 +1272,14 @@ impl PlaybackController {
             .and_then(|source| source.format.sample_rate_hz))
     }
 
-    fn enable_adaptive_controller(&self, is_confirmed: bool) -> Result<(), PlaybackCommandError> {
+    fn enable_adaptive_controller(&self) -> Result<(), PlaybackCommandError> {
         let result = self
             .adaptive_controller()?
             .lock()
             .map_err(|_| PlaybackCommandError::new("Adaptive System Rate state is unavailable."))?
-            .enable(is_confirmed);
+            .enable();
         match result {
             Ok(()) => Ok(()),
-            Err(error) if !is_confirmed => Err(PlaybackCommandError::new(error)),
             Err(error) => {
                 report_native_playback_error(&format!(
                     "Adaptive System Rate enable preparation failed: {error}"
@@ -1513,7 +1511,7 @@ impl PlaybackController {
     }
 
     fn restore_adaptive_output_route(&self) -> OutputMode {
-        match self.enable_adaptive_system_rate(true) {
+        match self.enable_adaptive_system_rate() {
             Ok(_) => OutputMode::AdaptiveSystemRate,
             Err(error) => {
                 report_native_playback_error(&format!(
@@ -1564,7 +1562,7 @@ impl PlaybackController {
         if previous_mode != OutputMode::AdaptiveSystemRate {
             return;
         }
-        if let Err(error) = self.enable_adaptive_system_rate(true) {
+        if let Err(error) = self.enable_adaptive_system_rate() {
             report_native_playback_error(&format!(
                 "Adaptive System Rate rollback failed after System Output error: {}",
                 error.message
@@ -3075,8 +3073,7 @@ mod tests {
         RealMpvProcess,
     };
     use crate::adaptive_system_rate::{
-        ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveCleanupMarker,
-        AdaptiveSystemRateController, PipeWireRateAdapter,
+        AdaptiveCleanupMarker, AdaptiveSystemRateController, PipeWireRateAdapter,
     };
     use crate::exclusive_output::ExclusiveOutputCoordinator;
     use crate::output_device::{AlsaOutputDeviceAdapter, OutputDevice};
@@ -3645,7 +3642,7 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_output_mode_requires_explicit_system_wide_confirmation() {
+    fn adaptive_output_mode_enables_without_a_confirmation_payload() {
         let (_event_sender, event_receiver) = std::sync::mpsc::channel();
         let process = FakeMpvProcess {
             loaded_url: Arc::new(Mutex::new(None)),
@@ -3660,18 +3657,9 @@ mod tests {
             |_| {},
         );
 
-        let error = controller
-            .enable_adaptive_system_rate(false)
-            .expect_err("reject unconfirmed experimental mode");
-        assert_eq!(error.message, ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE);
-        assert_eq!(
-            controller.state().expect("playback state").output_mode,
-            OutputMode::System
-        );
-
         let enabled = controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
         assert_eq!(enabled.output_mode, OutputMode::AdaptiveSystemRate);
     }
 
@@ -3694,7 +3682,7 @@ mod tests {
         );
 
         let error = controller
-            .enable_adaptive_system_rate(true)
+            .enable_adaptive_system_rate()
             .expect_err("surface marker persistence failure");
 
         assert!(error.message.contains("storage permissions"));
@@ -3719,8 +3707,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
 
         for (id, sample_rate_hz) in [("track-1", 44_100), ("track-2", 96_000)] {
             controller
@@ -3762,8 +3750,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
         controller
             .play(Some(json!({
                 "type": "radio-station",
@@ -3809,8 +3797,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
         controller
             .play(Some(json!({
                 "type": "track",
@@ -3845,8 +3833,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
         controller
             .play(Some(json!({
                 "type": "track",
@@ -3889,8 +3877,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
         controller
             .play(Some(json!({
                 "type": "track",
@@ -3929,8 +3917,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
 
         controller
             .play(Some(json!({
@@ -3980,8 +3968,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
         controller
             .play(Some(json!({
                 "type": "track",
@@ -4041,8 +4029,8 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
-            .expect("enable confirmed experimental mode");
+            .enable_adaptive_system_rate()
+            .expect("enable Adaptive System Rate");
         controller
             .play(Some(json!({
                 "type": "track",
@@ -4090,7 +4078,7 @@ mod tests {
             .sync_queue_context(sources.clone(), Some(0))
             .expect("sync queue");
         controller
-            .enable_adaptive_system_rate(true)
+            .enable_adaptive_system_rate()
             .expect("enable adaptive output");
         controller
             .play(Some(sources[0].clone()))
@@ -4117,7 +4105,7 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
+            .enable_adaptive_system_rate()
             .expect("enable adaptive output");
         controller
             .play(Some(json!({
@@ -4146,7 +4134,7 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
+            .enable_adaptive_system_rate()
             .expect("enable adaptive output");
         controller
             .play(Some(json!({
@@ -4173,7 +4161,7 @@ mod tests {
             |_| {},
         );
         controller
-            .enable_adaptive_system_rate(true)
+            .enable_adaptive_system_rate()
             .expect("enable adaptive output");
         controller
             .play(Some(json!({

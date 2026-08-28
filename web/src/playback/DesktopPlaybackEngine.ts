@@ -39,7 +39,7 @@ type DesktopPlaybackBridge = {
 	selectDirectAlsaOutput(deviceId: string): Promise<PlaybackSessionState>;
 	selectExclusiveOutput(): Promise<PlaybackSessionState>;
 	fallbackToSystemOutput(): Promise<PlaybackSessionState>;
-	enableAdaptiveSystemRate(isConfirmed: boolean): Promise<PlaybackSessionState>;
+	enableAdaptiveSystemRate(): Promise<PlaybackSessionState>;
 	toggleShuffle(): Promise<PlaybackSessionState>;
 	cycleRepeatMode(): Promise<PlaybackSessionState>;
 	listen(listener: PlaybackSessionListener): Promise<UnlistenFn>;
@@ -72,8 +72,8 @@ const tauriPlaybackBridge: DesktopPlaybackBridge = {
 		invoke("desktop_playback_select_exclusive_output"),
 	fallbackToSystemOutput: () =>
 		invoke("desktop_playback_fallback_to_system_output"),
-	enableAdaptiveSystemRate: (isConfirmed) =>
-		invoke("desktop_playback_enable_adaptive_system_rate", { isConfirmed }),
+	enableAdaptiveSystemRate: () =>
+		invoke("desktop_playback_enable_adaptive_system_rate"),
 	toggleShuffle: () => invoke("desktop_playback_toggle_shuffle"),
 	cycleRepeatMode: () => invoke("desktop_playback_cycle_repeat_mode"),
 	listen: (listener) =>
@@ -187,8 +187,8 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 		this.runCommand(() => this.bridge.fallbackToSystemOutput());
 	}
 
-	enableAdaptiveSystemRate(isConfirmed: boolean) {
-		this.runCommand(() => this.bridge.enableAdaptiveSystemRate(isConfirmed));
+	enableAdaptiveSystemRate() {
+		this.runCommand(() => this.bridge.enableAdaptiveSystemRate());
 	}
 
 	toggleShuffle() {

@@ -141,14 +141,14 @@ describe("DesktopPlaybackEngine", () => {
 		engine.destroy();
 	});
 
-	it("forwards explicit Adaptive System Rate confirmation to Rust", async () => {
+	it("forwards Adaptive System Rate selection without confirmation payload", async () => {
 		const native = createBridge();
 		const engine = new DesktopPlaybackEngine(native.bridge);
 
-		engine.enableAdaptiveSystemRate(true);
+		engine.enableAdaptiveSystemRate();
 
 		await vi.waitFor(() =>
-			expect(native.bridge.enableAdaptiveSystemRate).toHaveBeenCalledWith(true),
+			expect(native.bridge.enableAdaptiveSystemRate).toHaveBeenCalledWith(),
 		);
 		engine.destroy();
 	});

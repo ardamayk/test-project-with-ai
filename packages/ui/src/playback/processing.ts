@@ -4,8 +4,6 @@ export const EQ_FREQUENCIES_HZ = [
 
 export type ProcessingProfile = "direct" | "processed";
 export type OutputMode = "system" | "direct-alsa" | "adaptive-system-rate";
-export const ADAPTIVE_SYSTEM_RATE_WARNING =
-	"Adaptive System Rate affects audio from every application on the PipeWire graph.";
 export type OutputDevice = {
 	id: string;
 	name: string;

@@ -6,4 +6,4 @@ Linux exposes three user-facing output modes in a compact Player Bar menu. **Nor
 
 ## Consequences
 
-The Player Bar shows the active output mode as a text button. One click opens a tightly spaced menu immediately above it with Normal, Exclusive, and Adaptive in that order. No output-device picker is presented. Adaptive still requires explicit confirmation because its effect is system-wide. Detailed processing and playback telemetry remain internal state and may be exposed through a future diagnostic surface, but the mode selector does not present inferred signal-path data or an unprovable bit-perfect badge.
+The Player Bar shows the active output mode as a text button. One click opens a tightly spaced menu immediately above it with Normal, Exclusive, and Adaptive in that order. No output-device picker is presented. Selecting Adaptive applies it immediately with the same single-selection interaction as Normal and Exclusive. Detailed processing and playback telemetry remain internal state and may be exposed through a future diagnostic surface, but the mode selector does not present inferred signal-path data or an unprovable bit-perfect badge.

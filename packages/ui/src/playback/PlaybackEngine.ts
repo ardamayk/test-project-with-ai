@@ -94,7 +94,7 @@ export interface PlaybackEngine {
 	selectDirectAlsaOutput?(deviceId: string): void;
 	selectExclusiveOutput?(): void;
 	fallbackToSystemOutput?(): void;
-	enableAdaptiveSystemRate?(isConfirmed: boolean): void;
+	enableAdaptiveSystemRate?(): void;
 	toggleShuffle(): void;
 	cycleRepeatMode(): void;
 	destroy(): void;

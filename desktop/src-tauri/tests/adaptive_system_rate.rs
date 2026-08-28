@@ -1,6 +1,6 @@
 use earthly_audio_desktop::adaptive_system_rate::{
-    ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE, AdaptiveCleanupMarker, AdaptiveSystemRateController,
-    CommandPipeWireRateAdapter, FileAdaptiveCleanupMarker, PipeWireRateAdapter,
+    AdaptiveCleanupMarker, AdaptiveSystemRateController, CommandPipeWireRateAdapter,
+    FileAdaptiveCleanupMarker, PipeWireRateAdapter,
 };
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -69,30 +69,23 @@ impl PipeWireRateAdapter for FailingResetPipeWireRate {
 }
 
 #[test]
-fn adaptive_mode_requires_explicit_system_wide_effect_confirmation() {
+fn adaptive_mode_enables_without_a_confirmation_payload() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
     let mut controller = AdaptiveSystemRateController::new(adapter);
 
-    let error = controller
-        .enable(false)
-        .expect_err("reject unconfirmed experimental mode");
-
-    assert_eq!(error, ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE);
-    assert!(!controller.state().is_enabled);
-
-    controller.enable(true).expect("enable confirmed mode");
+    controller.enable().expect("enable Adaptive System Rate");
     assert!(controller.state().is_enabled);
 }
 
 #[test]
-fn confirmed_mode_marks_cleanup_required_until_a_clean_disable() {
+fn enabled_mode_marks_cleanup_required_until_a_clean_disable() {
     let marker = Arc::new(RecordedCleanupMarker::new(false));
     let mut controller = AdaptiveSystemRateController::with_cleanup_marker(
         Arc::new(RecordedPipeWireRate::default()),
         marker.clone(),
     );
 
-    controller.enable(true).expect("enable confirmed mode");
+    controller.enable().expect("enable Adaptive System Rate");
     assert!(marker.is_required().expect("cleanup marker is set"));
 
     controller.disable().expect("disable adaptive mode");
@@ -115,7 +108,7 @@ fn file_cleanup_marker_survives_until_explicitly_cleared() {
 fn enabled_mode_forces_the_playback_source_sample_rate() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
     let mut controller = AdaptiveSystemRateController::new(adapter.clone());
-    controller.enable(true).expect("enable confirmed mode");
+    controller.enable().expect("enable Adaptive System Rate");
 
     controller
         .apply_source_sample_rate(Some(44_100))
@@ -132,7 +125,7 @@ fn enabled_mode_forces_the_playback_source_sample_rate() {
 fn changing_playback_sources_updates_the_forced_graph_rate() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
     let mut controller = AdaptiveSystemRateController::new(adapter.clone());
-    controller.enable(true).expect("enable confirmed mode");
+    controller.enable().expect("enable Adaptive System Rate");
     controller
         .apply_source_sample_rate(Some(44_100))
         .expect("force first source rate");
@@ -151,7 +144,7 @@ fn changing_playback_sources_updates_the_forced_graph_rate() {
 fn disabling_adaptive_mode_restores_automatic_system_rate() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
     let mut controller = AdaptiveSystemRateController::new(adapter.clone());
-    controller.enable(true).expect("enable confirmed mode");
+    controller.enable().expect("enable Adaptive System Rate");
     controller
         .apply_source_sample_rate(Some(192_000))
         .expect("force source rate");
@@ -224,10 +217,10 @@ fn known_stale_cleanup_failure_blocks_startup_and_keeps_the_marker() {
 }
 
 #[test]
-fn player_recovery_resets_force_rate_without_forgetting_the_confirmed_mode() {
+fn player_recovery_resets_force_rate_without_forgetting_the_enabled_mode() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
     let mut controller = AdaptiveSystemRateController::new(adapter.clone());
-    controller.enable(true).expect("enable confirmed mode");
+    controller.enable().expect("enable Adaptive System Rate");
     controller
         .apply_source_sample_rate(Some(48_000))
         .expect("force source rate");
@@ -249,7 +242,7 @@ fn teardown_restores_automatic_rate_after_an_interrupted_session() {
     let adapter = Arc::new(RecordedPipeWireRate::default());
     {
         let mut controller = AdaptiveSystemRateController::new(adapter.clone());
-        controller.enable(true).expect("enable confirmed mode");
+        controller.enable().expect("enable Adaptive System Rate");
         controller
             .apply_source_sample_rate(Some(352_800))
             .expect("force source rate");
@@ -331,6 +324,30 @@ fn command_adapter_sets_source_rate_and_resets_to_automatic() {
     );
     std::fs::remove_file(script).expect("remove fake pw-metadata");
     std::fs::remove_file(log_path).expect("remove argument log");
+}
+
+#[test]
+#[ignore = "temporarily changes the active PipeWire graph rate"]
+fn real_pipewire_adapter_tracks_source_rates_and_restores_automatic() {
+    let adapter = Arc::new(CommandPipeWireRateAdapter::new());
+    let mut controller = AdaptiveSystemRateController::new(adapter.clone());
+    controller.enable().expect("enable Adaptive System Rate");
+
+    for rate_hz in [44_100, 96_000, 192_000] {
+        controller
+            .apply_source_sample_rate(Some(rate_hz))
+            .expect("force playback source rate");
+        assert_eq!(
+            adapter.forced_rate_hz().expect("observe forced rate"),
+            Some(rate_hz)
+        );
+    }
+
+    controller.disable().expect("restore automatic system rate");
+    assert_eq!(
+        adapter.forced_rate_hz().expect("observe automatic rate"),
+        None
+    );
 }
 
 fn temporary_executable(name: &str, contents: &str) -> PathBuf {

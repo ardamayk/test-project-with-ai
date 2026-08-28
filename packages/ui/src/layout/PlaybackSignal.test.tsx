@@ -63,7 +63,7 @@ describe("PlaybackSignal", () => {
 		expect(screen.queryByText(/USB|HDMI|hw:/i)).toBeNull();
 	});
 
-	it("requires a second Adaptive selection after the system-wide warning", () => {
+	it("selects Adaptive once and closes the compact menu", () => {
 		const controls = createControls();
 		render(<PlaybackSignal outputMode="system" outputControls={controls} />);
 
@@ -72,15 +72,10 @@ describe("PlaybackSignal", () => {
 		);
 		fireEvent.click(screen.getByRole("menuitemradio", { name: "Adaptive" }));
 
-		expect(screen.getByRole("alert").textContent).toContain(
-			"every application on the PipeWire graph",
-		);
-		expect(controls.enableAdaptiveSystemRate).not.toHaveBeenCalled();
-
-		fireEvent.click(
-			screen.getByRole("menuitemradio", { name: "Confirm Adaptive" }),
-		);
-		expect(controls.enableAdaptiveSystemRate).toHaveBeenCalledWith(true);
+		expect(controls.enableAdaptiveSystemRate).toHaveBeenCalledOnce();
+		expect(controls.enableAdaptiveSystemRate).toHaveBeenCalledWith();
+		expect(screen.queryByRole("menu", { name: "Output mode" })).toBeNull();
+		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
 	it("closes on Escape and outside pointer input", () => {

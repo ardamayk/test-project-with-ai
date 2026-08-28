@@ -1,10 +1,7 @@
 import { Check, ChevronUp } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/utils";
-import {
-	ADAPTIVE_SYSTEM_RATE_WARNING,
-	type OutputMode,
-} from "../playback/processing";
+import type { OutputMode } from "../playback/processing";
 
 type PlaybackSignalProps = {
 	outputMode: OutputMode;
@@ -14,7 +11,7 @@ type PlaybackSignalProps = {
 export type PlaybackOutputControls = {
 	selectNormalOutput(): void;
 	selectExclusiveOutput(): void;
-	enableAdaptiveSystemRate(isConfirmed: boolean): void;
+	enableAdaptiveSystemRate(): void;
 };
 
 const OUTPUT_OPTIONS: Array<{ mode: OutputMode; label: string }> = [
@@ -29,12 +26,10 @@ export function PlaybackSignal({
 }: PlaybackSignalProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [isOpen, setIsOpen] = useState(false);
-	const [isConfirmingAdaptive, setIsConfirmingAdaptive] = useState(false);
 	const activeLabel = getOutputLabel(outputMode);
 
 	const closeMenu = useCallback(() => {
 		setIsOpen(false);
-		setIsConfirmingAdaptive(false);
 	}, []);
 
 	useEffect(() => {
@@ -56,13 +51,8 @@ export function PlaybackSignal({
 	const selectMode = (mode: OutputMode) => {
 		if (mode === "system") outputControls.selectNormalOutput();
 		if (mode === "direct-alsa") outputControls.selectExclusiveOutput();
-		if (mode === "adaptive-system-rate") {
-			if (!isConfirmingAdaptive) {
-				setIsConfirmingAdaptive(true);
-				return;
-			}
-			outputControls.enableAdaptiveSystemRate(true);
-		}
+		if (mode === "adaptive-system-rate")
+			outputControls.enableAdaptiveSystemRate();
 		closeMenu();
 	};
 
@@ -74,10 +64,7 @@ export function PlaybackSignal({
 				aria-haspopup="menu"
 				aria-expanded={isOpen}
 				className="inline-flex h-6 items-center gap-1 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-2.5 text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
-				onClick={() => {
-					setIsOpen((value) => !value);
-					setIsConfirmingAdaptive(false);
-				}}
+				onClick={() => setIsOpen((value) => !value)}
 			>
 				{activeLabel}
 				<ChevronUp className="size-3" aria-hidden />
@@ -106,19 +93,9 @@ export function PlaybackSignal({
 									<Check className="size-3" aria-hidden />
 								) : null}
 							</span>
-							{isConfirmingAdaptive && option.mode === "adaptive-system-rate"
-								? "Confirm Adaptive"
-								: option.label}
+							{option.label}
 						</button>
 					))}
-					{isConfirmingAdaptive ? (
-						<p
-							role="alert"
-							className="px-1.5 pt-1 pb-0.5 text-[9px] text-muted-foreground leading-tight"
-						>
-							{ADAPTIVE_SYSTEM_RATE_WARNING} Select Adaptive again to confirm.
-						</p>
-					) : null}
 				</div>
 			) : null}
 		</div>

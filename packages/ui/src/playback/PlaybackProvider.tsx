@@ -114,7 +114,7 @@ type PlaybackContextValue = {
 	selectDirectAlsaOutput: (deviceId: string) => void;
 	selectExclusiveOutput: () => void;
 	fallbackToSystemOutput: () => void;
-	enableAdaptiveSystemRate: (isConfirmed: boolean) => void;
+	enableAdaptiveSystemRate: () => void;
 	removeFromQueue: (itemId: string) => Promise<void>;
 	reorderQueue: (itemIds: string[]) => Promise<void>;
 	clearQueue: () => Promise<void>;
@@ -448,8 +448,7 @@ export function PlaybackProvider({
 				engine.selectDirectAlsaOutput?.(deviceId),
 			selectExclusiveOutput: () => engine.selectExclusiveOutput?.(),
 			fallbackToSystemOutput: () => engine.fallbackToSystemOutput?.(),
-			enableAdaptiveSystemRate: (isConfirmed) =>
-				engine.enableAdaptiveSystemRate?.(isConfirmed),
+			enableAdaptiveSystemRate: () => engine.enableAdaptiveSystemRate?.(),
 			removeFromQueue,
 			reorderQueue,
 			clearQueue,

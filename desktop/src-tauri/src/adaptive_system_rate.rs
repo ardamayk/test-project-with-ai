@@ -5,9 +5,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-pub const ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE: &str =
-    "Explicit confirmation is required to enable Adaptive System Rate.";
-
 pub trait PipeWireRateAdapter: Send + Sync {
     fn forced_rate_hz(&self) -> Result<Option<u32>, String>;
     fn set_forced_rate_hz(&self, rate_hz: Option<u32>) -> Result<(), String>;
@@ -262,10 +259,7 @@ impl AdaptiveSystemRateController {
         &self.state
     }
 
-    pub fn enable(&mut self, is_confirmed: bool) -> Result<(), String> {
-        if !is_confirmed {
-            return Err(ADAPTIVE_CONFIRMATION_REQUIRED_MESSAGE.to_owned());
-        }
+    pub fn enable(&mut self) -> Result<(), String> {
         self.cleanup_marker.mark_required()?;
         self.state.is_enabled = true;
         Ok(())
