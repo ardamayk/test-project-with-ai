@@ -93,6 +93,10 @@ func main() {
 
 	server := newHTTPServer(cfg.Addr, r)
 
+	if err := libModule.Start(ctx); err != nil {
+		slog.Error("library startup failed", "error", err)
+	}
+
 	go func() {
 		slog.Info("server listening", "addr", cfg.Addr, "modules", registry.Names())
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

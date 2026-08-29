@@ -38,7 +38,7 @@ export MUSIC_PATHS=./music   # your music folder(s), comma-separated
 mise run dev    # Go :8090 + Vite :3000
 ```
 
-Open http://localhost:3000/library → **Scan library** to index files.
+The Music Server scans `MUSIC_PATHS` once at startup. Open http://localhost:3000/library and use **Scan library** whenever you want an additional rescan.
 
 ## Build
 

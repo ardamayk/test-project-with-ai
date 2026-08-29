@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -73,6 +74,8 @@ type ScanStatus struct {
 	StartedAt  *time.Time `json:"startedAt,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 }
+
+const INTERRUPTED_SCAN_ERROR = "scan interrupted by server restart"
 
 type Store struct {
 	db *sql.DB
@@ -667,6 +670,17 @@ func (s *Store) BeginScan(ctx context.Context) (string, error) {
 	return id, nil
 }
 
+func (s *Store) RecoverInterruptedScans(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE scan_jobs
+		SET status = 'failed', finished_at = ?, error_message = ?
+		WHERE status = 'running'`, time.Now().UTC(), INTERRUPTED_SCAN_ERROR)
+	if err != nil {
+		return fmt.Errorf("recover interrupted scans: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) resetScanPresence(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET missing_at = NULL WHERE missing_at IS NOT NULL`)
 	return err
@@ -678,27 +692,54 @@ func (s *Store) markTrackPresent(ctx context.Context, trackID string) error {
 }
 
 func (s *Store) MarkSeenPaths(ctx context.Context, paths map[string]struct{}) (removed int, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, file_path FROM tracks WHERE missing_at IS NULL`)
+	missingTrackIDs, err := s.listMissingTrackIDs(ctx, paths)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = rows.Close() }()
+	return s.markTracksMissing(ctx, missingTrackIDs)
+}
+
+func (s *Store) listMissingTrackIDs(ctx context.Context, paths map[string]struct{}) (trackIDs []string, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, file_path FROM tracks WHERE missing_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	for rows.Next() {
 		var id, path string
 		if err := rows.Scan(&id, &path); err != nil {
-			return 0, err
+			return nil, err
 		}
 		if _, ok := paths[path]; !ok {
-			if _, err := s.db.ExecContext(ctx,
-				`UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, id,
-			); err != nil {
-				return 0, err
-			}
-			removed++
+			trackIDs = append(trackIDs, id)
 		}
 	}
-	return removed, rows.Err()
+	return trackIDs, rows.Err()
+}
+
+func (s *Store) markTracksMissing(ctx context.Context, trackIDs []string) (removed int, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		rollbackErr := tx.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("rollback missing tracks: %w", rollbackErr))
+		}
+	}()
+
+	for _, trackID := range trackIDs {
+		if _, err := tx.ExecContext(ctx, `UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, trackID); err != nil {
+			return removed, fmt.Errorf("mark track %q missing: %w", trackID, err)
+		}
+		removed++
+	}
+	if err := tx.Commit(); err != nil {
+		return removed, fmt.Errorf("commit missing tracks: %w", err)
+	}
+	return removed, nil
 }
 
 func (s *Store) UpdateScanProgress(ctx context.Context, jobID string, scanned, added, updated, removed int) error {

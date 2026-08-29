@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
@@ -25,6 +26,17 @@ func NewModule(db *sql.DB, cfg config.Config) *Module {
 
 func (m *Module) Name() string {
 	return "library"
+}
+
+func (m *Module) Start(ctx context.Context) error {
+	if err := m.store.RecoverInterruptedScans(ctx); err != nil {
+		return err
+	}
+	if !m.service.MusicPathsConfigured() {
+		return nil
+	}
+	_, err := m.service.TriggerScan(ctx)
+	return err
 }
 
 func (m *Module) RegisterRoutes(r chi.Router) {
