@@ -18,17 +18,13 @@ import (
 )
 
 const (
-	LEGACY_MIGRATION_VERSION = 13
-	STRICT_IDENTITY_VERSION  = 14
+	LEGACY_MIGRATION_VERSION   = 13
+	STRICT_IDENTITY_VERSION    = 14
+	BACKFILL_MIGRATION_VERSION = 15
 )
 
 func TestStrictTrackIdentityMigrationAppliesAndRollsBackOnEmptyDatabase(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "empty.db")
-	sqlDB, err := database.OpenAndMigrate(context.Background(), databasePath, migrationsDir(t))
-	if err != nil {
-		t.Fatalf("migrate empty database: %v", err)
-	}
-	registerDatabaseCleanup(t, sqlDB)
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
 
 	assertMigrationVersion(t, sqlDB, STRICT_IDENTITY_VERSION)
 	assertStrictIdentitySchema(t, sqlDB)
@@ -40,7 +36,7 @@ func TestStrictTrackIdentityMigrationAppliesAndRollsBackOnEmptyDatabase(t *testi
 	assertTableMissing(t, sqlDB, "track_sources")
 	assertColumnMissing(t, sqlDB, "tracks", "disc_no")
 
-	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
+	if err := goose.UpTo(sqlDB, migrationsDir(t), STRICT_IDENTITY_VERSION); err != nil {
 		t.Fatalf("reapply strict identity migration: %v", err)
 	}
 	assertMigrationVersion(t, sqlDB, STRICT_IDENTITY_VERSION)
@@ -51,7 +47,7 @@ func TestStrictTrackIdentityMigrationPreservesPopulatedLegacyDatabase(t *testing
 	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 
-	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
+	if err := goose.UpTo(sqlDB, migrationsDir(t), STRICT_IDENTITY_VERSION); err != nil {
 		t.Fatalf("expand populated database: %v", err)
 	}
 	assertLegacyTrack(t, sqlDB)
@@ -62,6 +58,21 @@ func TestStrictTrackIdentityMigrationPreservesPopulatedLegacyDatabase(t *testing
 	}
 	assertLegacyTrack(t, sqlDB)
 	assertTableMissing(t, sqlDB, "track_sources")
+}
+
+func TestLegacyBackfillMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), BACKFILL_MIGRATION_VERSION); err != nil {
+		t.Fatalf("apply legacy backfill migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, BACKFILL_MIGRATION_VERSION)
+	assertLegacyBackfillSchema(t, sqlDB)
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back legacy backfill migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, STRICT_IDENTITY_VERSION)
+	assertTableMissing(t, sqlDB, "legacy_track_identities")
 }
 
 func TestBackfillExpandedLibraryPopulatesSourcesAndArtistRelationships(t *testing.T) {
@@ -78,6 +89,9 @@ func TestBackfillExpandedLibraryPopulatesSourcesAndArtistRelationships(t *testin
 	assertRowCount(t, sqlDB, "track_sources", 1)
 	assertRowCount(t, sqlDB, "track_artists", 1)
 	assertRowCount(t, sqlDB, "album_artists", 1)
+	assertRowCount(t, sqlDB, "legacy_artist_identities", 1)
+	assertRowCount(t, sqlDB, "legacy_album_identities", 1)
+	assertRowCount(t, sqlDB, "legacy_track_identities", 1)
 	assertTextValue(t, sqlDB, `SELECT source_kind FROM track_sources WHERE track_id = 'track-1'`, "legacy")
 	assertTextValue(t, sqlDB, `SELECT file_path FROM track_sources WHERE track_id = 'track-1'`, "/music/track.flac")
 	assertTextValue(t, sqlDB, `SELECT name FROM artists
@@ -142,13 +156,19 @@ func TestBackfillExpandedLibraryPopulatesAlbumArtworkMetadata(t *testing.T) {
 	}
 
 	expectedHash := fmt.Sprintf("%x", sha256.Sum256(coverData))
-	assertRowCount(t, sqlDB, "album_artwork", 1)
-	assertTextValue(t, sqlDB, `SELECT content_sha256 FROM album_artwork WHERE album_id = 'album-1'`, expectedHash)
-	assertTextValue(t, sqlDB, `SELECT media_type FROM album_artwork WHERE album_id = 'album-1'`, "image/png")
-	assertTextValue(t, sqlDB, `SELECT file_path FROM album_artwork WHERE album_id = 'album-1'`, "legacy-db://albums/album-1/cover")
-	assertTextValue(t, sqlDB, `SELECT source_track_id FROM album_artwork WHERE album_id = 'album-1'`, "track-1")
-	assertIntegerValue(t, sqlDB, `SELECT width * height FROM album_artwork WHERE album_id = 'album-1'`, 1024)
-	assertIntegerValue(t, sqlDB, `SELECT encoded_size_bytes FROM album_artwork WHERE album_id = 'album-1'`, int64(len(coverData)))
+	assertRowCount(t, sqlDB, "album_artwork", 0)
+	assertRowCount(t, sqlDB, "legacy_album_artwork_metadata", 1)
+	assertTextValue(t, sqlDB, `SELECT content_sha256 FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, expectedHash)
+	assertTextValue(t, sqlDB, `SELECT media_type FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, "image/png")
+	assertTextValue(t, sqlDB, `SELECT source_track_id FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, "track-1")
+	assertIntegerValue(t, sqlDB, `SELECT width * height FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, 1024)
+	assertIntegerValue(t, sqlDB, `SELECT encoded_size_bytes FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, int64(len(coverData)))
+	insertSecondAlbumTrack(t, sqlDB)
+	assertExecFails(t, sqlDB, `UPDATE legacy_album_artwork_metadata SET source_track_id = 'track-2' WHERE album_id = 'album-1'`, "Legacy Album Artwork source Track must belong to the Album")
+	if _, err := sqlDB.Exec(`DELETE FROM tracks WHERE id = 'track-1'`); err != nil {
+		t.Fatalf("delete legacy Album Artwork source Track: %v", err)
+	}
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_album_artwork_metadata WHERE source_track_id IS NULL`, 1)
 }
 
 func TestOpenAndMigrateBackfillsPopulatedLegacyDatabase(t *testing.T) {
@@ -200,7 +220,11 @@ func TestBackfillExpandedLibraryIsIdempotentAndPreservesLegacyReads(t *testing.T
 	assertRowCount(t, sqlDB, "album_artists", 1)
 	assertRowCount(t, sqlDB, "genres", 1)
 	assertRowCount(t, sqlDB, "track_genres", 1)
-	assertRowCount(t, sqlDB, "album_artwork", 1)
+	assertRowCount(t, sqlDB, "album_artwork", 0)
+	assertRowCount(t, sqlDB, "legacy_artist_identities", 2)
+	assertRowCount(t, sqlDB, "legacy_album_identities", 1)
+	assertRowCount(t, sqlDB, "legacy_track_identities", 1)
+	assertRowCount(t, sqlDB, "legacy_album_artwork_metadata", 1)
 	assertForeignKeyIntegrity(t, sqlDB)
 	if readsAfter := captureLegacyLibraryReads(t, sqlDB); readsAfter != readsBefore {
 		t.Fatalf("legacy library reads changed after backfill\nbefore: %s\nafter:  %s", readsBefore, readsAfter)
@@ -208,7 +232,7 @@ func TestBackfillExpandedLibraryIsIdempotentAndPreservesLegacyReads(t *testing.T
 }
 
 func TestBackfillExpandedLibraryRollsBackWhenExpandedRowsAreIncomplete(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 	insertSecondAlbumTrack(t, sqlDB)
 	_, err := sqlDB.Exec(`INSERT INTO track_sources (
@@ -230,7 +254,7 @@ func TestBackfillExpandedLibraryRollsBackWhenExpandedRowsAreIncomplete(t *testin
 }
 
 func TestBackfillExpandedLibrarySkipsInvalidLegacyArtwork(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = x'010203' WHERE id = 'album-1'`); err != nil {
 		t.Fatalf("store invalid legacy Album artwork: %v", err)
@@ -241,12 +265,13 @@ func TestBackfillExpandedLibrarySkipsInvalidLegacyArtwork(t *testing.T) {
 	}
 
 	assertRowCount(t, sqlDB, "album_artwork", 0)
+	assertRowCount(t, sqlDB, "legacy_album_artwork_metadata", 1)
 	assertRowCount(t, sqlDB, "track_sources", 1)
 	assertLegacyTrack(t, sqlDB)
 }
 
 func TestBackfillExpandedLibraryKeepsAmbiguousLegacyTrackPositionsPlayable(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 	_, err := sqlDB.Exec(`INSERT INTO tracks (
 		id, album_id, title, title_sort, artist_name, track_no, duration_ms,
@@ -264,12 +289,53 @@ func TestBackfillExpandedLibraryKeepsAmbiguousLegacyTrackPositionsPlayable(t *te
 	}
 
 	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM tracks WHERE identity_key IS NULL`, 2)
+	assertRowCount(t, sqlDB, "legacy_track_identities", 2)
 	assertRowCount(t, sqlDB, "track_sources", 2)
 	assertLegacyTrack(t, sqlDB)
 }
 
+func TestBackfillExpandedLibraryRecordsNormalizedIdentityCollisions(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "colliding-identities.db")
+	legacyDB := openDatabasePathAtVersion(t, databasePath, LEGACY_MIGRATION_VERSION)
+	_, err := legacyDB.Exec(`
+		INSERT INTO artists (id, name, name_sort) VALUES
+			('artist-spaced', 'A  B', 'a  b'),
+			('artist-collapsed', 'A B', 'a b');
+		INSERT INTO albums (id, artist_id, title, title_sort, year) VALUES
+			('album-spaced', 'artist-spaced', 'Album', 'album', 2024),
+			('album-collapsed', 'artist-collapsed', 'Album', 'album', 2024);
+		INSERT INTO tracks (
+			id, album_id, title, title_sort, artist_name, track_no,
+			duration_ms, format, size_bytes, file_path, file_mtime
+		) VALUES
+			('track-spaced', 'album-spaced', 'One', 'one', 'A  B', 1, 1000, 'flac', 100, '/music/one.flac', 1),
+			('track-collapsed', 'album-collapsed', 'Two', 'two', 'A B', 1, 1000, 'flac', 100, '/music/two.flac', 1);
+	`)
+	if err != nil {
+		t.Fatalf("store colliding legacy identities: %v", err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatalf("close colliding legacy database: %v", err)
+	}
+
+	sqlDB, err := database.OpenAndMigrate(context.Background(), databasePath, migrationsDir(t))
+	if err != nil {
+		t.Fatalf("open and backfill colliding legacy identities: %v", err)
+	}
+	registerDatabaseCleanup(t, sqlDB)
+
+	assertRowCount(t, sqlDB, "legacy_artist_identities", 2)
+	assertRowCount(t, sqlDB, "legacy_album_identities", 2)
+	assertRowCount(t, sqlDB, "legacy_track_identities", 2)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM artists WHERE name_normalized IS NULL`, 2)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM albums WHERE identity_key IS NULL`, 2)
+	assertRowCount(t, sqlDB, "track_sources", 2)
+	assertTextValue(t, sqlDB, `SELECT artist_id FROM track_artists WHERE track_id = 'track-spaced'`, "artist-spaced")
+	assertTextValue(t, sqlDB, `SELECT artist_id FROM track_artists WHERE track_id = 'track-collapsed'`, "artist-collapsed")
+}
+
 func TestBackfillExpandedLibraryPreservesExistingExpandedMetadata(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 	_, err := sqlDB.Exec(`
 		UPDATE albums SET identity_key = 'existing-album', release_date = '2020-01-02' WHERE id = 'album-1';
@@ -661,6 +727,18 @@ func assertStrictIdentitySchema(t *testing.T, sqlDB *sql.DB) {
 		assertColumnExists(t, sqlDB, "albums", columnName)
 	}
 	assertColumnExists(t, sqlDB, "artists", "name_normalized")
+}
+
+func assertLegacyBackfillSchema(t *testing.T, sqlDB *sql.DB) {
+	t.Helper()
+	for _, tableName := range []string{
+		"legacy_artist_identities",
+		"legacy_album_identities",
+		"legacy_track_identities",
+		"legacy_album_artwork_metadata",
+	} {
+		assertTableExists(t, sqlDB, tableName)
+	}
 }
 
 func assertTableExists(t *testing.T, sqlDB *sql.DB, tableName string) {
