@@ -1,7 +1,15 @@
 import type { Playlist } from "@repo/api-client";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { ListMusic, TriangleAlert } from "lucide-react";
 import { CollectionCoverCardStack } from "#/components/collection-cover-strip";
+import {
+	COLLECTION_PAGE_CONTAINER_CLASS,
+	CollectionGrid,
+	CollectionGridSkeleton,
+	CollectionGridState,
+	CollectionPageContainer,
+} from "#/components/collection-grid-layout";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { apiClient } from "#/lib/api";
 import {
@@ -9,28 +17,14 @@ import {
 	playlistQueryKeys,
 } from "#/lib/playlist-query-cache";
 
-const PLAYLISTS_WIDE_CENTER_CLASS =
-	"min-[1801px]:mx-auto min-[1801px]:w-full min-[1801px]:max-w-[1476px]";
-
 export function PlaylistsPage() {
 	const playlists = useQuery({
 		queryKey: playlistQueryKeys.list,
 		queryFn: () => apiClient.listPlaylists(),
 	});
-
-	if (playlists.isLoading) {
-		return (
-			<div className="p-6 text-foreground text-sm">Loading playlists…</div>
-		);
-	}
-
-	if (playlists.isError) {
-		return (
-			<div className="p-6 text-destructive text-sm">
-				Failed to load playlists
-			</div>
-		);
-	}
+	const playlistItems = playlists.data?.items ?? [];
+	const isInitialLoading = playlists.isLoading && !playlists.data;
+	const hasError = playlists.isError && !playlists.data;
 
 	return (
 		<PageShell
@@ -40,17 +34,37 @@ export function PlaylistsPage() {
 				<PageHeader
 					title="Playlists"
 					description="Favorites is your default playlist."
-					innerClassName={PLAYLISTS_WIDE_CENTER_CLASS}
+					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 				/>
 			}
 		>
-			<div
-				className={`${PLAYLISTS_WIDE_CENTER_CLASS} grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5`}
-			>
-				{(playlists.data?.items ?? []).map((playlist) => (
-					<PlaylistCard key={playlist.id} playlist={playlist} />
-				))}
-			</div>
+			<CollectionPageContainer aria-busy={playlists.isFetching || undefined}>
+				{isInitialLoading ? (
+					<CollectionGridSkeleton label="Loading playlists" />
+				) : hasError ? (
+					<CollectionGridState
+						kind="error"
+						icon={<TriangleAlert aria-hidden />}
+						title="Unable to load playlists"
+						description="Check your connection and try again."
+						onRetry={() => void playlists.refetch()}
+						isRetrying={playlists.isFetching}
+					/>
+				) : playlistItems.length === 0 ? (
+					<CollectionGridState
+						kind="empty"
+						icon={<ListMusic aria-hidden />}
+						title="No playlists yet"
+						description="Create a playlist to organize your library."
+					/>
+				) : (
+					<CollectionGrid isBusy={playlists.isFetching}>
+						{playlistItems.map((playlist) => (
+							<PlaylistCard key={playlist.id} playlist={playlist} />
+						))}
+					</CollectionGrid>
+				)}
+			</CollectionPageContainer>
 		</PageShell>
 	);
 }

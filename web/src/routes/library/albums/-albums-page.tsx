@@ -1,5 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Search, SlidersHorizontal, X } from "lucide-react";
+import {
+	Disc3,
+	Search,
+	SlidersHorizontal,
+	TriangleAlert,
+	X,
+} from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useDeferredValue, useMemo, useState } from "react";
 import {
@@ -9,6 +15,12 @@ import {
 	filterAlbums,
 } from "#/components/album-filters";
 import { AlbumGrid } from "#/components/album-grid";
+import {
+	COLLECTION_PAGE_CONTAINER_CLASS,
+	CollectionGridSkeleton,
+	CollectionGridState,
+	CollectionPageContainer,
+} from "#/components/collection-grid-layout";
 import {
 	HEADER_SEARCH_CONTAINER_CLASS,
 	HEADER_SEARCH_INPUT_CLASS,
@@ -24,8 +36,6 @@ const defaultFilters: AlbumFilterState = {
 	artistId: "all",
 	genre: "all",
 };
-
-const ALBUMS_CENTERED_CONTAINER_CLASS = "mx-auto w-full max-w-6xl";
 
 export function AlbumsPage() {
 	const [filters, setFilters] = useState<AlbumFilterState>(defaultFilters);
@@ -66,6 +76,32 @@ export function AlbumsPage() {
 		() => filterAlbums(albums.data?.items ?? [], filters),
 		[albums.data?.items, filters],
 	);
+	const isInitialLoading =
+		(albums.isLoading && !albums.data) ||
+		(artists.isLoading && !artists.data) ||
+		(genreSource.isLoading && !genreSource.data);
+	const hasError =
+		(albums.isError && !albums.data) ||
+		(artists.isError && !artists.data) ||
+		(genreSource.isError && !genreSource.data);
+	const isFetching =
+		albums.isFetching || artists.isFetching || genreSource.isFetching;
+	const isRetrying =
+		(albums.isError && albums.isFetching) ||
+		(artists.isError && artists.isFetching) ||
+		(genreSource.isError && genreSource.isFetching);
+	const hasActiveFilters =
+		filters.albumQuery.trim().length > 0 ||
+		filters.artistId !== "all" ||
+		filters.genre !== "all";
+
+	const handleRetry = () => {
+		void Promise.all([
+			albums.refetch(),
+			artists.refetch(),
+			genreSource.refetch(),
+		]);
+	};
 
 	return (
 		<PageShell
@@ -77,7 +113,7 @@ export function AlbumsPage() {
 					title="Albums"
 					description="Browse albums in your library"
 					className="pt-7 pb-4"
-					innerClassName={ALBUMS_CENTERED_CONTAINER_CLASS}
+					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 					actions={
 						<>
 							<div className={HEADER_SEARCH_CONTAINER_CLASS}>
@@ -106,7 +142,7 @@ export function AlbumsPage() {
 				/>
 			}
 		>
-			<div className={ALBUMS_CENTERED_CONTAINER_CLASS}>
+			<CollectionPageContainer aria-busy={isFetching || undefined}>
 				<AlbumFilterDrawer
 					isOpen={areFiltersOpen}
 					artists={artists.data?.items ?? []}
@@ -117,18 +153,36 @@ export function AlbumsPage() {
 					onFiltersChange={setFilters}
 				/>
 
-				{albums.isLoading ? (
-					<p className="text-foreground text-sm">Loading albums…</p>
-				) : albums.isError ? (
-					<p className="text-destructive text-sm">Failed to load albums</p>
+				{hasError ? (
+					<CollectionGridState
+						kind="error"
+						icon={<TriangleAlert aria-hidden />}
+						title="Unable to load albums"
+						description="Check your connection and try again."
+						onRetry={handleRetry}
+						isRetrying={isRetrying}
+					/>
+				) : isInitialLoading ? (
+					<CollectionGridSkeleton label="Loading albums" />
 				) : visibleAlbums.length === 0 ? (
-					<p className="text-foreground text-sm">
-						No albums match your filters.
-					</p>
+					<CollectionGridState
+						kind="empty"
+						icon={<Disc3 aria-hidden />}
+						title={
+							hasActiveFilters
+								? "No albums match your filters"
+								: "No albums yet"
+						}
+						description={
+							hasActiveFilters
+								? "Try adjusting your search or filters."
+								: "Scan your library to get started."
+						}
+					/>
 				) : (
 					<AlbumGrid albums={visibleAlbums} />
 				)}
-			</div>
+			</CollectionPageContainer>
 		</PageShell>
 	);
 }

@@ -5,6 +5,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlaylistsPage } from "./-playlists-page";
@@ -125,6 +126,8 @@ function renderWithQuery(ui: React.ReactElement) {
 
 describe("playlist routes", () => {
 	beforeEach(() => {
+		mocks.listPlaylists.mockClear();
+		mocks.getPlaylist.mockClear();
 		mocks.listPlaylists.mockResolvedValue({
 			items: [{ id: "p1", name: "Favorites", isDefault: true, trackCount: 4 }],
 		});
@@ -214,9 +217,44 @@ describe("playlist routes", () => {
 		expect(
 			container.querySelector("[data-playlist-card-overlay]"),
 		).toBeTruthy();
+	});
+
+	it("keeps the playlist header visible while showing the shared loading grid", () => {
+		mocks.listPlaylists.mockReturnValue(new Promise(() => undefined));
+
+		renderWithQuery(<PlaylistsPage />);
+
+		expect(screen.getByRole("heading", { name: "Playlists" })).toBeTruthy();
+		expect(screen.getByRole("status").textContent).toContain(
+			"Loading playlists",
+		);
+		expect(screen.getAllByTestId("collection-card-skeleton")).toHaveLength(10);
+	});
+
+	it("retries the playlist query from the shared error panel", async () => {
+		mocks.listPlaylists.mockRejectedValue(new Error("playlist request failed"));
+
+		renderWithQuery(<PlaylistsPage />);
+
+		const alert = await screen.findByRole("alert");
+		expect(alert.textContent).toContain("Unable to load playlists");
+		expect(alert.textContent).toContain("Check your connection and try again.");
+		fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+		await waitFor(() => {
+			expect(mocks.listPlaylists.mock.calls.length).toBeGreaterThanOrEqual(2);
+		});
+	});
+
+	it("renders the shared playlist empty state without an action", async () => {
+		mocks.listPlaylists.mockResolvedValue({ items: [] });
+
+		renderWithQuery(<PlaylistsPage />);
+
+		expect(await screen.findByText("No playlists yet")).toBeTruthy();
 		expect(
-			container.querySelector('[data-testid="playlist-card-cover-stack"]'),
+			screen.getByText("Create a playlist to organize your library."),
 		).toBeTruthy();
+		expect(screen.queryByRole("button")).toBeNull();
 	});
 
 	it("plays queues and removes tracks from playlist detail", async () => {

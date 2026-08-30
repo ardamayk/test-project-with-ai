@@ -2,6 +2,7 @@ import type { Album } from "@repo/api-client";
 import { AlbumArt } from "@repo/ui";
 import { Link } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
+import { CollectionGrid } from "#/components/collection-grid-layout";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -15,14 +16,6 @@ import { apiClient } from "#/lib/api";
 export function AlbumGrid({ albums }: { albums: Album[] }) {
 	const deleteAlbum = useDeleteAlbum();
 
-	if (albums.length === 0) {
-		return (
-			<p className="text-foreground text-sm">
-				No albums yet. Scan your library to get started.
-			</p>
-		);
-	}
-
 	const handleDelete = (album: Album) => {
 		const confirmed = confirmDelete(
 			`Delete "${album.title}" by ${album.artistName}?\n\nThis removes the album, all of its tracks, and their files from disk.`,
@@ -32,7 +25,7 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
 	};
 
 	return (
-		<div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8">
+		<CollectionGrid>
 			{albums.map((album) => (
 				<ContextMenu key={album.id}>
 					<ContextMenuTrigger asChild>
@@ -82,6 +75,6 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
 					</ContextMenuContent>
 				</ContextMenu>
 			))}
-		</div>
+		</CollectionGrid>
 	);
 }

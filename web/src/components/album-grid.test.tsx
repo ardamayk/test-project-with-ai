@@ -27,12 +27,7 @@ vi.mock("#/hooks/use-delete-library", () => ({
 }));
 
 describe("AlbumGrid", () => {
-	it("renders empty state", () => {
-		render(<AlbumGrid albums={[]} />);
-		expect(screen.getByText(/No albums yet/)).toBeTruthy();
-	});
-
-	it("uses the shared hover lift transition for album cards", () => {
+	it("uses the shared collection grid without changing album card behavior", () => {
 		const albums = [
 			{
 				id: "a1",
@@ -46,6 +41,13 @@ describe("AlbumGrid", () => {
 		const { container } = render(<AlbumGrid albums={albums} />);
 
 		const album = screen.getByRole("link", { name: /Kind of Blue/ });
+		const grid = container.firstElementChild;
+		expect(grid?.className).toContain("grid-cols-2");
+		expect(grid?.className).toContain("sm:grid-cols-3");
+		expect(grid?.className).toContain("md:grid-cols-4");
+		expect(grid?.className).toContain("lg:grid-cols-4");
+		expect(grid?.className).toContain("xl:grid-cols-5");
+		expect(grid?.className).toContain("gap-3");
 		expect(album.className).toContain("aspect-square");
 		expect(album.className).toContain("overflow-hidden");
 		expect(album.className).toContain("duration-300");
