@@ -35,6 +35,10 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
+	if err := BackfillExpandedLibrary(ctx, sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("backfill expanded library: %w", err)
+	}
 
 	return sqlDB, nil
 }

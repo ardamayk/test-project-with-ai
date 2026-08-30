@@ -1,15 +1,22 @@
 package db_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	database "github.com/ardam/navidrome-replacement/server/internal/db"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
@@ -59,6 +66,210 @@ func TestStrictTrackIdentityMigrationPreservesPopulatedLegacyDatabase(t *testing
 	}
 	assertLegacyTrack(t, sqlDB)
 	assertTableMissing(t, sqlDB, "track_sources")
+}
+
+func TestBackfillExpandedLibraryPopulatesSourcesAndArtistRelationships(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+
+	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("expand populated database: %v", err)
+	}
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
+	}
+
+	assertRowCount(t, sqlDB, "track_sources", 1)
+	assertRowCount(t, sqlDB, "track_artists", 1)
+	assertRowCount(t, sqlDB, "album_artists", 1)
+	assertTextValue(t, sqlDB, `SELECT source_kind FROM track_sources WHERE track_id = 'track-1'`, "legacy")
+	assertTextValue(t, sqlDB, `SELECT file_path FROM track_sources WHERE track_id = 'track-1'`, "/music/track.flac")
+	assertTextValue(t, sqlDB, `SELECT name FROM artists
+		WHERE id = (SELECT artist_id FROM track_artists WHERE track_id = 'track-1')`, "Artist")
+	assertTextValue(t, sqlDB, `SELECT name FROM artists
+		WHERE id = (SELECT artist_id FROM album_artists WHERE album_id = 'album-1')`, "Artist")
+	assertLegacyTrack(t, sqlDB)
+}
+
+func TestBackfillExpandedLibraryPopulatesIdentityGenresAndTechnicalMetadata(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	_, err := sqlDB.Exec(`
+		UPDATE albums SET year = 2024, genres = '["Rock"]' WHERE id = 'album-1';
+		UPDATE tracks SET artist_name = 'Track Artist', genre = 'Rock',
+			sample_rate_hz = 96000, bit_depth = 24
+		WHERE id = 'track-1';
+	`)
+	if err != nil {
+		t.Fatalf("enrich legacy library: %v", err)
+	}
+	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("expand populated database: %v", err)
+	}
+
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
+	}
+
+	assertRowCount(t, sqlDB, "artists", 2)
+	assertRowCount(t, sqlDB, "genres", 1)
+	assertRowCount(t, sqlDB, "track_genres", 1)
+	assertTextValue(t, sqlDB, `SELECT name_normalized FROM artists WHERE name = 'Track Artist'`, "track artist")
+	assertTextValue(t, sqlDB, `SELECT name FROM genres`, "Rock")
+	assertTextValue(t, sqlDB, `SELECT identity_key FROM albums WHERE id = 'album-1'`, "artist\x1falbum\x1f2024")
+	assertTextValue(t, sqlDB, `SELECT release_date FROM albums WHERE id = 'album-1'`, "2024")
+	assertTextValue(t, sqlDB, `SELECT identity_key FROM tracks WHERE id = 'track-1'`, "track")
+	assertTextValue(t, sqlDB, `SELECT codec || ':' || container || ':' || sample_format
+		FROM tracks WHERE id = 'track-1'`, "flac:flac:s24")
+	assertIntegerValue(t, sqlDB, `SELECT bitrate_bps FROM tracks WHERE id = 'track-1'`, 800)
+}
+
+func TestBackfillExpandedLibraryPopulatesAlbumArtworkMetadata(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	coverData := createLegacyCover(t)
+	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = ? WHERE id = 'album-1'`, coverData); err != nil {
+		t.Fatalf("store legacy Album artwork: %v", err)
+	}
+	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("expand populated database: %v", err)
+	}
+
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
+	}
+
+	expectedHash := fmt.Sprintf("%x", sha256.Sum256(coverData))
+	assertRowCount(t, sqlDB, "album_artwork", 1)
+	assertTextValue(t, sqlDB, `SELECT content_sha256 FROM album_artwork WHERE album_id = 'album-1'`, expectedHash)
+	assertTextValue(t, sqlDB, `SELECT media_type FROM album_artwork WHERE album_id = 'album-1'`, "image/png")
+	assertTextValue(t, sqlDB, `SELECT file_path FROM album_artwork WHERE album_id = 'album-1'`, "legacy-db://albums/album-1/cover")
+	assertTextValue(t, sqlDB, `SELECT source_track_id FROM album_artwork WHERE album_id = 'album-1'`, "track-1")
+	assertIntegerValue(t, sqlDB, `SELECT width * height FROM album_artwork WHERE album_id = 'album-1'`, 1)
+	assertIntegerValue(t, sqlDB, `SELECT encoded_size_bytes FROM album_artwork WHERE album_id = 'album-1'`, int64(len(coverData)))
+}
+
+func TestOpenAndMigrateBackfillsPopulatedLegacyDatabase(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "legacy.db")
+	legacyDB := openDatabasePathAtVersion(t, databasePath, LEGACY_MIGRATION_VERSION)
+	insertLegacyLibrary(t, legacyDB)
+	if err := legacyDB.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	sqlDB, err := database.OpenAndMigrate(context.Background(), databasePath, migrationsDir(t))
+	if err != nil {
+		t.Fatalf("open and migrate populated legacy database: %v", err)
+	}
+	registerDatabaseCleanup(t, sqlDB)
+
+	assertRowCount(t, sqlDB, "track_sources", 1)
+	assertRowCount(t, sqlDB, "track_artists", 1)
+	assertRowCount(t, sqlDB, "album_artists", 1)
+}
+
+func TestBackfillExpandedLibraryIsIdempotentAndPreservesLegacyReads(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	coverData := createLegacyCover(t)
+	_, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = ? WHERE id = 'album-1'`, coverData)
+	if err != nil {
+		t.Fatalf("store legacy Album artwork: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE tracks SET artist_name = '  Track   Artist ', genre = 'Alt   Rock' WHERE id = 'track-1'`); err != nil {
+		t.Fatalf("store legacy Track metadata: %v", err)
+	}
+	readsBefore := captureLegacyLibraryReads(t, sqlDB)
+	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("expand populated database: %v", err)
+	}
+
+	for run := 1; run <= 2; run++ {
+		if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+			t.Fatalf("backfill expanded library run %d: %v", run, err)
+		}
+	}
+
+	assertRowCount(t, sqlDB, "artists", 2)
+	assertRowCount(t, sqlDB, "track_sources", 1)
+	assertRowCount(t, sqlDB, "track_artists", 1)
+	assertRowCount(t, sqlDB, "album_artists", 1)
+	assertRowCount(t, sqlDB, "genres", 1)
+	assertRowCount(t, sqlDB, "track_genres", 1)
+	assertRowCount(t, sqlDB, "album_artwork", 1)
+	assertForeignKeyIntegrity(t, sqlDB)
+	if readsAfter := captureLegacyLibraryReads(t, sqlDB); readsAfter != readsBefore {
+		t.Fatalf("legacy library reads changed after backfill\nbefore: %s\nafter:  %s", readsBefore, readsAfter)
+	}
+}
+
+func TestBackfillExpandedLibraryRollsBackWhenExpandedRowsAreIncomplete(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	insertSecondAlbumTrack(t, sqlDB)
+	_, err := sqlDB.Exec(`INSERT INTO track_sources (
+		id, track_id, source_kind, file_path, source_format, size_bytes
+	) VALUES (
+		'legacy-source:track-1', 'track-2', 'legacy', '/music/track-2.flac', 'flac', 100
+	)`)
+	if err != nil {
+		t.Fatalf("store conflicting expanded Track source: %v", err)
+	}
+
+	err = database.BackfillExpandedLibrary(context.Background(), sqlDB)
+	if err == nil || !strings.Contains(err.Error(), "Track source") {
+		t.Fatalf("backfill error = %v, want incomplete Track source error", err)
+	}
+
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM track_sources WHERE track_id = 'track-1'`, 0)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM artists WHERE name_normalized IS NOT NULL`, 0)
+}
+
+func TestBackfillExpandedLibraryRollsBackInvalidLegacyArtwork(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = x'010203' WHERE id = 'album-1'`); err != nil {
+		t.Fatalf("store invalid legacy Album artwork: %v", err)
+	}
+
+	err := database.BackfillExpandedLibrary(context.Background(), sqlDB)
+	if err == nil || !strings.Contains(err.Error(), "decode image metadata") {
+		t.Fatalf("backfill error = %v, want invalid Album artwork error", err)
+	}
+
+	assertRowCount(t, sqlDB, "track_sources", 0)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM artists WHERE name_normalized IS NOT NULL`, 0)
+	assertLegacyTrack(t, sqlDB)
+}
+
+func TestBackfillExpandedLibraryPreservesExistingExpandedMetadata(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	_, err := sqlDB.Exec(`
+		UPDATE albums SET identity_key = 'existing-album', release_date = '2020-01-02' WHERE id = 'album-1';
+		UPDATE tracks SET identity_key = 'existing-track', codec = 'existing-codec',
+			container = 'existing-container', sample_format = 'existing-format', bitrate_bps = 123
+		WHERE id = 'track-1';
+		INSERT INTO track_sources (
+			id, track_id, source_kind, file_path, content_sha256, source_format, size_bytes
+		) VALUES (
+			'existing-source', 'track-1', 'managed', '/managed/track.flac',
+			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'flac', 100
+		);
+	`)
+	if err != nil {
+		t.Fatalf("store expanded metadata: %v", err)
+	}
+
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
+	}
+
+	assertTextValue(t, sqlDB, `SELECT identity_key || ':' || release_date FROM albums WHERE id = 'album-1'`, "existing-album:2020-01-02")
+	assertTextValue(t, sqlDB, `SELECT identity_key || ':' || codec || ':' || container || ':' || sample_format
+		FROM tracks WHERE id = 'track-1'`, "existing-track:existing-codec:existing-container:existing-format")
+	assertIntegerValue(t, sqlDB, `SELECT bitrate_bps FROM tracks WHERE id = 'track-1'`, 123)
+	assertRowCount(t, sqlDB, "track_sources", 1)
 }
 
 func TestStrictTrackIdentitySchemaEnforcesIdentityAndConcurrencyConstraints(t *testing.T) {
@@ -149,6 +360,11 @@ func migrationsDir(t *testing.T) string {
 func openDatabaseAtVersion(t *testing.T, version int64) *sql.DB {
 	t.Helper()
 	databasePath := filepath.Join(t.TempDir(), "populated.db")
+	return openDatabasePathAtVersion(t, databasePath, version)
+}
+
+func openDatabasePathAtVersion(t *testing.T, databasePath string, version int64) *sql.DB {
+	t.Helper()
 	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", databasePath)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -197,6 +413,17 @@ func insertSecondAlbumTrack(t *testing.T, sqlDB *sql.DB) {
 	if err != nil {
 		t.Fatalf("insert second Album and Track: %v", err)
 	}
+}
+
+func createLegacyCover(t *testing.T) []byte {
+	t.Helper()
+	cover := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	cover.Set(0, 0, color.RGBA{R: 20, G: 40, B: 60, A: 255})
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, cover); err != nil {
+		t.Fatalf("encode legacy Album artwork: %v", err)
+	}
+	return encoded.Bytes()
 }
 
 func assertOrderedRelationshipsRejectPositionConflicts(t *testing.T, sqlDB *sql.DB) {
@@ -276,6 +503,98 @@ func assertMigrationVersion(t *testing.T, sqlDB *sql.DB, expected int64) {
 	if version != expected {
 		t.Fatalf("migration version = %d, want %d", version, expected)
 	}
+}
+
+func assertRowCount(t *testing.T, sqlDB *sql.DB, tableName string, expected int) {
+	t.Helper()
+	var actual int
+	if err := sqlDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&actual); err != nil {
+		t.Fatalf("count %s: %v", tableName, err)
+	}
+	if actual != expected {
+		t.Fatalf("%s row count = %d, want %d", tableName, actual, expected)
+	}
+}
+
+func assertTextValue(t *testing.T, sqlDB *sql.DB, query string, expected string) {
+	t.Helper()
+	var actual string
+	if err := sqlDB.QueryRow(query).Scan(&actual); err != nil {
+		t.Fatalf("query text value: %v", err)
+	}
+	if actual != expected {
+		t.Fatalf("text value = %q, want %q", actual, expected)
+	}
+}
+
+func assertIntegerValue(t *testing.T, sqlDB *sql.DB, query string, expected int64) {
+	t.Helper()
+	var actual int64
+	if err := sqlDB.QueryRow(query).Scan(&actual); err != nil {
+		t.Fatalf("query integer value: %v", err)
+	}
+	if actual != expected {
+		t.Fatalf("integer value = %d, want %d", actual, expected)
+	}
+}
+
+func assertForeignKeyIntegrity(t *testing.T, sqlDB *sql.DB) {
+	t.Helper()
+	rows, err := sqlDB.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatalf("check foreign keys: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		t.Fatal("foreign key check reported an integrity violation")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate foreign key violations: %v", err)
+	}
+}
+
+func captureLegacyLibraryReads(t *testing.T, sqlDB *sql.DB) string {
+	t.Helper()
+	ctx := context.Background()
+	store := library.NewStore(sqlDB)
+	artists, err := store.ListArtists(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatalf("list legacy Artists: %v", err)
+	}
+	albums, err := store.ListAlbums(ctx, 10, 0, "", "")
+	if err != nil {
+		t.Fatalf("list legacy Albums: %v", err)
+	}
+	tracks, err := store.ListTracks(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatalf("list legacy Tracks: %v", err)
+	}
+	album, err := store.GetAlbum(ctx, "album-1")
+	if err != nil {
+		t.Fatalf("get legacy Album: %v", err)
+	}
+	track, err := store.GetTrack(ctx, "track-1")
+	if err != nil {
+		t.Fatalf("get legacy Track: %v", err)
+	}
+	coverMime, coverData, err := store.GetAlbumCover(ctx, "album-1")
+	if err != nil {
+		t.Fatalf("get legacy Album artwork: %v", err)
+	}
+	readModel := struct {
+		Artists     library.ArtistList  `json:"artists"`
+		Albums      library.AlbumList   `json:"albums"`
+		Tracks      library.TrackList   `json:"tracks"`
+		Album       library.AlbumDetail `json:"album"`
+		Track       library.Track       `json:"track"`
+		CoverMime   string              `json:"coverMime"`
+		CoverSHA256 string              `json:"coverSha256"`
+	}{artists, albums, tracks, album, track, coverMime, fmt.Sprintf("%x", sha256.Sum256(coverData))}
+	encoded, err := json.Marshal(readModel)
+	if err != nil {
+		t.Fatalf("encode legacy library reads: %v", err)
+	}
+	return string(encoded)
 }
 
 func assertStrictIdentitySchema(t *testing.T, sqlDB *sql.DB) {
