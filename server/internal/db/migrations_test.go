@@ -388,8 +388,8 @@ func TestBackfillExpandedLibraryRecordsNormalizedIdentityCollisions(t *testing.T
 	if err != nil {
 		t.Fatalf("store colliding legacy identities: %v", err)
 	}
-	if err := legacyDB.Close(); err != nil {
-		t.Fatalf("close colliding legacy database: %v", err)
+	if closeErr := legacyDB.Close(); closeErr != nil {
+		t.Fatalf("close colliding legacy database: %v", closeErr)
 	}
 
 	sqlDB, err := database.OpenAndMigrate(context.Background(), databasePath, migrationsDir(t))

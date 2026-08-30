@@ -503,13 +503,13 @@ func backfillLegacyTrackIdentityKeys(ctx context.Context, tx *sql.Tx) (err error
 		return fmt.Errorf("read legacy Track identities: %w", err)
 	}
 	for _, track := range tracks {
-		if err := storeLegacyIdentity(ctx, tx,
+		if identityErr := storeLegacyIdentity(ctx, tx,
 			`INSERT INTO legacy_track_identities (track_id, identity_key) VALUES (?, ?)
 			ON CONFLICT(track_id) DO UPDATE SET identity_key = excluded.identity_key`,
 			`SELECT identity_key FROM legacy_track_identities WHERE track_id = ?`,
 			track.id, normalizeLegacyName(track.name),
-		); err != nil {
-			return fmt.Errorf("backfill legacy Track identity %q: %w", track.id, err)
+		); identityErr != nil {
+			return fmt.Errorf("backfill legacy Track identity %q: %w", track.id, identityErr)
 		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE tracks SET identity_key = (
@@ -766,7 +766,7 @@ func listLegacyArtworkTracks(ctx context.Context, tx *sql.Tx, albumID string) (t
 
 func verifyLegacyArtworkFiles(tracks []legacyTrackFile, expectedArtwork []byte) (string, error) {
 	if len(tracks) == 0 {
-		return "", errors.New("Album has no active Tracks")
+		return "", errors.New("album has no active Tracks")
 	}
 	for _, track := range tracks {
 		artwork, err := readLegacyTrackArtwork(track.filePath)
@@ -774,7 +774,7 @@ func verifyLegacyArtworkFiles(tracks []legacyTrackFile, expectedArtwork []byte) 
 			return "", fmt.Errorf("read Track %q artwork: %w", track.id, err)
 		}
 		if !bytes.Equal(artwork, expectedArtwork) {
-			return "", fmt.Errorf("Track %q artwork differs from the Album artwork", track.id)
+			return "", fmt.Errorf("track %q artwork differs from the Album artwork", track.id)
 		}
 	}
 	return tracks[0].id, nil
