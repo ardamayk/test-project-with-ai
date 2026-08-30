@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -40,6 +41,16 @@ func BackfillExpandedLibrary(ctx context.Context, sqlDB *sql.DB) (err error) {
 			err = errors.Join(err, fmt.Errorf("roll back expanded library backfill: %w", rollbackErr))
 		}
 	}()
+	isComplete, err := isLegacyLibraryBackfillComplete(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if isComplete {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit completed expanded library backfill: %w", err)
+		}
+		return nil
+	}
 
 	if err := backfillLegacyLibraryRows(ctx, tx); err != nil {
 		return err
@@ -50,8 +61,36 @@ func BackfillExpandedLibrary(ctx context.Context, sqlDB *sql.DB) (err error) {
 	if err := verifyExpandedLibraryBackfill(ctx, tx); err != nil {
 		return err
 	}
+	if err := markLegacyLibraryBackfillComplete(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit expanded library backfill: %w", err)
+	}
+	return nil
+}
+
+func isLegacyLibraryBackfillComplete(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var isComplete bool
+	if err := tx.QueryRowContext(ctx, `SELECT completed_at IS NOT NULL
+		FROM legacy_library_backfill_state WHERE singleton = 1`).Scan(&isComplete); err != nil {
+		return false, fmt.Errorf("read legacy library backfill state: %w", err)
+	}
+	return isComplete, nil
+}
+
+func markLegacyLibraryBackfillComplete(ctx context.Context, tx *sql.Tx) error {
+	result, err := tx.ExecContext(ctx, `UPDATE legacy_library_backfill_state
+		SET completed_at = CURRENT_TIMESTAMP WHERE singleton = 1 AND completed_at IS NULL`)
+	if err != nil {
+		return fmt.Errorf("complete legacy library backfill: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("verify completed legacy library backfill: %w", err)
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf("verify completed legacy library backfill: updated %d state rows, want 1", rowsAffected)
 	}
 	return nil
 }
@@ -79,7 +118,10 @@ func backfillLegacyLibraryRows(ctx context.Context, tx *sql.Tx) error {
 	if err := backfillLegacyAlbumArtists(ctx, tx); err != nil {
 		return err
 	}
-	return backfillLegacyGenres(ctx, tx)
+	if err := backfillLegacyGenres(ctx, tx); err != nil {
+		return err
+	}
+	return backfillLegacyAlbumGenres(ctx, tx)
 }
 
 func backfillLegacyArtistIdentities(ctx context.Context, tx *sql.Tx) error {
@@ -190,6 +232,32 @@ func backfillLegacyGenres(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+func backfillLegacyAlbumGenres(ctx context.Context, tx *sql.Tx) (err error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, genres FROM albums
+		WHERE trim(COALESCE(genres, '')) NOT IN ('', '[]')`)
+	if err != nil {
+		return fmt.Errorf("list legacy Album Genres: %w", err)
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var albumID string
+		var rawGenres string
+		if err := rows.Scan(&albumID, &rawGenres); err != nil {
+			return fmt.Errorf("read legacy Album Genres: %w", err)
+		}
+		for position, genreName := range decodeLegacyAlbumGenres(rawGenres) {
+			genreID, err := findOrCreateLegacyGenre(ctx, tx, genreName)
+			if err != nil {
+				return fmt.Errorf("backfill legacy Album Genre %q: %w", genreName, err)
+			}
+			if err := relateLegacyAlbumGenre(ctx, tx, albumID, genreID, position); err != nil {
+				return fmt.Errorf("relate legacy Album %q to Genre: %w", albumID, err)
+			}
+		}
+	}
+	return rows.Err()
+}
+
 func findOrCreateLegacyArtist(ctx context.Context, tx *sql.Tx, name string) (string, error) {
 	displayName := normalizeLegacyDisplayName(name)
 	normalizedName := normalizeLegacyName(name)
@@ -282,6 +350,26 @@ func splitLegacyGenres(value string) []string {
 	return genres
 }
 
+func decodeLegacyAlbumGenres(value string) []string {
+	var encodedGenres []string
+	if err := json.Unmarshal([]byte(value), &encodedGenres); err != nil {
+		return splitLegacyGenres(value)
+	}
+	genres := make([]string, 0, len(encodedGenres))
+	seen := make(map[string]struct{}, len(encodedGenres))
+	for _, encodedGenre := range encodedGenres {
+		for _, genre := range splitLegacyGenres(encodedGenre) {
+			normalizedName := normalizeLegacyName(genre)
+			if _, exists := seen[normalizedName]; exists {
+				continue
+			}
+			seen[normalizedName] = struct{}{}
+			genres = append(genres, genre)
+		}
+	}
+	return genres
+}
+
 func deterministicLegacyID(prefix string, value string) string {
 	hash := sha256.Sum256([]byte(value))
 	return fmt.Sprintf("%s:%x", prefix, hash)
@@ -318,6 +406,15 @@ func relateLegacyTrackGenre(ctx context.Context, tx *sql.Tx, trackID string, gen
 		targetName:  "Genre",
 	}
 	return ensureLegacyRelationship(ctx, tx, queries, trackID, genreID, position)
+}
+
+func relateLegacyAlbumGenre(ctx context.Context, tx *sql.Tx, albumID string, genreID string, position int) error {
+	queries := legacyRelationshipQueries{
+		insertQuery: `INSERT OR IGNORE INTO legacy_album_genres (album_id, genre_id, position) VALUES (?, ?, ?)`,
+		selectQuery: `SELECT genre_id FROM legacy_album_genres WHERE album_id = ? AND position = ?`,
+		targetName:  "Genre",
+	}
+	return ensureLegacyRelationship(ctx, tx, queries, albumID, genreID, position)
 }
 
 func ensureLegacyRelationship(ctx context.Context, tx *sql.Tx, queries legacyRelationshipQueries, ownerID string, targetID string, position int) error {
@@ -554,7 +651,7 @@ func backfillLegacyArtwork(ctx context.Context, tx *sql.Tx) error {
 			return fmt.Errorf("backfill legacy Album artwork %q: %w", item.albumID, err)
 		}
 		if !isStored {
-			slog.Warn("legacy Album artwork metadata could not be verified; preserving legacy artwork only", "albumId", item.albumID)
+			slog.Warn("legacy Album artwork provenance could not be verified; preserving transition metadata", "albumId", item.albumID)
 		}
 	}
 	return nil

@@ -1,4 +1,11 @@
 -- +goose Up
+CREATE TABLE legacy_library_backfill_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    completed_at DATETIME
+);
+
+INSERT INTO legacy_library_backfill_state (singleton) VALUES (1);
+
 CREATE TABLE legacy_artist_identities (
     artist_id TEXT PRIMARY KEY REFERENCES artists(id) ON DELETE CASCADE,
     normalized_name TEXT NOT NULL,
@@ -25,6 +32,17 @@ CREATE TABLE legacy_track_identities (
 
 CREATE INDEX idx_legacy_track_identities_identity_key
     ON legacy_track_identities(identity_key);
+
+CREATE TABLE legacy_album_genres (
+    album_id TEXT NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+    genre_id TEXT NOT NULL REFERENCES genres(id),
+    position INTEGER NOT NULL CHECK (position >= 0),
+    PRIMARY KEY (album_id, genre_id),
+    UNIQUE (album_id, position)
+);
+
+CREATE INDEX idx_legacy_album_genres_genre_id
+    ON legacy_album_genres(genre_id);
 
 CREATE TABLE legacy_album_artwork_metadata (
     album_id TEXT PRIMARY KEY REFERENCES albums(id) ON DELETE CASCADE,
@@ -87,6 +105,8 @@ DROP TRIGGER IF EXISTS clear_legacy_album_artwork_source_track_album_update;
 DROP TRIGGER IF EXISTS validate_legacy_album_artwork_source_update;
 DROP TRIGGER IF EXISTS validate_legacy_album_artwork_source_insert;
 DROP TABLE IF EXISTS legacy_album_artwork_metadata;
+DROP TABLE IF EXISTS legacy_album_genres;
 DROP TABLE IF EXISTS legacy_track_identities;
 DROP TABLE IF EXISTS legacy_album_identities;
 DROP TABLE IF EXISTS legacy_artist_identities;
+DROP TABLE IF EXISTS legacy_library_backfill_state;

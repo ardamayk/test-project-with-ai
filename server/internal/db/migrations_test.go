@@ -72,7 +72,9 @@ func TestLegacyBackfillMigrationAppliesAndRollsBack(t *testing.T) {
 		t.Fatalf("roll back legacy backfill migration: %v", err)
 	}
 	assertMigrationVersion(t, sqlDB, STRICT_IDENTITY_VERSION)
+	assertTableMissing(t, sqlDB, "legacy_library_backfill_state")
 	assertTableMissing(t, sqlDB, "legacy_track_identities")
+	assertTableMissing(t, sqlDB, "legacy_album_genres")
 }
 
 func TestBackfillExpandedLibraryPopulatesSourcesAndArtistRelationships(t *testing.T) {
@@ -124,6 +126,7 @@ func TestBackfillExpandedLibraryPopulatesIdentityGenresAndTechnicalMetadata(t *t
 	assertRowCount(t, sqlDB, "artists", 2)
 	assertRowCount(t, sqlDB, "genres", 2)
 	assertRowCount(t, sqlDB, "track_genres", 2)
+	assertRowCount(t, sqlDB, "legacy_album_genres", 1)
 	assertTextValue(t, sqlDB, `SELECT name_normalized FROM artists WHERE name = 'Track Artist'`, "track artist")
 	assertTextValue(t, sqlDB, `SELECT group_concat(name, ',') FROM (SELECT name FROM genres ORDER BY name_normalized)`, "Pop,Rock")
 	assertTextValue(t, sqlDB, `SELECT identity_key FROM albums WHERE id = 'album-1'`, "artist\x1falbum\x1f2024")
@@ -135,6 +138,22 @@ func TestBackfillExpandedLibraryPopulatesIdentityGenresAndTechnicalMetadata(t *t
 	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM tracks
 		WHERE id = 'track-1' AND codec IS NULL AND container IS NULL
 		AND sample_format IS NULL AND bitrate_bps IS NULL`, 1)
+}
+
+func TestBackfillExpandedLibraryNormalizesAlbumOnlyGenres(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	if _, err := sqlDB.Exec(`UPDATE albums SET genres = '["Rock","Pop"]' WHERE id = 'album-1'`); err != nil {
+		t.Fatalf("store legacy Album Genres: %v", err)
+	}
+
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
+	}
+
+	assertRowCount(t, sqlDB, "genres", 2)
+	assertRowCount(t, sqlDB, "legacy_album_genres", 2)
+	assertTextValue(t, sqlDB, `SELECT group_concat(name, ',') FROM (SELECT name FROM genres ORDER BY name_normalized)`, "Pop,Rock")
 }
 
 func TestBackfillExpandedLibraryPopulatesAlbumArtworkMetadata(t *testing.T) {
@@ -225,10 +244,49 @@ func TestBackfillExpandedLibraryIsIdempotentAndPreservesLegacyReads(t *testing.T
 	assertRowCount(t, sqlDB, "legacy_album_identities", 1)
 	assertRowCount(t, sqlDB, "legacy_track_identities", 1)
 	assertRowCount(t, sqlDB, "legacy_album_artwork_metadata", 1)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_library_backfill_state WHERE completed_at IS NOT NULL`, 1)
 	assertForeignKeyIntegrity(t, sqlDB)
 	if readsAfter := captureLegacyLibraryReads(t, sqlDB); readsAfter != readsBefore {
 		t.Fatalf("legacy library reads changed after backfill\nbefore: %s\nafter:  %s", readsBefore, readsAfter)
 	}
+}
+
+func TestBackfillExpandedLibraryStopsAtCompletedLegacyBoundary(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("initial expanded library backfill: %v", err)
+	}
+	_, err := sqlDB.Exec(`
+		INSERT INTO artists (id, name, name_sort, name_normalized) VALUES
+			('managed-artist', 'Managed Artist', 'managed artist', 'managed artist');
+		INSERT INTO albums (id, artist_id, title, title_sort, identity_key) VALUES
+			('managed-album', 'managed-artist', 'Managed Album', 'managed album', 'managed-album');
+		INSERT INTO tracks (
+			id, album_id, title, title_sort, artist_name, track_no, duration_ms,
+			format, size_bytes, file_path, file_mtime, identity_key
+		) VALUES (
+			'managed-track', 'managed-album', 'Managed Track', 'managed track',
+			'Managed Artist feat. Guest', 1, 1000, 'flac', 100, '/managed/track.flac', 1,
+			'managed-track'
+		);
+		INSERT INTO track_artists (track_id, artist_id, position) VALUES
+			('managed-track', 'managed-artist', 0);
+		UPDATE tracks SET artist_name = 'Changed Artist', genre = 'Changed Genre'
+		WHERE id = 'track-1';
+	`)
+	if err != nil {
+		t.Fatalf("store post-backfill library changes: %v", err)
+	}
+
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("repeat expanded library backfill: %v", err)
+	}
+
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_artist_identities WHERE artist_id = 'managed-artist'`, 0)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_album_identities WHERE album_id = 'managed-album'`, 0)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_track_identities WHERE track_id = 'managed-track'`, 0)
+	assertTextValue(t, sqlDB, `SELECT artist_id FROM track_artists WHERE track_id = 'managed-track'`, "managed-artist")
 }
 
 func TestBackfillExpandedLibraryRollsBackWhenExpandedRowsAreIncomplete(t *testing.T) {
@@ -732,9 +790,11 @@ func assertStrictIdentitySchema(t *testing.T, sqlDB *sql.DB) {
 func assertLegacyBackfillSchema(t *testing.T, sqlDB *sql.DB) {
 	t.Helper()
 	for _, tableName := range []string{
+		"legacy_library_backfill_state",
 		"legacy_artist_identities",
 		"legacy_album_identities",
 		"legacy_track_identities",
+		"legacy_album_genres",
 		"legacy_album_artwork_metadata",
 	} {
 		assertTableExists(t, sqlDB, tableName)
