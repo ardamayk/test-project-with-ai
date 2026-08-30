@@ -74,7 +74,7 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	r.Use(middleware.ClientIPFromRemoteAddr)
 	r.Use(middleware.Recoverer)
 	r.Use(streamAwareTimeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{

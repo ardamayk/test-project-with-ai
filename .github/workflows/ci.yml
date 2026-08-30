@@ -106,7 +106,7 @@ jobs:
       - run: pnpm generate
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.26.6"
       - name: Install Playwright
         run: pnpm --filter web exec playwright install chromium --with-deps
       - name: E2E tests
