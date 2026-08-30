@@ -391,7 +391,12 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 				return;
 			}
 			await this.media.play();
-		} catch {
+		} catch (error) {
+			console.warn("Live playback reconnect attempt failed", {
+				sourceType: source.type,
+				attempt: this.reconnectAttempt,
+				errorType: error instanceof Error ? error.name : typeof error,
+			});
 			shouldRetry =
 				this.sourceRevision === sourceRevision &&
 				this.state.source === source &&

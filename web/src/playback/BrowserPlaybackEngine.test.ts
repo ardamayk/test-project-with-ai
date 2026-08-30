@@ -29,12 +29,46 @@ class MemoryMedia extends EventTarget implements BrowserPlaybackMedia {
 
 let media: MemoryMedia;
 
+function createCatalogPreviewSource(stationUuid: string) {
+	const sourceUrl = `https://example.com/${stationUuid}.mp3`;
+	return {
+		type: "catalog-preview" as const,
+		result: {
+			stationUuid,
+			name: stationUuid,
+			streamUrl: sourceUrl,
+			tags: [],
+		},
+		playbackUrl: `/api/v1/radio/preview/${stationUuid}/stream`,
+		sourceUrl,
+	};
+}
+
+function createRadioStationSource(id: string, sourceUrl?: string) {
+	const streamUrl = sourceUrl ?? `https://example.com/${id}.mp3`;
+	return {
+		type: "radio-station" as const,
+		station: {
+			id,
+			name: id,
+			streamUrl,
+			tags: [],
+			source: "manual" as const,
+			isFavorite: false,
+			position: 0,
+		},
+		playbackUrl: `/api/v1/radio/stations/${id}/stream`,
+		sourceUrl: streamUrl,
+	};
+}
+
 beforeEach(() => {
 	media = new MemoryMedia();
 });
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.restoreAllMocks();
 });
 
 playbackEngineContract("browser", () => {
@@ -49,20 +83,7 @@ describe("BrowserPlaybackEngine", () => {
 	it("reconnects a started Radio Station after its stream ends", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		const source = {
-			type: "radio-station" as const,
-			station: {
-				id: "station-reconnect",
-				name: "Reconnect Radio",
-				streamUrl: "https://example.com/live.mp3",
-				tags: [],
-				source: "manual" as const,
-				isFavorite: false,
-				position: 0,
-			},
-			playbackUrl: "/api/v1/radio/stations/station-reconnect/stream",
-			sourceUrl: "https://example.com/live.mp3",
-		};
+		const source = createRadioStationSource("station-reconnect");
 
 		await engine.play(source);
 		media.paused = true;
@@ -80,17 +101,7 @@ describe("BrowserPlaybackEngine", () => {
 	it("reconnects a started Catalog Preview after a media error", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "catalog-preview",
-			result: {
-				stationUuid: "catalog-reconnect",
-				name: "Reconnect Preview",
-				streamUrl: "https://example.com/preview.mp3",
-				tags: [],
-			},
-			playbackUrl: "/api/v1/radio/preview/catalog-reconnect/stream",
-			sourceUrl: "https://example.com/preview.mp3",
-		});
+		await engine.play(createCatalogPreviewSource("catalog-reconnect"));
 
 		media.paused = true;
 		media.dispatchEvent(new Event("error"));
@@ -108,20 +119,7 @@ describe("BrowserPlaybackEngine", () => {
 			media.dispatchEvent(new Event("play"));
 		});
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "radio-station",
-			station: {
-				id: "station-initial-failure",
-				name: "Initial Failure",
-				streamUrl: "https://example.com/initial-failure.mp3",
-				tags: [],
-				source: "manual",
-				isFavorite: false,
-				position: 0,
-			},
-			playbackUrl: "/api/v1/radio/stations/station-initial-failure/stream",
-			sourceUrl: "https://example.com/initial-failure.mp3",
-		});
+		await engine.play(createRadioStationSource("station-initial-failure"));
 
 		media.dispatchEvent(new Event("error"));
 		await vi.advanceTimersByTimeAsync(15000);
@@ -134,17 +132,7 @@ describe("BrowserPlaybackEngine", () => {
 	it("reconnects when a started live stream remains stalled", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "catalog-preview",
-			result: {
-				stationUuid: "catalog-stalled",
-				name: "Stalled Preview",
-				streamUrl: "https://example.com/stalled.mp3",
-				tags: [],
-			},
-			playbackUrl: "/api/v1/radio/preview/catalog-stalled/stream",
-			sourceUrl: "https://example.com/stalled.mp3",
-		});
+		await engine.play(createCatalogPreviewSource("catalog-stalled"));
 
 		media.dispatchEvent(new Event("stalled"));
 		await vi.advanceTimersByTimeAsync(9999);
@@ -159,17 +147,7 @@ describe("BrowserPlaybackEngine", () => {
 	it("cancels the stall watchdog when live playback advances", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "catalog-preview",
-			result: {
-				stationUuid: "catalog-recovered-stall",
-				name: "Recovered Stall",
-				streamUrl: "https://example.com/recovered-stall.mp3",
-				tags: [],
-			},
-			playbackUrl: "/api/v1/radio/preview/catalog-recovered-stall/stream",
-			sourceUrl: "https://example.com/recovered-stall.mp3",
-		});
+		await engine.play(createCatalogPreviewSource("catalog-recovered-stall"));
 
 		media.dispatchEvent(new Event("stalled"));
 		await vi.advanceTimersByTimeAsync(5000);
@@ -185,17 +163,7 @@ describe("BrowserPlaybackEngine", () => {
 	it("resets live reconnect backoff after stable playback", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "catalog-preview",
-			result: {
-				stationUuid: "catalog-stable",
-				name: "Stable Preview",
-				streamUrl: "https://example.com/stable.mp3",
-				tags: [],
-			},
-			playbackUrl: "/api/v1/radio/preview/catalog-stable/stream",
-			sourceUrl: "https://example.com/stable.mp3",
-		});
+		await engine.play(createCatalogPreviewSource("catalog-stable"));
 
 		media.paused = true;
 		media.dispatchEvent(new Event("ended"));
@@ -214,17 +182,7 @@ describe("BrowserPlaybackEngine", () => {
 	it("lets the user pause an active reconnect attempt", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "catalog-preview",
-			result: {
-				stationUuid: "catalog-pause-reconnect",
-				name: "Pause Reconnect",
-				streamUrl: "https://example.com/pause.mp3",
-				tags: [],
-			},
-			playbackUrl: "/api/v1/radio/preview/catalog-pause-reconnect/stream",
-			sourceUrl: "https://example.com/pause.mp3",
-		});
+		await engine.play(createCatalogPreviewSource("catalog-pause-reconnect"));
 		media.paused = true;
 		media.dispatchEvent(new Event("ended"));
 
@@ -239,17 +197,7 @@ describe("BrowserPlaybackEngine", () => {
 	it("does not resume when the user pauses an in-flight reconnect", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "catalog-preview",
-			result: {
-				stationUuid: "catalog-in-flight-pause",
-				name: "In-flight Pause",
-				streamUrl: "https://example.com/in-flight.mp3",
-				tags: [],
-			},
-			playbackUrl: "/api/v1/radio/preview/catalog-in-flight-pause/stream",
-			sourceUrl: "https://example.com/in-flight.mp3",
-		});
+		await engine.play(createCatalogPreviewSource("catalog-in-flight-pause"));
 		let resolveReconnect: () => void = () => undefined;
 		media.play.mockImplementationOnce(
 			() =>
@@ -272,18 +220,9 @@ describe("BrowserPlaybackEngine", () => {
 
 	it("caps persistent live reconnect backoff at fifteen seconds", async () => {
 		vi.useFakeTimers();
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
-		await engine.play({
-			type: "catalog-preview",
-			result: {
-				stationUuid: "catalog-backoff",
-				name: "Backoff Preview",
-				streamUrl: "https://example.com/backoff.mp3",
-				tags: [],
-			},
-			playbackUrl: "/api/v1/radio/preview/catalog-backoff/stream",
-			sourceUrl: "https://example.com/backoff.mp3",
-		});
+		await engine.play(createCatalogPreviewSource("catalog-backoff"));
 		media.play.mockRejectedValue(new Error("stream unavailable"));
 		media.paused = true;
 		media.dispatchEvent(new Event("ended"));
@@ -294,6 +233,14 @@ describe("BrowserPlaybackEngine", () => {
 
 		expect(media.play).toHaveBeenCalledTimes(7);
 		expect(engine.getState().status).toBe("reconnecting");
+		expect(warn).toHaveBeenCalledWith(
+			"Live playback reconnect attempt failed",
+			{
+				sourceType: "catalog-preview",
+				attempt: expect.any(Number),
+				errorType: "Error",
+			},
+		);
 		engine.destroy();
 	});
 
@@ -365,20 +312,12 @@ describe("BrowserPlaybackEngine", () => {
 				create: () => hls,
 			},
 		});
-		await engine.play({
-			type: "radio-station",
-			station: {
-				id: "station-fatal-hls",
-				name: "Fatal HLS",
-				streamUrl: "https://example.com/live/index.m3u8",
-				tags: [],
-				source: "manual",
-				isFavorite: false,
-				position: 0,
-			},
-			playbackUrl: "/api/v1/radio/stations/station-fatal-hls/stream",
-			sourceUrl: "https://example.com/live/index.m3u8",
-		});
+		await engine.play(
+			createRadioStationSource(
+				"station-fatal-hls",
+				"https://example.com/live/index.m3u8",
+			),
+		);
 
 		reportFatalError();
 
