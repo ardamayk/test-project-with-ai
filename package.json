@@ -22,5 +22,12 @@
   "packageManager": "pnpm@10.12.1",
   "engines": {
     "node": ">=22"
+  },
+  "pnpm": {
+    "overrides": {
+      "browserslist": "4.28.8",
+      "nanoid": "3.3.18",
+      "postcss": "8.5.26"
+    }
   }
 }
