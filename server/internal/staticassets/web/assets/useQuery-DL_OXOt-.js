@@ -1,0 +1,1 @@
+import{m as e,p as t}from"./api-DIywFTGl.js";function n(n,r){return t(n,e,r)}export{n as t};

@@ -2,3 +2,7 @@ packages:
   - desktop
   - web
   - packages/*
+
+onlyBuiltDependencies:
+  - esbuild
+  - lightningcss

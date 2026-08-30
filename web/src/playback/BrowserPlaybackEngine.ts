@@ -6,7 +6,6 @@ import type {
 	PlaybackSource,
 } from "@repo/ui";
 import { DEFAULT_PLAYBACK_SESSION_STATE } from "@repo/ui";
-import Hls from "hls.js";
 
 export interface BrowserPlaybackMedia extends EventTarget {
 	currentTime: number;
@@ -33,35 +32,44 @@ type BrowserHlsFactory = {
 	create(): BrowserHls;
 };
 
+type BrowserHlsFactoryLoader = () => Promise<BrowserHlsFactory>;
+
 type BrowserPlaybackEngineOptions = {
 	createMedia?: () => BrowserPlaybackMedia;
 	hls?: BrowserHlsFactory;
+	loadHls?: BrowserHlsFactoryLoader;
 };
 
 const LIVE_RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000] as const;
 const LIVE_STALL_TIMEOUT_MS = 10000;
 const LIVE_STABILITY_RESET_MS = 30000;
 
-const defaultHlsFactory: BrowserHlsFactory = {
-	isSupported: () => Hls.isSupported(),
-	create: () => {
-		const hls = new Hls();
-		return {
-			attachMedia: (media) => hls.attachMedia(media as HTMLMediaElement),
-			destroy: () => hls.destroy(),
-			loadSource: (url) => hls.loadSource(url),
-			onFatalError: (listener) => {
-				hls.on(Hls.Events.ERROR, (_event, data) => {
-					if (data.fatal) listener();
-				});
-			},
-		};
-	},
-};
+let defaultHlsFactoryPromise: Promise<BrowserHlsFactory> | null = null;
+
+function loadDefaultHlsFactory() {
+	defaultHlsFactoryPromise ??= import("hls.js").then(({ default: Hls }) => ({
+		isSupported: () => Hls.isSupported(),
+		create: () => {
+			const hls = new Hls();
+			return {
+				attachMedia: (media) => hls.attachMedia(media as HTMLMediaElement),
+				destroy: () => hls.destroy(),
+				loadSource: (url) => hls.loadSource(url),
+				onFatalError: (listener) => {
+					hls.on(Hls.Events.ERROR, (_event, data) => {
+						if (data.fatal) listener();
+					});
+				},
+			};
+		},
+	}));
+	return defaultHlsFactoryPromise;
+}
 
 export class BrowserPlaybackEngine implements PlaybackEngine {
 	private readonly media: BrowserPlaybackMedia;
-	private readonly hlsFactory: BrowserHlsFactory;
+	private hlsFactory: BrowserHlsFactory | null;
+	private readonly loadHlsFactory: BrowserHlsFactoryLoader;
 	private readonly listeners = new Set<PlaybackSessionListener>();
 	private readonly navigationListeners = new Set<PlaybackNavigationListener>();
 	private state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
@@ -76,7 +84,8 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 
 	constructor(options: BrowserPlaybackEngineOptions = {}) {
 		this.media = options.createMedia?.() ?? new Audio();
-		this.hlsFactory = options.hls ?? defaultHlsFactory;
+		this.hlsFactory = options.hls ?? null;
+		this.loadHlsFactory = options.loadHls ?? loadDefaultHlsFactory;
 		this.media.volume = this.state.volume;
 		this.addMediaListeners();
 	}
@@ -124,7 +133,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		}
 
 		try {
-			if (source) this.setMediaSource(source);
+			if (source) await this.setMediaSource(source);
 			await this.media.play();
 			this.update({ status: "playing", error: null });
 		} catch (error) {
@@ -319,20 +328,24 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.media.removeEventListener("waiting", this.handleStalled);
 	}
 
-	private setMediaSource(source: PlaybackSource) {
+	private async setMediaSource(source: PlaybackSource) {
 		this.destroyHls();
 		this.media.removeAttribute("src");
 		this.media.load();
 		const sourceUrl =
 			source.type === "track" ? source.playbackUrl : source.sourceUrl;
-		if (isHlsStream(sourceUrl) && this.hlsFactory.isSupported()) {
+		const isHlsSource = isHlsStream(sourceUrl);
+		if (isHlsSource) {
+			this.hlsFactory ??= await this.loadHlsFactory();
+		}
+		if (isHlsSource && this.hlsFactory?.isSupported()) {
 			this.hls = this.hlsFactory.create();
 			this.hls.onFatalError?.(this.handleMediaError);
 			this.hls.loadSource(source.playbackUrl);
 			this.hls.attachMedia(this.media);
 			return;
 		}
-		if (isHlsStream(sourceUrl) && canPlayNativeHls(this.media)) {
+		if (isHlsSource && canPlayNativeHls(this.media)) {
 			this.media.src = source.playbackUrl;
 			return;
 		}

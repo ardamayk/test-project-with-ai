@@ -5,8 +5,9 @@
   "scripts": {
     "build": "tauri build --no-bundle",
     "build:sidecar": "pnpm prepare:mpv && tauri build --no-bundle --config src-tauri/tauri.sidecar.conf.json",
-    "desktop:dev": "pnpm prepare:mpv && tauri dev --config src-tauri/tauri.sidecar.conf.json",
+    "desktop:dev": "pnpm prepare:mpv && ./scripts/run-linux-webkit.sh tauri dev --config src-tauri/tauri.sidecar.conf.json",
     "prepare:mpv": "./scripts/prepare-mpv-sidecar.sh",
+    "start": "./scripts/run-linux-webkit.sh ./src-tauri/target/release/earthly-audio-desktop",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:mpv": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests -- --ignored --test-threads=1"
   },

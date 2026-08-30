@@ -332,6 +332,29 @@ describe("BrowserPlaybackEngine", () => {
 		engine.destroy();
 	});
 
+	it("does not load hls.js for non-HLS playback", async () => {
+		const loadHls = vi.fn();
+		const engine = new BrowserPlaybackEngine({
+			createMedia: () => media,
+			loadHls,
+		});
+
+		await engine.play({
+			type: "catalog-preview",
+			result: {
+				stationUuid: "catalog-mp3",
+				name: "MP3 Catalog",
+				streamUrl: "https://example.com/live.mp3",
+				tags: [],
+			},
+			playbackUrl: "/api/v1/radio/preview/catalog-mp3/stream",
+			sourceUrl: "https://example.com/live.mp3",
+		});
+
+		expect(loadHls).not.toHaveBeenCalled();
+		engine.destroy();
+	});
+
 	it("publishes playback errors without exposing media errors", async () => {
 		media.play.mockRejectedValueOnce(new Error("codec unavailable"));
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });

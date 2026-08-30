@@ -4,6 +4,116 @@ Navidrome Replacement is a self-hosted music app for browsing local library cont
 
 ## Language
 
+### Library
+
+**Personal Music Server**:
+A self-hosted Music Server operated for one person's library in the initial product. Future user profiles may isolate multiple personal libraries, but the initial product is not a shared or multi-tenant music host.
+_Avoid_: Public music server, multi-tenant library
+
+**Managed Import**:
+A user-initiated transfer in which a Playback Client uploads an audio file and the Music Server retains an authoritative managed copy after validation and explicit confirmation.
+_Avoid_: Folder scan, referenced file, automatic import
+
+**Local Folder Import**:
+A Managed Import initiated by selecting a directory on a Playback Client and recursively uploading its supported contents. The client directory and its hierarchy are not retained as a library source or storage structure.
+_Avoid_: External Library Root, folder scan, preserved folder hierarchy
+
+**External Library Root**:
+A read-only, server-visible directory that a user explicitly registers and refreshes as an additional library source. Its files remain externally owned and are never copied, symlinked, or deleted by the Music Server.
+_Avoid_: Local Folder Import, Managed Storage, client-local path
+
+**Managed Storage**:
+The Music Server-owned location that holds one authoritative audio file per Track in its Source Audio Format and one extracted artwork file per Album.
+_Avoid_: Source folder, Playlist folder, symlink view
+
+**Bit-Preserving Storage**:
+Managed Storage that retains the exact uploaded audio-file bytes and verifies them by full-file SHA-256 before and after canonical placement. It does not imply an end-to-end bit-perfect Playback guarantee.
+_Avoid_: Transcoded storage, rewritten tags, bit-perfect Playback guarantee
+
+**Import Preview**:
+The validation result shown before a Managed Import is committed. It identifies accepted and rejected files without creating library content until the user confirms.
+_Avoid_: Completed import, scan result
+
+**Strict Import Profile**:
+The fallback-free metadata, artwork, and audio-integrity contract shared by Managed Import and Library Migration. A file that fails any required condition is rejected without synthesizing missing values or granting legacy exceptions.
+_Avoid_: Best-effort scan, legacy exception, filename fallback
+
+**Import Batch**:
+A user-selected group of files processed through one Import Preview. Each selected file commits independently, so one failure does not roll back files already imported successfully.
+_Avoid_: Atomic batch, folder scan, Playlist
+
+**Import History**:
+The retained results of the most recent Managed Imports without their staged audio files. It supports reviewing outcomes but not resuming or restoring an import.
+_Avoid_: Staging storage, retry queue, library history
+
+**Possible Duplicate**:
+A proposed import whose metadata resembles an existing Track but whose full-file content hash differs. It requires an explicit user choice and never causes automatic replacement.
+_Avoid_: Exact duplicate, automatic replacement
+
+**Exact Duplicate**:
+A proposed import whose full-file content hash matches an existing Track. It is rejected without changing library state, regardless of its client filename or source location.
+_Avoid_: Possible Duplicate, same title, same recording
+
+**Library Migration**:
+An explicit, user-confirmed copy and verification of accepted Legacy Tracks into Managed Storage. Rejected source files remain unchanged outside the managed library.
+_Avoid_: Startup scan, automatic migration, destructive move
+
+**Legacy Track**:
+A Track indexed from the former server-side music folder before Managed Import became authoritative. It remains playable without automatic rescanning until Library Migration accepts or rejects it.
+_Avoid_: Managed Import, External Library Root
+
+**Source Audio Format**:
+The audio file's existing supported format, which a Managed Import preserves without transcoding.
+_Avoid_: Import format, normalized format
+
+**Artist**:
+A credited performer associated with a Track, an Album, or both. Structured multi-value credits create ordered Artist relationships without guessing from punctuation inside a display credit.
+_Avoid_: Album Artist, free-text artist label, Composer
+
+**Album Artist**:
+The Artist credit under which an Album is grouped. It is required independently from each Track's Artist credit and is never inferred from it.
+_Avoid_: Track Artist, fallback Artist, Composer
+
+**Album**:
+A release grouping of Tracks under an Album Artist and stable Album identity. Similar titles or editions require explicit matching rather than automatic merging when their known release metadata conflicts.
+_Avoid_: Playlist, folder, import batch
+
+**Album Artwork**:
+The validated front-cover image embedded in every Track of an Album edition. Accepted Tracks in that Album carry byte-identical artwork, from which the Music Server extracts one display copy without modifying the audio files.
+_Avoid_: External cover upload, folder artwork, inferred picture
+
+**Track**:
+A library item backed by one authoritative playable audio source. Playlist and genre membership reference the Track without creating additional audio-file copies.
+_Avoid_: File copy, playlist entry, Radio Station
+
+**Managed Track**:
+A Track backed by a Music Server-owned audio file in Managed Storage.
+_Avoid_: External Track, Legacy Track, client-local file
+
+**External Track**:
+A Track backed by a read-only, externally owned audio file inside an External Library Root.
+_Avoid_: Managed Track, copied import, client-local file
+
+**Genre**:
+A normalized classification referenced by one or more Tracks. An Album's displayed Genres are derived from its active Tracks without copying audio files.
+_Avoid_: Playlist, folder, symlink view
+
+**Track Replacement**:
+An explicit user-confirmed change of a Track's managed audio file that preserves the Track's identity and adopts the replacement file's validated metadata. A Possible Duplicate never triggers Track Replacement automatically.
+_Avoid_: Exact duplicate, automatic replacement, separate import
+
+**Canonical Library Path**:
+A Music Server-generated, human-readable Managed Storage path whose stable IDs determine identity while metadata-derived slugs aid inspection. Client filenames and folder hierarchies never determine it.
+_Avoid_: Client path, identity-by-filename, source hierarchy
+
+**Playlist**:
+A user-created named collection of library Tracks. Managed Imports do not create Playlists automatically.
+_Avoid_: Album, genre, import batch, Queue
+
+**Permanent Track Deletion**:
+An irreversible removal of both a Track and its managed audio file from the Music Server.
+_Avoid_: Remove from Playlist, hide Track, trash
+
 ### Playback
 
 **Music Server**:

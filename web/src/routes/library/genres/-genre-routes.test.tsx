@@ -7,8 +7,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GenresPage } from "./-genres-page";
 import { GenreDetailContent } from "./$genre";
-import { GenresPage } from "./index";
 
 const mocks = vi.hoisted(() => ({
 	listTracks: vi.fn(),
@@ -147,8 +147,11 @@ describe("genre routes", () => {
 		expect(dance.getAttribute("href")).toBe("/library/genres/Dance");
 		expect(synthpop.className).toContain("duration-300");
 		expect(synthpop.className).toContain("ease-out");
-		expect(synthpop.className).toContain("hover:-translate-y-1");
+		expect(synthpop.className).toContain("hover:-translate-y-px");
 		expect(synthpop.className).toContain("hover:shadow-lg");
+		expect(synthpop.className).toContain("focus-visible:ring-2");
+		expect(synthpop.className).toContain("motion-reduce:transition-none");
+		expect(synthpop.className).not.toContain("hover:-translate-y-1");
 		expect(synthpop.className).toContain("aspect-square");
 		expect(synthpop.className).toContain("overflow-hidden");
 		expect(screen.getByTestId("genres-page-shell").className).toContain(
@@ -170,7 +173,13 @@ describe("genre routes", () => {
 		expect(
 			container.querySelector('[data-testid="playlist-card-cover-stack"]'),
 		).toBeTruthy();
-		expect(container.querySelector("[data-genre-card-overlay]")).toBeTruthy();
+		const overlay = container.querySelector("[data-genre-card-overlay]");
+		expect(overlay?.className).toContain("px-3");
+		expect(overlay?.className).toContain("pt-14");
+		expect(overlay?.querySelector("p")?.className).toContain("font-semibold");
+		expect(overlay?.querySelector("p")?.className).not.toContain(
+			"group-hover:underline",
+		);
 		await waitFor(() => {
 			expect(container.querySelectorAll("img").length).toBeGreaterThanOrEqual(
 				4,

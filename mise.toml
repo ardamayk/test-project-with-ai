@@ -6,14 +6,7 @@ golangci-lint = "2.12.2"
 
 [tasks.dev]
 description = "Run Go API and Vite dev server in parallel"
-run = """
-#!/usr/bin/env bash
-set -euo pipefail
-trap 'kill 0' EXIT
-(cd server && go run ./cmd/server) &
-pnpm --dir web dev &
-wait
-"""
+run = "./scripts/run-with-music-server.sh development pnpm --dir web dev"
 
 [tasks.build]
 description = "Build web SPA and Go server binary"
@@ -24,6 +17,25 @@ pnpm build
 chmod +x scripts/sync-static.sh
 ./scripts/sync-static.sh
 cd server && go build -o ../bin/server ./cmd/server
+"""
+
+[tasks."desktop:build"]
+description = "Build the Music Server and release Desktop Client with pinned mpv"
+depends = ["build"]
+run = "pnpm --dir desktop build:sidecar"
+
+[tasks."desktop:dev"]
+description = "Run the Music Server and Tauri Desktop Client in development mode"
+run = "./scripts/run-with-music-server.sh development pnpm --dir desktop desktop:dev"
+
+[tasks.start]
+description = "Run the built Music Server and release Desktop Client"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -x bin/server ]] || { echo "Missing bin/server; run 'mise run desktop:build' first." >&2; exit 1; }
+[[ -x desktop/src-tauri/target/release/earthly-audio-desktop ]] || { echo "Missing Desktop Client; run 'mise run desktop:build' first." >&2; exit 1; }
+./scripts/run-with-music-server.sh built pnpm --dir desktop start
 """
 
 [tasks.generate]

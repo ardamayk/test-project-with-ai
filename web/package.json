@@ -11,7 +11,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test && pnpm test:e2e:production",
+    "test:e2e:production": "playwright test --config playwright.production.config.ts",
     "format": "biome format",
     "lint": "biome lint",
     "check": "biome check"
@@ -27,7 +28,7 @@
     "@tanstack/react-form": "latest",
     "@tanstack/react-query": "latest",
     "@tanstack/react-query-devtools": "latest",
-    "@tanstack/react-router": "latest",
+    "@tanstack/react-router": "1.170.32",
     "@tanstack/react-router-devtools": "latest",
     "@tanstack/router-plugin": "^1.132.0",
     "class-variance-authority": "^0.7.1",

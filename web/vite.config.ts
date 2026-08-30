@@ -5,9 +5,12 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+const LAZY_HLS_CHUNK_SIZE_WARNING_LIMIT_KB = 550;
+
 const config = defineConfig({
 	resolve: { tsconfigPaths: true },
 	build: {
+		chunkSizeWarningLimit: LAZY_HLS_CHUNK_SIZE_WARNING_LIMIT_KB,
 		outDir: "dist",
 	},
 	server: {

@@ -7,7 +7,7 @@ import {
 	screen,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TracksPage } from "./index";
+import { TracksPage } from "./-tracks-page";
 
 const mocks = vi.hoisted(() => ({
 	listTracks: vi.fn(),
@@ -117,12 +117,24 @@ describe("tracks route", () => {
 		expect(header).toBeTruthy();
 		expect(header?.className).toContain("sticky");
 		expect(header?.className).toContain("top-0");
+		expect(header?.className).toContain("py-3");
+		expect(
+			header?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+		).toBeTruthy();
 		expect(screen.getByTestId("tracks-page-shell").className).toContain(
 			"overflow-hidden",
 		);
 		expect(screen.getByTestId("tracks-page-content").className).toContain(
 			"[scrollbar-width:none]",
 		);
+		expect(screen.getByTestId("tracks-page-content").className).toContain(
+			"py-5",
+		);
+		expect(
+			screen
+				.getByTestId("tracks-page-content")
+				.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+		).toBeTruthy();
 		expect(input.className).toContain("h-11");
 		expect(input.className).toContain("pl-10");
 		expect(input.parentElement?.className).toContain("sm:max-w-md");

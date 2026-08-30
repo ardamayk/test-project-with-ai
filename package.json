@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
+    "desktop:build": "mise run desktop:build",
+    "desktop:dev": "mise run desktop:dev",
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
     "test": "turbo run test",
@@ -11,7 +13,8 @@
     "test:e2e": "turbo run test:e2e --filter=web",
     "test:e2e:hls": "cd server && RUN_HLS_BROWSER_INTEGRATION=1 go test ./internal/modules/radio -run TestBrowserHLSProxyIntegration -count=1 -v",
     "generate": "turbo run generate",
-    "check": "turbo run check"
+    "check": "turbo run check",
+    "start": "mise run start"
   },
   "devDependencies": {
     "turbo": "^2.5.4"
@@ -19,11 +22,5 @@
   "packageManager": "pnpm@10.12.1",
   "engines": {
     "node": ">=22"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "lightningcss"
-    ]
   }
 }

@@ -80,7 +80,8 @@ describe("albums route", () => {
 
 		expect(header?.className).toContain("sticky");
 		expect(header?.className).toContain("top-0");
-		expect(header?.className).toContain("pt-7");
+		expect(header?.className).toContain("py-3");
+		expect(header?.className).not.toContain("pt-7");
 		expect(
 			header?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
 		).toBeTruthy();
@@ -94,6 +95,9 @@ describe("albums route", () => {
 			"[scrollbar-width:none]",
 		);
 		expect(screen.getByTestId("albums-page-content").className).toContain(
+			"py-5",
+		);
+		expect(screen.getByTestId("albums-page-content").className).not.toContain(
 			"pt-8",
 		);
 		const collectionContainer = screen

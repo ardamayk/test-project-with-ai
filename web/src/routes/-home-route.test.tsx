@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HomePage } from "./home";
+import { HomePage } from "./-home-page";
 
 vi.mock("#/components/scan-library-button", () => ({
 	ScanLibraryButton: () => <button type="button">Scan library</button>,

@@ -107,12 +107,10 @@ export function AlbumsPage() {
 		<PageShell
 			testId="albums-page-shell"
 			contentTestId="albums-page-content"
-			contentClassName="pt-8"
 			header={
 				<PageHeader
 					title="Albums"
 					description="Browse albums in your library"
-					className="pt-7 pb-4"
 					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 					actions={
 						<>

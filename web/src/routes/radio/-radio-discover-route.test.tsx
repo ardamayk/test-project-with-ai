@@ -9,7 +9,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RadioDiscoverPage } from "./discover";
+import { RadioDiscoverPage } from "./-radio-discover-page";
 
 const mocks = vi.hoisted(() => ({
 	searchRadioStations: vi.fn(),

@@ -197,6 +197,10 @@ describe("playlist routes", () => {
 		expect(link.className).toContain("aspect-square");
 		expect(link.className).toContain("overflow-hidden");
 		expect(link.className).toContain("rounded-md");
+		expect(link.className).toContain("hover:-translate-y-px");
+		expect(link.className).toContain("focus-visible:ring-2");
+		expect(link.className).toContain("motion-reduce:transition-none");
+		expect(link.className).not.toContain("hover:-translate-y-1");
 		expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
 		expect(screen.queryByRole("button", { name: "Shuffle" })).toBeNull();
 		await waitFor(() => {
@@ -214,8 +218,15 @@ describe("playlist routes", () => {
 				"/cover/a4",
 			]),
 		);
+		const overlay = container.querySelector("[data-playlist-card-overlay]");
+		expect(overlay?.className).toContain("px-3");
+		expect(overlay?.className).toContain("pt-14");
+		expect(overlay?.querySelector("p")?.className).toContain("font-semibold");
+		expect(overlay?.querySelector("p")?.className).not.toContain(
+			"group-hover:underline",
+		);
 		expect(
-			container.querySelector("[data-playlist-card-overlay]"),
+			container.querySelector('[data-testid="playlist-card-cover-stack"]'),
 		).toBeTruthy();
 	});
 

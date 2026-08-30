@@ -191,9 +191,9 @@ pub(crate) enum MpvEvent {
 
 pub(crate) trait MpvProcessAdapter: Send + Sync {
     fn load(&self, url: &str) -> Result<(), String>;
-    fn load_at(&self, url: &str, start_seconds: f64) -> Result<(), String> {
+    fn load_at(&self, url: &str, seconds: f64) -> Result<(), String> {
         self.load(url)?;
-        self.seek(start_seconds)
+        self.seek(seconds)
     }
     fn set_paused(&self, is_paused: bool) -> Result<(), String>;
     fn seek(&self, seconds: f64) -> Result<(), String>;
@@ -386,13 +386,13 @@ impl MpvProcessAdapter for RealMpvProcess {
             .map(|_| ())
     }
 
-    fn load_at(&self, url: &str, start_seconds: f64) -> Result<(), String> {
+    fn load_at(&self, url: &str, seconds: f64) -> Result<(), String> {
         self.command(json!([
             "loadfile",
             url,
             "replace",
             -1,
-            { "start": start_seconds.to_string() }
+            { "start": seconds.to_string() }
         ]))
         .map(|_| ())
     }
@@ -3870,6 +3870,7 @@ mod tests {
         loaded_url: Option<String>,
         is_paused: bool,
         playhead_seconds: f64,
+        standalone_seek_calls: usize,
         volume: f64,
     }
 
@@ -3913,13 +3914,22 @@ mod tests {
             Ok(())
         }
 
+        fn load_at(&self, url: &str, seconds: f64) -> Result<(), String> {
+            let mut state = self.state.lock().expect("process state");
+            state.loaded_url = Some(url.to_owned());
+            state.playhead_seconds = seconds;
+            Ok(())
+        }
+
         fn set_paused(&self, is_paused: bool) -> Result<(), String> {
             self.state.lock().expect("process state").is_paused = is_paused;
             Ok(())
         }
 
         fn seek(&self, seconds: f64) -> Result<(), String> {
-            self.state.lock().expect("process state").playhead_seconds = seconds;
+            let mut state = self.state.lock().expect("process state");
+            state.playhead_seconds = seconds;
+            state.standalone_seek_calls += 1;
             Ok(())
         }
 
@@ -5237,6 +5247,7 @@ mod tests {
         assert_eq!(restored.repeat_mode, super::RepeatMode::Loop);
         assert!(process.is_paused);
         assert_eq!(process.playhead_seconds, 41.5);
+        assert_eq!(process.standalone_seek_calls, 0);
         assert_eq!(process.volume, 0.65);
     }
 
@@ -6109,10 +6120,15 @@ mod tests {
             "playbackUrl": fixture_path.to_string_lossy()
         });
 
-        controller.play(Some(source)).expect("play fixture");
+        controller.play(Some(source.clone())).expect("play fixture");
         let playing = wait_for_state(&controller, |state| state.current_time > 0.0);
         controller.pause().expect("pause fixture");
         controller.seek(0.5).expect("seek fixture");
+        let snapshot = PlaybackSessionSnapshot::new(Some(source), 0.5, 0.37, false, "off")
+            .expect("valid real mpv snapshot");
+        let restored = controller
+            .restore_paused(&snapshot)
+            .expect("restore real mpv snapshot without an early seek command");
 
         assert_eq!(applied.processing.software_volume, 0.37);
         assert_eq!(applied.processing.replay_gain_mode, ReplayGainMode::Album);
@@ -6120,6 +6136,8 @@ mod tests {
         assert!(!applied.processing.effective_audio_filters.is_empty());
         assert_eq!(playing.status, PlaybackStatus::Playing);
         assert!(playing.duration > 0.9);
+        assert_eq!(restored.status, PlaybackStatus::Paused);
+        assert_eq!(restored.current_time, 0.5);
         drop(controller);
         assert!(!ipc_directory.exists());
         fs::remove_file(fixture_path).expect("remove WAV fixture");

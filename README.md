@@ -48,6 +48,23 @@ pnpm build
 cd server && go build -o ../bin/server ./cmd/server
 ```
 
+## Linux Desktop Client
+
+Run the Music Server and Tauri Desktop Client together in development mode:
+
+```bash
+mise run desktop:dev
+```
+
+Build and start the release Desktop Client:
+
+```bash
+mise run desktop:build
+mise run start       # or: pnpm start
+```
+
+The launcher automatically selects native Wayland with the NVIDIA explicit-sync workaround when required. Use `EARTHLY_AUDIO_DISPLAY_MODE=x11` to force X11/XWayland or `EARTHLY_AUDIO_DISPLAY_MODE=wayland-shm` for the slower shared-memory Wayland fallback. Docker Compose runs only the Music Server and does not launch the Desktop Client.
+
 ## Test
 
 ```bash

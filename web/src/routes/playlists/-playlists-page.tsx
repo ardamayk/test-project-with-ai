@@ -82,17 +82,22 @@ function PlaylistCard({ playlist }: { playlist: Playlist }) {
 		<Link
 			to="/playlists/$playlistId"
 			params={{ playlistId: playlist.id }}
-			className="group relative aspect-square overflow-hidden rounded-md border border-border bg-card transition duration-300 ease-out hover:-translate-y-1 hover:bg-muted/50 hover:shadow-lg"
+			className="group relative aspect-square overflow-hidden rounded-md border border-border bg-card transition duration-300 ease-out hover:-translate-y-px hover:border-ring/60 hover:bg-muted/50 hover:shadow-lg focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transform-none motion-reduce:transition-none"
 		>
-			{tracks.length > 0 ? <CollectionCoverCardStack tracks={tracks} /> : null}
+			{tracks.length > 0 ? (
+				<CollectionCoverCardStack
+					tracks={tracks}
+					seed={`playlist:${playlist.id}`}
+				/>
+			) : null}
 			<div
 				data-playlist-card-overlay
-				className="absolute inset-x-0 bottom-0 z-50 bg-gradient-to-t from-background/95 via-background/75 to-transparent p-2 text-foreground"
+				className="absolute inset-x-0 bottom-0 z-50 bg-gradient-to-t from-background/95 via-background/70 to-transparent px-3 pt-14 pb-2.5 text-foreground"
 			>
-				<p className="truncate font-medium text-heading text-xs leading-tight group-hover:underline">
+				<p className="truncate font-semibold text-heading text-sm leading-tight tracking-[-0.012em]">
 					{playlist.name}
 				</p>
-				<p className="truncate text-[11px] text-caption leading-tight">
+				<p className="mt-0.5 truncate text-[11px] text-caption leading-tight tracking-[0.01em]">
 					{playlist.trackCount} track{playlist.trackCount === 1 ? "" : "s"}
 				</p>
 			</div>

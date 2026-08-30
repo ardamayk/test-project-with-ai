@@ -11,7 +11,7 @@ import {
 	formatTrackCollectionDuration,
 	useTrackCollectionViewState,
 } from "#/lib/track-collection-view-state";
-import { trackHasGenre } from "./index";
+import { trackHasGenre } from "./-genres-page";
 
 export const Route = createFileRoute("/library/genres/$genre")({
 	component: GenreDetailPage,

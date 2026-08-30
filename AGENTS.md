@@ -98,35 +98,6 @@ type Module interface {
 
 v1 modules: `preferences`, `library`, `playback` implemented; future modules follow the same pattern.
 
-## Commands
-
-```bash
-mise run dev          # Go API :8090 + Vite dev :3000
-pnpm generate         # OpenAPI → Go types + TS schema
-pnpm build            # turbo: build all packages
-pnpm test             # unit tests
-pnpm test:e2e         # Playwright smoke
-./scripts/sync-static.sh   # copy dist → Go embed paths (before go build)
-```
-
-
-
-## Agent automation rules
-
-
-| When                            | Action                                                    |
-| ------------------------------- | --------------------------------------------------------- |
-| **Before** codebase exploration | `graphify query "<question>"` — do not skip for Read/Grep |
-| **After** code file changes     | `graphify update .`                                       |
-| New feature / behavior change   | `brainstorming` skill first                               |
-| Multi-step implementation       | `writing-plans` → `executing-plans`                       |
-| Bug or test failure             | `systematic-debugging`                                    |
-| Feature or bugfix code          | `test-driven-development`                                 |
-| E2E verification                | `playwright-cli` or `pnpm test:e2e`                       |
-| User communication style        | **caveman mode active** — terse, no filler                |
-| Before claiming done            | `verification-before-completion` — run tests, show output |
-
-
 
 
 ## Graphify
@@ -159,13 +130,6 @@ graphify . --wiki
 - API client → Vitest in `packages/api-client/`
 - Critical flows → Playwright in `web/e2e/`
 
-
-
-## Skills in repo
-
-- `.claude/skills/playwright-cli/SKILL.md` — browser automation for E2E debugging
-- Always use caveman skill and adjust caveman skill level according to task. lite, full or ultra modes allowed.
-
 ## Agent skills
 
 ### Issue tracker
@@ -179,53 +143,3 @@ Uses the default five-label triage vocabulary: `needs-triage`, `needs-info`, `re
 ### Domain docs
 
 Single-context layout: repo-root `CONTEXT.md` plus `docs/adr/` for ADRs. See `docs/agents/domain.md`.
-
-## UI: Earthly Audio shell
-
-| Area | Location |
-|------|----------|
-| App shell (3-column resize + DnD) | `packages/ui/src/layout/` |
-| Widget registry | `packages/ui/src/widgets/registry.tsx` |
-| Theme presets | `web/src/themes/earthly.css`, `tokyo-night.css` |
-| Theme apply | `packages/ui/src/theme/ThemeProvider.tsx` + `web/src/components/theme-sync.tsx` |
-| shadcn components | `web/components.json` → `web/src/components/ui/` |
-| Web routes | `web/src/routes/` |
-
-### shadcn/ui
-
-- Run CLI from `web/`: `pnpm dlx shadcn@latest add <component>`
-- Use semantic tokens (`bg-primary`, `text-muted-foreground`); no raw color classes
-- Spacing: `flex flex-col gap-*` (not `space-y-*`)
-- See shadcn skill for composition rules (Card, Empty, Badge, Field, etc.)
-
-### Theme system
-
-- `UserPreferences.theme`: `{ mode: light|dark|system, preset: earthly|tokyo-night }`
-- Applied via `data-theme-preset` on `<html>` + `.dark` class for mode
-- CSS variables in `web/src/styles.css` + preset files under `web/src/themes/`
-
-### Layout customization
-
-- Panel resize: shadcn `Resizable` / `react-resizable-panels` in `AppShell`; sizes in `layout.sizes` `[left, main, right]` %
-- **Important:** `react-resizable-panels` v4 — numeric `minSize`/`maxSize`/`defaultSize` are **pixels**; use string `"22"` or `"22%"` for percentages
-- Widget DnD: `@dnd-kit` in `WidgetDock`; queue is fixed in right panel (not a widget)
-- Preferences sync: `PATCH /api/v1/preferences`
-
-## Intentionally out of scope (v1 scaffold)
-
-Auth implementation, party WebSocket, sidecars, Lua scripting, native client. Playlists/favorites/folders/radio UI placeholders only.
-
-See `contracts.md` for API contract rules.
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-When the user types `/graphify`, invoke the `skill` tool with `skill: "graphify"` before doing anything else.
-
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
