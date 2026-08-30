@@ -126,6 +126,7 @@ function Harness() {
 				{playback.radioNowPlaying?.raw ?? ""}
 			</span>
 			<span data-testid="playing">{String(playback.isPlaying)}</span>
+			<span data-testid="reconnecting">{String(playback.isReconnecting)}</span>
 			<span data-testid="volume">{playback.volume}</span>
 			<span data-testid="repeat">{playback.repeatMode}</span>
 			<span data-testid="queue-conflict">{playback.queueConflict ?? ""}</span>
@@ -284,6 +285,18 @@ describe("PlaybackProvider", () => {
 		});
 		expect(screen.getByTestId("radio").textContent).toBe("");
 		expect(screen.getByTestId("queue").textContent).toBe(queueBeforePlayback);
+	});
+
+	it("exposes an active reconnecting Radio Station session", async () => {
+		const { engine } = renderPlayback();
+		await act(async () =>
+			screen.getByRole("button", { name: "Radio" }).click(),
+		);
+
+		act(() => engine.reconnect());
+
+		expect(screen.getByTestId("playing").textContent).toBe("true");
+		expect(screen.getByTestId("reconnecting").textContent).toBe("true");
 	});
 
 	it("delegates Playback Session controls to PlaybackEngine", async () => {

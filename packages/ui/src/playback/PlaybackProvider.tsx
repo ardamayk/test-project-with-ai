@@ -84,6 +84,7 @@ type PlaybackContextValue = {
 	currentRadioStation: RadioStation | null;
 	radioNowPlaying: RadioNowPlaying | null;
 	isPlaying: boolean;
+	isReconnecting: boolean;
 	currentTime: number;
 	duration: number;
 	volume: number;
@@ -415,7 +416,9 @@ export function PlaybackProvider({
 			currentTrack,
 			currentRadioStation,
 			radioNowPlaying,
-			isPlaying: session.status === "playing",
+			isPlaying:
+				session.status === "playing" || session.status === "reconnecting",
+			isReconnecting: session.status === "reconnecting",
 			currentTime: session.currentTime,
 			duration: session.duration,
 			volume: session.volume,

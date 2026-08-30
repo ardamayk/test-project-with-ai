@@ -200,6 +200,18 @@ describe("PlayerBar", () => {
 		expect(screen.getByText("Album 1")).toBeTruthy();
 	});
 
+	it("shows an active reconnecting state for live radio", async () => {
+		const { engine } = renderPlayerBar();
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start radio" }).click();
+		});
+		act(() => engine.reconnect());
+
+		expect(screen.getByRole("status").textContent).toBe("Reconnecting…");
+		expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+	});
+
 	it("keeps the now-playing region at a stable width independent of title length", async () => {
 		renderPlayerBar();
 

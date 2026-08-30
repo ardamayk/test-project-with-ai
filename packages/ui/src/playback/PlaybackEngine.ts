@@ -32,7 +32,13 @@ export type PlaybackSource =
 			sourceUrl: string;
 	  };
 
-export type PlaybackStatus = "idle" | "playing" | "paused" | "ended" | "error";
+export type PlaybackStatus =
+	| "idle"
+	| "playing"
+	| "reconnecting"
+	| "paused"
+	| "ended"
+	| "error";
 
 export type PlaybackError = {
 	code:

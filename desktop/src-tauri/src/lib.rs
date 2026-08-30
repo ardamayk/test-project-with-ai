@@ -27,7 +27,6 @@ use output_device::{
 };
 use playback::{
     OutputDeviceIssueCode, PlaybackCommandError, PlaybackController, PlaybackSessionState,
-    PlaybackStatus,
 };
 use playback_app_actions::{
     DesktopPlaybackAction, DesktopPlaybackShell, dispatch_desktop_playback_action,
@@ -829,10 +828,9 @@ pub fn run() -> tauri::Result<()> {
                 Arc::new(CommandPipeWireObserver::new()),
                 adaptive_system_rate,
                 move |state| {
-                    if let Err(error) = playback_event_tray.update(
-                        state.source.as_ref(),
-                        state.status == PlaybackStatus::Playing,
-                    ) {
+                    if let Err(error) =
+                        playback_event_tray.update(state.source.as_ref(), state.status.is_active())
+                    {
                         eprintln!("Desktop playback tray update failed: {error}");
                     }
                     if let Err(error) = app_handle.emit(PLAYBACK_STATE_EVENT, state) {

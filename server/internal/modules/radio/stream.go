@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -351,7 +352,15 @@ func (p *StreamProxy) writeAudioStream(w http.ResponseWriter, r *http.Request, r
 			_ = reader.Close()
 		}()
 	}
-	_, _ = io.Copy(w, reader)
+	written, copyErr := io.Copy(w, reader)
+	if r.Context().Err() != nil || r.URL.Query().Get("resource") != "" {
+		return
+	}
+	if copyErr != nil {
+		slog.Warn("radio stream interrupted", "stationId", station.ID, "bytes", written, "error", copyErr)
+		return
+	}
+	slog.Info("radio upstream stream ended", "stationId", station.ID, "bytes", written)
 }
 
 func isHLSPlaylist(response *http.Response) bool {

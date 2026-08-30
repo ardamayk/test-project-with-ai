@@ -135,7 +135,9 @@ func isStreamPath(path string) bool {
 		return true
 	}
 	return strings.HasSuffix(path, "/stream") &&
-		(strings.HasPrefix(path, "/api/v1/tracks/") || strings.HasPrefix(path, "/api/v1/radio/stations/"))
+		(strings.HasPrefix(path, "/api/v1/tracks/") ||
+			strings.HasPrefix(path, "/api/v1/radio/stations/") ||
+			strings.HasPrefix(path, "/api/v1/radio/preview/"))
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

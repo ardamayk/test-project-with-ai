@@ -74,7 +74,10 @@ export class InMemoryPlaybackEngine implements PlaybackEngine {
 	}
 
 	togglePlay() {
-		if (this.state.status === "playing") {
+		if (
+			this.state.status === "playing" ||
+			this.state.status === "reconnecting"
+		) {
 			this.pause();
 			return;
 		}
@@ -132,6 +135,15 @@ export class InMemoryPlaybackEngine implements PlaybackEngine {
 
 	fail(error: PlaybackError) {
 		this.update({ status: "error", error });
+	}
+
+	reconnect() {
+		if (
+			this.state.source?.type === "radio-station" ||
+			this.state.source?.type === "catalog-preview"
+		) {
+			this.update({ status: "reconnecting", error: null });
+		}
 	}
 
 	destroy() {

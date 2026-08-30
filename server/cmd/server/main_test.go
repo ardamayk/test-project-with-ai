@@ -7,8 +7,10 @@ import (
 	"time"
 )
 
-func TestStreamAwareTimeoutSkipsTrackStreams(t *testing.T) {
+func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	var streamHasDeadline bool
+	var radioStationHasDeadline bool
+	var radioPreviewHasDeadline bool
 	var queueEventsHasDeadline bool
 	var apiHasDeadline bool
 
@@ -16,6 +18,16 @@ func TestStreamAwareTimeoutSkipsTrackStreams(t *testing.T) {
 		_, hasDeadline := r.Context().Deadline()
 		if r.URL.Path == "/api/v1/tracks/track-1/stream" {
 			streamHasDeadline = hasDeadline
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/api/v1/radio/preview/station-1/stream" {
+			radioPreviewHasDeadline = hasDeadline
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/api/v1/radio/stations/station-1/stream" {
+			radioStationHasDeadline = hasDeadline
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -35,6 +47,14 @@ func TestStreamAwareTimeoutSkipsTrackStreams(t *testing.T) {
 	)
 	wrapped.ServeHTTP(
 		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "/api/v1/radio/preview/station-1/stream", nil),
+	)
+	wrapped.ServeHTTP(
+		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "/api/v1/radio/stations/station-1/stream", nil),
+	)
+	wrapped.ServeHTTP(
+		httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/api/v1/playback/queue/events", nil),
 	)
 	wrapped.ServeHTTP(
@@ -44,6 +64,12 @@ func TestStreamAwareTimeoutSkipsTrackStreams(t *testing.T) {
 
 	if streamHasDeadline {
 		t.Fatal("stream route should not inherit request timeout deadline")
+	}
+	if radioPreviewHasDeadline {
+		t.Fatal("Radio Catalog Preview stream should not inherit request timeout deadline")
+	}
+	if radioStationHasDeadline {
+		t.Fatal("Radio Station stream should not inherit request timeout deadline")
 	}
 	if queueEventsHasDeadline {
 		t.Fatal("Queue event stream should not inherit request timeout deadline")

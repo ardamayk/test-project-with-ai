@@ -136,6 +136,7 @@ export function PlayerBar({
 		currentRadioStation,
 		radioNowPlaying,
 		isPlaying,
+		isReconnecting,
 		currentTime,
 		duration,
 		volume,
@@ -254,14 +255,15 @@ export function PlayerBar({
 		null;
 	const nowPlayingTitle =
 		currentTrack?.title ?? radioTitle ?? "Nothing playing";
-	const nowPlayingSubtitle =
-		currentTrack?.artistName ??
-		(isRadioPlaying
-			? radioNowPlaying?.artist && radioNowPlaying.artist !== radioTitle
-				? radioNowPlaying.artist
-				: "Live radio"
-			: null) ??
-		"Select a track";
+	const nowPlayingSubtitle = isReconnecting
+		? "Reconnecting…"
+		: (currentTrack?.artistName ??
+			(isRadioPlaying
+				? radioNowPlaying?.artist && radioNowPlaying.artist !== radioTitle
+					? radioNowPlaying.artist
+					: "Live radio"
+				: null) ??
+			"Select a track");
 	const nowPlayingCaption = currentTrack?.albumTitle ?? null;
 	const artworkUrl = currentTrack
 		? getAlbumCoverUrl(currentTrack.albumId)
@@ -466,6 +468,8 @@ export function PlayerBar({
 						<p
 							className="truncate text-player-foreground text-[11px]"
 							title={nowPlayingSubtitle}
+							role={isReconnecting ? "status" : undefined}
+							aria-live={isReconnecting ? "polite" : undefined}
 						>
 							{nowPlayingSubtitle}
 						</p>
