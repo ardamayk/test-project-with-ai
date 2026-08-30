@@ -1,15 +1,11 @@
 package db_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -96,7 +92,7 @@ func TestBackfillExpandedLibraryPopulatesIdentityGenresAndTechnicalMetadata(t *t
 	insertLegacyLibrary(t, sqlDB)
 	_, err := sqlDB.Exec(`
 		UPDATE albums SET year = 2024, genres = '["Rock"]' WHERE id = 'album-1';
-		UPDATE tracks SET artist_name = 'Track Artist', genre = 'Rock',
+		UPDATE tracks SET artist_name = 'Track Artist', genre = 'Rock; Pop',
 			sample_rate_hz = 96000, bit_depth = 24
 		WHERE id = 'track-1';
 	`)
@@ -112,24 +108,30 @@ func TestBackfillExpandedLibraryPopulatesIdentityGenresAndTechnicalMetadata(t *t
 	}
 
 	assertRowCount(t, sqlDB, "artists", 2)
-	assertRowCount(t, sqlDB, "genres", 1)
-	assertRowCount(t, sqlDB, "track_genres", 1)
+	assertRowCount(t, sqlDB, "genres", 2)
+	assertRowCount(t, sqlDB, "track_genres", 2)
 	assertTextValue(t, sqlDB, `SELECT name_normalized FROM artists WHERE name = 'Track Artist'`, "track artist")
-	assertTextValue(t, sqlDB, `SELECT name FROM genres`, "Rock")
+	assertTextValue(t, sqlDB, `SELECT group_concat(name, ',') FROM (SELECT name FROM genres ORDER BY name_normalized)`, "Pop,Rock")
 	assertTextValue(t, sqlDB, `SELECT identity_key FROM albums WHERE id = 'album-1'`, "artist\x1falbum\x1f2024")
 	assertTextValue(t, sqlDB, `SELECT release_date FROM albums WHERE id = 'album-1'`, "2024")
 	assertTextValue(t, sqlDB, `SELECT identity_key FROM tracks WHERE id = 'track-1'`, "track")
-	assertTextValue(t, sqlDB, `SELECT codec || ':' || container || ':' || sample_format
-		FROM tracks WHERE id = 'track-1'`, "flac:flac:s24")
-	assertIntegerValue(t, sqlDB, `SELECT bitrate_bps FROM tracks WHERE id = 'track-1'`, 800)
+	assertTextValue(t, sqlDB, `SELECT source_format FROM track_sources WHERE track_id = 'track-1'`, "flac")
+	assertIntegerValue(t, sqlDB, `SELECT sample_rate_hz FROM tracks WHERE id = 'track-1'`, 96000)
+	assertIntegerValue(t, sqlDB, `SELECT bit_depth FROM tracks WHERE id = 'track-1'`, 24)
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM tracks
+		WHERE id = 'track-1' AND codec IS NULL AND container IS NULL
+		AND sample_format IS NULL AND bitrate_bps IS NULL`, 1)
 }
 
 func TestBackfillExpandedLibraryPopulatesAlbumArtworkMetadata(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
-	coverData := createLegacyCover(t)
+	fixturePath, coverData := loadStrictImportArtwork(t)
 	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = ? WHERE id = 'album-1'`, coverData); err != nil {
 		t.Fatalf("store legacy Album artwork: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE tracks SET file_path = ? WHERE id = 'track-1'`, fixturePath); err != nil {
+		t.Fatalf("store legacy Track path: %v", err)
 	}
 	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
 		t.Fatalf("expand populated database: %v", err)
@@ -145,7 +147,7 @@ func TestBackfillExpandedLibraryPopulatesAlbumArtworkMetadata(t *testing.T) {
 	assertTextValue(t, sqlDB, `SELECT media_type FROM album_artwork WHERE album_id = 'album-1'`, "image/png")
 	assertTextValue(t, sqlDB, `SELECT file_path FROM album_artwork WHERE album_id = 'album-1'`, "legacy-db://albums/album-1/cover")
 	assertTextValue(t, sqlDB, `SELECT source_track_id FROM album_artwork WHERE album_id = 'album-1'`, "track-1")
-	assertIntegerValue(t, sqlDB, `SELECT width * height FROM album_artwork WHERE album_id = 'album-1'`, 1)
+	assertIntegerValue(t, sqlDB, `SELECT width * height FROM album_artwork WHERE album_id = 'album-1'`, 1024)
 	assertIntegerValue(t, sqlDB, `SELECT encoded_size_bytes FROM album_artwork WHERE album_id = 'album-1'`, int64(len(coverData)))
 }
 
@@ -171,10 +173,12 @@ func TestOpenAndMigrateBackfillsPopulatedLegacyDatabase(t *testing.T) {
 func TestBackfillExpandedLibraryIsIdempotentAndPreservesLegacyReads(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
-	coverData := createLegacyCover(t)
-	_, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = ? WHERE id = 'album-1'`, coverData)
-	if err != nil {
+	fixturePath, coverData := loadStrictImportArtwork(t)
+	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = ? WHERE id = 'album-1'`, coverData); err != nil {
 		t.Fatalf("store legacy Album artwork: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE tracks SET file_path = ? WHERE id = 'track-1'`, fixturePath); err != nil {
+		t.Fatalf("store legacy Track path: %v", err)
 	}
 	if _, err := sqlDB.Exec(`UPDATE tracks SET artist_name = '  Track   Artist ', genre = 'Alt   Rock' WHERE id = 'track-1'`); err != nil {
 		t.Fatalf("store legacy Track metadata: %v", err)
@@ -225,20 +229,42 @@ func TestBackfillExpandedLibraryRollsBackWhenExpandedRowsAreIncomplete(t *testin
 	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM artists WHERE name_normalized IS NOT NULL`, 0)
 }
 
-func TestBackfillExpandedLibraryRollsBackInvalidLegacyArtwork(t *testing.T) {
+func TestBackfillExpandedLibrarySkipsInvalidLegacyArtwork(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = x'010203' WHERE id = 'album-1'`); err != nil {
 		t.Fatalf("store invalid legacy Album artwork: %v", err)
 	}
 
-	err := database.BackfillExpandedLibrary(context.Background(), sqlDB)
-	if err == nil || !strings.Contains(err.Error(), "decode image metadata") {
-		t.Fatalf("backfill error = %v, want invalid Album artwork error", err)
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
 	}
 
-	assertRowCount(t, sqlDB, "track_sources", 0)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM artists WHERE name_normalized IS NOT NULL`, 0)
+	assertRowCount(t, sqlDB, "album_artwork", 0)
+	assertRowCount(t, sqlDB, "track_sources", 1)
+	assertLegacyTrack(t, sqlDB)
+}
+
+func TestBackfillExpandedLibraryKeepsAmbiguousLegacyTrackPositionsPlayable(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	_, err := sqlDB.Exec(`INSERT INTO tracks (
+		id, album_id, title, title_sort, artist_name, track_no, duration_ms,
+		format, size_bytes, file_path, file_mtime
+	) VALUES (
+		'track-duplicate', 'album-1', 'Duplicate Position', 'duplicate position',
+		'Artist', 1, 1000, 'flac', 100, '/music/duplicate.flac', 1
+	)`)
+	if err != nil {
+		t.Fatalf("store duplicate legacy Track position: %v", err)
+	}
+
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
+	}
+
+	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM tracks WHERE identity_key IS NULL`, 2)
+	assertRowCount(t, sqlDB, "track_sources", 2)
 	assertLegacyTrack(t, sqlDB)
 }
 
@@ -415,15 +441,18 @@ func insertSecondAlbumTrack(t *testing.T, sqlDB *sql.DB) {
 	}
 }
 
-func createLegacyCover(t *testing.T) []byte {
+func loadStrictImportArtwork(t *testing.T) (string, []byte) {
 	t.Helper()
-	cover := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	cover.Set(0, 0, color.RGBA{R: 20, G: 40, B: 60, A: 255})
-	var encoded bytes.Buffer
-	if err := png.Encode(&encoded, cover); err != nil {
-		t.Fatalf("encode legacy Album artwork: %v", err)
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve strict import fixture path")
 	}
-	return encoded.Bytes()
+	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "modules", "library", "testdata", "strict-import.flac")
+	inspection, err := library.NewMediaInspector().Inspect(fixturePath)
+	if err != nil {
+		t.Fatalf("inspect strict import fixture: %v", err)
+	}
+	return fixturePath, inspection.AlbumArtwork.Data
 }
 
 func assertOrderedRelationshipsRejectPositionConflicts(t *testing.T, sqlDB *sql.DB) {
@@ -544,7 +573,11 @@ func assertForeignKeyIntegrity(t *testing.T, sqlDB *sql.DB) {
 	if err != nil {
 		t.Fatalf("check foreign keys: %v", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close foreign key violations: %v", err)
+		}
+	}()
 	if rows.Next() {
 		t.Fatal("foreign key check reported an integrity violation")
 	}

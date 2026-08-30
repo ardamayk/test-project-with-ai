@@ -10,9 +10,13 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"log/slog"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 
+	"github.com/dhowden/tag"
 	_ "golang.org/x/image/webp"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
@@ -22,6 +26,8 @@ const (
 	MAX_LEGACY_ARTWORK_SIZE_BYTES = 20 * 1024 * 1024
 	MAX_LEGACY_ARTWORK_PIXELS     = 50_000_000
 )
+
+var legacyGenreDelimiterPattern = regexp.MustCompile(`[;/|,]+`)
 
 // BackfillExpandedLibrary mirrors legacy library rows into the additive strict identity model.
 func BackfillExpandedLibrary(ctx context.Context, sqlDB *sql.DB) (err error) {
@@ -36,7 +42,7 @@ func BackfillExpandedLibrary(ctx context.Context, sqlDB *sql.DB) (err error) {
 		}
 	}()
 
-	if err := backfillLegacySourcesAndArtists(ctx, tx); err != nil {
+	if err := backfillLegacyLibraryRows(ctx, tx); err != nil {
 		return err
 	}
 	if err := backfillLegacyArtwork(ctx, tx); err != nil {
@@ -51,7 +57,7 @@ func BackfillExpandedLibrary(ctx context.Context, sqlDB *sql.DB) (err error) {
 	return nil
 }
 
-func backfillLegacySourcesAndArtists(ctx context.Context, tx *sql.Tx) error {
+func backfillLegacyLibraryRows(ctx context.Context, tx *sql.Tx) error {
 	if err := normalizeLegacyArtists(ctx, tx); err != nil {
 		return err
 	}
@@ -61,27 +67,15 @@ func backfillLegacySourcesAndArtists(ctx context.Context, tx *sql.Tx) error {
 	if err := backfillLegacyIdentityKeys(ctx, tx); err != nil {
 		return err
 	}
-	statements := []string{
-		`INSERT OR IGNORE INTO track_sources (
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_sources (
 			id, track_id, source_kind, file_path, source_format, size_bytes
 		) SELECT 'legacy-source:' || id, id, 'legacy', file_path, lower(format), size_bytes
 		FROM tracks
-		WHERE NOT EXISTS (SELECT 1 FROM track_sources WHERE track_sources.track_id = tracks.id)`,
-		`INSERT OR IGNORE INTO album_artists (album_id, artist_id, position)
-		SELECT id, artist_id, 0 FROM albums`,
-		`UPDATE tracks SET
-			codec = COALESCE(codec, lower(format)),
-			container = COALESCE(container, lower(format)),
-			sample_format = COALESCE(sample_format,
-				CASE WHEN bit_depth IS NOT NULL AND bit_depth > 0 THEN printf('s%d', bit_depth) END),
-			bitrate_bps = COALESCE(bitrate_bps,
-				CASE WHEN size_bytes > 0 AND duration_ms > 0
-					THEN (size_bytes * 8000 + duration_ms / 2) / duration_ms END)`,
+		WHERE NOT EXISTS (SELECT 1 FROM track_sources WHERE track_sources.track_id = tracks.id)`); err != nil {
+		return fmt.Errorf("backfill legacy Track sources: %w", err)
 	}
-	for _, statement := range statements {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("backfill legacy source and Artist data: %w", err)
-		}
+	if err := backfillLegacyAlbumArtists(ctx, tx); err != nil {
+		return err
 	}
 	return backfillLegacyGenres(ctx, tx)
 }
@@ -113,12 +107,29 @@ func createMissingLegacyArtists(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("read legacy Track Artists: %w", err)
 	}
 	for _, artist := range artists {
-		artistID, err := findOrCreateNormalizedEntity(ctx, tx, "artists", "legacy-artist", artist.name)
+		artistID, err := findOrCreateLegacyArtist(ctx, tx, artist.name)
 		if err != nil {
 			return fmt.Errorf("backfill legacy Track Artist %q: %w", artist.name, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (?, ?, 0)`, artist.id, artistID); err != nil {
+		if err := relateLegacyTrackArtist(ctx, tx, artist.id, artistID); err != nil {
 			return fmt.Errorf("relate legacy Track %q to Artist: %w", artist.id, err)
+		}
+	}
+	return nil
+}
+
+func backfillLegacyAlbumArtists(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, artist_id FROM albums`)
+	if err != nil {
+		return fmt.Errorf("list legacy Album Artists: %w", err)
+	}
+	albums, err := scanLegacyNames(rows)
+	if err != nil {
+		return fmt.Errorf("read legacy Album Artists: %w", err)
+	}
+	for _, album := range albums {
+		if err := relateLegacyAlbumArtist(ctx, tx, album.id, album.name); err != nil {
+			return fmt.Errorf("relate legacy Album %q to Artist: %w", album.id, err)
 		}
 	}
 	return nil
@@ -133,39 +144,53 @@ func backfillLegacyGenres(ctx context.Context, tx *sql.Tx) error {
 	if err != nil {
 		return fmt.Errorf("read legacy Genres: %w", err)
 	}
-	for _, genre := range genres {
-		genreID, err := findOrCreateNormalizedEntity(ctx, tx, "genres", "legacy-genre", genre.name)
-		if err != nil {
-			return fmt.Errorf("backfill legacy Genre %q: %w", genre.name, err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_genres (track_id, genre_id, position) VALUES (?, ?, 0)`, genre.id, genreID); err != nil {
-			return fmt.Errorf("relate legacy Track %q to Genre: %w", genre.id, err)
+	for _, trackGenres := range genres {
+		for position, genreName := range splitLegacyGenres(trackGenres.name) {
+			genreID, err := findOrCreateLegacyGenre(ctx, tx, genreName)
+			if err != nil {
+				return fmt.Errorf("backfill legacy Genre %q: %w", genreName, err)
+			}
+			if err := relateLegacyTrackGenre(ctx, tx, trackGenres.id, genreID, position); err != nil {
+				return fmt.Errorf("relate legacy Track %q to Genre: %w", trackGenres.id, err)
+			}
 		}
 	}
 	return nil
 }
 
-func findOrCreateNormalizedEntity(ctx context.Context, tx *sql.Tx, tableName string, idPrefix string, name string) (string, error) {
+func findOrCreateLegacyArtist(ctx context.Context, tx *sql.Tx, name string) (string, error) {
 	normalizedName := normalizeLegacyName(name)
 	var existingID string
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE name_normalized = ?`, tableName), normalizedName).Scan(&existingID)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM artists WHERE name_normalized = ?`, normalizedName).Scan(&existingID)
 	if err == nil {
 		return existingID, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	entityID := deterministicLegacyID(idPrefix, normalizedName)
-	if tableName == "artists" {
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO artists (id, name, name_sort, name_normalized) VALUES (?, ?, ?, ?)`,
-			entityID, strings.TrimSpace(name), normalizedName, normalizedName,
-		)
-		return entityID, err
+	entityID := deterministicLegacyID("legacy-artist", normalizedName)
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO artists (id, name, name_sort, name_normalized) VALUES (?, ?, ?, ?)`,
+		entityID, normalizeLegacyDisplayName(name), normalizedName, normalizedName,
+	)
+	return entityID, err
+}
+
+func findOrCreateLegacyGenre(ctx context.Context, tx *sql.Tx, name string) (string, error) {
+	normalizedName := normalizeLegacyName(name)
+	var existingID string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM genres WHERE name_normalized = ?`, normalizedName).Scan(&existingID)
+	if err == nil {
+		return existingID, nil
 	}
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(
-		`INSERT INTO %s (id, name, name_normalized) VALUES (?, ?, ?)`, tableName,
-	), entityID, strings.TrimSpace(name), normalizedName)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	entityID := deterministicLegacyID("legacy-genre", normalizedName)
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO genres (id, name, name_normalized) VALUES (?, ?, ?)`,
+		entityID, normalizeLegacyDisplayName(name), normalizedName,
+	)
 	return entityID, err
 }
 
@@ -187,13 +212,77 @@ func scanLegacyNames(rows *sql.Rows) (values []legacyName, err error) {
 }
 
 func normalizeLegacyName(value string) string {
-	value = strings.Join(strings.Fields(norm.NFC.String(value)), " ")
-	return cases.Fold().String(value)
+	return cases.Fold().String(normalizeLegacyDisplayName(value))
+}
+
+func normalizeLegacyDisplayName(value string) string {
+	return strings.Join(strings.Fields(norm.NFC.String(value)), " ")
+}
+
+func splitLegacyGenres(value string) []string {
+	parts := legacyGenreDelimiterPattern.Split(value, -1)
+	genres := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		displayName := normalizeLegacyDisplayName(part)
+		normalizedName := normalizeLegacyName(displayName)
+		if displayName == "" {
+			continue
+		}
+		if _, exists := seen[normalizedName]; exists {
+			continue
+		}
+		seen[normalizedName] = struct{}{}
+		genres = append(genres, displayName)
+	}
+	return genres
 }
 
 func deterministicLegacyID(prefix string, value string) string {
 	hash := sha256.Sum256([]byte(value))
 	return fmt.Sprintf("%s:%x", prefix, hash)
+}
+
+func relateLegacyTrackArtist(ctx context.Context, tx *sql.Tx, trackID string, artistID string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (?, ?, 0)`, trackID, artistID); err != nil {
+		return err
+	}
+	var relatedArtistID string
+	if err := tx.QueryRowContext(ctx, `SELECT artist_id FROM track_artists WHERE track_id = ? AND position = 0`, trackID).Scan(&relatedArtistID); err != nil {
+		return err
+	}
+	if relatedArtistID != artistID {
+		return fmt.Errorf("position 0 references Artist %q, want %q", relatedArtistID, artistID)
+	}
+	return nil
+}
+
+func relateLegacyAlbumArtist(ctx context.Context, tx *sql.Tx, albumID string, artistID string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_artists (album_id, artist_id, position) VALUES (?, ?, 0)`, albumID, artistID); err != nil {
+		return err
+	}
+	var relatedArtistID string
+	if err := tx.QueryRowContext(ctx, `SELECT artist_id FROM album_artists WHERE album_id = ? AND position = 0`, albumID).Scan(&relatedArtistID); err != nil {
+		return err
+	}
+	if relatedArtistID != artistID {
+		return fmt.Errorf("position 0 references Artist %q, want %q", relatedArtistID, artistID)
+	}
+	return nil
+}
+
+func relateLegacyTrackGenre(ctx context.Context, tx *sql.Tx, trackID string, genreID string, position int) error {
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_genres (track_id, genre_id, position) VALUES (?, ?, ?)`, trackID, genreID, position); err != nil {
+		return err
+	}
+	var relatedGenreID string
+	if err := tx.QueryRowContext(ctx, `SELECT genre_id FROM track_genres WHERE track_id = ? AND position = ?`, trackID, position).Scan(&relatedGenreID); err != nil {
+		return err
+	}
+	if relatedGenreID != genreID {
+		return fmt.Errorf("position %d references Genre %q, want %q", position, relatedGenreID, genreID)
+	}
+	return nil
 }
 
 type legacyAlbumIdentity struct {
@@ -240,7 +329,19 @@ func listLegacyAlbumIdentities(ctx context.Context, tx *sql.Tx) (albums []legacy
 }
 
 func backfillLegacyTrackIdentityKeys(ctx context.Context, tx *sql.Tx) (err error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, title FROM tracks WHERE identity_key IS NULL`)
+	rows, err := tx.QueryContext(ctx, `SELECT tracks.id, tracks.title
+		FROM tracks
+		WHERE tracks.identity_key IS NULL
+		AND (
+			tracks.missing_at IS NOT NULL OR tracks.track_no IS NULL OR NOT EXISTS (
+				SELECT 1 FROM tracks AS conflicting
+				WHERE conflicting.id != tracks.id
+				AND conflicting.album_id = tracks.album_id
+				AND conflicting.missing_at IS NULL
+				AND COALESCE(conflicting.disc_no, 1) = COALESCE(tracks.disc_no, 1)
+				AND conflicting.track_no = tracks.track_no
+			)
+		)`)
 	if err != nil {
 		return fmt.Errorf("list legacy Track identities: %w", err)
 	}
@@ -265,7 +366,6 @@ func verifyExpandedLibraryBackfill(ctx context.Context, tx *sql.Tx) error {
 		{"Track Artist relationship", `SELECT COUNT(*) FROM tracks LEFT JOIN track_artists ON track_artists.track_id = tracks.id WHERE track_artists.track_id IS NULL`},
 		{"Album Artist relationship", `SELECT COUNT(*) FROM albums LEFT JOIN album_artists ON album_artists.album_id = albums.id WHERE album_artists.album_id IS NULL`},
 		{"Track Genre relationship", `SELECT COUNT(*) FROM tracks LEFT JOIN track_genres ON track_genres.track_id = tracks.id WHERE trim(COALESCE(tracks.genre, '')) != '' AND track_genres.track_id IS NULL`},
-		{"Album Artwork metadata", `SELECT COUNT(*) FROM albums LEFT JOIN album_artwork ON album_artwork.album_id = albums.id WHERE length(COALESCE(albums.cover_data, x'')) > 0 AND EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id) AND album_artwork.album_id IS NULL`},
 	}
 	for _, check := range checks {
 		var missingCount int
@@ -295,18 +395,27 @@ func verifyForeignKeys(ctx context.Context, tx *sql.Tx) (err error) {
 }
 
 type legacyArtwork struct {
-	albumID       string
-	sourceTrackID string
-	data          []byte
+	albumID string
+	data    []byte
+}
+
+type legacyTrackFile struct {
+	id       string
+	filePath string
+}
+
+type legacyArtworkMetadata struct {
+	contentHash string
+	mediaType   string
+	width       int
+	height      int
+	sizeBytes   int
 }
 
 func backfillLegacyArtwork(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, `SELECT albums.id,
-		(SELECT tracks.id FROM tracks WHERE tracks.album_id = albums.id ORDER BY tracks.id LIMIT 1),
-		albums.cover_data
+	rows, err := tx.QueryContext(ctx, `SELECT albums.id, albums.cover_data
 		FROM albums
 		WHERE length(COALESCE(albums.cover_data, x'')) > 0
-		AND EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)
 		AND NOT EXISTS (SELECT 1 FROM album_artwork WHERE album_artwork.album_id = albums.id)`)
 	if err != nil {
 		return fmt.Errorf("list legacy Album artwork: %w", err)
@@ -316,8 +425,12 @@ func backfillLegacyArtwork(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("read legacy Album artwork: %w", err)
 	}
 	for _, item := range artwork {
-		if err := storeLegacyArtwork(ctx, tx, item); err != nil {
+		isStored, err := storeLegacyArtwork(ctx, tx, item)
+		if err != nil {
 			return fmt.Errorf("backfill legacy Album artwork %q: %w", item.albumID, err)
+		}
+		if !isStored {
+			slog.Warn("legacy Album artwork metadata could not be verified; preserving legacy artwork only", "albumId", item.albumID)
 		}
 	}
 	return nil
@@ -327,7 +440,7 @@ func scanLegacyArtwork(rows *sql.Rows) (artwork []legacyArtwork, err error) {
 	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
 		var item legacyArtwork
-		if err := rows.Scan(&item.albumID, &item.sourceTrackID, &item.data); err != nil {
+		if err := rows.Scan(&item.albumID, &item.data); err != nil {
 			return nil, err
 		}
 		artwork = append(artwork, item)
@@ -335,27 +448,113 @@ func scanLegacyArtwork(rows *sql.Rows) (artwork []legacyArtwork, err error) {
 	return artwork, rows.Err()
 }
 
-func storeLegacyArtwork(ctx context.Context, tx *sql.Tx, artwork legacyArtwork) error {
-	if len(artwork.data) > MAX_LEGACY_ARTWORK_SIZE_BYTES {
-		return fmt.Errorf("encoded data exceeds %d bytes", MAX_LEGACY_ARTWORK_SIZE_BYTES)
-	}
-	config, format, err := image.DecodeConfig(bytes.NewReader(artwork.data))
+func storeLegacyArtwork(ctx context.Context, tx *sql.Tx, artwork legacyArtwork) (bool, error) {
+	tracks, err := listLegacyArtworkTracks(ctx, tx, artwork.albumID)
 	if err != nil {
-		return fmt.Errorf("decode image metadata: %w", err)
+		return false, err
+	}
+	sourceTrackID, err := verifyLegacyArtworkFiles(tracks, artwork.data)
+	if err != nil {
+		slog.Warn("legacy Album artwork source could not be verified", "albumId", artwork.albumID, "error", err)
+		return false, nil
+	}
+	metadata, isValid := inspectLegacyArtwork(artwork.data)
+	if sourceTrackID == "" || !isValid {
+		return false, nil
+	}
+	return insertLegacyArtwork(ctx, tx, artwork.albumID, sourceTrackID, metadata)
+}
+
+func inspectLegacyArtwork(data []byte) (legacyArtworkMetadata, bool) {
+	if len(data) == 0 || len(data) > MAX_LEGACY_ARTWORK_SIZE_BYTES {
+		return legacyArtworkMetadata{}, false
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return legacyArtworkMetadata{}, false
 	}
 	mediaType, isSupported := map[string]string{"jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[format]
 	if !isSupported || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > MAX_LEGACY_ARTWORK_PIXELS {
-		return fmt.Errorf("unsupported image format or dimensions: %s %dx%d", format, config.Width, config.Height)
+		return legacyArtworkMetadata{}, false
 	}
-	contentHash := fmt.Sprintf("%x", sha256.Sum256(artwork.data))
-	_, err = tx.ExecContext(ctx, `INSERT INTO album_artwork (
+	return legacyArtworkMetadata{
+		contentHash: fmt.Sprintf("%x", sha256.Sum256(data)),
+		mediaType:   mediaType,
+		width:       config.Width,
+		height:      config.Height,
+		sizeBytes:   len(data),
+	}, true
+}
+
+func insertLegacyArtwork(ctx context.Context, tx *sql.Tx, albumID string, sourceTrackID string, metadata legacyArtworkMetadata) (bool, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO album_artwork (
 		id, album_id, source_track_id, content_sha256, media_type,
 		width, height, encoded_size_bytes, file_path
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(album_id) DO NOTHING`,
-		deterministicLegacyID("legacy-artwork", artwork.albumID), artwork.albumID, artwork.sourceTrackID,
-		contentHash, mediaType, config.Width, config.Height, len(artwork.data),
-		"legacy-db://albums/"+url.PathEscape(artwork.albumID)+"/cover",
+		deterministicLegacyID("legacy-artwork", albumID), albumID, sourceTrackID,
+		metadata.contentHash, metadata.mediaType, metadata.width, metadata.height, metadata.sizeBytes,
+		"legacy-db://albums/"+url.PathEscape(albumID)+"/cover",
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read inserted artwork row count: %w", err)
+	}
+	if rowsAffected != 1 {
+		return false, errors.New("deterministic artwork identity conflicts with an existing row")
+	}
+	return true, nil
+}
+
+func listLegacyArtworkTracks(ctx context.Context, tx *sql.Tx, albumID string) (tracks []legacyTrackFile, err error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, file_path FROM tracks
+		WHERE album_id = ? AND missing_at IS NULL ORDER BY id`, albumID)
+	if err != nil {
+		return nil, fmt.Errorf("list Album Tracks: %w", err)
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var track legacyTrackFile
+		if err := rows.Scan(&track.id, &track.filePath); err != nil {
+			return nil, fmt.Errorf("read Album Track: %w", err)
+		}
+		tracks = append(tracks, track)
+	}
+	return tracks, rows.Err()
+}
+
+func verifyLegacyArtworkFiles(tracks []legacyTrackFile, expectedArtwork []byte) (string, error) {
+	if len(tracks) == 0 {
+		return "", errors.New("Album has no active Tracks")
+	}
+	for _, track := range tracks {
+		artwork, err := readLegacyTrackArtwork(track.filePath)
+		if err != nil {
+			return "", fmt.Errorf("read Track %q artwork: %w", track.id, err)
+		}
+		if !bytes.Equal(artwork, expectedArtwork) {
+			return "", fmt.Errorf("Track %q artwork differs from the Album artwork", track.id)
+		}
+	}
+	return tracks[0].id, nil
+}
+
+func readLegacyTrackArtwork(filePath string) (artwork []byte, err error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+	metadata, err := tag.ReadFrom(file)
+	if err != nil {
+		return nil, err
+	}
+	picture := metadata.Picture()
+	if picture == nil || len(picture.Data) == 0 {
+		return nil, errors.New("embedded artwork is missing")
+	}
+	return picture.Data, nil
 }
