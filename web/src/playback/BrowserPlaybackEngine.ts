@@ -396,6 +396,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 				sourceType: source.type,
 				attempt: this.reconnectAttempt,
 				errorType: error instanceof Error ? error.name : typeof error,
+				errorMessage: sanitizeReconnectErrorMessage(error),
 			});
 			shouldRetry =
 				this.sourceRevision === sourceRevision &&
@@ -459,4 +460,12 @@ function canPlayNativeHls(media: BrowserPlaybackMedia) {
 
 function getErrorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Playback failed";
+}
+
+function sanitizeReconnectErrorMessage(error: unknown) {
+	if (!(error instanceof Error)) return "Non-Error rejection";
+	const urlPattern = /\bhttps?:\/\/\S+/gi;
+	const maxMessageLength = 240;
+	const message = error.message.replace(urlPattern, "[redacted-url]").trim();
+	return (message || error.name).slice(0, maxMessageLength);
 }

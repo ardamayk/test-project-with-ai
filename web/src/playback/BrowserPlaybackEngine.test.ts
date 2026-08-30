@@ -223,7 +223,11 @@ describe("BrowserPlaybackEngine", () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
 		await engine.play(createCatalogPreviewSource("catalog-backoff"));
-		media.play.mockRejectedValue(new Error("stream unavailable"));
+		media.play.mockRejectedValue(
+			new Error(
+				"stream unavailable at https://secret.example/live?token=top-secret",
+			),
+		);
 		media.paused = true;
 		media.dispatchEvent(new Event("ended"));
 
@@ -239,6 +243,7 @@ describe("BrowserPlaybackEngine", () => {
 				sourceType: "catalog-preview",
 				attempt: expect.any(Number),
 				errorType: "Error",
+				errorMessage: "stream unavailable at [redacted-url]",
 			},
 		);
 		engine.destroy();

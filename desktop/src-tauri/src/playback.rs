@@ -179,6 +179,7 @@ impl PlaybackCommandError {
 }
 
 pub(crate) enum MpvEvent {
+    LoadBoundary(u64),
     Time(f64),
     Duration(f64),
     Paused(bool),
@@ -197,6 +198,10 @@ pub(crate) trait MpvProcessAdapter: Send + Sync {
     fn set_paused(&self, is_paused: bool) -> Result<(), String>;
     fn seek(&self, seconds: f64) -> Result<(), String>;
     fn set_volume(&self, value: f64) -> Result<(), String>;
+    fn load_with_event_boundary(&self, url: &str, load_revision: u64) -> Result<(), String> {
+        let _ = load_revision;
+        self.load(url)
+    }
     fn configure_output(
         &self,
         _configuration: &MpvOutputConfiguration,
@@ -229,6 +234,7 @@ pub(crate) enum MpvOutputConfiguration {
 enum MpvWorkerRequest {
     Command {
         command: Value,
+        event_boundary: Option<u64>,
         response: Sender<Result<Value, String>>,
     },
     Shutdown,
@@ -282,10 +288,19 @@ impl RealMpvProcess {
     }
 
     fn command(&self, command: Value) -> Result<Value, String> {
+        self.command_with_event_boundary(command, None)
+    }
+
+    fn command_with_event_boundary(
+        &self,
+        command: Value,
+        event_boundary: Option<u64>,
+    ) -> Result<Value, String> {
         let (response_sender, response_receiver) = mpsc::channel();
         self.requests
             .send(MpvWorkerRequest::Command {
                 command,
+                event_boundary,
                 response: response_sender,
             })
             .map_err(|_| "Native mpv process is not running.".to_owned())?;
@@ -394,6 +409,11 @@ impl MpvProcessAdapter for RealMpvProcess {
 
     fn set_volume(&self, value: f64) -> Result<(), String> {
         self.command(json!(["set_property", "volume", value * 100.0]))
+            .map(|_| ())
+    }
+
+    fn load_with_event_boundary(&self, url: &str, load_revision: u64) -> Result<(), String> {
+        self.command_with_event_boundary(json!(["loadfile", url, "replace"]), Some(load_revision))
             .map(|_| ())
     }
 
@@ -649,10 +669,23 @@ fn run_mpv_worker(
     let mut request_id = 0_u64;
     loop {
         match requests.recv_timeout(EVENT_POLL_INTERVAL) {
-            Ok(MpvWorkerRequest::Command { command, response }) => {
+            Ok(MpvWorkerRequest::Command {
+                command,
+                event_boundary,
+                response,
+            }) => {
                 request_id += 1;
                 let result =
                     execute_mpv_command(&mut stream, &mut reader, &events, request_id, command);
+                if result.is_ok()
+                    && let Some(load_revision) = event_boundary
+                {
+                    send_mpv_event(
+                        &events,
+                        MpvEvent::LoadBoundary(load_revision),
+                        "publishing load event boundary",
+                    );
+                }
                 if response.send(result).is_err() {
                     eprintln!(
                         "Pinned mpv command response could not be delivered for request {request_id}: receiver closed."
@@ -856,6 +889,8 @@ pub(crate) struct PlaybackController {
     lifecycle: Arc<Mutex<PlaybackLifecycle>>,
     is_shutdown: Arc<AtomicBool>,
     command_revision: Arc<AtomicU64>,
+    load_revision: Arc<AtomicU64>,
+    published_load_revision: Arc<AtomicU64>,
     event_thread: Option<JoinHandle<()>>,
     listener: StateListener,
 }
@@ -1038,6 +1073,8 @@ impl PlaybackController {
         let queue = Arc::new(Mutex::new(PlaybackQueueContext::default()));
         let is_shutdown = Arc::new(AtomicBool::new(false));
         let command_revision = Arc::new(AtomicU64::new(0));
+        let load_revision = Arc::new(AtomicU64::new(0));
+        let published_load_revision = Arc::new(AtomicU64::new(0));
         let listener: StateListener = Arc::new(listener);
         let output_devices = output_device_adapter
             .map(OutputDeviceCatalog::new)
@@ -1051,6 +1088,8 @@ impl PlaybackController {
                 queue: queue.clone(),
                 is_shutdown: is_shutdown.clone(),
                 command_revision: command_revision.clone(),
+                load_revision: load_revision.clone(),
+                published_load_revision: published_load_revision.clone(),
                 listener: listener.clone(),
                 lifecycle: lifecycle.clone(),
                 starter,
@@ -1069,6 +1108,8 @@ impl PlaybackController {
             lifecycle,
             is_shutdown,
             command_revision,
+            load_revision,
+            published_load_revision,
             event_thread: Some(event_thread),
             listener,
         }
@@ -1126,26 +1167,37 @@ impl PlaybackController {
             self.reset_adaptive_after_failure("source rate setup");
             return self.fail_native(error);
         }
-        if let Err(error) = self.start_playback(&next_source, is_new_source) {
-            self.reset_adaptive_after_failure("mpv playback setup");
-            return self.fail_native(error);
-        }
+        let load_revision = match self.start_playback(&next_source, is_new_source) {
+            Ok(load_revision) => load_revision,
+            Err(error) => {
+                self.reset_adaptive_after_failure("mpv playback setup");
+                return self.fail_native(error);
+            }
+        };
         let state =
             self.update(|state| update_playing_state(state, next_source.clone(), is_new_source))?;
+        if let Some(load_revision) = load_revision {
+            self.published_load_revision
+                .store(load_revision, Ordering::Release);
+        }
         self.align_queue_to_source(&next_source)?;
         self.mark_player_stable()?;
         Ok(state)
     }
 
-    fn start_playback(&self, source: &Value, should_load: bool) -> Result<(), String> {
+    fn start_playback(&self, source: &Value, should_load: bool) -> Result<Option<u64>, String> {
         if !should_load {
-            return self.with_process(|process| process.set_paused(false));
+            return self
+                .with_process(|process| process.set_paused(false))
+                .map(|_| None);
         }
         let url = playback_url(source).map_err(|error| error.message)?;
+        let load_revision = self.next_load_revision();
         self.with_process(|process| {
-            process.load(&url)?;
+            process.load_with_event_boundary(&url, load_revision)?;
             process.set_paused(false)
         })
+        .map(|_| Some(load_revision))
     }
 
     fn apply_adaptive_source_rate(&self, source: &Value) -> Result<(), String> {
@@ -1670,6 +1722,10 @@ impl PlaybackController {
         self.command_revision.fetch_add(1, Ordering::AcqRel);
     }
 
+    fn next_load_revision(&self) -> u64 {
+        self.load_revision.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     fn update(
         &self,
         change: impl FnOnce(&mut PlaybackSessionState),
@@ -1817,6 +1873,8 @@ struct PlaybackEventContext {
     queue: Arc<Mutex<PlaybackQueueContext>>,
     is_shutdown: Arc<AtomicBool>,
     command_revision: Arc<AtomicU64>,
+    load_revision: Arc<AtomicU64>,
+    published_load_revision: Arc<AtomicU64>,
     listener: StateListener,
     lifecycle: Arc<Mutex<PlaybackLifecycle>>,
     starter: Option<ProcessStarter>,
@@ -1833,6 +1891,7 @@ struct LiveReconnectState {
     retry_at: Option<Instant>,
     readiness_deadline: Option<Instant>,
     stability_deadline: Option<Instant>,
+    accepted_load_revision: Option<u64>,
 }
 
 fn run_playback_event_loop(context: PlaybackEventContext, events: &mut Receiver<MpvEvent>) {
@@ -1913,6 +1972,10 @@ fn dispatch_regular_playback_event(
     last_path_refresh: &mut Instant,
     live_reconnect: &mut LiveReconnectState,
 ) {
+    if let MpvEvent::LoadBoundary(load_revision) = &event {
+        handle_load_boundary(context, live_reconnect, *load_revision);
+        return;
+    }
     if is_stable_playback_event(&event) {
         handle_live_stable_event(context, live_reconnect);
     }
@@ -1942,10 +2005,31 @@ fn dispatch_regular_playback_event(
     }
 }
 
+fn handle_load_boundary(
+    context: &PlaybackEventContext,
+    live_reconnect: &mut LiveReconnectState,
+    load_revision: u64,
+) {
+    if context.load_revision.load(Ordering::Acquire) == load_revision {
+        if live_reconnect.armed_source.is_some()
+            && context.command_revision.load(Ordering::Acquire) != live_reconnect.command_revision
+        {
+            *live_reconnect = LiveReconnectState::default();
+        }
+        live_reconnect.accepted_load_revision = Some(load_revision);
+    }
+}
+
 fn handle_live_stable_event(
     context: &PlaybackEventContext,
     live_reconnect: &mut LiveReconnectState,
 ) {
+    let load_revision = context.load_revision.load(Ordering::Acquire);
+    if live_reconnect.accepted_load_revision != Some(load_revision)
+        || context.published_load_revision.load(Ordering::Acquire) != load_revision
+    {
+        return;
+    }
     let Ok(current) = context.state.lock().map(|state| state.clone()) else {
         return;
     };
@@ -2009,6 +2093,9 @@ fn start_live_reconnect(
 }
 
 fn poll_live_reconnect(context: &PlaybackEventContext, live_reconnect: &mut LiveReconnectState) {
+    if live_reconnect.armed_source.is_none() {
+        return;
+    }
     let Ok(current) = context.state.lock().map(|state| state.clone()) else {
         return;
     };
@@ -2112,8 +2199,13 @@ fn reconnect_live_source(
     if context.command_revision.load(Ordering::Acquire) != live_reconnect.command_revision {
         return Err("playback source changed while reconnect was waiting".to_owned());
     }
-    process.load(&url)?;
-    process.set_paused(false)
+    let load_revision = context.load_revision.fetch_add(1, Ordering::AcqRel) + 1;
+    process.load_with_event_boundary(&url, load_revision)?;
+    process.set_paused(false)?;
+    context
+        .published_load_revision
+        .store(load_revision, Ordering::Release);
+    Ok(())
 }
 
 fn schedule_next_live_reconnect(live_reconnect: &mut LiveReconnectState) {
@@ -2741,7 +2833,10 @@ fn reduce_mpv_event(
         }
         MpvEvent::Ended => handle_ended_event(process, state, queue, adaptive_system_rate),
         MpvEvent::Error(message) => handle_mpv_error(process, state, adaptive_system_rate, message),
-        MpvEvent::ExitedUnexpectedly(_) | MpvEvent::Time(_) | MpvEvent::Duration(_) => {
+        MpvEvent::LoadBoundary(_)
+        | MpvEvent::ExitedUnexpectedly(_)
+        | MpvEvent::Time(_)
+        | MpvEvent::Duration(_) => {
             return Ok(None);
         }
     };
@@ -3407,7 +3502,10 @@ mod tests {
         let recorded_actions = actions.clone();
         let recorder = thread::spawn(move || {
             while let Ok(request) = request_receiver.recv() {
-                if let MpvWorkerRequest::Command { command, response } = request {
+                if let MpvWorkerRequest::Command {
+                    command, response, ..
+                } = request
+                {
                     let command_name = command
                         .as_array()
                         .and_then(|values| values.first())
@@ -3890,6 +3988,16 @@ mod tests {
         }
 
         fn shutdown(&self) {}
+    }
+
+    fn publish_current_load_boundary(
+        controller: &PlaybackController,
+        event_sender: &std::sync::mpsc::Sender<MpvEvent>,
+    ) {
+        let load_revision = controller.load_revision.load(Ordering::Acquire);
+        event_sender
+            .send(MpvEvent::LoadBoundary(load_revision))
+            .expect("current load boundary");
     }
 
     #[test]
@@ -5464,6 +5572,7 @@ mod tests {
         controller
             .play(Some(source))
             .expect("play live Radio Station");
+        publish_current_load_boundary(&controller, &event_sender);
         event_sender
             .send(MpvEvent::Time(1.0))
             .expect("stable live event");
@@ -5502,6 +5611,7 @@ mod tests {
         controller
             .play(Some(source))
             .expect("play live Radio Station");
+        publish_current_load_boundary(&controller, &event_sender);
         event_sender
             .send(MpvEvent::Time(1.0))
             .expect("stable live event");
@@ -5523,6 +5633,7 @@ mod tests {
             controller.state().expect("reconnecting state").status,
             PlaybackStatus::Reconnecting
         );
+        publish_current_load_boundary(&controller, &event_sender);
         event_sender
             .send(MpvEvent::Time(2.0))
             .expect("recovered live event");
@@ -5584,6 +5695,7 @@ mod tests {
         controller
             .play(Some(source))
             .expect("play live Radio Station");
+        publish_current_load_boundary(&controller, &event_sender);
         event_sender
             .send(MpvEvent::Time(1.0))
             .expect("stable live event");
@@ -5627,6 +5739,7 @@ mod tests {
         });
 
         controller.play(Some(source)).expect("play Catalog Preview");
+        publish_current_load_boundary(&controller, &event_sender);
         event_sender
             .send(MpvEvent::Time(1.0))
             .expect("stable live event");
@@ -5678,6 +5791,103 @@ mod tests {
     }
 
     #[test]
+    fn delayed_stable_event_does_not_arm_a_replaced_live_source() {
+        let (event_sender, event_receiver) = std::sync::mpsc::channel();
+        let load_calls = Arc::new(AtomicUsize::new(0));
+        let controller = PlaybackController::start(
+            Box::new(ReconnectMpvProcess {
+                load_calls: load_calls.clone(),
+            }),
+            event_receiver,
+            |_| {},
+        );
+        let first_source = json!({
+            "type": "radio-station",
+            "station": { "id": "station-first", "name": "First Radio" },
+            "playbackUrl": "http://127.0.0.1/api/v1/radio/stations/station-first/stream"
+        });
+        let replacement_source = json!({
+            "type": "radio-station",
+            "station": { "id": "station-replacement", "name": "Replacement Radio" },
+            "playbackUrl": "http://127.0.0.1/api/v1/radio/stations/station-replacement/stream"
+        });
+
+        controller
+            .play(Some(first_source))
+            .expect("play first live source");
+        publish_current_load_boundary(&controller, &event_sender);
+        event_sender
+            .send(MpvEvent::Time(1.0))
+            .expect("first source stable event");
+        wait_for_state(&controller, |state| state.current_time == 1.0);
+
+        controller
+            .play(Some(replacement_source))
+            .expect("play replacement live source");
+        event_sender
+            .send(MpvEvent::Time(2.0))
+            .expect("delayed previous-source event");
+        wait_for_state(&controller, |state| state.current_time == 2.0);
+        event_sender
+            .send(MpvEvent::Error("replacement failed initially".to_owned()))
+            .expect("replacement initial error");
+
+        let failed = wait_for_state(&controller, |state| state.status == PlaybackStatus::Error);
+        thread::sleep(Duration::from_millis(75));
+        assert_eq!(failed.status, PlaybackStatus::Error);
+        assert_eq!(load_calls.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn delayed_stable_event_does_not_complete_a_new_reconnect_load() {
+        let (event_sender, event_receiver) = std::sync::mpsc::channel();
+        let load_calls = Arc::new(AtomicUsize::new(0));
+        let controller = PlaybackController::start(
+            Box::new(ReconnectMpvProcess {
+                load_calls: load_calls.clone(),
+            }),
+            event_receiver,
+            |_| {},
+        );
+        let source = json!({
+            "type": "catalog-preview",
+            "result": { "stationUuid": "catalog-delayed", "name": "Delayed Catalog" },
+            "playbackUrl": "http://127.0.0.1/api/v1/radio/preview/catalog-delayed/stream"
+        });
+
+        controller.play(Some(source)).expect("play Catalog Preview");
+        publish_current_load_boundary(&controller, &event_sender);
+        event_sender
+            .send(MpvEvent::Time(1.0))
+            .expect("initial stable event");
+        wait_for_state(&controller, |state| state.current_time == 1.0);
+        event_sender
+            .send(MpvEvent::Ended)
+            .expect("Catalog Preview ended event");
+        wait_for_state(&controller, |state| {
+            state.status == PlaybackStatus::Reconnecting
+        });
+        let first_retry_deadline = Instant::now() + Duration::from_millis(250);
+        while load_calls.load(Ordering::Acquire) < 2 && Instant::now() < first_retry_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        event_sender
+            .send(MpvEvent::Time(2.0))
+            .expect("delayed pre-reconnect event");
+        wait_for_state(&controller, |state| state.current_time == 2.0);
+        assert_eq!(
+            controller.state().expect("reconnecting state").status,
+            PlaybackStatus::Reconnecting
+        );
+        let readiness_retry_deadline = Instant::now() + Duration::from_millis(350);
+        while load_calls.load(Ordering::Acquire) < 3 && Instant::now() < readiness_retry_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(load_calls.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
     fn pausing_cancels_a_pending_live_reconnect() {
         let (event_sender, event_receiver) = std::sync::mpsc::channel();
         let load_calls = Arc::new(AtomicUsize::new(0));
@@ -5702,6 +5912,7 @@ mod tests {
         controller
             .play(Some(source))
             .expect("play live Radio Station");
+        publish_current_load_boundary(&controller, &event_sender);
         event_sender
             .send(MpvEvent::Time(1.0))
             .expect("stable live event");
