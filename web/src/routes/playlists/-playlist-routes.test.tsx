@@ -7,8 +7,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PlaylistsPage } from "./-playlists-page";
 import { PlaylistDetailContent } from "./$playlistId";
-import { PlaylistsPage } from "./index";
 
 const mocks = vi.hoisted(() => ({
 	listPlaylists: vi.fn(),

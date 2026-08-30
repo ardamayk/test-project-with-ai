@@ -7,7 +7,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AlbumsPage } from "./index";
+import { AlbumsPage } from "./-albums-page";
 
 const mocks = vi.hoisted(() => ({
 	listAlbums: vi.fn(),
