@@ -210,29 +210,30 @@ function StationCard({
 		refetchInterval: false,
 	});
 	const nowPlayingLabel = formatNowPlaying(nowPlaying.data);
+	const CardElement = isEditing ? "article" : "button";
 
 	return (
 		<ContextMenu open={isContextMenuOpen} onOpenChange={setIsContextMenuOpen}>
 			<ContextMenuTrigger asChild>
-				<article
+				<CardElement
+					aria-label={isEditing ? undefined : `Play ${station.name}`}
 					data-testid={`radio-station-card-${station.id}`}
 					className={cn(
-						"flex min-w-0 items-start gap-3 rounded-xl border border-border bg-card/45 p-3 transition duration-300 ease-out hover:-translate-y-1 hover:bg-card/65 hover:shadow-lg",
+						"flex min-w-0 items-start gap-3 rounded-xl border border-border bg-card/45 p-3 text-left transition duration-300 ease-out hover:-translate-y-1 hover:bg-card/65 hover:shadow-lg",
+						!isEditing &&
+							"cursor-pointer outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
 						isActive &&
 							"border-border bg-[var(--player)] text-player-foreground shadow-lg",
 					)}
+					onClick={isEditing ? undefined : onPlay}
+					type={isEditing ? undefined : "button"}
 				>
-					<button
-						aria-label="Play station"
-						className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]"
-						type="button"
-						onClick={onPlay}
-					>
+					<div className="shrink-0 rounded-lg">
 						<StationArtwork
 							faviconUrl={station.faviconUrl}
 							name={station.name}
 						/>
-					</button>
+					</div>
 
 					<div className="min-w-0 flex-1">
 						{isEditing ? (
@@ -327,7 +328,7 @@ function StationCard({
 							</Button>
 						</div>
 					) : null}
-				</article>
+				</CardElement>
 			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem asChild>

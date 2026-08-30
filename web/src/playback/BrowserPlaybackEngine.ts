@@ -17,6 +17,7 @@ export interface BrowserPlaybackMedia extends EventTarget {
 	canPlayType(type: string): string;
 	play(): Promise<void>;
 	pause(): void;
+	load(): void;
 	removeAttribute(name: string): void;
 }
 
@@ -24,6 +25,7 @@ type BrowserHls = {
 	attachMedia(media: BrowserPlaybackMedia): void;
 	destroy(): void;
 	loadSource(url: string): void;
+	onFatalError?(listener: () => void): void;
 };
 
 type BrowserHlsFactory = {
@@ -36,6 +38,10 @@ type BrowserPlaybackEngineOptions = {
 	hls?: BrowserHlsFactory;
 };
 
+const LIVE_RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000] as const;
+const LIVE_STALL_TIMEOUT_MS = 10000;
+const LIVE_STABILITY_RESET_MS = 30000;
+
 const defaultHlsFactory: BrowserHlsFactory = {
 	isSupported: () => Hls.isSupported(),
 	create: () => {
@@ -44,6 +50,11 @@ const defaultHlsFactory: BrowserHlsFactory = {
 			attachMedia: (media) => hls.attachMedia(media as HTMLMediaElement),
 			destroy: () => hls.destroy(),
 			loadSource: (url) => hls.loadSource(url),
+			onFatalError: (listener) => {
+				hls.on(Hls.Events.ERROR, (_event, data) => {
+					if (data.fatal) listener();
+				});
+			},
 		};
 	},
 };
@@ -55,6 +66,13 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	private readonly navigationListeners = new Set<PlaybackNavigationListener>();
 	private state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
 	private hls: BrowserHls | null = null;
+	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	private stallTimer: ReturnType<typeof setTimeout> | null = null;
+	private stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+	private reconnectAttempt = 0;
+	private sourceRevision = 0;
+	private hasStartedLivePlayback = false;
+	private isReconnectAttemptRunning = false;
 
 	constructor(options: BrowserPlaybackEngineOptions = {}) {
 		this.media = options.createMedia?.() ?? new Audio();
@@ -90,6 +108,9 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		if (!nextSource) return;
 
 		if (source) {
+			this.cancelLiveReconnect();
+			this.sourceRevision += 1;
+			this.hasStartedLivePlayback = false;
 			this.update({
 				source,
 				status: "paused",
@@ -119,14 +140,19 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	}
 
 	pause() {
+		this.cancelLiveReconnect();
+		this.sourceRevision += 1;
 		this.media.pause();
 		if (this.state.source) this.update({ status: "paused" });
 	}
 
 	stop() {
+		this.cancelLiveReconnect();
+		this.sourceRevision += 1;
 		this.media.pause();
 		this.destroyHls();
 		this.media.removeAttribute("src");
+		this.media.load();
 		this.update({
 			source: null,
 			status: "idle",
@@ -137,6 +163,13 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	}
 
 	togglePlay() {
+		if (
+			this.state.status === "playing" ||
+			this.state.status === "reconnecting"
+		) {
+			this.pause();
+			return;
+		}
 		if (this.media.paused) {
 			void this.play().catch(() => undefined);
 			return;
@@ -170,10 +203,13 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	}
 
 	destroy() {
+		this.cancelLiveReconnect();
+		this.sourceRevision += 1;
 		this.media.pause();
 		this.destroyHls();
 		this.removeMediaListeners();
 		this.media.removeAttribute("src");
+		this.media.load();
 		this.listeners.clear();
 		this.navigationListeners.clear();
 	}
@@ -183,6 +219,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	}
 
 	private readonly handleTimeUpdate = () => {
+		if (isLiveSource(this.state.source)) this.clearStallTimer();
 		this.update({ currentTime: this.media.currentTime });
 	};
 
@@ -192,12 +229,32 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		}
 	};
 
-	private readonly handlePlay = () => this.update({ status: "playing" });
+	private readonly handlePlay = () => {
+		if (this.state.status !== "reconnecting") {
+			this.update({ status: "playing" });
+		}
+	};
+	private readonly handlePlaying = () => {
+		this.clearStallTimer();
+		if (isLiveSource(this.state.source)) this.hasStartedLivePlayback = true;
+		this.update({ status: "playing" });
+		if (this.reconnectAttempt > 0) {
+			this.clearStabilityTimer();
+			this.stabilityTimer = setTimeout(() => {
+				this.stabilityTimer = null;
+				this.reconnectAttempt = 0;
+			}, LIVE_STABILITY_RESET_MS);
+		}
+	};
 	private readonly handlePause = () => {
 		if (this.state.status !== "ended") this.update({ status: "paused" });
 	};
 
 	private readonly handleEnded = () => {
+		if (isLiveSource(this.state.source) && this.hasStartedLivePlayback) {
+			this.scheduleLiveReconnect();
+			return;
+		}
 		if (this.state.repeatMode === "once" || this.state.repeatMode === "loop") {
 			const repeatMode =
 				this.state.repeatMode === "once" ? "off" : this.state.repeatMode;
@@ -208,14 +265,45 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		}
 		this.update({ status: "ended" });
 	};
+	private readonly handleMediaError = () => {
+		if (this.isReconnectAttemptRunning) return;
+		if (isLiveSource(this.state.source) && this.hasStartedLivePlayback) {
+			this.scheduleLiveReconnect();
+			return;
+		}
+		this.update({
+			status: "error",
+			error: {
+				code: "playback-failed",
+				message: "Playback failed",
+			},
+		});
+	};
+	private readonly handleStalled = () => {
+		if (
+			this.stallTimer ||
+			!isLiveSource(this.state.source) ||
+			!this.hasStartedLivePlayback
+		) {
+			return;
+		}
+		this.stallTimer = setTimeout(() => {
+			this.stallTimer = null;
+			this.scheduleLiveReconnect();
+		}, LIVE_STALL_TIMEOUT_MS);
+	};
 
 	private addMediaListeners() {
 		this.media.addEventListener("timeupdate", this.handleTimeUpdate);
 		this.media.addEventListener("durationchange", this.handleDurationChange);
 		this.media.addEventListener("loadedmetadata", this.handleDurationChange);
 		this.media.addEventListener("play", this.handlePlay);
+		this.media.addEventListener("playing", this.handlePlaying);
 		this.media.addEventListener("pause", this.handlePause);
 		this.media.addEventListener("ended", this.handleEnded);
+		this.media.addEventListener("error", this.handleMediaError);
+		this.media.addEventListener("stalled", this.handleStalled);
+		this.media.addEventListener("waiting", this.handleStalled);
 	}
 
 	private removeMediaListeners() {
@@ -223,16 +311,23 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.media.removeEventListener("durationchange", this.handleDurationChange);
 		this.media.removeEventListener("loadedmetadata", this.handleDurationChange);
 		this.media.removeEventListener("play", this.handlePlay);
+		this.media.removeEventListener("playing", this.handlePlaying);
 		this.media.removeEventListener("pause", this.handlePause);
 		this.media.removeEventListener("ended", this.handleEnded);
+		this.media.removeEventListener("error", this.handleMediaError);
+		this.media.removeEventListener("stalled", this.handleStalled);
+		this.media.removeEventListener("waiting", this.handleStalled);
 	}
 
 	private setMediaSource(source: PlaybackSource) {
 		this.destroyHls();
+		this.media.removeAttribute("src");
+		this.media.load();
 		const sourceUrl =
 			source.type === "track" ? source.playbackUrl : source.sourceUrl;
 		if (isHlsStream(sourceUrl) && this.hlsFactory.isSupported()) {
 			this.hls = this.hlsFactory.create();
+			this.hls.onFatalError?.(this.handleMediaError);
 			this.hls.loadSource(source.playbackUrl);
 			this.hls.attachMedia(this.media);
 			return;
@@ -249,10 +344,95 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.hls = null;
 	}
 
+	private scheduleLiveReconnect() {
+		if (
+			this.reconnectTimer ||
+			this.isReconnectAttemptRunning ||
+			!isLiveSource(this.state.source)
+		) {
+			return;
+		}
+		this.clearStabilityTimer();
+		const source = this.state.source;
+		const sourceRevision = this.sourceRevision;
+		const delayIndex = Math.min(
+			this.reconnectAttempt,
+			LIVE_RECONNECT_DELAYS_MS.length - 1,
+		);
+		const delay = LIVE_RECONNECT_DELAYS_MS[delayIndex];
+		this.reconnectAttempt += 1;
+		this.update({ status: "reconnecting", error: null });
+		this.reconnectTimer = setTimeout(() => {
+			this.reconnectTimer = null;
+			void this.reconnectLiveSource(source, sourceRevision);
+		}, delay);
+	}
+
+	private async reconnectLiveSource(
+		source: PlaybackSource,
+		sourceRevision: number,
+	) {
+		if (
+			this.sourceRevision !== sourceRevision ||
+			this.state.source !== source ||
+			this.state.status !== "reconnecting"
+		) {
+			return;
+		}
+		this.isReconnectAttemptRunning = true;
+		let shouldRetry = false;
+		try {
+			await this.setMediaSource(source);
+			if (
+				this.sourceRevision !== sourceRevision ||
+				this.state.source !== source ||
+				this.state.status !== "reconnecting"
+			) {
+				return;
+			}
+			await this.media.play();
+		} catch {
+			shouldRetry =
+				this.sourceRevision === sourceRevision &&
+				this.state.source === source &&
+				this.state.status === "reconnecting";
+		} finally {
+			this.isReconnectAttemptRunning = false;
+		}
+		if (shouldRetry) this.scheduleLiveReconnect();
+	}
+
+	private cancelLiveReconnect() {
+		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+		this.reconnectTimer = null;
+		this.clearStallTimer();
+		this.clearStabilityTimer();
+		this.reconnectAttempt = 0;
+	}
+
+	private clearStallTimer() {
+		if (this.stallTimer) clearTimeout(this.stallTimer);
+		this.stallTimer = null;
+	}
+
+	private clearStabilityTimer() {
+		if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
+		this.stabilityTimer = null;
+	}
+
 	private update(next: Partial<PlaybackSessionState>) {
 		this.state = { ...this.state, ...next };
 		for (const listener of this.listeners) listener(this.state);
 	}
+}
+
+function isLiveSource(
+	source: PlaybackSource | null,
+): source is Extract<
+	PlaybackSource,
+	{ type: "radio-station" | "catalog-preview" }
+> {
+	return source?.type === "radio-station" || source?.type === "catalog-preview";
 }
 
 function isHlsStream(url: string) {

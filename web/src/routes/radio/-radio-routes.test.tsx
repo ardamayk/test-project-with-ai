@@ -239,7 +239,7 @@ describe("radio routes", () => {
 
 		await screen.findByText("Rock Hits");
 
-		fireEvent.click(screen.getAllByRole("button", { name: "Play station" })[1]);
+		fireEvent.click(screen.getByRole("button", { name: "Play Rock Hits" }));
 		expect(mocks.playRadioStation).toHaveBeenCalledWith(stations[1]);
 
 		fireEvent.contextMenu(screen.getByText("Rock Hits"));
@@ -265,6 +265,17 @@ describe("radio routes", () => {
 				streamUrl: "https://example.com/jazz",
 			});
 		});
+		expect(mocks.playRadioStation).toHaveBeenCalledTimes(1);
+	});
+
+	it("plays a saved station from the full card", async () => {
+		renderWithQuery(<RadioPage />);
+
+		const jazzCard = await screen.findByTestId("radio-station-card-s1");
+		fireEvent.click(jazzCard);
+
+		expect(jazzCard.className).toContain("cursor-pointer");
+		expect(mocks.playRadioStation).toHaveBeenCalledWith(stations[0]);
 	});
 
 	it("removes favorite controls from saved station rows", async () => {
