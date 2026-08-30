@@ -46,15 +46,15 @@ type InspectionError struct {
 	Err   error
 }
 
-func (e *InspectionError) Error() string {
-	if e.Field != "" {
-		return fmt.Sprintf("inspect %s: %s: %v", e.Field, e.Code, e.Err)
+func (inspectionErr *InspectionError) Error() string {
+	if inspectionErr.Field != "" {
+		return fmt.Sprintf("inspect %s: %s: %v", inspectionErr.Field, inspectionErr.Code, inspectionErr.Err)
 	}
-	return fmt.Sprintf("inspect: %s: %v", e.Code, e.Err)
+	return fmt.Sprintf("inspect: %s: %v", inspectionErr.Code, inspectionErr.Err)
 }
 
-func (e *InspectionError) Unwrap() error {
-	return e.Err
+func (inspectionErr *InspectionError) Unwrap() error {
+	return inspectionErr.Err
 }
 
 // MediaInspector validates one stable local file through the Strict Import Profile.
@@ -64,26 +64,29 @@ type MediaInspector interface {
 }
 
 type MediaInspection struct {
-	Metadata   NormalizedMediaMetadata
-	Artwork    EmbeddedArtwork
-	Audio      TechnicalAudioProperties
-	FileSHA256 string
+	Metadata     NormalizedMediaMetadata
+	AlbumArtwork AlbumArtwork
+	Audio        TechnicalAudioProperties
+	FileSHA256   string
 }
 
 type NormalizedMediaMetadata struct {
-	Title        string
-	Artists      []string
-	AlbumArtists []string
-	Album        string
-	TrackNumber  int
-	TrackTotal   int
-	DiscNumber   int
-	DiscTotal    int
-	Genres       []string
-	Year         int
+	Title         string
+	Artists       []string
+	AlbumArtists  []string
+	Album         string
+	TrackPosition MediaPosition
+	DiscPosition  MediaPosition
+	Genres        []string
+	Year          int
 }
 
-type EmbeddedArtwork struct {
+type MediaPosition struct {
+	Number int
+	Total  int
+}
+
+type AlbumArtwork struct {
 	MIMEType string
 	Width    int
 	Height   int
@@ -112,8 +115,22 @@ func (defaultMediaInspector) Inspect(path string) (MediaInspection, error) {
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
-	defer func() { _ = file.Close() }()
+	inspection, inspectionErr := inspectOpenFLAC(file)
+	closeErr := file.Close()
+	if closeErr != nil {
+		closeFailure := inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("close file: %w", closeErr))
+		if inspectionErr != nil {
+			return MediaInspection{}, errors.Join(inspectionErr, closeFailure)
+		}
+		return MediaInspection{}, closeFailure
+	}
+	if inspectionErr != nil {
+		return MediaInspection{}, inspectionErr
+	}
+	return inspection, nil
+}
 
+func inspectOpenFLAC(file *os.File) (MediaInspection, error) {
 	fileHash, sizeBytes, err := hashAndRewind(file)
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
@@ -138,7 +155,7 @@ func (defaultMediaInspector) Inspect(path string) (MediaInspection, error) {
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	return MediaInspection{Metadata: metadata, Artwork: artwork, Audio: audio, FileSHA256: fileHash}, nil
+	return MediaInspection{Metadata: metadata, AlbumArtwork: artwork, Audio: audio, FileSHA256: fileHash}, nil
 }
 
 func validateFLACSignature(file *os.File) error {
@@ -169,31 +186,15 @@ func hashAndRewind(file *os.File) (string, int64, error) {
 
 func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, error) {
 	tags := collectVorbisTags(blocks)
-	title, err := requiredSingleTag(tags, "TITLE")
+	names, err := inspectFLACNames(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
-	artists, err := requiredTags(tags, "ARTIST")
+	trackPosition, err := requiredPosition(tags, "TRACKNUMBER")
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
-	albumArtists, err := requiredTags(tags, "ALBUMARTIST")
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	album, err := requiredSingleTag(tags, "ALBUM")
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	genres, err := requiredTags(tags, "GENRE")
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	trackNumber, trackTotal, err := requiredPosition(tags, "TRACKNUMBER")
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	discNumber, discTotal, err := optionalPosition(tags, "DISCNUMBER", 1)
+	discPosition, err := optionalPosition(tags, "DISCNUMBER", 1)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
@@ -202,17 +203,44 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 		return NormalizedMediaMetadata{}, err
 	}
 	return NormalizedMediaMetadata{
-		Title:        title,
-		Artists:      artists,
-		AlbumArtists: albumArtists,
-		Album:        album,
-		TrackNumber:  trackNumber,
-		TrackTotal:   trackTotal,
-		DiscNumber:   discNumber,
-		DiscTotal:    discTotal,
-		Genres:       genres,
-		Year:         year,
+		Title:         names.Title,
+		Artists:       names.Artists,
+		AlbumArtists:  names.AlbumArtists,
+		Album:         names.Album,
+		TrackPosition: trackPosition,
+		DiscPosition:  discPosition,
+		Genres:        names.Genres,
+		Year:          year,
 	}, nil
+}
+
+type normalizedMediaNames struct {
+	Title        string
+	Artists      []string
+	AlbumArtists []string
+	Album        string
+	Genres       []string
+}
+
+func inspectFLACNames(tags map[string][]string) (normalizedMediaNames, error) {
+	var names normalizedMediaNames
+	var err error
+	if names.Title, err = requiredSingleTag(tags, "TITLE"); err != nil {
+		return normalizedMediaNames{}, err
+	}
+	if names.Artists, err = requiredTags(tags, "ARTIST"); err != nil {
+		return normalizedMediaNames{}, err
+	}
+	if names.AlbumArtists, err = requiredTags(tags, "ALBUMARTIST"); err != nil {
+		return normalizedMediaNames{}, err
+	}
+	if names.Album, err = requiredSingleTag(tags, "ALBUM"); err != nil {
+		return normalizedMediaNames{}, err
+	}
+	if names.Genres, err = requiredTags(tags, "GENRE"); err != nil {
+		return normalizedMediaNames{}, err
+	}
+	return names, nil
 }
 
 func collectVorbisTags(blocks []*flacmeta.Block) map[string][]string {
@@ -266,42 +294,42 @@ func normalizeMetadataValue(value string) (string, bool) {
 	return value, value != ""
 }
 
-func requiredPosition(tags map[string][]string, key string) (int, int, error) {
+func requiredPosition(tags map[string][]string, key string) (MediaPosition, error) {
 	value, err := requiredSingleTag(tags, key)
 	if err != nil {
-		return 0, 0, err
+		return MediaPosition{}, err
 	}
-	position, total, err := parsePosition(value)
-	if err != nil || position <= 0 {
-		return 0, 0, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, errors.New("position must be a positive integer with an optional total"))
+	position, err := parsePosition(value)
+	if err != nil || position.Number <= 0 {
+		return MediaPosition{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, errors.New("position must be a positive integer with an optional total"))
 	}
-	return position, total, nil
+	return position, nil
 }
 
-func optionalPosition(tags map[string][]string, key string, defaultPosition int) (int, int, error) {
+func optionalPosition(tags map[string][]string, key string, defaultPosition int) (MediaPosition, error) {
 	if len(tags[key]) == 0 {
-		return defaultPosition, 0, nil
+		return MediaPosition{Number: defaultPosition}, nil
 	}
 	return requiredPosition(tags, key)
 }
 
-func parsePosition(value string) (int, int, error) {
+func parsePosition(value string) (MediaPosition, error) {
 	parts := strings.Split(value, "/")
 	if len(parts) > 2 {
-		return 0, 0, errors.New("too many position parts")
+		return MediaPosition{}, errors.New("too many position parts")
 	}
 	position, err := strconv.Atoi(strings.TrimSpace(parts[0]))
 	if err != nil {
-		return 0, 0, err
+		return MediaPosition{}, err
 	}
 	if len(parts) == 1 || strings.TrimSpace(parts[1]) == "" {
-		return position, 0, nil
+		return MediaPosition{Number: position}, nil
 	}
 	total, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 	if err != nil || total < position {
-		return 0, 0, errors.New("position total is invalid")
+		return MediaPosition{}, errors.New("position total is invalid")
 	}
-	return position, total, nil
+	return MediaPosition{Number: position, Total: total}, nil
 }
 
 func optionalYear(tags map[string][]string) (int, error) {
@@ -322,7 +350,7 @@ func optionalYear(tags map[string][]string) (int, error) {
 	return year, nil
 }
 
-func inspectFLACArtwork(blocks []*flacmeta.Block) (EmbeddedArtwork, error) {
+func inspectFLACArtwork(blocks []*flacmeta.Block) (AlbumArtwork, error) {
 	var frontCover *flacmeta.Picture
 	for _, block := range blocks {
 		picture, ok := block.Body.(*flacmeta.Picture)
@@ -330,33 +358,33 @@ func inspectFLACArtwork(blocks []*flacmeta.Block) (EmbeddedArtwork, error) {
 			continue
 		}
 		if frontCover != nil {
-			return EmbeddedArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple front covers are ambiguous"))
+			return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple front covers are ambiguous"))
 		}
 		frontCover = picture
 	}
 	if frontCover == nil {
-		return EmbeddedArtwork{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
+		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
 	}
 	return validateArtwork(frontCover)
 }
 
-func validateArtwork(picture *flacmeta.Picture) (EmbeddedArtwork, error) {
+func validateArtwork(picture *flacmeta.Picture) (AlbumArtwork, error) {
 	if len(picture.Data) == 0 || len(picture.Data) > MAX_ARTWORK_SIZE_BYTES {
-		return EmbeddedArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("encoded artwork size is invalid"))
+		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("encoded artwork size is invalid"))
 	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(picture.Data))
 	if err != nil {
-		return EmbeddedArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", fmt.Errorf("decode image: %w", err))
+		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", fmt.Errorf("decode image: %w", err))
 	}
 	mimeType := map[string]string{"jpeg": "image/jpeg", "png": "image/png"}[format]
 	if mimeType == "" || picture.MIME != mimeType {
-		return EmbeddedArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("declared and detected image formats differ or are unsupported"))
+		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("declared and detected image formats differ or are unsupported"))
 	}
 	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > MAX_ARTWORK_PIXELS {
-		return EmbeddedArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("decoded artwork dimensions are invalid"))
+		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("decoded artwork dimensions are invalid"))
 	}
 	hash := sha256.Sum256(picture.Data)
-	return EmbeddedArtwork{MIMEType: mimeType, Width: config.Width, Height: config.Height, Data: append([]byte(nil), picture.Data...), SHA256: hex.EncodeToString(hash[:])}, nil
+	return AlbumArtwork{MIMEType: mimeType, Width: config.Width, Height: config.Height, Data: append([]byte(nil), picture.Data...), SHA256: hex.EncodeToString(hash[:])}, nil
 }
 
 func inspectFLACAudio(stream *flac.Stream, sizeBytes int64) (TechnicalAudioProperties, error) {
