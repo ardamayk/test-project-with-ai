@@ -135,8 +135,8 @@ func inspectOpenFLAC(file *os.File) (MediaInspection, error) {
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
-	if err := validateFLACSignature(file); err != nil {
-		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "format", err)
+	if signatureErr := validateFLACSignature(file); signatureErr != nil {
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "format", signatureErr)
 	}
 	stream, err := flac.Parse(file)
 	if err != nil {

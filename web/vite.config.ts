@@ -6,6 +6,17 @@ import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const LAZY_HLS_CHUNK_SIZE_WARNING_LIMIT_KB = 550;
+const DEFAULT_API_PROXY_TARGET = "http://localhost:8090";
+
+const apiProxy = {
+	target: process.env.VITE_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET,
+	changeOrigin: true,
+};
+
+const proxyRoutes = {
+	"/api": apiProxy,
+	"/docs": apiProxy,
+};
 
 const config = defineConfig({
 	resolve: { tsconfigPaths: true },
@@ -15,17 +26,9 @@ const config = defineConfig({
 	},
 	server: {
 		port: 3000,
-		proxy: {
-			"/api": {
-				target: "http://localhost:8090",
-				changeOrigin: true,
-			},
-			"/docs": {
-				target: "http://localhost:8090",
-				changeOrigin: true,
-			},
-		},
+		proxy: proxyRoutes,
 	},
+	preview: { proxy: proxyRoutes },
 	plugins: [
 		devtools(),
 		tailwindcss(),
