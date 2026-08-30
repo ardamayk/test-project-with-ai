@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	database "github.com/ardam/navidrome-replacement/server/internal/db"
@@ -14,8 +15,8 @@ import (
 )
 
 const (
-	legacyMigrationVersion = 13
-	strictIdentityVersion  = 14
+	LEGACY_MIGRATION_VERSION = 13
+	STRICT_IDENTITY_VERSION  = 14
 )
 
 func TestStrictTrackIdentityMigrationAppliesAndRollsBackOnEmptyDatabase(t *testing.T) {
@@ -24,27 +25,27 @@ func TestStrictTrackIdentityMigrationAppliesAndRollsBackOnEmptyDatabase(t *testi
 	if err != nil {
 		t.Fatalf("migrate empty database: %v", err)
 	}
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	registerDatabaseCleanup(t, sqlDB)
 
-	assertMigrationVersion(t, sqlDB, strictIdentityVersion)
+	assertMigrationVersion(t, sqlDB, STRICT_IDENTITY_VERSION)
 	assertStrictIdentitySchema(t, sqlDB)
 
 	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
 		t.Fatalf("roll back strict identity migration: %v", err)
 	}
-	assertMigrationVersion(t, sqlDB, legacyMigrationVersion)
+	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_VERSION)
 	assertTableMissing(t, sqlDB, "track_sources")
 	assertColumnMissing(t, sqlDB, "tracks", "disc_no")
 
 	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
 		t.Fatalf("reapply strict identity migration: %v", err)
 	}
-	assertMigrationVersion(t, sqlDB, strictIdentityVersion)
+	assertMigrationVersion(t, sqlDB, STRICT_IDENTITY_VERSION)
 	assertStrictIdentitySchema(t, sqlDB)
 }
 
 func TestStrictTrackIdentityMigrationPreservesPopulatedLegacyDatabase(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, legacyMigrationVersion)
+	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 
 	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
@@ -61,16 +62,18 @@ func TestStrictTrackIdentityMigrationPreservesPopulatedLegacyDatabase(t *testing
 }
 
 func TestStrictTrackIdentitySchemaEnforcesIdentityAndConcurrencyConstraints(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, strictIdentityVersion)
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 
-	assertExecFails(t, sqlDB, invalidTrackTotalsUpdate())
+	assertExecFails(t, sqlDB, invalidTrackTotalsUpdate(), "invalid strict Track position totals")
 	storeStrictTrackIdentity(t, sqlDB)
 	insertSecondAlbumTrack(t, sqlDB)
 	assertDuplicateTrackHashRejected(t, sqlDB)
 	assertExecFails(t, sqlDB, `
-		UPDATE tracks SET album_id = 'album-1', disc_no = 1, track_no = 1 WHERE id = 'track-2'
-	`)
+		UPDATE tracks
+		SET album_id = 'album-1', disc_no = NULL, track_no = 1, identity_key = 'track-two'
+		WHERE id = 'track-2'
+	`, "idx_tracks_active_album_position")
 	assertOrderedRelationshipsRejectPositionConflicts(t, sqlDB)
 	assertReleaseIdentifiersRejectConcurrentMatches(t, sqlDB)
 }
@@ -112,18 +115,26 @@ func assertDuplicateTrackHashRejected(t *testing.T, sqlDB *sql.DB) {
 			'source-2', 'track-2', 'managed', '/managed/track-2.flac',
 			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'flac', 100
 		)
-	`)
+	`, "track_sources.content_sha256")
+	assertExecFails(t, sqlDB, `
+		INSERT INTO track_sources (
+			id, track_id, source_kind, file_path, source_format, size_bytes
+		) VALUES (
+			'source-2', 'track-2', 'managed', '/managed/track-2.flac', 'flac', 100
+		)
+	`, "managed_source_hash_required")
 }
 
 func TestStrictTrackIdentitySchemaRequiresArtworkSourceFromSameAlbum(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, strictIdentityVersion)
+	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
 	insertLegacyLibrary(t, sqlDB)
 	insertSecondAlbumTrack(t, sqlDB)
 
-	assertExecFails(t, sqlDB, albumArtworkInsert("track-2"))
+	assertExecFails(t, sqlDB, albumArtworkInsert("track-2"), "Album Artwork source Track must belong to the Album")
 	if _, err := sqlDB.Exec(albumArtworkInsert("track-1")); err != nil {
 		t.Fatalf("store Album Artwork metadata: %v", err)
 	}
+	assertExecFails(t, sqlDB, `UPDATE tracks SET album_id = 'album-2' WHERE id = 'track-1'`, "Album Artwork source Track must remain in the Album")
 }
 
 func migrationsDir(t *testing.T) string {
@@ -143,7 +154,7 @@ func openDatabaseAtVersion(t *testing.T, version int64) *sql.DB {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	registerDatabaseCleanup(t, sqlDB)
 	if err := goose.SetDialect("sqlite"); err != nil {
 		t.Fatalf("set migration dialect: %v", err)
 	}
@@ -200,9 +211,9 @@ func assertOrderedRelationshipsRejectPositionConflicts(t *testing.T, sqlDB *sql.
 	if err != nil {
 		t.Fatalf("store ordered relationships: %v", err)
 	}
-	assertExecFails(t, sqlDB, `INSERT INTO track_artists (track_id, artist_id, position) VALUES ('track-1', 'artist-2', 0)`)
-	assertExecFails(t, sqlDB, `INSERT INTO album_artists (album_id, artist_id, position) VALUES ('album-1', 'artist-2', 0)`)
-	assertExecFails(t, sqlDB, `INSERT INTO genres (id, name, name_normalized) VALUES ('genre-2', 'ROCK', 'rock')`)
+	assertExecFails(t, sqlDB, `INSERT INTO track_artists (track_id, artist_id, position) VALUES ('track-1', 'artist-2', 0)`, "track_artists.track_id, track_artists.position")
+	assertExecFails(t, sqlDB, `INSERT INTO album_artists (album_id, artist_id, position) VALUES ('album-1', 'artist-2', 0)`, "album_artists.album_id, album_artists.position")
+	assertExecFails(t, sqlDB, `INSERT INTO genres (id, name, name_normalized) VALUES ('genre-2', 'ROCK', 'rock')`, "genres.name_normalized")
 }
 
 func assertReleaseIdentifiersRejectConcurrentMatches(t *testing.T, sqlDB *sql.DB) {
@@ -217,13 +228,17 @@ func assertReleaseIdentifiersRejectConcurrentMatches(t *testing.T, sqlDB *sql.DB
 	assertExecFails(t, sqlDB, `
 		INSERT INTO album_release_identifiers (album_id, scheme, value)
 		VALUES ('album-2', 'musicbrainz_release', 'release-1')
-	`)
+	`, "album_release_identifiers.scheme, album_release_identifiers.value")
 }
 
-func assertExecFails(t *testing.T, sqlDB *sql.DB, statement string) {
+func assertExecFails(t *testing.T, sqlDB *sql.DB, statement string, expectedError string) {
 	t.Helper()
-	if _, err := sqlDB.Exec(statement); err == nil {
+	_, err := sqlDB.Exec(statement)
+	if err == nil {
 		t.Fatalf("statement unexpectedly succeeded: %s", statement)
+	}
+	if !strings.Contains(err.Error(), expectedError) {
+		t.Fatalf("statement error = %q, want error containing %q", err, expectedError)
 	}
 }
 
@@ -338,7 +353,11 @@ func hasColumn(t *testing.T, sqlDB *sql.DB, tableName string, columnName string)
 	if err != nil {
 		t.Fatalf("list columns for %s: %v", tableName, err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close columns for %s: %v", tableName, err)
+		}
+	}()
 	for rows.Next() {
 		var columnID int
 		var name string
@@ -357,4 +376,13 @@ func hasColumn(t *testing.T, sqlDB *sql.DB, tableName string, columnName string)
 		t.Fatalf("iterate columns for %s: %v", tableName, err)
 	}
 	return false
+}
+
+func registerDatabaseCleanup(t *testing.T, sqlDB *sql.DB) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
 }

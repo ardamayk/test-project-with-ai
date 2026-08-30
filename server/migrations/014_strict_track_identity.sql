@@ -25,8 +25,8 @@ ALTER TABLE tracks ADD COLUMN identity_key TEXT;
 ALTER TABLE tracks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0);
 
 CREATE UNIQUE INDEX idx_tracks_active_album_position
-    ON tracks(album_id, disc_no, track_no)
-    WHERE missing_at IS NULL AND disc_no IS NOT NULL AND track_no IS NOT NULL;
+    ON tracks(album_id, COALESCE(disc_no, 1), track_no)
+    WHERE missing_at IS NULL AND identity_key IS NOT NULL AND track_no IS NOT NULL;
 
 CREATE INDEX idx_tracks_album_identity_key
     ON tracks(album_id, identity_key)
@@ -71,7 +71,10 @@ CREATE TABLE track_sources (
     size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT managed_source_hash_required CHECK (
+        source_kind != 'managed' OR content_sha256 IS NOT NULL
+    )
 );
 
 CREATE UNIQUE INDEX idx_track_sources_content_sha256
@@ -180,7 +183,21 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+CREATE TRIGGER validate_album_artwork_source_track_album_update
+BEFORE UPDATE OF album_id ON tracks
+WHEN EXISTS (
+    SELECT 1
+    FROM album_artwork
+    WHERE source_track_id = OLD.id AND album_id != NEW.album_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Album Artwork source Track must remain in the Album');
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS validate_album_artwork_source_track_album_update;
 DROP TRIGGER IF EXISTS validate_album_artwork_source_update;
 DROP TRIGGER IF EXISTS validate_album_artwork_source_insert;
 DROP TABLE IF EXISTS album_artwork;
