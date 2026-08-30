@@ -156,6 +156,22 @@ func TestBackfillExpandedLibraryNormalizesAlbumOnlyGenres(t *testing.T) {
 	assertTextValue(t, sqlDB, `SELECT group_concat(name, ',') FROM (SELECT name FROM genres ORDER BY name_normalized)`, "Pop,Rock")
 }
 
+func TestBackfillExpandedLibraryIgnoresDelimiterOnlyGenres(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	if _, err := sqlDB.Exec(`UPDATE tracks SET genre = '; / | ,' WHERE id = 'track-1'`); err != nil {
+		t.Fatalf("store delimiter-only legacy Track Genre: %v", err)
+	}
+
+	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
+		t.Fatalf("backfill expanded library: %v", err)
+	}
+
+	assertRowCount(t, sqlDB, "genres", 0)
+	assertRowCount(t, sqlDB, "track_genres", 0)
+	assertLegacyTrack(t, sqlDB)
+}
+
 func TestBackfillExpandedLibraryPopulatesAlbumArtworkMetadata(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
 	insertLegacyLibrary(t, sqlDB)

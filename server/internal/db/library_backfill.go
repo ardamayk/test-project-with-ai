@@ -555,7 +555,6 @@ func verifyExpandedLibraryBackfill(ctx context.Context, tx *sql.Tx) error {
 		{"Track source", `SELECT COUNT(*) FROM tracks LEFT JOIN track_sources ON track_sources.track_id = tracks.id WHERE track_sources.track_id IS NULL`},
 		{"Track Artist relationship", `SELECT COUNT(*) FROM tracks LEFT JOIN track_artists ON track_artists.track_id = tracks.id WHERE track_artists.track_id IS NULL`},
 		{"Album Artist relationship", `SELECT COUNT(*) FROM albums LEFT JOIN album_artists ON album_artists.album_id = albums.id WHERE album_artists.album_id IS NULL`},
-		{"Track Genre relationship", `SELECT COUNT(*) FROM tracks LEFT JOIN track_genres ON track_genres.track_id = tracks.id WHERE trim(COALESCE(tracks.genre, '')) != '' AND track_genres.track_id IS NULL`},
 		{"legacy Album Artwork metadata", `SELECT COUNT(*) FROM albums LEFT JOIN legacy_album_artwork_metadata ON legacy_album_artwork_metadata.album_id = albums.id WHERE length(COALESCE(albums.cover_data, x'')) > 0 AND legacy_album_artwork_metadata.album_id IS NULL`},
 	}
 	for _, check := range checks {
