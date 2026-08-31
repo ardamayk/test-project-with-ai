@@ -46,8 +46,8 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationError(err))
 	}
-	if err := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); err != nil {
-		return Preview{}, service.failUpload(ctx, jobID, stagedPath, err)
+	if validationErr := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); validationErr != nil {
+		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationErr)
 	}
 	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, stagedPath, inspection.FileSHA256)
 	if err != nil {
