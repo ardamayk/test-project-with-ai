@@ -261,51 +261,57 @@ func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 }
 
 func TestManagedImportExposesValidationProgressAndCancellation(t *testing.T) {
-	database := testutil.OpenMigratedDB(t)
-	configuration := config.Config{ManagedStoragePath: t.TempDir()}
 	inspector := &cancellingInspector{reported: make(chan struct{})}
-	importModule := managedimport.NewModule(database, configuration, inspector)
-	router := chi.NewRouter()
-	importModule.RegisterRoutes(router)
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
-	var job struct {
-		ID string `json:"id"`
-	}
-	decodeJSON(t, jobResponse, &job)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	uploadRequest := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(readStrictFLACFixture(t))).WithContext(ctx)
-	uploadRequest.Header.Set("Content-Type", "audio/flac")
-	uploadRequest.Header.Set("X-Import-Filename", "strict-import.flac")
-	uploadResponse := httptest.NewRecorder()
-	uploadDone := make(chan struct{})
-	go func() {
-		defer close(uploadDone)
-		router.ServeHTTP(uploadResponse, uploadRequest)
-	}()
-
-	select {
-	case <-inspector.reported:
-	case <-time.After(2 * time.Second):
-		t.Fatal("validation progress was not reported")
-	}
-	activeJob := getManagedImportJob(t, router, job.ID)
+	router := newManagedImportRouter(t, inspector)
+	jobID := createManagedImportJob(t, router)
+	cancel, uploadResponse, uploadDone := startManagedImportUpload(t, router, jobID)
+	waitForSignal(t, inspector.reported, "validation progress was not reported")
+	activeJob := getManagedImportJob(t, router, jobID)
 	if activeJob.Status != "uploading" || activeJob.ValidationProgress != 40 || activeJob.ErrorCode != "" {
 		t.Fatalf("active Managed Import Job = %+v", activeJob)
 	}
 
 	cancel()
-	select {
-	case <-uploadDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("validation did not stop after cancellation")
-	}
+	waitForSignal(t, uploadDone, "validation did not stop after cancellation")
 	if uploadResponse.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("cancelled validation status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
 	}
-	failedJob := getManagedImportJob(t, router, job.ID)
+	failedJob := getManagedImportJob(t, router, jobID)
 	if failedJob.Status != "failed" || failedJob.ValidationProgress != 40 || failedJob.ErrorCode != "validation_cancelled" {
 		t.Fatalf("cancelled Managed Import Job = %+v", failedJob)
+	}
+}
+
+func TestManagedImportRecordsCancellationAtPreviewBoundary(t *testing.T) {
+	inspector := &completionCancellingInspector{}
+	router := newManagedImportRouter(t, inspector)
+	jobID := createManagedImportJob(t, router)
+	ctx, cancel := context.WithCancel(context.Background())
+	inspector.cancel = cancel
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t))).WithContext(ctx)
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "strict-import.flac")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	job := getManagedImportJob(t, router, jobID)
+	if job.Status != "failed" || job.ValidationProgress != 100 || job.ErrorCode != "validation_cancelled" {
+		t.Fatalf("preview-boundary cancellation result = %+v", job)
+	}
+}
+
+func TestManagedImportDetectsFLACWithoutTrustingFilenameOrContentType(t *testing.T) {
+	router := newManagedImportRouter(t, library.NewMediaInspector())
+	jobID := createManagedImportJob(t, router)
+
+	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t)), map[string]string{
+		"Content-Type":      "audio/mpeg",
+		"X-Import-Filename": "misleading.mp3",
+	})
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"container":"flac"`) || !strings.Contains(response.Body.String(), `"codec":"flac"`) {
+		t.Fatalf("detected FLAC response = %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -328,6 +334,62 @@ func getManagedImportJob(t *testing.T, router http.Handler, jobID string) manage
 
 type cancellingInspector struct {
 	reported chan struct{}
+}
+
+type completionCancellingInspector struct {
+	cancel context.CancelFunc
+}
+
+func (inspector *completionCancellingInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
+	inspection, err := library.NewMediaInspector().Inspect(ctx, path, reportProgress)
+	if err != nil {
+		return library.MediaInspection{}, err
+	}
+	inspector.cancel()
+	return inspection, nil
+}
+
+func createManagedImportJob(t *testing.T, router http.Handler) string {
+	t.Helper()
+	response := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	var job struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, response, &job)
+	return job.ID
+}
+
+func newManagedImportRouter(t *testing.T, inspector library.MediaInspector) http.Handler {
+	t.Helper()
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	router := chi.NewRouter()
+	managedimport.NewModule(database, configuration, inspector).RegisterRoutes(router)
+	return router
+}
+
+func startManagedImportUpload(t *testing.T, router http.Handler, jobID string) (context.CancelFunc, *httptest.ResponseRecorder, <-chan struct{}) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t))).WithContext(ctx)
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "strict-import.flac")
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		router.ServeHTTP(response, request)
+	}()
+	return cancel, response, done
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, failureMessage string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(2 * time.Second):
+		t.Fatal(failureMessage)
+	}
 }
 
 func (inspector *cancellingInspector) Inspect(ctx context.Context, _ string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {

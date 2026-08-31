@@ -155,7 +155,8 @@ func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress Inspecti
 	if signatureErr := validateFLACSignature(file); signatureErr != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", signatureErr)
 	}
-	stream, err := flac.Parse(file)
+	decoderReader := &countingReader{reader: file}
+	stream, err := flac.Parse(decoderReader)
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", err)
 	}
@@ -168,7 +169,7 @@ func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress Inspecti
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	audio, err := inspectFLACAudio(ctx, stream, sizeBytes, reportProgress)
+	audio, err := inspectFLACAudio(ctx, stream, decoderReader, sizeBytes, reportProgress)
 	if err != nil {
 		return MediaInspection{}, err
 	}
@@ -204,6 +205,17 @@ func hashAndRewind(ctx context.Context, file *os.File) (string, int64, error) {
 type contextReader struct {
 	ctx    context.Context
 	reader io.Reader
+}
+
+type countingReader struct {
+	reader    io.Reader
+	bytesRead int64
+}
+
+func (reader *countingReader) Read(buffer []byte) (int, error) {
+	read, err := reader.reader.Read(buffer)
+	reader.bytesRead += int64(read)
+	return read, err
 }
 
 func (reader contextReader) Read(buffer []byte) (int, error) {
@@ -416,7 +428,7 @@ func validateArtwork(picture *flacmeta.Picture) (AlbumArtwork, error) {
 	return AlbumArtwork{MIMEType: mimeType, Width: config.Width, Height: config.Height, Data: append([]byte(nil), picture.Data...), SHA256: hex.EncodeToString(hash[:])}, nil
 }
 
-func inspectFLACAudio(ctx context.Context, stream *flac.Stream, sizeBytes int64, reportProgress InspectionProgressReporter) (TechnicalAudioProperties, error) {
+func inspectFLACAudio(ctx context.Context, stream *flac.Stream, decoderReader *countingReader, sizeBytes int64, reportProgress InspectionProgressReporter) (TechnicalAudioProperties, error) {
 	decodedHash := md5.New()
 	var decodedSamples uint64
 	for {
@@ -435,7 +447,7 @@ func inspectFLACAudio(ctx context.Context, stream *flac.Stream, sizeBytes int64,
 		}
 		decodedSamples += uint64(len(frame.Subframes[0].Samples))
 		frame.Hash(decodedHash)
-		if err := reportDecodedProgress(reportProgress, decodedSamples, stream.Info.NSamples, false); err != nil {
+		if err := reportDecodedProgress(reportProgress, decodedSamples, stream.Info.NSamples, decoderReader.bytesRead, sizeBytes, false); err != nil {
 			return TechnicalAudioProperties{}, inspectionProgressError(err)
 		}
 	}
@@ -443,7 +455,7 @@ func inspectFLACAudio(ctx context.Context, stream *flac.Stream, sizeBytes int64,
 	if err != nil {
 		return TechnicalAudioProperties{}, err
 	}
-	if err := reportDecodedProgress(reportProgress, decodedSamples, decodedSamples, true); err != nil {
+	if err := reportDecodedProgress(reportProgress, decodedSamples, stream.Info.NSamples, decoderReader.bytesRead, sizeBytes, true); err != nil {
 		return TechnicalAudioProperties{}, inspectionProgressError(err)
 	}
 	return audio, nil
@@ -489,13 +501,15 @@ func inspectionProgressError(err error) error {
 	return err
 }
 
-func reportDecodedProgress(reportProgress InspectionProgressReporter, decodedSamples, totalSamples uint64, isComplete bool) error {
+func reportDecodedProgress(reportProgress InspectionProgressReporter, decodedSamples, totalSamples uint64, encodedBytes, totalBytes int64, isComplete bool) error {
 	if reportProgress == nil {
 		return nil
 	}
 	percent := 0
 	if totalSamples > 0 {
 		percent = int(decodedSamples * 100 / totalSamples)
+	} else if totalBytes > 0 {
+		percent = int(encodedBytes * 100 / totalBytes)
 	}
 	if isComplete {
 		percent = 100

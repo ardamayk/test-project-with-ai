@@ -187,6 +187,32 @@ func TestMediaInspectorReportsCancellationFromProgressObserver(t *testing.T) {
 	}
 }
 
+func TestMediaInspectorReportsProgressWhenStreamSampleTotalIsUnknown(t *testing.T) {
+	fixture := readInspectionFixture(t)
+	fixture[21] &= 0xF0
+	clear(fixture[22:26])
+	path := filepath.Join(t.TempDir(), "unknown-total.flac")
+	if err := os.WriteFile(path, fixture, 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	var progress []library.InspectionProgress
+
+	_, err := library.NewMediaInspector().Inspect(context.Background(), path, func(update library.InspectionProgress) error {
+		progress = append(progress, update)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("inspect unknown-total fixture: %v", err)
+	}
+	if len(progress) < 2 || progress[0].Percent <= 0 || progress[0].Percent >= 100 {
+		t.Fatalf("unknown-total inspection progress = %+v", progress)
+	}
+	if progress[len(progress)-1].Percent != 100 {
+		t.Fatalf("completed unknown-total progress = %+v", progress[len(progress)-1])
+	}
+}
+
 func assertCompletedInspectionProgress(t *testing.T, progress []library.InspectionProgress) {
 	t.Helper()
 	if len(progress) == 0 {

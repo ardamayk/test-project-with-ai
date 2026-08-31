@@ -236,7 +236,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Stream one FLAC into a Managed Import Job and produce an Import Preview */
+        /** Stream one audio file into a Managed Import Job and detect its actual format */
         put: operations["uploadManagedImportFile"];
         post?: never;
         delete?: never;
@@ -1425,6 +1425,7 @@ export interface operations {
         };
         requestBody: {
             content: {
+                "application/octet-stream": string;
                 "audio/flac": string;
             };
         };

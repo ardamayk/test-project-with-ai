@@ -56,9 +56,22 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	}
 	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, stagedPath, inspection.FileSHA256)
 	if err != nil {
-		return Preview{}, errors.Join(err, os.Remove(stagedPath))
+		return service.recoverPreviewFailure(ctx, jobID, stagedPath, err, inspection)
 	}
 	return previewFromInspection(job, inspection), nil
+}
+
+func (service *Service) recoverPreviewFailure(ctx context.Context, jobID, stagedPath string, transitionErr error, inspection library.MediaInspection) (Preview, error) {
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	job, getErr := service.store.GetJob(recoveryCtx, jobID)
+	if getErr == nil && job.Status == STATUS_AWAITING_CONFIRMATION {
+		return previewFromInspection(job, inspection), nil
+	}
+	if ctx.Err() != nil {
+		transitionErr = validationError(&library.InspectionError{Code: library.INSPECTION_ERROR_VALIDATION_CANCELLED, Field: "validation", Err: ctx.Err()})
+	}
+	return Preview{}, service.failUpload(ctx, jobID, stagedPath, errors.Join(transitionErr, getErr))
 }
 
 func (service *Service) Confirm(ctx context.Context, jobID string, revision int) (Result, error) {
@@ -138,9 +151,6 @@ func safeOriginalFilename(value string) (string, error) {
 	value = filepath.Base(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
 	if value == "." || value == "" || len(value) > MAX_ORIGINAL_FILENAME_BYTES {
 		return "", fmt.Errorf("%w: filename is missing or too long", ErrInvalidUpload)
-	}
-	if !strings.EqualFold(filepath.Ext(value), ".flac") {
-		return "", fmt.Errorf("%w: only FLAC files are accepted", ErrInvalidUpload)
 	}
 	return value, nil
 }

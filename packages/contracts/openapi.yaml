@@ -291,7 +291,7 @@ paths:
     put:
       tags: [imports]
       operationId: uploadManagedImportFile
-      summary: Stream one FLAC into a Managed Import Job and produce an Import Preview
+      summary: Stream one audio file into a Managed Import Job and detect its actual format
       parameters:
         - $ref: "#/components/parameters/importId"
         - name: X-Import-Filename
@@ -303,6 +303,10 @@ paths:
       requestBody:
         required: true
         content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
           audio/flac:
             schema:
               type: string
