@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	internaldb "github.com/ardam/navidrome-replacement/server/internal/db"
 	"github.com/google/uuid"
 )
 
@@ -78,11 +79,39 @@ type ScanStatus struct {
 const INTERRUPTED_SCAN_ERROR = "scan interrupted by server restart"
 
 type Store struct {
-	db *sql.DB
+	db      storeDatabase
+	beginTx func(context.Context, *sql.TxOptions) (*sql.Tx, error)
 }
 
 func NewStore(db *sql.DB) *Store {
-	return &Store{db: db}
+	return &Store{db: db, beginTx: db.BeginTx}
+}
+
+type storeDatabase interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func runStoreMutation[T any](ctx context.Context, store *Store, operation string, mutate func(*Store, *sql.Tx) (T, error)) (result T, err error) {
+	tx, err := store.beginTx(ctx, nil)
+	if err != nil {
+		return result, fmt.Errorf("begin %s: %w", operation, err)
+	}
+	defer func() {
+		rollbackErr := tx.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("roll back %s: %w", operation, rollbackErr))
+		}
+	}()
+	result, err = mutate(&Store{db: tx}, tx)
+	if err != nil {
+		return result, err
+	}
+	if err := tx.Commit(); err != nil {
+		return result, fmt.Errorf("commit %s: %w", operation, err)
+	}
+	return result, nil
 }
 
 func (s *Store) ListArtists(ctx context.Context, limit, offset int, q string) (ArtistList, error) {
@@ -338,6 +367,54 @@ func (s *Store) GetTrackFilePath(ctx context.Context, trackID string) (string, e
 }
 
 func (s *Store) UpsertFromScan(ctx context.Context, meta FileMetadata) (added, updated bool, err error) {
+	result, err := runStoreMutation(ctx, s, "scanned Track upsert", func(store *Store, tx *sql.Tx) (upsertResult, error) {
+		previousAlbumID, lookupErr := store.findAlbumByTrackPath(ctx, meta.Path)
+		if lookupErr != nil {
+			return upsertResult{}, lookupErr
+		}
+		added, updated, upsertErr := store.upsertFromScan(ctx, meta)
+		if upsertErr != nil {
+			return upsertResult{}, upsertErr
+		}
+		trackID, _, lookupErr := store.findTrackByPath(ctx, meta.Path)
+		if lookupErr != nil {
+			return upsertResult{}, fmt.Errorf("lookup synchronized Track: %w", lookupErr)
+		}
+		if syncErr := internaldb.SynchronizeLegacyTrack(ctx, tx, trackID); syncErr != nil {
+			return upsertResult{}, syncErr
+		}
+		currentAlbumID, lookupErr := store.findAlbumByTrackPath(ctx, meta.Path)
+		if lookupErr != nil {
+			return upsertResult{}, fmt.Errorf("lookup synchronized Track Album: %w", lookupErr)
+		}
+		if previousAlbumID != "" && previousAlbumID != currentAlbumID {
+			if syncErr := internaldb.SynchronizeLegacyAlbum(ctx, tx, previousAlbumID); syncErr != nil {
+				return upsertResult{}, syncErr
+			}
+			if syncErr := internaldb.FinalizeLegacyRemoval(ctx, tx); syncErr != nil {
+				return upsertResult{}, syncErr
+			}
+		}
+		return upsertResult{added: added, updated: updated}, nil
+	})
+	return result.added, result.updated, err
+}
+
+type upsertResult struct {
+	added   bool
+	updated bool
+}
+
+func (s *Store) findAlbumByTrackPath(ctx context.Context, path string) (string, error) {
+	var albumID string
+	err := s.db.QueryRowContext(ctx, `SELECT album_id FROM tracks WHERE file_path = ?`, path).Scan(&albumID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return albumID, err
+}
+
+func (s *Store) upsertFromScan(ctx context.Context, meta FileMetadata) (added, updated bool, err error) {
 	existingID, existingMtime, err := s.findTrackByPath(ctx, meta.Path)
 	if err != nil {
 		return false, false, err
@@ -646,6 +723,23 @@ func (s *Store) GetAlbumCover(ctx context.Context, albumID string) (mime string,
 }
 
 func (s *Store) BeginScan(ctx context.Context) (string, error) {
+	return runStoreMutation(ctx, s, "scan presence reset", func(store *Store, tx *sql.Tx) (string, error) {
+		jobID, err := store.beginScan(ctx)
+		if err != nil {
+			return "", err
+		}
+		albumIDs, err := store.listAlbumIDs(ctx)
+		if err != nil {
+			return "", fmt.Errorf("list reset Track Albums: %w", err)
+		}
+		if err := store.synchronizeLegacyAlbums(ctx, tx, albumIDs); err != nil {
+			return "", err
+		}
+		return jobID, nil
+	})
+}
+
+func (s *Store) beginScan(ctx context.Context) (string, error) {
 	var running int
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM scan_jobs WHERE status = 'running'`,
@@ -682,21 +776,63 @@ func (s *Store) RecoverInterruptedScans(ctx context.Context) error {
 }
 
 func (s *Store) resetScanPresence(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET missing_at = NULL WHERE missing_at IS NOT NULL`)
+	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET identity_key = NULL, missing_at = NULL WHERE missing_at IS NOT NULL`)
 	return err
 }
 
 func (s *Store) markTrackPresent(ctx context.Context, trackID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET missing_at = NULL WHERE id = ?`, trackID)
+	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET identity_key = NULL, missing_at = NULL WHERE id = ?`, trackID)
 	return err
 }
 
 func (s *Store) MarkSeenPaths(ctx context.Context, paths map[string]struct{}) (removed int, err error) {
-	missingTrackIDs, err := s.listMissingTrackIDs(ctx, paths)
-	if err != nil {
-		return 0, err
+	return runStoreMutation(ctx, s, "missing Track reconciliation", func(store *Store, tx *sql.Tx) (int, error) {
+		missingTrackIDs, listErr := store.listMissingTrackIDs(ctx, paths)
+		if listErr != nil {
+			return 0, listErr
+		}
+		albumIDs, listErr := store.listTrackAlbumIDs(ctx, missingTrackIDs)
+		if listErr != nil {
+			return 0, listErr
+		}
+		removed, markErr := store.markTracksMissing(ctx, missingTrackIDs)
+		if markErr != nil {
+			return removed, markErr
+		}
+		if syncErr := store.synchronizeLegacyAlbums(ctx, tx, albumIDs); syncErr != nil {
+			return removed, syncErr
+		}
+		return removed, nil
+	})
+}
+
+func (s *Store) synchronizeLegacyAlbums(ctx context.Context, tx *sql.Tx, albumIDs []string) error {
+	for _, albumID := range albumIDs {
+		if err := s.recomputeAlbumGenres(ctx, albumID); err != nil {
+			return fmt.Errorf("recompute legacy Album %q Genres: %w", albumID, err)
+		}
+		if err := internaldb.SynchronizeLegacyAlbum(ctx, tx, albumID); err != nil {
+			return err
+		}
 	}
-	return s.markTracksMissing(ctx, missingTrackIDs)
+	return nil
+}
+
+func (s *Store) listTrackAlbumIDs(ctx context.Context, trackIDs []string) ([]string, error) {
+	albumIDs := make([]string, 0, len(trackIDs))
+	seenAlbumIDs := make(map[string]struct{}, len(trackIDs))
+	for _, trackID := range trackIDs {
+		var albumID string
+		if err := s.db.QueryRowContext(ctx, `SELECT album_id FROM tracks WHERE id = ?`, trackID).Scan(&albumID); err != nil {
+			return nil, fmt.Errorf("lookup Track %q Album: %w", trackID, err)
+		}
+		if _, exists := seenAlbumIDs[albumID]; exists {
+			continue
+		}
+		seenAlbumIDs[albumID] = struct{}{}
+		albumIDs = append(albumIDs, albumID)
+	}
+	return albumIDs, nil
 }
 
 func (s *Store) listMissingTrackIDs(ctx context.Context, paths map[string]struct{}) (trackIDs []string, err error) {
@@ -719,25 +855,11 @@ func (s *Store) listMissingTrackIDs(ctx context.Context, paths map[string]struct
 }
 
 func (s *Store) markTracksMissing(ctx context.Context, trackIDs []string) (removed int, err error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		rollbackErr := tx.Rollback()
-		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
-			err = errors.Join(err, fmt.Errorf("rollback missing tracks: %w", rollbackErr))
-		}
-	}()
-
 	for _, trackID := range trackIDs {
-		if _, err := tx.ExecContext(ctx, `UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, trackID); err != nil {
+		if _, err := s.db.ExecContext(ctx, `UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, trackID); err != nil {
 			return removed, fmt.Errorf("mark track %q missing: %w", trackID, err)
 		}
 		removed++
-	}
-	if err := tx.Commit(); err != nil {
-		return removed, fmt.Errorf("commit missing tracks: %w", err)
 	}
 	return removed, nil
 }
