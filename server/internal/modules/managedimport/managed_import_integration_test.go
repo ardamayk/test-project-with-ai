@@ -2,9 +2,13 @@ package managedimport_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +24,19 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
+	flacmeta "github.com/mewkiz/flac/meta"
+)
+
+const (
+	FLAC_METADATA_BLOCK_LAST_FLAG            byte = 0x80
+	FLAC_METADATA_BLOCK_TYPE_MASK            byte = 0x7f
+	FLAC_PICTURE_FIELD_SIZE_BYTES                 = 4
+	FLAC_PICTURE_DIMENSION_FIELDS_SIZE_BYTES      = 16
+	FLAC_METADATA_LENGTH_HIGH_BYTE_OFFSET         = 1
+	FLAC_METADATA_LENGTH_MIDDLE_BYTE_OFFSET       = 2
+	FLAC_METADATA_LENGTH_LOW_BYTE_OFFSET          = 3
+	FLAC_METADATA_LENGTH_HIGH_SHIFT               = 16
+	FLAC_METADATA_LENGTH_MIDDLE_SHIFT             = 8
 )
 
 func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
@@ -133,7 +150,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if idempotentResult.TrackID != result.TrackID || len(listTracks(t, router).Items) != 1 {
 		t.Fatalf("idempotent result = %+v", idempotentResult)
 	}
-	assertNormalizedAlbum(t, router, committedTrack.AlbumID)
+	assertNormalizedAlbum(t, router, committedTrack.AlbumID, result.TrackID)
 	runLibraryScan(t, router)
 	if len(listTracks(t, router).Items) != 1 {
 		t.Fatal("legacy library reconciliation hid the committed Managed Track")
@@ -246,18 +263,66 @@ func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 	}
 }
 
-func TestManagedImportReusesMatchingNormalizedAlbumArtwork(t *testing.T) {
-	database := testutil.OpenMigratedDB(t)
-	configuration := config.Config{ManagedStoragePath: t.TempDir()}
-	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
-	libraryModule := library.NewModule(database, configuration)
-	router := chi.NewRouter()
-	importModule.RegisterRoutes(router)
-	libraryModule.RegisterRoutes(router)
+func TestManagedImportRecommendsPicardForMissingEmbeddedArtwork(t *testing.T) {
+	router := newManagedImportTestRouter(t, t.TempDir())
+	firstTrackID := importOneFLAC(t, router, readStrictFLACFixture(t), "first.flac")
+	jobID := createImportJob(t, router)
+	fixture := withoutFrontCover(t, secondTrackFixture(readStrictFLACFixture(t)))
+
+	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "missing-cover.flac",
+	})
+
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing artwork status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var failure struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	decodeJSON(t, response, &failure)
+	if failure.Code != "missing_artwork" || !strings.Contains(failure.Message, "MusicBrainz Picard") {
+		t.Fatalf("missing artwork failure = %+v", failure)
+	}
+	tracks := listTracks(t, router)
+	if len(tracks.Items) != 1 || tracks.Items[0].ID != firstTrackID {
+		t.Fatalf("Tracks after missing artwork = %+v", tracks.Items)
+	}
+}
+
+func TestManagedImportRejectsConflictingAlbumArtworkWithoutPartialCommit(t *testing.T) {
+	managedStoragePath := t.TempDir()
+	router := newManagedImportTestRouter(t, managedStoragePath)
 	firstFixture := readStrictFLACFixture(t)
 	firstTrackID := importOneFLAC(t, router, firstFixture, "first.flac")
-	secondFixture := bytes.Replace(firstFixture, []byte("TITLE=  Inspection   Fixture  "), []byte("TITLE=  Inspection   Second!  "), 1)
-	secondFixture = bytes.Replace(secondFixture, []byte("TRACKNUMBER=3/9"), []byte("TRACKNUMBER=4/9"), 1)
+	secondFixture := replaceFrontCover(t, secondTrackFixture(firstFixture), encodeAlternatePNG(t))
+	jobID, revision := uploadFLACForPreview(t, router, secondFixture, "second.flac")
+
+	confirmResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision)), map[string]string{"Content-Type": "application/json"})
+
+	if confirmResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("conflicting confirm status = %d, body = %s", confirmResponse.Code, confirmResponse.Body.String())
+	}
+	var failure struct {
+		Code string `json:"code"`
+	}
+	decodeJSON(t, confirmResponse, &failure)
+	if failure.Code != "album_artwork_conflict" {
+		t.Fatalf("conflicting artwork error code = %q", failure.Code)
+	}
+	tracks := listTracks(t, router)
+	if len(tracks.Items) != 1 || tracks.Items[0].ID != firstTrackID {
+		t.Fatalf("Tracks after artwork conflict = %+v", tracks.Items)
+	}
+	assertCanonicalFileCounts(t, managedStoragePath, 1, 1)
+}
+
+func TestManagedImportReusesMatchingNormalizedAlbumArtwork(t *testing.T) {
+	router := newManagedImportTestRouter(t, t.TempDir())
+	firstFixture := readStrictFLACFixture(t)
+	firstTrackID := importOneFLAC(t, router, firstFixture, "first.flac")
+	secondFixture := secondTrackFixture(firstFixture)
 
 	secondTrackID := importOneFLAC(t, router, secondFixture, "second.flac")
 
@@ -268,17 +333,28 @@ func TestManagedImportReusesMatchingNormalizedAlbumArtwork(t *testing.T) {
 	if len(tracks.Items) != 2 || tracks.Items[0].AlbumID != tracks.Items[1].AlbumID {
 		t.Fatalf("Tracks in matching normalized Album = %+v", tracks.Items)
 	}
-	assertNormalizedAlbum(t, router, tracks.Items[0].AlbumID)
+	assertNormalizedAlbum(t, router, tracks.Items[0].AlbumID, firstTrackID)
 }
 
 func importOneFLAC(t *testing.T, router http.Handler, fixture []byte, filename string) string {
 	t.Helper()
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
-	var job struct {
-		ID string `json:"id"`
+	jobID, revision := uploadFLACForPreview(t, router, fixture, filename)
+	confirmation := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision))
+	confirmResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", confirmation, map[string]string{"Content-Type": "application/json"})
+	if confirmResponse.Code != http.StatusOK {
+		t.Fatalf("confirm %q status = %d, body = %s", filename, confirmResponse.Code, confirmResponse.Body.String())
 	}
-	decodeJSON(t, jobResponse, &job)
-	uploadResponse := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+	var result struct {
+		TrackID string `json:"trackId"`
+	}
+	decodeJSON(t, confirmResponse, &result)
+	return result.TrackID
+}
+
+func uploadFLACForPreview(t *testing.T, router http.Handler, fixture []byte, filename string) (string, int) {
+	t.Helper()
+	jobID := createImportJob(t, router)
+	uploadResponse := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": filename,
 	})
@@ -289,16 +365,34 @@ func importOneFLAC(t *testing.T, router http.Handler, fixture []byte, filename s
 		Revision int `json:"revision"`
 	}
 	decodeJSON(t, uploadResponse, &preview)
-	confirmation := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, preview.Revision))
-	confirmResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", confirmation, map[string]string{"Content-Type": "application/json"})
-	if confirmResponse.Code != http.StatusOK {
-		t.Fatalf("confirm %q status = %d, body = %s", filename, confirmResponse.Code, confirmResponse.Body.String())
+	return jobID, preview.Revision
+}
+
+func createImportJob(t *testing.T, router http.Handler) string {
+	t.Helper()
+	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	var job struct {
+		ID string `json:"id"`
 	}
-	var result struct {
-		TrackID string `json:"trackId"`
-	}
-	decodeJSON(t, confirmResponse, &result)
-	return result.TrackID
+	decodeJSON(t, jobResponse, &job)
+	return job.ID
+}
+
+func newManagedImportTestRouter(t *testing.T, managedStoragePath string) http.Handler {
+	t.Helper()
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	libraryModule := library.NewModule(database, configuration)
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	libraryModule.RegisterRoutes(router)
+	return router
+}
+
+func secondTrackFixture(fixture []byte) []byte {
+	result := bytes.Replace(fixture, []byte("TITLE=  Inspection   Fixture  "), []byte("TITLE=  Inspection   Second!  "), 1)
+	return bytes.Replace(result, []byte("TRACKNUMBER=3/9"), []byte("TRACKNUMBER=4/9"), 1)
 }
 
 type stagingObservingReader struct {
@@ -353,7 +447,16 @@ type trackList struct {
 	} `json:"items"`
 }
 
-func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID string) {
+type albumArtworkResponse struct {
+	ContentSHA256 string `json:"contentSha256"`
+	MediaType     string `json:"mediaType"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	SizeBytes     int    `json:"sizeBytes"`
+	SourceTrackID string `json:"sourceTrackId"`
+}
+
+func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID, sourceTrackID string) {
 	t.Helper()
 	response := serveRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+albumID, nil, nil)
 	if response.Code != http.StatusOK {
@@ -368,20 +471,29 @@ func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID string) {
 		GenreItems []struct {
 			Name string `json:"name"`
 		} `json:"genreItems"`
-		Artwork *struct {
-			MediaType string `json:"mediaType"`
-		} `json:"artwork"`
+		Artwork *albumArtworkResponse `json:"artwork"`
 	}
 	decodeJSON(t, response, &album)
 	if album.Title != "Strict Import Tests" || album.ReleaseDate != "2026" || len(album.AlbumArtists) != 1 || album.AlbumArtists[0].Name != "Test Album Artist" {
 		t.Fatalf("normalized imported Album = %+v", album)
 	}
-	if len(album.GenreItems) != 1 || album.GenreItems[0].Name != "Electronic" || album.Artwork == nil || album.Artwork.MediaType != "image/png" {
+	if len(album.GenreItems) != 1 || album.GenreItems[0].Name != "Electronic" {
 		t.Fatalf("imported Album Genre/Artwork = %+v", album)
 	}
+	assertAlbumArtworkMetadata(t, album.Artwork, sourceTrackID)
 	coverResponse := serveRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+albumID+"/cover", nil, nil)
 	if coverResponse.Code != http.StatusOK || coverResponse.Header().Get("Content-Type") != "image/png" || coverResponse.Body.Len() == 0 {
 		t.Fatalf("imported Album Artwork response = %d %q (%d bytes)", coverResponse.Code, coverResponse.Header().Get("Content-Type"), coverResponse.Body.Len())
+	}
+}
+
+func assertAlbumArtworkMetadata(t *testing.T, artwork *albumArtworkResponse, sourceTrackID string) {
+	t.Helper()
+	if artwork == nil || artwork.MediaType != "image/png" {
+		t.Fatalf("persisted Album Artwork = %+v", artwork)
+	}
+	if artwork.ContentSHA256 != "d153c3ba2710fc0a3e364b3533812a538287d75bdfe407bd2f6e7c4c2358e85e" || artwork.Width != 32 || artwork.Height != 32 || artwork.SizeBytes <= 0 || artwork.SourceTrackID != sourceTrackID {
+		t.Fatalf("persisted Album Artwork metadata = %+v", artwork)
 	}
 }
 
@@ -431,6 +543,134 @@ func assertCanonicalStorage(t *testing.T, managedStoragePath string, fixture []b
 	if !bytes.Equal(stored, fixture) {
 		t.Fatal("canonical audio bytes differ from uploaded FLAC")
 	}
+}
+
+func assertCanonicalFileCounts(t *testing.T, managedStoragePath string, expectedAudio, expectedArtwork int) {
+	t.Helper()
+	var audioCount int
+	var artworkCount int
+	err := filepath.WalkDir(managedStoragePath, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".flac":
+			audioCount++
+		case ".jpg", ".png", ".webp":
+			artworkCount++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk Managed Storage: %v", err)
+	}
+	if audioCount != expectedAudio || artworkCount != expectedArtwork {
+		t.Fatalf("canonical audio/artwork counts = %d/%d, want %d/%d", audioCount, artworkCount, expectedAudio, expectedArtwork)
+	}
+}
+
+func withoutFrontCover(t *testing.T, fixture []byte) []byte {
+	t.Helper()
+	result := append([]byte(nil), fixture...)
+	_, bodyOffset, _ := findFLACPictureBlock(t, result)
+	binary.BigEndian.PutUint32(result[bodyOffset:bodyOffset+FLAC_PICTURE_FIELD_SIZE_BYTES], library.FLAC_PICTURE_TYPE_BACK_COVER)
+	return result
+}
+
+func replaceFrontCover(t *testing.T, fixture, artwork []byte) []byte {
+	t.Helper()
+	headerOffset, bodyOffset, bodyEnd := findFLACPictureBlock(t, fixture)
+	newBody := replaceFLACPictureData(t, fixture[bodyOffset:bodyEnd], artwork)
+	newBlock := encodeFLACMetadataBlock(fixture[headerOffset], newBody)
+	result := append([]byte(nil), fixture[:headerOffset]...)
+	result = append(result, newBlock...)
+	return append(result, fixture[bodyEnd:]...)
+}
+
+func findFLACPictureBlock(t *testing.T, fixture []byte) (int, int, int) {
+	t.Helper()
+	offset := library.FLAC_SIGNATURE_SIZE_BYTES
+	for offset+library.FLAC_METADATA_BLOCK_HEADER_SIZE_BYTES <= len(fixture) {
+		headerOffset := offset
+		header := fixture[headerOffset]
+		length := flacMetadataBlockLength(fixture, headerOffset)
+		bodyOffset := headerOffset + library.FLAC_METADATA_BLOCK_HEADER_SIZE_BYTES
+		bodyEnd := bodyOffset + length
+		if bodyEnd > len(fixture) {
+			t.Fatal("strict FLAC fixture metadata is truncated")
+		}
+		if header&FLAC_METADATA_BLOCK_TYPE_MASK == byte(flacmeta.TypePicture) {
+			return headerOffset, bodyOffset, bodyEnd
+		}
+		offset = bodyEnd
+		if header&FLAC_METADATA_BLOCK_LAST_FLAG != 0 {
+			break
+		}
+	}
+	t.Fatal("strict FLAC fixture has no Picture block")
+	return 0, 0, 0
+}
+
+func flacMetadataBlockLength(fixture []byte, headerOffset int) int {
+	high := int(fixture[headerOffset+FLAC_METADATA_LENGTH_HIGH_BYTE_OFFSET]) << FLAC_METADATA_LENGTH_HIGH_SHIFT
+	middle := int(fixture[headerOffset+FLAC_METADATA_LENGTH_MIDDLE_BYTE_OFFSET]) << FLAC_METADATA_LENGTH_MIDDLE_SHIFT
+	return high | middle | int(fixture[headerOffset+FLAC_METADATA_LENGTH_LOW_BYTE_OFFSET])
+}
+
+func replaceFLACPictureData(t *testing.T, body, artwork []byte) []byte {
+	t.Helper()
+	dataLengthOffset := pictureDataLengthOffset(t, body)
+	newBody := append([]byte(nil), body[:dataLengthOffset]...)
+	lengthBytes := make([]byte, FLAC_PICTURE_FIELD_SIZE_BYTES)
+	binary.BigEndian.PutUint32(lengthBytes, uint32(len(artwork)))
+	newBody = append(newBody, lengthBytes...)
+	return append(newBody, artwork...)
+}
+
+func encodeFLACMetadataBlock(header byte, body []byte) []byte {
+	length := len(body)
+	result := []byte{
+		header,
+		byte(length >> FLAC_METADATA_LENGTH_HIGH_SHIFT),
+		byte(length >> FLAC_METADATA_LENGTH_MIDDLE_SHIFT),
+		byte(length),
+	}
+	return append(result, body...)
+}
+
+func pictureDataLengthOffset(t *testing.T, body []byte) int {
+	t.Helper()
+	minimumHeaderSize := FLAC_PICTURE_FIELD_SIZE_BYTES * 2
+	if len(body) < minimumHeaderSize {
+		t.Fatal("FLAC Picture block is truncated")
+	}
+	offset := FLAC_PICTURE_FIELD_SIZE_BYTES
+	mimeLength := int(binary.BigEndian.Uint32(body[offset : offset+FLAC_PICTURE_FIELD_SIZE_BYTES]))
+	offset += FLAC_PICTURE_FIELD_SIZE_BYTES + mimeLength
+	if offset+FLAC_PICTURE_FIELD_SIZE_BYTES > len(body) {
+		t.Fatal("FLAC Picture MIME is truncated")
+	}
+	descriptionLength := int(binary.BigEndian.Uint32(body[offset : offset+FLAC_PICTURE_FIELD_SIZE_BYTES]))
+	offset += FLAC_PICTURE_FIELD_SIZE_BYTES + descriptionLength + FLAC_PICTURE_DIMENSION_FIELDS_SIZE_BYTES
+	if offset+FLAC_PICTURE_FIELD_SIZE_BYTES > len(body) {
+		t.Fatal("FLAC Picture fields are truncated")
+	}
+	return offset
+}
+
+func encodeAlternatePNG(t *testing.T) []byte {
+	t.Helper()
+	artwork := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	artwork.Set(0, 0, color.RGBA{R: 255, G: 64, A: 255})
+	artwork.Set(1, 1, color.RGBA{B: 255, A: 255})
+	var output bytes.Buffer
+	if err := png.Encode(&output, artwork); err != nil {
+		t.Fatalf("encode alternate PNG: %v", err)
+	}
+	return output.Bytes()
 }
 
 func readStrictFLACFixture(t *testing.T) []byte {

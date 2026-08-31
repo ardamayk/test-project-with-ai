@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/ardam/navidrome-replacement/server/internal/api/respond"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -89,6 +90,9 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 }
 
 func strictValidationMessage(validationErr *ValidationError) string {
+	if validationErr.Code == string(library.INSPECTION_ERROR_MISSING_ARTWORK) {
+		return "Embedded front-cover artwork is required; add one with MusicBrainz Picard and retry"
+	}
 	if validationErr.Field == "" {
 		return "File failed the Strict Import Profile"
 	}
