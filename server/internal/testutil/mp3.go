@@ -104,6 +104,9 @@ func structuredID3TextFrames(version byte, name string, values []string) [][]byt
 	if version == 4 {
 		return [][]byte{id3TextFrame(version, name, strings.Join(values, "\x00"))}
 	}
+	if name == "TCO" || name == "TCON" {
+		return [][]byte{id3TextFrame(version, name, strings.Join(values, "; "))}
+	}
 	frames := make([][]byte, 0, len(values))
 	for _, value := range values {
 		frames = append(frames, id3TextFrame(version, name, value))

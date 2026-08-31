@@ -47,6 +47,12 @@ describe('Track ReplayGain Metadata', () => {
 })
 
 describe('Managed Import media contracts', () => {
+  it('requires source bit depth for FLAC', () => {
+    expectTypeOf<
+      components['schemas']['ManagedImportFlacPreviewFile']['bitDepth']
+    >().toEqualTypeOf<number>()
+  })
+
   it('supports MP3 without a source bit depth', () => {
     const file: components['schemas']['ManagedImportPreviewFile'] = {
       originalFilename: 'fixture.mp3',

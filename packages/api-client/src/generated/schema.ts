@@ -654,7 +654,8 @@ export interface components {
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
         };
-        ManagedImportPreviewFile: {
+        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"];
+        ManagedImportPreviewFileCommon: {
             originalFilename: string;
             title: string;
             artists: string[];
@@ -667,18 +668,40 @@ export interface components {
             discTotal?: number;
             year?: number;
             durationMs: number;
-            /** @enum {string} */
-            format: "flac" | "mp3";
-            /** @enum {string} */
-            container: "flac" | "mp3";
-            /** @enum {string} */
-            codec: "flac" | "mp3";
             sampleRateHz: number;
             channelCount: number;
-            bitDepth?: number;
             bitrateKbps: number;
             /** @enum {string} */
             artworkMediaType: "image/jpeg" | "image/png" | "image/webp";
+        };
+        ManagedImportFlacPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "flac";
+            /** @constant */
+            container: "flac";
+            /** @constant */
+            codec: "flac";
+            bitDepth: number;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "flac";
+        };
+        ManagedImportMp3PreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "mp3";
+            /** @constant */
+            container: "mp3";
+            /** @constant */
+            codec: "mp3";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "mp3";
         };
         ManagedImportConfirmation: {
             revision: number;

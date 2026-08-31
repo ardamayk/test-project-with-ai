@@ -70,6 +70,44 @@ func TestMediaInspectorReadsMP3ReplayGain(t *testing.T) {
 	}
 }
 
+func TestMediaInspectorAcceptsOneUnambiguousMP3Picture(t *testing.T) {
+	fixture := testutil.StrictMP3Fixture()
+	pictureType := bytes.Index(fixture, []byte("image/png\x00\x03"))
+	if pictureType < 0 {
+		t.Fatal("strict MP3 fixture has no APIC picture type")
+	}
+	fixture[pictureType+len("image/png\x00")] = 0
+
+	inspection := inspectMP3Fixture(t, fixture)
+	if inspection.AlbumArtwork.MIMEType != "image/png" {
+		t.Fatalf("unambiguous MP3 artwork = %+v", inspection.AlbumArtwork)
+	}
+}
+
+func TestMediaInspectorRejectsOneExplicitNonFrontMP3Picture(t *testing.T) {
+	fixture := testutil.StrictMP3Fixture()
+	pictureType := bytes.Index(fixture, []byte("image/png\x00\x03"))
+	if pictureType < 0 {
+		t.Fatal("strict MP3 fixture has no APIC picture type")
+	}
+	fixture[pictureType+len("image/png\x00")] = 4
+
+	_, err := inspectMP3FixtureError(t, fixture)
+	var inspectionErr *library.InspectionError
+	if !errors.As(err, &inspectionErr) || inspectionErr.Code != library.INSPECTION_ERROR_INVALID_ARTWORK || inspectionErr.Field != "artwork" {
+		t.Fatalf("non-front picture error = %T %+v", err, inspectionErr)
+	}
+}
+
+func TestMediaInspectorRejectsInvalidMP3ReplayGain(t *testing.T) {
+	fixture := bytes.Replace(testutil.StrictMP3Fixture(), []byte("-7.25 dB"), []byte("garbage!"), 1)
+	_, err := inspectMP3FixtureError(t, fixture)
+	var inspectionErr *library.InspectionError
+	if !errors.As(err, &inspectionErr) || inspectionErr.Code != library.INSPECTION_ERROR_INVALID_METADATA || inspectionErr.Field != "REPLAYGAIN_TRACK_GAIN" {
+		t.Fatalf("invalid ReplayGain error = %T %+v", err, inspectionErr)
+	}
+}
+
 func TestMediaInspectorRejectsInvalidMP3TagsArtworkCodecAndTruncation(t *testing.T) {
 	fixture := testutil.StrictMP3Fixture()
 	audioOffset := strictID3AudioOffset(t, fixture)
@@ -84,6 +122,7 @@ func TestMediaInspectorRejectsInvalidMP3TagsArtworkCodecAndTruncation(t *testing
 		field string
 	}{
 		{name: "invalid tag version", data: mutateMP3Fixture(fixture, 3, 5), code: library.INSPECTION_ERROR_INVALID_METADATA, field: "ID3"},
+		{name: "invalid tag padding", data: zeroMP3FixtureBytes(fixture, 10, 4), code: library.INSPECTION_ERROR_INVALID_METADATA, field: "ID3"},
 		{name: "invalid artwork", data: mutateMP3Fixture(fixture, pngOffset, 0), code: library.INSPECTION_ERROR_INVALID_ARTWORK, field: "artwork"},
 		{name: "invalid codec data", data: mutateMP3Fixture(fixture, audioOffset, 0), code: library.INSPECTION_ERROR_AUDIO_DECODE, field: "audio"},
 		{name: "truncated middle", data: removeMP3FixtureBytes(fixture, audioOffset+(len(fixture)-audioOffset)/2, 8), code: library.INSPECTION_ERROR_AUDIO_DECODE, field: "audio"},
@@ -135,4 +174,10 @@ func mutateMP3Fixture(fixture []byte, offset int, value byte) []byte {
 func removeMP3FixtureBytes(fixture []byte, offset, count int) []byte {
 	truncated := append([]byte(nil), fixture[:offset]...)
 	return append(truncated, fixture[offset+count:]...)
+}
+
+func zeroMP3FixtureBytes(fixture []byte, offset, count int) []byte {
+	mutated := append([]byte(nil), fixture...)
+	clear(mutated[offset : offset+count])
+	return mutated
 }

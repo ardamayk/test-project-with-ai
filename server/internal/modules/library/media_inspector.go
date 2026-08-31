@@ -292,6 +292,10 @@ func (reader contextReader) Read(buffer []byte) (int, error) {
 
 func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, error) {
 	tags := collectVorbisTags(blocks)
+	return normalizeMediaMetadata(tags, replayGainFromTags(tags))
+}
+
+func normalizeMediaMetadata(tags map[string][]string, replayGain ReplayGainMetadata) (NormalizedMediaMetadata, error) {
 	names, err := inspectFLACNames(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
@@ -318,7 +322,7 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 		HasDiscNumber: len(tags["DISCNUMBER"]) > 0,
 		Genres:        names.Genres,
 		Year:          year,
-		ReplayGain:    replayGainFromTags(tags),
+		ReplayGain:    replayGain,
 	}, nil
 }
 

@@ -3,6 +3,7 @@ package managedimport_test
 import (
 	"bytes"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +19,16 @@ import (
 )
 
 func TestManagedImportCommitsStrictMP3ThroughLibraryPlayback(t *testing.T) {
+	router, database, managedStoragePath := newMP3ManagedImportRouter(t)
+	fixture := testutil.StrictMP3Fixture()
+	jobID, revision := uploadStrictMP3(t, router, fixture)
+	trackID := confirmStrictMP3(t, router, jobID, revision)
+	assertCommittedMP3(t, router, trackID, fixture)
+	assertCanonicalMP3(t, database, trackID, fixture, managedStoragePath)
+}
+
+func newMP3ManagedImportRouter(t *testing.T) (http.Handler, *sql.DB, string) {
+	t.Helper()
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()
 	configuration := config.Config{ManagedStoragePath: managedStoragePath, MusicPaths: []string{t.TempDir()}}
@@ -28,8 +39,11 @@ func TestManagedImportCommitsStrictMP3ThroughLibraryPlayback(t *testing.T) {
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)
 	playbackModule.RegisterRoutes(router)
-	fixture := testutil.StrictMP3Fixture()
+	return router, database, managedStoragePath
+}
 
+func uploadStrictMP3(t *testing.T, router http.Handler, fixture []byte) (string, int) {
+	t.Helper()
 	jobID := createManagedImportJob(t, router)
 	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "application/octet-stream",
@@ -56,7 +70,13 @@ func TestManagedImportCommitsStrictMP3ThroughLibraryPlayback(t *testing.T) {
 	if preview.File.Format != "mp3" || preview.File.Container != "mp3" || preview.File.Codec != "mp3" || preview.File.BitDepth != 0 || preview.File.BitrateKbps != 52 || preview.File.ChannelCount != 1 {
 		t.Fatalf("MP3 Import Preview = %+v", preview.File)
 	}
-	confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{"Content-Type": "application/json"})
+	return jobID, preview.Revision
+}
+
+func confirmStrictMP3(t *testing.T, router http.Handler, jobID string, revision int) string {
+	t.Helper()
+	body := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision))
+	confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
 	if confirmResponse.Code != http.StatusOK {
 		t.Fatalf("confirm strict MP3 status = %d, body = %s", confirmResponse.Code, confirmResponse.Body.String())
 	}
@@ -64,10 +84,15 @@ func TestManagedImportCommitsStrictMP3ThroughLibraryPlayback(t *testing.T) {
 		TrackID string `json:"trackId"`
 	}
 	testutil.DecodeJSON(t, confirmResponse, &result)
+	return result.TrackID
+}
+
+func assertCommittedMP3(t *testing.T, router http.Handler, trackID string, fixture []byte) {
+	t.Helper()
 	tracksResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/tracks", nil, nil)
 	var tracks library.TrackList
 	testutil.DecodeJSON(t, tracksResponse, &tracks)
-	if len(tracks.Items) != 1 || tracks.Items[0].ID != result.TrackID {
+	if len(tracks.Items) != 1 || tracks.Items[0].ID != trackID {
 		t.Fatalf("committed MP3 Tracks = %+v", tracks.Items)
 	}
 	track := tracks.Items[0]
@@ -75,11 +100,10 @@ func TestManagedImportCommitsStrictMP3ThroughLibraryPlayback(t *testing.T) {
 		t.Fatalf("persisted MP3 technical properties = %+v", track)
 	}
 	assertMP3ReplayGain(t, track.ReplayGain)
-	streamResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/tracks/"+result.TrackID+"/stream", nil, nil)
+	streamResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/tracks/"+trackID+"/stream", nil, nil)
 	if streamResponse.Code != http.StatusOK || !bytes.Equal(streamResponse.Body.Bytes(), fixture) {
 		t.Fatalf("streamed MP3 status/size = %d/%d", streamResponse.Code, streamResponse.Body.Len())
 	}
-	assertCanonicalMP3(t, database, result.TrackID, fixture, managedStoragePath)
 }
 
 func assertMP3ReplayGain(t *testing.T, replayGain library.ReplayGainMetadata) {
