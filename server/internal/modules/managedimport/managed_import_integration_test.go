@@ -2,6 +2,7 @@ package managedimport_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
@@ -88,6 +90,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if preview.File.Format != "flac" || preview.File.ArtworkMediaType != "image/png" {
 		t.Fatalf("Import Preview media = %+v", preview.File)
 	}
+	assertStagedStorage(t, managedStoragePath, job.ID, fixture)
 
 	tracksBeforeConfirm := listTracks(t, router)
 	if len(tracksBeforeConfirm.Items) != 0 {
@@ -201,6 +204,74 @@ func TestManagedImportStreamsUploadIntoServerOwnedStaging(t *testing.T) {
 	if !reader.observedStagedBytes {
 		t.Fatal("upload body was consumed before bytes appeared in server-owned staging")
 	}
+}
+
+func TestManagedImportEnforcesFileLimitWithoutContentLength(t *testing.T) {
+	router := newManagedImportRouter(t, config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedStorageReserveBytes:   0,
+		ManagedImportFileLimitBytes:  1024,
+		ManagedImportBatchLimitBytes: 4096,
+	})
+	jobID := createManagedImportJob(t, router)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(make([]byte, 2048)))
+	request.ContentLength = -1
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "oversized.flac")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	assertErrorCode(t, response, http.StatusRequestEntityTooLarge, "upload_too_large")
+}
+
+func TestManagedImportEnforcesFileLimitWhenContentLengthIsFalse(t *testing.T) {
+	router := newManagedImportRouter(t, config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedStorageReserveBytes:   0,
+		ManagedImportFileLimitBytes:  1024,
+		ManagedImportBatchLimitBytes: 4096,
+	})
+	jobID := createManagedImportJob(t, router)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(make([]byte, 2048)))
+	request.ContentLength = 512
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "oversized.flac")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	assertErrorCode(t, response, http.StatusRequestEntityTooLarge, "upload_too_large")
+}
+
+func TestManagedImportEnforcesBatchLimitWhileStreaming(t *testing.T) {
+	router := newManagedImportRouter(t, config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedStorageReserveBytes:   0,
+		ManagedImportFileLimitBytes:  4096,
+		ManagedImportBatchLimitBytes: 1024,
+	})
+	jobID := createManagedImportJob(t, router)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(make([]byte, 2048)))
+	request.ContentLength = -1
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "oversized.flac")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	assertErrorCode(t, response, http.StatusRequestEntityTooLarge, "batch_upload_too_large")
+}
+
+func TestManagedImportRejectsClientFilenamePathSegments(t *testing.T) {
+	router := newManagedImportRouter(t, config.Config{ManagedStoragePath: t.TempDir()})
+	jobID := createManagedImportJob(t, router)
+	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t)), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "../strict-import.flac",
+	})
+
+	assertErrorCode(t, response, http.StatusBadRequest, "invalid_upload")
 }
 
 func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
@@ -424,12 +495,69 @@ func assertCanonicalStorage(t *testing.T, managedStoragePath string, fixture []b
 	if filepath.Base(audioPath) == "strict-import.flac" || !strings.Contains(audioPath, "strict-import-tests") || !strings.Contains(audioPath, "inspection-fixture") {
 		t.Fatalf("audio path is not canonical: %q", audioPath)
 	}
+	relativePath, err := filepath.Rel(managedStoragePath, audioPath)
+	if err != nil {
+		t.Fatalf("resolve canonical relative path: %v", err)
+	}
+	parts := strings.Split(relativePath, string(filepath.Separator))
+	if len(parts) != 4 || parts[0] != "library" {
+		t.Fatalf("canonical path parts = %v", parts)
+	}
+	assertCanonicalID(t, parts[1], "test-album-artist-")
+	assertCanonicalID(t, parts[2], "strict-import-tests-")
+	audioStem := strings.TrimSuffix(parts[3], ".flac")
+	assertCanonicalID(t, audioStem, "01-03-inspection-fixture-")
 	stored, err := os.ReadFile(audioPath)
 	if err != nil {
 		t.Fatalf("read canonical audio: %v", err)
 	}
 	if !bytes.Equal(stored, fixture) {
 		t.Fatal("canonical audio bytes differ from uploaded FLAC")
+	}
+}
+
+func assertStagedStorage(t *testing.T, managedStoragePath, jobID string, fixture []byte) {
+	t.Helper()
+	stagingPath := filepath.Join(managedStoragePath, ".staging")
+	stagingInfo, err := os.Stat(stagingPath)
+	if err != nil {
+		t.Fatalf("stat staging directory: %v", err)
+	}
+	if stagingInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("staging directory mode = %o", stagingInfo.Mode().Perm())
+	}
+	entries, err := os.ReadDir(stagingPath)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("staging entries = %v, error = %v", entries, err)
+	}
+	entry := entries[0]
+	if entry.Name() == jobID+".upload" || !strings.HasPrefix(entry.Name(), ".import-") {
+		t.Fatalf("staging filename is not an independent server-generated name: %q", entry.Name())
+	}
+	info, err := entry.Info()
+	if err != nil {
+		t.Fatalf("stat staged file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("staged file mode = %o", info.Mode().Perm())
+	}
+	stagedBytes, err := os.ReadFile(filepath.Join(stagingPath, entry.Name()))
+	if err != nil {
+		t.Fatalf("read staged file: %v", err)
+	}
+	if sha256.Sum256(stagedBytes) != sha256.Sum256(fixture) {
+		t.Fatal("staged file SHA-256 differs from uploaded bytes")
+	}
+}
+
+func assertCanonicalID(t *testing.T, value, prefix string) {
+	t.Helper()
+	stableID := strings.TrimPrefix(value, prefix)
+	if stableID == value {
+		t.Fatalf("canonical component %q does not start with %q", value, prefix)
+	}
+	if _, err := uuid.Parse(stableID); err != nil {
+		t.Fatalf("canonical component %q has invalid stable ID: %v", value, err)
 	}
 }
 
@@ -457,5 +585,41 @@ func decodeJSON(t *testing.T, response *httptest.ResponseRecorder, target any) {
 	t.Helper()
 	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+}
+
+func newManagedImportRouter(t *testing.T, configuration config.Config) http.Handler {
+	t.Helper()
+	database := testutil.OpenMigratedDB(t)
+	module := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+	return router
+}
+
+func createManagedImportJob(t *testing.T, router http.Handler) string {
+	t.Helper()
+	response := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create Import Job status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var job struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, response, &job)
+	return job.ID
+}
+
+func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("status = %d, want %d, body = %s", response.Code, status, response.Body.String())
+	}
+	var failure struct {
+		Code string `json:"code"`
+	}
+	decodeJSON(t, response, &failure)
+	if failure.Code != code {
+		t.Fatalf("error code = %q, want %q", failure.Code, code)
 	}
 }

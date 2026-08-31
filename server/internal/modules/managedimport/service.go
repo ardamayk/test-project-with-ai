@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -38,17 +37,24 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, err
 	}
-	stagedPath, _, err := service.storage.StageUpload(jobID, body, contentLength)
+	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
 		return Preview{}, err
 	}
-	inspection, err := service.inspector.Inspect(stagedPath)
+	inspection, err := service.inspector.Inspect(upload.Path)
 	if err != nil {
-		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationError(err))
+		return Preview{}, service.failUpload(ctx, jobID, upload.Path, validationError(err))
 	}
-	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, stagedPath, inspection.FileSHA256)
+	if inspection.FileSHA256 != upload.SHA256 {
+		hashErr := &ValidationError{Code: "staged_file_changed", Field: "file", Err: errors.New("staged file hash differs from uploaded bytes")}
+		return Preview{}, service.failUpload(ctx, jobID, upload.Path, hashErr)
+	}
+	if preflightErr := service.preflightCommit(upload.Size, inspection); preflightErr != nil {
+		return Preview{}, service.failUpload(ctx, jobID, upload.Path, preflightErr)
+	}
+	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, upload.Path, upload.SHA256)
 	if err != nil {
-		return Preview{}, errors.Join(err, os.Remove(stagedPath))
+		return Preview{}, errors.Join(err, service.storage.RemoveStaged(upload.Path))
 	}
 	return previewFromInspection(job, inspection), nil
 }
@@ -67,6 +73,10 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
+	stagedBytes, err := service.storage.StagedFileSize(job.StagedFilePath)
+	if err != nil {
+		return Result{}, err
+	}
 	inspection, err := service.inspector.Inspect(job.StagedFilePath)
 	if err != nil {
 		return Result{}, validationError(err)
@@ -74,7 +84,17 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if inspection.FileSHA256 != job.ContentSHA256 {
 		return Result{}, &ValidationError{Code: "staged_file_changed", Field: "file", Err: errors.New("staged file hash changed after Import Preview")}
 	}
+	if err := service.preflightCommit(stagedBytes, inspection); err != nil {
+		return Result{}, err
+	}
 	return service.commit(ctx, job, inspection)
+}
+
+func (service *Service) preflightCommit(stagedBytes int64, inspection library.MediaInspection) error {
+	return service.storage.Preflight(StorageRequirement{
+		SelectedBytes: stagedBytes,
+		ArtworkBytes:  int64(len(inspection.AlbumArtwork.Data)),
+	})
 }
 
 func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
@@ -104,14 +124,17 @@ func (service *Service) failUpload(ctx context.Context, jobID, stagedPath string
 	if errors.As(uploadErr, &validationErr) {
 		errorCode = validationErr.Code
 	}
-	return errors.Join(uploadErr, os.Remove(stagedPath), service.store.MarkFailed(ctx, jobID, errorCode))
+	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(ctx, jobID, errorCode))
 }
 
 func safeOriginalFilename(value string) (string, error) {
 	if strings.ContainsAny(value, "\x00\r\n") {
 		return "", fmt.Errorf("%w: filename contains forbidden characters", ErrInvalidUpload)
 	}
-	value = filepath.Base(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
+	value = strings.TrimSpace(value)
+	if strings.ContainsAny(value, "/\\") || filepath.Base(value) != value {
+		return "", fmt.Errorf("%w: filename must not contain path segments", ErrInvalidUpload)
+	}
 	if value == "." || value == "" || len(value) > MAX_ORIGINAL_FILENAME_BYTES {
 		return "", fmt.Errorf("%w: filename is missing or too long", ErrInvalidUpload)
 	}

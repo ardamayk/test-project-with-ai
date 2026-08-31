@@ -12,7 +12,6 @@ const (
 	STATUS_AWAITING_CONFIRMATION ImportStatus = "awaiting_confirmation"
 	STATUS_COMMITTED             ImportStatus = "committed"
 	STATUS_FAILED                ImportStatus = "failed"
-	MAX_UPLOAD_SIZE_BYTES        int64        = 2 * 1024 * 1024 * 1024
 	MAX_CONFIRMATION_BODY_BYTES  int64        = 4 * 1024
 	MAX_ORIGINAL_FILENAME_BYTES               = 255
 	BITS_PER_KILOBIT                          = 1000
@@ -21,11 +20,14 @@ const (
 type ImportStatus string
 
 var (
-	ErrNotFound         = errors.New("managed import job not found")
-	ErrInvalidState     = errors.New("managed import job is not awaiting this operation")
-	ErrRevisionConflict = errors.New("managed import revision conflict")
-	ErrUploadTooLarge   = errors.New("managed import file exceeds upload limit")
-	ErrInvalidUpload    = errors.New("managed import upload is invalid")
+	ErrNotFound            = errors.New("managed import job not found")
+	ErrInvalidState        = errors.New("managed import job is not awaiting this operation")
+	ErrRevisionConflict    = errors.New("managed import revision conflict")
+	ErrUploadTooLarge      = errors.New("managed import file exceeds upload limit")
+	ErrBatchTooLarge       = errors.New("managed import batch exceeds upload limit")
+	ErrInvalidUpload       = errors.New("managed import upload is invalid")
+	ErrInsufficientStorage = errors.New("managed storage capacity is insufficient")
+	ErrUnsafeStoragePath   = errors.New("managed storage path is unsafe")
 )
 
 type Job struct {
