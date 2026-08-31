@@ -551,6 +551,8 @@ func sourceExtension(format string) (string, error) {
 	switch format {
 	case "flac":
 		return ".flac", nil
+	case "m4a":
+		return ".m4a", nil
 	default:
 		return "", &ValidationError{Code: "unsupported_format", Field: "format", Err: fmt.Errorf("validated Source Audio Format %q has no canonical extension", format)}
 	}

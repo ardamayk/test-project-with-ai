@@ -668,13 +668,14 @@ export interface components {
             year?: number;
             durationMs: number;
             /** @enum {string} */
-            format: "flac";
+            format: "flac" | "m4a";
             /** @enum {string} */
-            container: "flac";
+            container: "flac" | "m4a";
             /** @enum {string} */
-            codec: "flac";
+            codec: "flac" | "aac" | "alac";
             sampleRateHz: number;
             channelCount: number;
+            /** @description Source bit depth when meaningful; 0 for lossy codecs such as AAC. */
             bitDepth: number;
             bitrateKbps: number;
             /** @enum {string} */

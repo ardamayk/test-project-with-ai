@@ -135,6 +135,7 @@ type NormalizedMediaMetadata struct {
 	HasDiscNumber bool
 	Genres        []string
 	Year          int
+	ReplayGain    ReplayGainMetadata
 }
 
 type MediaPosition struct {
@@ -175,6 +176,17 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
+	container, detectionErr := detectInspectionContainer(file)
+	if detectionErr != nil {
+		_ = file.Close()
+		return MediaInspection{}, detectionErr
+	}
+	if container == "m4a" {
+		if err := file.Close(); err != nil {
+			return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
+		}
+		return inspectM4A(ctx, path, reportProgress)
+	}
 	inspection, inspectionErr := inspectOpenFLAC(ctx, file, reportProgress)
 	closeErr := file.Close()
 	if closeErr != nil {
@@ -188,6 +200,24 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 		return MediaInspection{}, inspectionErr
 	}
 	return inspection, nil
+}
+
+func detectInspectionContainer(file *os.File) (string, error) {
+	var header [12]byte
+	read, err := io.ReadFull(file, header[:])
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return "", inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
+	}
+	if read >= len(FLAC_SIGNATURE) && string(header[:len(FLAC_SIGNATURE)]) == FLAC_SIGNATURE {
+		return "flac", nil
+	}
+	if read >= len(header) && string(header[4:8]) == "ftyp" {
+		return "m4a", nil
+	}
+	return "", inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("supported media container signature is missing"))
 }
 
 func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
@@ -299,7 +329,18 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 		HasDiscNumber: len(tags["DISCNUMBER"]) > 0,
 		Genres:        names.Genres,
 		Year:          year,
+		ReplayGain:    replayGainFromTags(tags),
 	}, nil
+}
+
+func replayGainFromTags(tags map[string][]string) ReplayGainMetadata {
+	values := make(map[string]string, len(tags))
+	for key, tagValues := range tags {
+		if len(tagValues) > 0 {
+			values[key] = tagValues[0]
+		}
+	}
+	return readReplayGainStringMetadata(values)
 }
 
 func inspectTrackPosition(tags map[string][]string) (MediaPosition, error) {
@@ -741,7 +782,7 @@ func publicInspectionReason(code InspectionErrorCode, err error) string {
 	case INSPECTION_ERROR_FILE_READ:
 		return "file could not be read"
 	case INSPECTION_ERROR_UNSUPPORTED_FORMAT:
-		return "file is not a supported FLAC stream"
+		return "file container or audio codec is not supported"
 	case INSPECTION_ERROR_INVALID_ARTWORK:
 		return "embedded artwork is invalid"
 	case INSPECTION_ERROR_AUDIO_DECODE:

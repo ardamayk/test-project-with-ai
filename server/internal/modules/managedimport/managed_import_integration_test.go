@@ -1130,7 +1130,13 @@ type trackList struct {
 		ChannelCount int    `json:"channelCount"`
 		BitDepth     int    `json:"bitDepth"`
 		BitrateBps   int    `json:"bitrateBps"`
-		Artists      []struct {
+		ReplayGain   struct {
+			TrackGainDB *float64 `json:"trackGainDb"`
+			TrackPeak   *float64 `json:"trackPeak"`
+			AlbumGainDB *float64 `json:"albumGainDb"`
+			AlbumPeak   *float64 `json:"albumPeak"`
+		} `json:"replayGain"`
+		Artists []struct {
 			Name string `json:"name"`
 		} `json:"artists"`
 		Genres []struct {

@@ -1271,13 +1271,13 @@ components:
           minimum: 1
         format:
           type: string
-          enum: [flac]
+          enum: [flac, m4a]
         container:
           type: string
-          enum: [flac]
+          enum: [flac, m4a]
         codec:
           type: string
-          enum: [flac]
+          enum: [flac, aac, alac]
         sampleRateHz:
           type: integer
           minimum: 1
@@ -1286,7 +1286,8 @@ components:
           minimum: 1
         bitDepth:
           type: integer
-          minimum: 1
+          minimum: 0
+          description: Source bit depth when meaningful; 0 for lossy codecs such as AAC.
         bitrateKbps:
           type: integer
           minimum: 1
