@@ -465,32 +465,20 @@ func optionalYear(tags map[string][]string) (int, error) {
 
 func inspectFLACArtwork(blocks []*flacmeta.Block) (AlbumArtwork, error) {
 	var frontCover *flacmeta.Picture
-	var genericCover *flacmeta.Picture
-	genericCoverCount := 0
 	for _, block := range blocks {
 		picture, ok := block.Body.(*flacmeta.Picture)
 		if !ok {
 			continue
 		}
-		switch picture.Type {
-		case FLAC_PICTURE_TYPE_FRONT_COVER:
+		if picture.Type == FLAC_PICTURE_TYPE_FRONT_COVER {
 			if frontCover != nil {
 				return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple front covers are ambiguous"))
 			}
 			frontCover = picture
-		case FLAC_PICTURE_TYPE_OTHER:
-			genericCover = picture
-			genericCoverCount++
 		}
 	}
 	if frontCover != nil {
 		return validateArtwork(frontCover)
-	}
-	if genericCoverCount == 1 {
-		return validateArtwork(genericCover)
-	}
-	if genericCoverCount > 1 {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple generic covers are ambiguous"))
 	}
 	return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
 }

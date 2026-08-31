@@ -157,7 +157,6 @@ func TestMediaInspectorAcceptsSupportedStaticArtworkFormats(t *testing.T) {
 		{name: "JPEG", picture: frontCover("image/jpeg", encodeJPEG(t))},
 		{name: "PNG", picture: frontCover("image/png", encodePNG(t))},
 		{name: "WebP", picture: frontCover("image/webp", decodeBase64(t, "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8MQL/yC5YXXI1/8gP+QH/ID/+PIAAAA="))},
-		{name: "unambiguous generic PNG", picture: genericCover("image/png", encodePNG(t))},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			path := writeFLACWithPictures(t, []embeddedPicture{testCase.picture})
@@ -176,17 +175,19 @@ func TestMediaInspectorAcceptsSupportedStaticArtworkFormats(t *testing.T) {
 func TestMediaInspectorRejectsUnsafeEmbeddedArtwork(t *testing.T) {
 	pngData := encodePNG(t)
 	testCases := []struct {
-		name     string
-		pictures []embeddedPicture
+		name         string
+		pictures     []embeddedPicture
+		expectedCode library.InspectionErrorCode
 	}{
-		{name: "missing front cover"},
-		{name: "ambiguous front covers", pictures: []embeddedPicture{frontCover("image/png", pngData), frontCover("image/png", pngData)}},
-		{name: "ambiguous generic covers", pictures: []embeddedPicture{genericCover("image/png", pngData), genericCover("image/png", pngData)}},
-		{name: "declared type mismatch", pictures: []embeddedPicture{frontCover("image/jpeg", pngData)}},
-		{name: "truncated image", pictures: []embeddedPicture{frontCover("image/png", pngData[:len(pngData)-TRUNCATED_PNG_SUFFIX_BYTES])}},
-		{name: "animated PNG", pictures: []embeddedPicture{frontCover("image/png", addPNGAnimationControl(t, pngData))}},
-		{name: "animated WebP", pictures: []embeddedPicture{frontCover("image/webp", animatedWebP(t))}},
-		{name: "decoded pixel limit", pictures: []embeddedPicture{frontCover("image/png", oversizedPNG(t, pngData))}},
+		{name: "missing front cover", expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "generic picture is not a front cover", pictures: []embeddedPicture{genericCover("image/png", pngData)}, expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "multiple generic pictures are not front covers", pictures: []embeddedPicture{genericCover("image/png", pngData), genericCover("image/png", pngData)}, expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "ambiguous front covers", pictures: []embeddedPicture{frontCover("image/png", pngData), frontCover("image/png", pngData)}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "declared type mismatch", pictures: []embeddedPicture{frontCover("image/jpeg", pngData)}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "truncated image", pictures: []embeddedPicture{frontCover("image/png", pngData[:len(pngData)-TRUNCATED_PNG_SUFFIX_BYTES])}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "animated PNG", pictures: []embeddedPicture{frontCover("image/png", addPNGAnimationControl(t, pngData))}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "animated WebP", pictures: []embeddedPicture{frontCover("image/webp", animatedWebP(t))}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "decoded pixel limit", pictures: []embeddedPicture{frontCover("image/png", oversizedPNG(t, pngData))}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -197,11 +198,7 @@ func TestMediaInspectorRejectsUnsafeEmbeddedArtwork(t *testing.T) {
 			if !errors.As(err, &inspectionErr) {
 				t.Fatalf("error = %T %v", err, err)
 			}
-			expectedCode := library.INSPECTION_ERROR_INVALID_ARTWORK
-			if testCase.name == "missing front cover" {
-				expectedCode = library.INSPECTION_ERROR_MISSING_ARTWORK
-			}
-			if inspectionErr.Code != expectedCode || inspectionErr.Field != "artwork" {
+			if inspectionErr.Code != testCase.expectedCode || inspectionErr.Field != "artwork" {
 				t.Fatalf("inspection error = %+v", inspectionErr)
 			}
 		})
