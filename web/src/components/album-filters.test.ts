@@ -9,6 +9,12 @@ describe("collectAlbumGenres", () => {
 				title: "A",
 				artistId: "a",
 				artistName: "Artist",
+				albumArtists: [],
+				releaseIdentifiers: [],
+				genreItems: [
+					{ id: "pop", name: "Pop" },
+					{ id: "rock", name: "Rock" },
+				],
 				genres: ["Pop", "Rock"],
 			},
 			{
@@ -16,6 +22,12 @@ describe("collectAlbumGenres", () => {
 				title: "B",
 				artistId: "a",
 				artistName: "Artist",
+				albumArtists: [],
+				releaseIdentifiers: [],
+				genreItems: [
+					{ id: "pop", name: "pop" },
+					{ id: "jazz", name: "Jazz" },
+				],
 				genres: ["pop", "Jazz"],
 			},
 		]);
@@ -30,6 +42,9 @@ describe("filterAlbums", () => {
 			title: "Pop Album",
 			artistId: "a",
 			artistName: "Taylor",
+			albumArtists: [],
+			releaseIdentifiers: [],
+			genreItems: [{ id: "pop", name: "Pop" }],
 			genres: ["Pop"],
 		},
 		{
@@ -37,6 +52,9 @@ describe("filterAlbums", () => {
 			title: "Rock Album",
 			artistId: "b",
 			artistName: "Weeknd",
+			albumArtists: [],
+			releaseIdentifiers: [],
+			genreItems: [{ id: "rock", name: "Rock" }],
 			genres: ["Rock"],
 		},
 	];

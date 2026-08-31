@@ -46,11 +46,17 @@ describe("album detail route", () => {
 			id: "album-1",
 			title: "1989",
 			artistId: "artist-1",
-			artistName: "Taylor Swift",
+			artistName: "Legacy Album Artist",
+			albumArtists: [
+				{ id: "artist-1", name: "Taylor Swift" },
+				{ id: "artist-2", name: "Guest Artist" },
+			],
 			year: 2014,
+			releaseDate: "2014-10-27",
 			trackCount: 1,
 			durationMs: 180_000,
 			genres: ["Pop"],
+			genreItems: [{ id: "genre-1", name: "Pop" }],
 			tracks: [
 				{
 					id: "track-1",
@@ -72,6 +78,9 @@ describe("album detail route", () => {
 		renderWithQuery(<AlbumDetailContent albumId="album-1" />);
 
 		await screen.findByRole("heading", { name: "1989" });
+		expect(screen.getByText("Taylor Swift, Guest Artist")).toBeTruthy();
+		expect(screen.getByText("2014-10-27")).toBeTruthy();
+		expect(screen.queryByText("Legacy Album Artist")).toBeNull();
 		expect(screen.queryByRole("link", { name: /Back to library/ })).toBeNull();
 	});
 });

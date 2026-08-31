@@ -1,4 +1,5 @@
 import type { Track } from "@repo/api-client";
+import { getTrackGenreNames } from "./library-display";
 
 function formatSampleRate(hz: number): string {
 	if (hz % 1000 === 0) {
@@ -10,8 +11,9 @@ function formatSampleRate(hz: number): string {
 export function formatTrackMeta(track: Track): string | null {
 	const parts: string[] = [];
 
-	if (track.genre) {
-		parts.push(track.genre);
+	const genres = getTrackGenreNames(track);
+	if (genres.length > 0) {
+		parts.push(genres.join(", "));
 	}
 
 	if (track.format) {

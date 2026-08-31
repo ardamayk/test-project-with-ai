@@ -22,6 +22,14 @@ export type ApiClientConfig = {
 }
 
 type Schemas = components['schemas']
+type WireAlbum = Schemas['Album']
+type WireAlbumDetail = Schemas['AlbumDetail']
+type WireAlbumList = Schemas['AlbumList']
+type WireTrack = Schemas['Track']
+type WireTrackList = Schemas['TrackList']
+type WirePlaylistDetail = Schemas['PlaylistDetail']
+type WireQueue = Schemas['Queue']
+type WireQueueItem = Schemas['QueueItem']
 
 export type HealthResponse = Schemas['HealthResponse']
 export type ThemePreferences = Schemas['ThemePreferences']
@@ -30,23 +38,38 @@ export type UserPreferences = Schemas['UserPreferences']
 export type UserPreferencesPatch = Schemas['UserPreferencesPatch']
 export type User = Schemas['User']
 export type Artist = Schemas['Artist']
+export type ArtistCredit = Schemas['ArtistCredit']
+export type Genre = Schemas['Genre']
+export type ReleaseIdentifier = Schemas['ReleaseIdentifier']
+export type AlbumArtwork = Schemas['AlbumArtwork']
 export type ArtistList = Schemas['ArtistList']
-export type Album = Schemas['Album']
-export type AlbumList = Schemas['AlbumList']
-export type AlbumDetail = Schemas['AlbumDetail']
-export type Track = Schemas['Track']
-export type TrackList = Schemas['TrackList']
+export type Album = Omit<WireAlbum, 'albumArtists' | 'genreItems' | 'releaseIdentifiers'> & {
+  albumArtists: ArtistCredit[]
+  genreItems: Genre[]
+  releaseIdentifiers: ReleaseIdentifier[]
+}
+export type Track = Omit<WireTrack, 'artists' | 'discNo' | 'genres'> & {
+  artists: ArtistCredit[]
+  discNo: number
+  genres: Genre[]
+}
+export type AlbumList = Omit<WireAlbumList, 'items'> & { items: Album[] }
+export type AlbumDetail = Omit<WireAlbumDetail, keyof Album | 'tracks'> &
+  Album & { tracks: Track[] }
+export type TrackList = Omit<WireTrackList, 'items'> & { items: Track[] }
 export type Playlist = Schemas['Playlist']
 export type PlaylistList = Schemas['PlaylistList']
-export type PlaylistDetail = Schemas['PlaylistDetail']
+export type PlaylistDetail = Omit<WirePlaylistDetail, 'tracks'> & { tracks: Track[] }
 export type PlaylistCreate = Schemas['PlaylistCreate']
 export type PlaylistTrackAdd = Schemas['PlaylistTrackAdd']
 export type ScanStatus = Schemas['ScanStatus']
 export type DeleteResult = Schemas['DeleteResult']
-export type QueueItem = Schemas['QueueItem']
-export type Queue = Schemas['Queue']
+export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track }
+export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] }
 export type ErrorResponse = Schemas['ErrorResponse']
-export type QueueConflictResponse = Schemas['QueueConflictResponse']
+export type QueueConflictResponse = Omit<Schemas['QueueConflictResponse'], 'queue'> & {
+  queue: Queue
+}
 export type QueueReplace = Schemas['QueueReplace']
 export type QueueItemAppend = Schemas['QueueItemAppend']
 export type QueueReorder = Schemas['QueueReorder']
@@ -103,6 +126,72 @@ function buildRadioSearchQuery(params?: RadioSearchParams): string {
   if (params.offset != null) search.set('offset', String(params.offset))
   const qs = search.toString()
   return qs ? `?${qs}` : ''
+}
+
+function legacyArtistCredit(name: string): ArtistCredit {
+  return { id: `legacy-artist:${name}`, name }
+}
+
+function legacyGenre(name: string): Genre {
+  return { id: `legacy-genre:${name}`, name }
+}
+
+function normalizeTrack(track: WireTrack): Track {
+  return {
+    ...track,
+    artists: track.artists ?? [legacyArtistCredit(track.artistName)],
+    discNo: track.discNo ?? 1,
+    genres: track.genres ?? (track.genre ? [legacyGenre(track.genre)] : []),
+  }
+}
+
+function normalizeAlbum(album: WireAlbum): Album {
+  return {
+    ...album,
+    albumArtists: album.albumArtists ?? [
+      { id: album.artistId, name: album.artistName },
+    ],
+    genreItems: album.genreItems ?? (album.genres ?? []).map(legacyGenre),
+    releaseIdentifiers: album.releaseIdentifiers ?? [],
+  }
+}
+
+function normalizeAlbumList(albums: WireAlbumList): AlbumList {
+  return { ...albums, items: albums.items.map(normalizeAlbum) }
+}
+
+function normalizeAlbumDetail(album: WireAlbumDetail): AlbumDetail {
+  return {
+    ...normalizeAlbum(album),
+    tracks: album.tracks.map(normalizeTrack),
+  }
+}
+
+function normalizeTrackList(tracks: WireTrackList): TrackList {
+  return { ...tracks, items: tracks.items.map(normalizeTrack) }
+}
+
+function normalizePlaylistDetail(playlist: WirePlaylistDetail): PlaylistDetail {
+  return { ...playlist, tracks: playlist.tracks.map(normalizeTrack) }
+}
+
+function normalizeQueue(queue: WireQueue): Queue {
+  return {
+    ...queue,
+    items: queue.items.map((item) => ({
+      ...item,
+      track: normalizeTrack(item.track),
+    })),
+  }
+}
+
+function normalizeApiErrorBody(
+  body: ErrorResponse | Schemas['QueueConflictResponse'],
+): ErrorResponse | QueueConflictResponse {
+  if ('queue' in body) {
+    return { ...body, queue: normalizeQueue(body.queue) }
+  }
+  return body
 }
 
 export function createApiClient(config: ApiClientConfig) {
@@ -163,11 +252,11 @@ export function createApiClient(config: ApiClientConfig) {
     })
 
     if (!response.ok) {
-      const body = (await response.json().catch(() => ({
+      const body = normalizeApiErrorBody(await response.json().catch(() => ({
         error: 'unknown',
         code: 'unknown',
         message: response.statusText,
-      }))) as ErrorResponse
+      })) as ErrorResponse | Schemas['QueueConflictResponse'])
       throw new ApiError(response.status, body)
     }
 
@@ -195,44 +284,51 @@ export function createApiClient(config: ApiClientConfig) {
     listArtists: (params?: ListParams) =>
       request<ArtistList>(`/api/v1/library/artists${buildQuery(params)}`),
     listAlbums: (params?: ListParams) =>
-      request<AlbumList>(`/api/v1/library/albums${buildQuery(params)}`),
+      request<WireAlbumList>(`/api/v1/library/albums${buildQuery(params)}`).then(
+        normalizeAlbumList,
+      ),
     getAlbum: (albumId: string) =>
-      request<AlbumDetail>(`/api/v1/library/albums/${albumId}`),
+      request<WireAlbumDetail>(`/api/v1/library/albums/${albumId}`).then(
+        normalizeAlbumDetail,
+      ),
     deleteAlbum: (albumId: string) =>
       request<DeleteResult>(`/api/v1/library/albums/${albumId}`, {
         method: 'DELETE',
       }),
     listTracks: (params?: ListParams) =>
-      request<TrackList>(`/api/v1/library/tracks${buildQuery(params)}`),
+      request<WireTrackList>(`/api/v1/library/tracks${buildQuery(params)}`).then(
+        normalizeTrackList,
+      ),
     getTrack: (trackId: string) =>
-      request<Track>(`/api/v1/library/tracks/${trackId}`),
+      request<WireTrack>(`/api/v1/library/tracks/${trackId}`).then(normalizeTrack),
     deleteTrack: (trackId: string) =>
       request<DeleteResult>(`/api/v1/library/tracks/${trackId}`, {
         method: 'DELETE',
       }),
 
-    getPlaybackQueue: () => request<Queue>('/api/v1/playback/queue'),
+    getPlaybackQueue: () =>
+      request<WireQueue>('/api/v1/playback/queue').then(normalizeQueue),
     subscribePlaybackQueueEvents,
     replacePlaybackQueue: (trackIds: string[], revision: string) =>
-      request<Queue>('/api/v1/playback/queue', {
+      request<WireQueue>('/api/v1/playback/queue', {
         method: 'PUT',
         body: JSON.stringify({ trackIds, revision }),
-      }),
+      }).then(normalizeQueue),
     reorderPlaybackQueue: (itemIds: string[], revision: string) =>
-      request<Queue>('/api/v1/playback/queue', {
+      request<WireQueue>('/api/v1/playback/queue', {
         method: 'PATCH',
         body: JSON.stringify({ itemIds, revision }),
-      }),
+      }).then(normalizeQueue),
     appendPlaybackQueueItem: (trackId: string, revision: string) =>
-      request<Queue>('/api/v1/playback/queue/items', {
+      request<WireQueue>('/api/v1/playback/queue/items', {
         method: 'POST',
         body: JSON.stringify({ trackId, revision }),
-      }),
+      }).then(normalizeQueue),
     removePlaybackQueueItem: (itemId: string, revision: string) =>
-      request<Queue>(`/api/v1/playback/queue/items/${itemId}`, {
+      request<WireQueue>(`/api/v1/playback/queue/items/${itemId}`, {
         method: 'DELETE',
         headers: { 'If-Match': revision },
-      }),
+      }).then(normalizeQueue),
     listPlaylists: () => request<PlaylistList>('/api/v1/playlists'),
     createPlaylist: (body: PlaylistCreate) =>
       request<Playlist>('/api/v1/playlists', {
@@ -240,16 +336,19 @@ export function createApiClient(config: ApiClientConfig) {
         body: JSON.stringify(body),
       }),
     getPlaylist: (playlistId: string) =>
-      request<PlaylistDetail>(`/api/v1/playlists/${playlistId}`),
+      request<WirePlaylistDetail>(`/api/v1/playlists/${playlistId}`).then(
+        normalizePlaylistDetail,
+      ),
     addPlaylistTrack: (playlistId: string, trackId: string) =>
-      request<PlaylistDetail>(`/api/v1/playlists/${playlistId}/tracks`, {
+      request<WirePlaylistDetail>(`/api/v1/playlists/${playlistId}/tracks`, {
         method: 'POST',
         body: JSON.stringify({ trackId }),
-      }),
+      }).then(normalizePlaylistDetail),
     removePlaylistTrack: (playlistId: string, trackId: string) =>
-      request<PlaylistDetail>(`/api/v1/playlists/${playlistId}/tracks/${trackId}`, {
-        method: 'DELETE',
-      }),
+      request<WirePlaylistDetail>(
+        `/api/v1/playlists/${playlistId}/tracks/${trackId}`,
+        { method: 'DELETE' },
+      ).then(normalizePlaylistDetail),
     listRadioStations: () =>
       request<RadioStationList>('/api/v1/radio/stations'),
     getRadioStation: (stationId: string) =>

@@ -14,6 +14,7 @@ import { confirmDelete, useDeleteAlbum } from "#/hooks/use-delete-library";
 import { getAlbumExternalLinks } from "#/lib/album-external-links";
 import { getAlbumGenres } from "#/lib/album-genres";
 import { apiClient } from "#/lib/api";
+import { getAlbumArtistName } from "#/lib/library-display";
 
 function formatTotalDuration(ms: number): string {
 	if (!ms || ms < 0) return "0m";
@@ -47,19 +48,20 @@ export function AlbumDetailHeader({
 	const trackCount = album.trackCount ?? album.tracks.length;
 
 	const metaTags = [
-		album.year != null ? String(album.year) : null,
+		album.releaseDate ?? (album.year != null ? String(album.year) : null),
 		trackCount > 0 ? `${trackCount} tracks` : null,
 		totalDurationMs > 0 ? formatTotalDuration(totalDurationMs) : null,
 		...formats,
 	].filter(Boolean) as string[];
 
-	const externalLinks = getAlbumExternalLinks(album.artistName, album.title);
+	const artistName = getAlbumArtistName(album);
+	const externalLinks = getAlbumExternalLinks(artistName, album.title);
 	const genres = getAlbumGenres(album);
 	const deleteAlbum = useDeleteAlbum();
 
 	const handleDeleteAlbum = () => {
 		const confirmed = confirmDelete(
-			`Delete "${album.title}" by ${album.artistName}?\n\nThis removes the album, all of its tracks, and their files from disk.`,
+			`Delete "${album.title}" by ${artistName}?\n\nThis removes the album, all of its tracks, and their files from disk.`,
 		);
 		if (!confirmed) return;
 		deleteAlbum.mutate(album.id);
@@ -85,7 +87,7 @@ export function AlbumDetailHeader({
 								{album.title}
 							</h1>
 							<p className="mt-2 font-medium text-foreground text-lg">
-								{album.artistName}
+								{artistName}
 							</p>
 
 							<div className="mt-4 flex flex-wrap items-center gap-2 text-foreground text-sm">

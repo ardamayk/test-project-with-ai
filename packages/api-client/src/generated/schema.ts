@@ -560,10 +560,32 @@ export interface components {
             message: string;
         };
         Artist: {
-            /** Format: uuid */
             id: string;
             name: string;
             albumCount?: number;
+        };
+        ArtistCredit: {
+            id: string;
+            name: string;
+        };
+        Genre: {
+            id: string;
+            name: string;
+        };
+        ReleaseIdentifier: {
+            scheme: string;
+            value: string;
+        };
+        AlbumArtwork: {
+            /** Format: uuid */
+            sourceTrackId?: string;
+            contentSha256: string;
+            /** @enum {string} */
+            mediaType?: "image/jpeg" | "image/png" | "image/webp";
+            width?: number;
+            height?: number;
+            /** Format: int64 */
+            sizeBytes: number;
         };
         ArtistList: {
             items: components["schemas"]["Artist"][];
@@ -573,12 +595,24 @@ export interface components {
             /** Format: uuid */
             id: string;
             title: string;
-            /** Format: uuid */
             artistId: string;
             artistName: string;
+            /** @description Ordered normalized Album Artist credits. */
+            albumArtists?: components["schemas"]["ArtistCredit"][];
             year?: number;
+            /** @description Known release date or year for this Album edition. */
+            releaseDate?: string;
+            /** @description External identifiers that disambiguate this Album edition. */
+            releaseIdentifiers?: components["schemas"]["ReleaseIdentifier"][];
             trackCount?: number;
+            /**
+             * @deprecated
+             * @description Legacy Genre names retained for API v1 compatibility.
+             */
             genres?: string[];
+            /** @description Normalized Genres derived from active Tracks. */
+            genreItems?: components["schemas"]["Genre"][];
+            artwork?: components["schemas"]["AlbumArtwork"];
         };
         AlbumList: {
             items: components["schemas"]["Album"][];
@@ -591,16 +625,37 @@ export interface components {
             /** Format: uuid */
             id: string;
             title: string;
+            /**
+             * @deprecated
+             * @description Legacy display credit retained for API v1 compatibility.
+             */
             artistName: string;
+            /** @description Ordered normalized Track Artist credits. */
+            artists?: components["schemas"]["ArtistCredit"][];
             /** Format: uuid */
             albumId: string;
             albumTitle?: string;
             trackNo?: number;
+            /** @description Effective disc position; single-disc Albums use 1. */
+            discNo?: number;
+            trackTotal?: number;
+            discTotal?: number;
             durationMs: number;
             format: string;
+            codec?: string;
+            container?: string;
+            sampleFormat?: string;
+            /**
+             * @deprecated
+             * @description Legacy Genre value retained for API v1 compatibility.
+             */
             genre?: string;
+            /** @description Ordered normalized Track Genres. */
+            genres?: components["schemas"]["Genre"][];
             sampleRateHz?: number;
             bitDepth?: number;
+            channelCount?: number;
+            bitrateBps?: number;
             bitrateKbps?: number;
             sizeBytes?: number;
             replayGain?: components["schemas"]["ReplayGainMetadata"];

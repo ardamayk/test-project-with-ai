@@ -12,13 +12,15 @@ import {
 } from "#/components/ui/context-menu";
 import { confirmDelete, useDeleteAlbum } from "#/hooks/use-delete-library";
 import { apiClient } from "#/lib/api";
+import { getAlbumArtistName } from "#/lib/library-display";
 
 export function AlbumGrid({ albums }: { albums: Album[] }) {
 	const deleteAlbum = useDeleteAlbum();
 
 	const handleDelete = (album: Album) => {
+		const artistName = getAlbumArtistName(album);
 		const confirmed = confirmDelete(
-			`Delete "${album.title}" by ${album.artistName}?\n\nThis removes the album, all of its tracks, and their files from disk.`,
+			`Delete "${album.title}" by ${artistName}?\n\nThis removes the album, all of its tracks, and their files from disk.`,
 		);
 		if (!confirmed) return;
 		deleteAlbum.mutate(album.id);
@@ -47,11 +49,11 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
 									{album.title}
 								</p>
 								<p className="truncate text-[11px] text-foreground leading-tight">
-									{album.artistName}
+									{getAlbumArtistName(album)}
 								</p>
-								{album.year != null ? (
+								{album.releaseDate != null || album.year != null ? (
 									<p className="text-[10px] text-caption leading-tight">
-										{album.year}
+										{album.releaseDate ?? album.year}
 									</p>
 								) : null}
 							</div>

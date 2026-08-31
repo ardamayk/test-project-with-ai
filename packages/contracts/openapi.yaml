@@ -1049,11 +1049,57 @@ components:
       properties:
         id:
           type: string
-          format: uuid
         name:
           type: string
         albumCount:
           type: integer
+    ArtistCredit:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    Genre:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    ReleaseIdentifier:
+      type: object
+      required: [scheme, value]
+      properties:
+        scheme:
+          type: string
+        value:
+          type: string
+    AlbumArtwork:
+      type: object
+      required: [contentSha256, sizeBytes]
+      properties:
+        sourceTrackId:
+          type: string
+          format: uuid
+        contentSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        mediaType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        width:
+          type: integer
+          minimum: 1
+        height:
+          type: integer
+          minimum: 1
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 1
     ArtistList:
       type: object
       required: [items, total]
@@ -1075,17 +1121,38 @@ components:
           type: string
         artistId:
           type: string
-          format: uuid
         artistName:
           type: string
+        albumArtists:
+          type: array
+          description: Ordered normalized Album Artist credits.
+          items:
+            $ref: "#/components/schemas/ArtistCredit"
         year:
           type: integer
+        releaseDate:
+          type: string
+          description: Known release date or year for this Album edition.
+        releaseIdentifiers:
+          type: array
+          description: External identifiers that disambiguate this Album edition.
+          items:
+            $ref: "#/components/schemas/ReleaseIdentifier"
         trackCount:
           type: integer
         genres:
           type: array
+          deprecated: true
+          description: Legacy Genre names retained for API v1 compatibility.
           items:
             type: string
+        genreItems:
+          type: array
+          description: Normalized Genres derived from active Tracks.
+          items:
+            $ref: "#/components/schemas/Genre"
+        artwork:
+          $ref: "#/components/schemas/AlbumArtwork"
     AlbumList:
       type: object
       required: [items, total]
@@ -1117,6 +1184,13 @@ components:
           type: string
         artistName:
           type: string
+          deprecated: true
+          description: Legacy display credit retained for API v1 compatibility.
+        artists:
+          type: array
+          description: Ordered normalized Track Artist credits.
+          items:
+            $ref: "#/components/schemas/ArtistCredit"
         albumId:
           type: string
           format: uuid
@@ -1124,15 +1198,42 @@ components:
           type: string
         trackNo:
           type: integer
+        discNo:
+          type: integer
+          minimum: 1
+          description: Effective disc position; single-disc Albums use 1.
+        trackTotal:
+          type: integer
+          minimum: 1
+        discTotal:
+          type: integer
+          minimum: 1
         durationMs:
           type: integer
         format:
           type: string
+        codec:
+          type: string
+        container:
+          type: string
+        sampleFormat:
+          type: string
         genre:
           type: string
+          deprecated: true
+          description: Legacy Genre value retained for API v1 compatibility.
+        genres:
+          type: array
+          description: Ordered normalized Track Genres.
+          items:
+            $ref: "#/components/schemas/Genre"
         sampleRateHz:
           type: integer
         bitDepth:
+          type: integer
+        channelCount:
+          type: integer
+        bitrateBps:
           type: integer
         bitrateKbps:
           type: integer

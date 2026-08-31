@@ -11,6 +11,7 @@ import {
 } from "#/components/ui/context-menu";
 import { confirmDelete, useDeleteTrack } from "#/hooks/use-delete-library";
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
+import { getTrackArtistName, getTrackGenreNames } from "#/lib/library-display";
 import { cn } from "#/lib/utils";
 
 function formatDuration(ms: number): string {
@@ -91,6 +92,7 @@ export function TrackList({
 	const favoritePadding = compact ? "px-2 py-1.5" : "px-2 py-2.5";
 	const shouldShowArtistLine = !albumId;
 	const shouldShowAlbumCover = !albumId;
+	const hasMultipleDiscs = tracks.some((track) => track.discNo > 1);
 
 	return (
 		<>
@@ -117,8 +119,13 @@ export function TrackList({
 					{tracks.map((track, index) => {
 						const isPlaying = currentTrack?.id === track.id;
 						const favorited = isFavorite(track.id);
+						const trackNumber = track.trackNo ?? index + 1;
 						const visibleNumber =
-							numbering === "list" ? index + 1 : (track.trackNo ?? index + 1);
+							numbering === "list"
+								? index + 1
+								: hasMultipleDiscs
+									? `${track.discNo}.${trackNumber}`
+									: trackNumber;
 
 						return (
 							<ContextMenu key={track.id}>
@@ -163,7 +170,7 @@ export function TrackList({
 													</span>
 													{shouldShowArtistLine ? (
 														<span className="mt-0.5 block truncate text-caption text-[11px] leading-tight">
-															{track.artistName}
+															{getTrackArtistName(track)}
 														</span>
 													) : null}
 												</div>
@@ -251,8 +258,9 @@ function TrackDetailsDialog({
 	const rows = track
 		? [
 				["Title", track.title],
-				["Artist", track.artistName],
+				["Artist", getTrackArtistName(track)],
 				["Album", track.albumTitle],
+				["Disc", track.discNo.toString()],
 				["Track", track.trackNo?.toString()],
 				["Duration", formatDurationLabel(track.durationMs)],
 				["Codec", track.format],
@@ -272,7 +280,7 @@ function TrackDetailsDialog({
 						track.replayGain?.albumPeak,
 					),
 				],
-				["Genre", track.genre],
+				["Genre", getTrackGenreNames(track).join(", ")],
 				["Size", formatBytes(track.sizeBytes)],
 				["Id", track.id],
 			].filter((row): row is [string, string] => Boolean(row[1]))

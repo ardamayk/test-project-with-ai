@@ -13,9 +13,12 @@ const trackSource: PlaybackSource = {
 		id: "track-1",
 		title: "Track 1",
 		artistName: "Artist",
+		artists: [],
 		albumId: "album-1",
+		discNo: 1,
 		durationMs: 120000,
 		format: "flac",
+		genres: [],
 	},
 	playbackUrl: `http://127.0.0.1:43129/${"a".repeat(64)}/api/v1/tracks/track-1/stream`,
 };

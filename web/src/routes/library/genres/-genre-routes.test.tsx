@@ -187,6 +187,28 @@ describe("genre routes", () => {
 		});
 	});
 
+	it("renders structured Genre names without punctuation guessing", async () => {
+		mocks.listTracks.mockResolvedValue({
+			items: [
+				{
+					...tracks[0],
+					genre: "Legacy, Guess",
+					genres: [{ id: "ambient", name: "Electronic / Ambient" }],
+				},
+			],
+		});
+
+		renderWithQuery(<GenresPage />);
+
+		expect(
+			await screen.findByRole("link", {
+				name: /Electronic \/ Ambient 1 track/,
+			}),
+		).toBeTruthy();
+		expect(screen.queryByRole("link", { name: /Legacy/ })).toBeNull();
+		expect(screen.queryByRole("link", { name: /Guess/ })).toBeNull();
+	});
+
 	it("scopes detail playback actions to matching genre tracks", async () => {
 		renderWithQuery(<GenreDetailContent genre="Synthpop" />);
 

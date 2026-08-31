@@ -1,6 +1,32 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { operations } from './generated/schema'
-import { createApiClient, type Track } from './index'
+import {
+  type Album,
+  type ArtistCredit,
+  createApiClient,
+  type Genre,
+  type ReleaseIdentifier,
+  type Track,
+} from './index'
+
+describe('normalized library contracts', () => {
+  it('exposes ordered Artist credits, structured Genres, disc positions, editions, and artwork', () => {
+    expectTypeOf<Album>().toHaveProperty('albumArtists')
+    expectTypeOf<Album>().toHaveProperty('genreItems')
+    expectTypeOf<Album>().toHaveProperty('releaseDate')
+    expectTypeOf<Album>().toHaveProperty('releaseIdentifiers')
+    expectTypeOf<Album>().toHaveProperty('artwork')
+    expectTypeOf<Track>().toHaveProperty('artists')
+    expectTypeOf<Track>().toHaveProperty('genres')
+    expectTypeOf<Track>().toHaveProperty('discNo')
+    expectTypeOf<Album['albumArtists']>().toEqualTypeOf<ArtistCredit[]>()
+    expectTypeOf<Album['genreItems']>().toEqualTypeOf<Genre[]>()
+    expectTypeOf<Album['releaseIdentifiers']>().toEqualTypeOf<ReleaseIdentifier[]>()
+    expectTypeOf<Track['artists']>().toEqualTypeOf<ArtistCredit[]>()
+    expectTypeOf<Track['genres']>().toEqualTypeOf<Genre[]>()
+    expectTypeOf<Track['discNo']>().toEqualTypeOf<number>()
+  })
+})
 
 describe('Track ReplayGain Metadata', () => {
   it('preserves missing values as null', () => {
@@ -21,6 +47,64 @@ describe('Track ReplayGain Metadata', () => {
 })
 
 describe('createApiClient', () => {
+  it('normalizes legacy library responses at the client boundary', async () => {
+    const transport = vi.fn<typeof fetch>(async (input) => {
+      if (input.toString().includes('/library/albums/')) {
+        return Response.json({
+          id: 'album-1',
+          title: 'Legacy Album',
+          artistId: 'artist-1',
+          artistName: 'Legacy Artist',
+          genres: ['Rock'],
+          tracks: [
+            {
+              id: 'track-1',
+              title: 'Legacy Track',
+              artistName: 'Track Artist',
+              albumId: 'album-1',
+              durationMs: 1000,
+              format: 'flac',
+              genre: 'Electronic / Ambient',
+            },
+          ],
+        })
+      }
+      return Response.json({
+        items: [
+          {
+            id: 'track-1',
+            title: 'Legacy Track',
+            artistName: 'Track Artist',
+            albumId: 'album-1',
+            durationMs: 1000,
+            format: 'flac',
+            genre: 'Electronic / Ambient',
+          },
+        ],
+        total: 1,
+      })
+    })
+    const client = createApiClient({ baseUrl: '', transport })
+
+    const album = await client.getAlbum('album-1')
+    const tracks = await client.listTracks()
+
+    expect(album.albumArtists).toEqual([{ id: 'artist-1', name: 'Legacy Artist' }])
+    expect(album.genreItems).toEqual([{ id: 'legacy-genre:Rock', name: 'Rock' }])
+    expect(album.releaseIdentifiers).toEqual([])
+    expect(album.tracks[0]).toMatchObject({
+      artists: [{ id: 'legacy-artist:Track Artist', name: 'Track Artist' }],
+      discNo: 1,
+      genres: [
+        {
+          id: 'legacy-genre:Electronic / Ambient',
+          name: 'Electronic / Ambient',
+        },
+      ],
+    })
+    expect(tracks.items[0]?.discNo).toBe(1)
+  })
+
   it('generates the missing revision response for Queue removal', () => {
     type RemoveQueueResponses = operations['removePlaybackQueueItem']['responses']
 

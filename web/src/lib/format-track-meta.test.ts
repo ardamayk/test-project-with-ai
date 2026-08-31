@@ -7,10 +7,13 @@ describe("formatTrackMeta", () => {
 			id: "1",
 			title: "Track",
 			artistName: "Artist",
+			artists: [],
 			albumId: "a1",
+			discNo: 1,
 			durationMs: 1000,
 			format: "flac",
 			genre: "Pop",
+			genres: [{ id: "genre-pop", name: "Pop" }],
 			bitDepth: 24,
 			sampleRateHz: 96000,
 		});
@@ -22,9 +25,12 @@ describe("formatTrackMeta", () => {
 			id: "1",
 			title: "Track",
 			artistName: "Artist",
+			artists: [],
 			albumId: "a1",
+			discNo: 1,
 			durationMs: 1000,
 			format: "mp3",
+			genres: [],
 			bitrateKbps: 320,
 		});
 		expect(meta).toBe("MP3 · 320 kbps");

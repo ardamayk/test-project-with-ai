@@ -8,6 +8,8 @@ vi.mock("#/lib/api", () => ({
 	},
 }));
 
+const normalizedTrackFields = { artists: [], discNo: 1, genres: [] };
+
 describe("CollectionDetailHeader", () => {
 	afterEach(() => {
 		cleanup();
@@ -75,6 +77,7 @@ describe("CollectionDetailHeader", () => {
 				trackCount={4}
 				coverTracks={[
 					{
+						...normalizedTrackFields,
 						id: "t1",
 						title: "A",
 						albumId: "a1",
@@ -83,6 +86,7 @@ describe("CollectionDetailHeader", () => {
 						format: "flac",
 					},
 					{
+						...normalizedTrackFields,
 						id: "t2",
 						title: "B",
 						albumId: "a2",
@@ -91,6 +95,7 @@ describe("CollectionDetailHeader", () => {
 						format: "flac",
 					},
 					{
+						...normalizedTrackFields,
 						id: "t3",
 						title: "C",
 						albumId: "a3",
@@ -99,6 +104,7 @@ describe("CollectionDetailHeader", () => {
 						format: "flac",
 					},
 					{
+						...normalizedTrackFields,
 						id: "t4",
 						title: "D",
 						albumId: "a4",
@@ -145,6 +151,7 @@ describe("CollectionDetailHeader", () => {
 				trackCount={3}
 				coverTracks={[
 					{
+						...normalizedTrackFields,
 						id: "t1",
 						title: "A",
 						albumId: "a1",
@@ -153,6 +160,7 @@ describe("CollectionDetailHeader", () => {
 						format: "flac",
 					},
 					{
+						...normalizedTrackFields,
 						id: "t2",
 						title: "B",
 						albumId: "a1",
@@ -161,6 +169,7 @@ describe("CollectionDetailHeader", () => {
 						format: "flac",
 					},
 					{
+						...normalizedTrackFields,
 						id: "t3",
 						title: "C",
 						albumId: "a2",
