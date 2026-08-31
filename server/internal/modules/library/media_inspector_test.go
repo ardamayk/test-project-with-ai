@@ -90,9 +90,10 @@ func TestMediaInspectorInspectsStrictOGGFixtures(t *testing.T) {
 		codec        string
 		expectedHash string
 		sampleRateHz int
+		bitrateKbps  int
 	}{
-		{name: "Vorbis", filename: "strict-import.ogg", format: "ogg", codec: "vorbis", expectedHash: "7d61b6f5fda0f02392177282bc79c4b96e33736ec41056891dff4de31fbc7f6a", sampleRateHz: 44100},
-		{name: "Opus", filename: "strict-import.opus", format: "opus", codec: "opus", expectedHash: "6ba8a2b924835bec5cbb97d538b8077dd4d722faa15baf83a0139ad4a27867d4", sampleRateHz: 48000},
+		{name: "Vorbis", filename: "strict-import.ogg", format: "ogg", codec: "vorbis", expectedHash: "7d61b6f5fda0f02392177282bc79c4b96e33736ec41056891dff4de31fbc7f6a", sampleRateHz: 44100, bitrateKbps: 20},
+		{name: "Opus", filename: "strict-import.opus", format: "opus", codec: "opus", expectedHash: "6ba8a2b924835bec5cbb97d538b8077dd4d722faa15baf83a0139ad4a27867d4", sampleRateHz: 48000, bitrateKbps: 85},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -112,7 +113,7 @@ func TestMediaInspectorInspectsStrictOGGFixtures(t *testing.T) {
 			if inspection.Audio.DurationMs != 250 || inspection.Audio.SampleRateHz != testCase.sampleRateHz || inspection.Audio.ChannelCount != 1 {
 				t.Fatalf("duration/sample rate/channels = %d/%d/%d", inspection.Audio.DurationMs, inspection.Audio.SampleRateHz, inspection.Audio.ChannelCount)
 			}
-			if inspection.Audio.BitDepth != 0 || inspection.Audio.BitrateKbps <= 0 {
+			if inspection.Audio.BitDepth != 0 || inspection.Audio.BitrateKbps != testCase.bitrateKbps {
 				t.Fatalf("bit depth/bitrate = %d/%d", inspection.Audio.BitDepth, inspection.Audio.BitrateKbps)
 			}
 			if inspection.FileSHA256 != testCase.expectedHash {
@@ -155,6 +156,7 @@ func TestMediaInspectorReturnsStableOGGErrors(t *testing.T) {
 		{name: "unsupported OGG stream", filename: "strict-import.opus", mutate: replaceOGGBytes([]byte("OpusHead"), []byte("NopeHead")), expectedCode: library.INSPECTION_ERROR_UNSUPPORTED_FORMAT, expectedField: "container"},
 		{name: "truncated Vorbis stream", filename: "strict-import.ogg", mutate: truncateOGGEnd, expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
 		{name: "truncated Opus stream", filename: "strict-import.opus", mutate: truncateOGGEnd, expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
+		{name: "corrupt page after Vorbis EOS", filename: "strict-import.ogg", mutate: appendCorruptOGGPage, expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -218,6 +220,24 @@ func replaceOGGBytes(oldValue, newValue []byte) func(*testing.T, []byte) []byte 
 func truncateOGGEnd(t *testing.T, fixture []byte) []byte {
 	t.Helper()
 	return append([]byte(nil), fixture[:len(fixture)-8]...)
+}
+
+func appendCorruptOGGPage(t *testing.T, fixture []byte) []byte {
+	t.Helper()
+	lastPageOffset := 0
+	for offset := 0; offset < len(fixture); {
+		lastPageOffset = offset
+		segmentCount := int(fixture[offset+OGG_PAGE_SEGMENT_COUNT_OFFSET])
+		segmentTableEnd := offset + library.OGG_PAGE_HEADER_SIZE_BYTES + segmentCount
+		offset = segmentTableEnd
+		for _, size := range fixture[lastPageOffset+library.OGG_PAGE_HEADER_SIZE_BYTES : segmentTableEnd] {
+			offset += int(size)
+		}
+	}
+	result := append([]byte(nil), fixture...)
+	result = append(result, fixture[lastPageOffset:]...)
+	result[len(result)-1] ^= 0xff
+	return result
 }
 
 func readOGGFixture(t *testing.T, filename string) []byte {

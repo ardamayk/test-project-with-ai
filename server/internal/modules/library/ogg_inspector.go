@@ -18,19 +18,33 @@ import (
 )
 
 const (
-	OGG_SIGNATURE              = "OggS"
-	VORBIS_IDENTIFICATION      = "\x01vorbis"
-	OPUS_IDENTIFICATION        = "OpusHead"
-	OPUS_COMMENT_SIGNATURE     = "OpusTags"
-	OGG_PAGE_HEADER_SIZE_BYTES = 27
-	OGG_END_OF_STREAM_FLAG     = 0x04
-	OGG_MAX_SEGMENT_SIZE_BYTES = 255
-	OPUS_DECODE_SAMPLE_RATE_HZ = 48000
-	OPUS_MAX_FRAME_SAMPLES     = 5760
-	PICTURE_FIXED_FIELD_COUNT  = 8
-	PICTURE_FIXED_FIELD_SIZE   = 4
-	MAX_PICTURE_COMMENT_BYTES  = (MAX_ARTWORK_SIZE_BYTES + 1024) * 2
+	OGG_SIGNATURE                = "OggS"
+	VORBIS_IDENTIFICATION        = "\x01vorbis"
+	OPUS_IDENTIFICATION          = "OpusHead"
+	OPUS_COMMENT_SIGNATURE       = "OpusTags"
+	OGG_PAGE_HEADER_SIZE_BYTES   = 27
+	OGG_END_OF_STREAM_FLAG       = 0x04
+	OGG_MAX_SEGMENT_SIZE_BYTES   = 255
+	OGG_BEGINNING_OF_STREAM_FLAG = 0x02
+	OGG_CONTINUED_PACKET_FLAG    = 0x01
+	OPUS_DECODE_SAMPLE_RATE_HZ   = 48000
+	OPUS_MAX_FRAME_SAMPLES       = 5760
+	MAX_PICTURE_COMMENT_BYTES    = (MAX_ARTWORK_SIZE_BYTES + 1024) * 2
 )
+
+type oggPage struct {
+	headerType      byte
+	granulePosition uint64
+	serial          uint32
+	sequence        uint32
+	segmentSizes    []byte
+	payload         []byte
+}
+
+type oggStreamAnalysis struct {
+	encodedAudioBytes int64
+	finalGranule      uint64
+}
 
 func inspectOpenOGG(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
 	fileHash, sizeBytes, err := hashAndRewind(ctx, file)
@@ -41,15 +55,23 @@ func inspectOpenOGG(ctx context.Context, file *os.File, reportProgress Inspectio
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", err)
 	}
+	headerPackets := 3
+	if codec == "opus" {
+		headerPackets = 2
+	}
+	analysis, err := analyzeOGGStream(file, headerPackets)
+	if err != nil {
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+	}
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind OGG stream: %w", err))
 	}
 	var inspection MediaInspection
 	switch codec {
 	case "vorbis":
-		inspection, err = inspectVorbisOGG(ctx, file, sizeBytes, reportProgress)
+		inspection, err = inspectVorbisOGG(ctx, file, sizeBytes, analysis, reportProgress)
 	case "opus":
-		inspection, err = inspectOpusOGG(ctx, file, sizeBytes, reportProgress)
+		inspection, err = inspectOpusOGG(ctx, file, sizeBytes, analysis, reportProgress)
 	}
 	if err != nil {
 		return MediaInspection{}, err
@@ -81,32 +103,151 @@ func detectOGGCodec(file *os.File) (string, error) {
 }
 
 func readFirstOGGPacket(reader io.Reader) ([]byte, error) {
-	header := make([]byte, OGG_PAGE_HEADER_SIZE_BYTES)
-	if _, err := io.ReadFull(reader, header); err != nil {
+	page, err := readOGGPage(reader)
+	if err != nil {
 		return nil, fmt.Errorf("read OGG page header: %w", err)
 	}
-	if string(header[:len(OGG_SIGNATURE)]) != OGG_SIGNATURE || header[4] != 0 {
-		return nil, errors.New("OGG page header is invalid")
-	}
-	segmentSizes := make([]byte, int(header[26]))
-	if _, err := io.ReadFull(reader, segmentSizes); err != nil {
-		return nil, fmt.Errorf("read OGG segment table: %w", err)
-	}
 	packetSize := 0
-	for _, size := range segmentSizes {
+	for _, size := range page.segmentSizes {
 		packetSize += int(size)
 		if size < OGG_MAX_SEGMENT_SIZE_BYTES {
-			packet := make([]byte, packetSize)
-			if _, err := io.ReadFull(reader, packet); err != nil {
-				return nil, fmt.Errorf("read OGG identification packet: %w", err)
-			}
-			return packet, nil
+			return page.payload[:packetSize], nil
 		}
 	}
 	return nil, errors.New("OGG identification packet spans pages")
 }
 
-func inspectVorbisOGG(ctx context.Context, file *os.File, sizeBytes int64, reportProgress InspectionProgressReporter) (MediaInspection, error) {
+func readOGGPage(reader io.Reader) (oggPage, error) {
+	header := make([]byte, OGG_PAGE_HEADER_SIZE_BYTES)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return oggPage{}, err
+	}
+	if string(header[:len(OGG_SIGNATURE)]) != OGG_SIGNATURE || header[4] != 0 {
+		return oggPage{}, errors.New("OGG page header is invalid")
+	}
+	segmentSizes := make([]byte, int(header[26]))
+	if _, err := io.ReadFull(reader, segmentSizes); err != nil {
+		return oggPage{}, fmt.Errorf("read OGG segment table: %w", err)
+	}
+	payloadSize := 0
+	for _, size := range segmentSizes {
+		payloadSize += int(size)
+	}
+	payload := make([]byte, payloadSize)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return oggPage{}, fmt.Errorf("read OGG page payload: %w", err)
+	}
+	if !hasValidOGGChecksum(header, segmentSizes, payload) {
+		return oggPage{}, errors.New("OGG page checksum is invalid")
+	}
+	return oggPage{
+		headerType:      header[5],
+		granulePosition: binary.LittleEndian.Uint64(header[6:14]),
+		serial:          binary.LittleEndian.Uint32(header[14:18]),
+		sequence:        binary.LittleEndian.Uint32(header[18:22]),
+		segmentSizes:    segmentSizes,
+		payload:         payload,
+	}, nil
+}
+
+func analyzeOGGStream(file *os.File, headerPackets int) (oggStreamAnalysis, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return oggStreamAnalysis{}, fmt.Errorf("rewind OGG stream analysis: %w", err)
+	}
+	var analysis oggStreamAnalysis
+	var streamSerial, expectedSequence uint32
+	var partialPacketBytes int64
+	packetIndex := 0
+	hasPage, hasEOS := false, false
+	for {
+		page, err := readOGGPage(file)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return oggStreamAnalysis{}, fmt.Errorf("read OGG page: %w", err)
+		}
+		if err = validateOGGPageContinuity(page, hasPage, hasEOS, streamSerial, expectedSequence, partialPacketBytes > 0); err != nil {
+			return oggStreamAnalysis{}, err
+		}
+		if !hasPage {
+			streamSerial = page.serial
+		}
+		hasPage = true
+		expectedSequence = page.sequence + 1
+		for _, size := range page.segmentSizes {
+			partialPacketBytes += int64(size)
+			if size < OGG_MAX_SEGMENT_SIZE_BYTES {
+				if packetIndex >= headerPackets {
+					analysis.encodedAudioBytes += partialPacketBytes
+				}
+				partialPacketBytes = 0
+				packetIndex++
+			}
+		}
+		if page.headerType&OGG_END_OF_STREAM_FLAG != 0 {
+			hasEOS = true
+			analysis.finalGranule = page.granulePosition
+		}
+	}
+	if !hasPage || !hasEOS || partialPacketBytes != 0 || packetIndex <= headerPackets || analysis.encodedAudioBytes <= 0 {
+		return oggStreamAnalysis{}, errors.New("OGG stream is incomplete")
+	}
+	return analysis, nil
+}
+
+func validateOGGPageContinuity(page oggPage, hasPage, hasEOS bool, serial, expectedSequence uint32, hasPartialPacket bool) error {
+	if hasEOS {
+		return errors.New("OGG data follows end-of-stream page")
+	}
+	if !hasPage {
+		if page.headerType&OGG_BEGINNING_OF_STREAM_FLAG == 0 || page.sequence != 0 {
+			return errors.New("OGG beginning-of-stream page is invalid")
+		}
+	} else if page.serial != serial || page.sequence != expectedSequence || page.headerType&OGG_BEGINNING_OF_STREAM_FLAG != 0 {
+		return errors.New("OGG stream continuity is invalid")
+	}
+	isContinued := page.headerType&OGG_CONTINUED_PACKET_FLAG != 0
+	if isContinued != hasPartialPacket {
+		return errors.New("OGG continued-packet flag is invalid")
+	}
+	return nil
+}
+
+func hasValidOGGChecksum(header, segmentSizes, payload []byte) bool {
+	expected := binary.LittleEndian.Uint32(header[22:26])
+	headerCopy := append([]byte(nil), header...)
+	clear(headerCopy[22:26])
+	checksum := updateOGGChecksum(0, headerCopy)
+	checksum = updateOGGChecksum(checksum, segmentSizes)
+	checksum = updateOGGChecksum(checksum, payload)
+	return checksum == expected
+}
+
+func updateOGGChecksum(checksum uint32, data []byte) uint32 {
+	for _, value := range data {
+		checksum = checksum<<8 ^ oggChecksumTable[byte(checksum>>24)^value]
+	}
+	return checksum
+}
+
+var oggChecksumTable = func() [256]uint32 {
+	var table [256]uint32
+	for index := range table {
+		value := uint32(index) << 24
+		for range 8 {
+			if value&0x80000000 != 0 {
+				value = value<<1 ^ 0x04c11db7
+			} else {
+				value <<= 1
+			}
+		}
+		table[index] = value
+	}
+	return table
+}()
+
+func inspectVorbisOGG(ctx context.Context, file *os.File, sizeBytes int64, analysis oggStreamAnalysis, reportProgress InspectionProgressReporter) (MediaInspection, error) {
 	commentHeader, err := oggvorbis.GetCommentHeader(file)
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "comments", err)
@@ -126,14 +267,14 @@ func inspectVorbisOGG(ctx context.Context, file *os.File, sizeBytes int64, repor
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
-	audio, err := decodeVorbisToEnd(ctx, file, decoder, sizeBytes, reportProgress)
+	audio, err := decodeVorbisToEnd(ctx, decoder, sizeBytes, analysis.encodedAudioBytes, reportProgress)
 	if err != nil {
 		return MediaInspection{}, err
 	}
 	return MediaInspection{Metadata: metadata, AlbumArtwork: artwork, Audio: audio}, nil
 }
 
-func decodeVorbisToEnd(ctx context.Context, file *os.File, decoder *oggvorbis.Reader, sizeBytes int64, reportProgress InspectionProgressReporter) (TechnicalAudioProperties, error) {
+func decodeVorbisToEnd(ctx context.Context, decoder *oggvorbis.Reader, sizeBytes, encodedAudioBytes int64, reportProgress InspectionProgressReporter) (TechnicalAudioProperties, error) {
 	channels, sampleRate := decoder.Channels(), decoder.SampleRate()
 	if channels <= 0 || sampleRate <= 0 {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("vorbis stream has invalid technical properties"))
@@ -162,11 +303,8 @@ func decodeVorbisToEnd(ctx context.Context, file *os.File, decoder *oggvorbis.Re
 	if decoder.Length() <= 0 || decodedSamples != uint64(decoder.Length()) {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("decoded sample count does not match OGG granule position"))
 	}
-	if err := validateOGGEndOfStream(file); err != nil {
-		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
-	}
 	durationMs := int(decodedSamples * 1000 / uint64(sampleRate))
-	bitrateKbps := vorbisBitrateKbps(decoder, sizeBytes, durationMs)
+	bitrateKbps := averageBitrateKbps(encodedAudioBytes, durationMs)
 	if durationMs <= 0 || bitrateKbps <= 0 {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("vorbis duration or bitrate is not positive"))
 	}
@@ -176,14 +314,7 @@ func decodeVorbisToEnd(ctx context.Context, file *os.File, decoder *oggvorbis.Re
 	return TechnicalAudioProperties{Format: "ogg", Container: "ogg", Codec: "vorbis", DurationMs: durationMs, SampleRateHz: sampleRate, ChannelCount: channels, BitrateKbps: bitrateKbps}, nil
 }
 
-func vorbisBitrateKbps(decoder *oggvorbis.Reader, sizeBytes int64, durationMs int) int {
-	if decoder.Bitrate().Nominal > 0 {
-		return decoder.Bitrate().Nominal / 1000
-	}
-	return averageBitrateKbps(sizeBytes, durationMs)
-}
-
-func inspectOpusOGG(ctx context.Context, file *os.File, sizeBytes int64, reportProgress InspectionProgressReporter) (MediaInspection, error) {
+func inspectOpusOGG(ctx context.Context, file *os.File, sizeBytes int64, analysis oggStreamAnalysis, reportProgress InspectionProgressReporter) (MediaInspection, error) {
 	reader, header, err := oggreader.NewWith(file)
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", err)
@@ -207,14 +338,14 @@ func inspectOpusOGG(ctx context.Context, file *os.File, sizeBytes int64, reportP
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	audio, err := decodeOpusToEnd(ctx, file, reader, header, sizeBytes, reportProgress)
+	audio, err := decodeOpusToEnd(ctx, reader, header, sizeBytes, analysis, reportProgress)
 	if err != nil {
 		return MediaInspection{}, err
 	}
 	return MediaInspection{Metadata: metadata, AlbumArtwork: artwork, Audio: audio}, nil
 }
 
-func decodeOpusToEnd(ctx context.Context, file *os.File, reader *oggreader.OggReader, header *oggreader.OggHeader, sizeBytes int64, reportProgress InspectionProgressReporter) (TechnicalAudioProperties, error) {
+func decodeOpusToEnd(ctx context.Context, reader *oggreader.OggReader, header *oggreader.OggHeader, sizeBytes int64, analysis oggStreamAnalysis, reportProgress InspectionProgressReporter) (TechnicalAudioProperties, error) {
 	channels := int(header.Channels)
 	decoder, err := opus.NewDecoderWithOutput(OPUS_DECODE_SAMPLE_RATE_HZ, channels)
 	if err != nil {
@@ -244,15 +375,15 @@ func decodeOpusToEnd(ctx context.Context, file *os.File, reader *oggreader.OggRe
 			return TechnicalAudioProperties{}, inspectionProgressError(err)
 		}
 	}
-	if err = validateOGGEndOfStream(file); err != nil {
-		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+	if int64(encodedBytes) != analysis.encodedAudioBytes || finalGranule != analysis.finalGranule {
+		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("decoded Opus packets do not match OGG stream analysis"))
 	}
-	playableSamples, err := playableOpusSamples(decodedSamples, finalGranule, uint64(header.PreSkip))
+	playableSamples, err := playableOpusSamples(decodedSamples, analysis.finalGranule, uint64(header.PreSkip))
 	if err != nil {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
 	durationMs := int(playableSamples * 1000 / OPUS_DECODE_SAMPLE_RATE_HZ)
-	bitrateKbps := averageBitrateKbps(int64(encodedBytes), durationMs)
+	bitrateKbps := averageBitrateKbps(analysis.encodedAudioBytes, durationMs)
 	if durationMs <= 0 || bitrateKbps <= 0 {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("opus duration or bitrate is not positive"))
 	}
@@ -380,20 +511,34 @@ func decodePictureComment(value string) (*flacmeta.Picture, error) {
 	if _, err = readPictureString(reader); err != nil {
 		return nil, err
 	}
-	fields := make([]uint32, PICTURE_FIXED_FIELD_COUNT-3)
-	for index := range fields {
-		if fields[index], err = readPictureUint32(reader); err != nil {
-			return nil, err
-		}
+	width, err := readPictureUint32(reader)
+	if err != nil {
+		return nil, err
 	}
-	if fields[4] > MAX_ARTWORK_SIZE_BYTES || uint64(fields[4]) != uint64(reader.Len()) {
+	height, err := readPictureUint32(reader)
+	if err != nil {
+		return nil, err
+	}
+	depth, err := readPictureUint32(reader)
+	if err != nil {
+		return nil, err
+	}
+	paletteColors, err := readPictureUint32(reader)
+	if err != nil {
+		return nil, err
+	}
+	dataLength, err := readPictureUint32(reader)
+	if err != nil {
+		return nil, err
+	}
+	if dataLength > MAX_ARTWORK_SIZE_BYTES || uint64(dataLength) != uint64(reader.Len()) {
 		return nil, errors.New("picture data length is invalid")
 	}
-	pictureData := make([]byte, int(fields[4]))
+	pictureData := make([]byte, int(dataLength))
 	if _, err = io.ReadFull(reader, pictureData); err != nil {
 		return nil, err
 	}
-	return &flacmeta.Picture{Type: pictureType, MIME: mimeType, Width: fields[0], Height: fields[1], Depth: fields[2], NPalColors: fields[3], Data: pictureData}, nil
+	return &flacmeta.Picture{Type: pictureType, MIME: mimeType, Width: width, Height: height, Depth: depth, NPalColors: paletteColors, Data: pictureData}, nil
 }
 
 func readPictureString(reader *bytes.Reader) (string, error) {
@@ -410,42 +555,4 @@ func readPictureUint32(reader io.Reader) (uint32, error) {
 	var value uint32
 	err := binary.Read(reader, binary.BigEndian, &value)
 	return value, err
-}
-
-func validateOGGEndOfStream(file *os.File) error {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("rewind OGG stream for EOS validation: %w", err)
-	}
-	var lastHeaderType byte
-	hasPage := false
-	for {
-		header := make([]byte, OGG_PAGE_HEADER_SIZE_BYTES)
-		_, err := io.ReadFull(file, header)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("read OGG page header: %w", err)
-		}
-		if string(header[:len(OGG_SIGNATURE)]) != OGG_SIGNATURE || header[4] != 0 {
-			return errors.New("OGG page header is invalid")
-		}
-		segmentSizes := make([]byte, int(header[26]))
-		if _, err = io.ReadFull(file, segmentSizes); err != nil {
-			return fmt.Errorf("read OGG segment table: %w", err)
-		}
-		payloadSize := 0
-		for _, size := range segmentSizes {
-			payloadSize += int(size)
-		}
-		if _, err = io.CopyN(io.Discard, file, int64(payloadSize)); err != nil {
-			return fmt.Errorf("read OGG page payload: %w", err)
-		}
-		lastHeaderType = header[5]
-		hasPage = true
-	}
-	if !hasPage || lastHeaderType&OGG_END_OF_STREAM_FLAG == 0 {
-		return errors.New("OGG end-of-stream page is missing")
-	}
-	return nil
 }

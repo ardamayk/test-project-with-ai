@@ -294,7 +294,7 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 }
 
 func inspectVorbisMetadata(tags map[string][]string) (NormalizedMediaMetadata, error) {
-	names, err := inspectFLACNames(tags)
+	names, err := inspectVorbisNames(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
@@ -359,7 +359,7 @@ type normalizedMediaNames struct {
 	Genres       []string
 }
 
-func inspectFLACNames(tags map[string][]string) (normalizedMediaNames, error) {
+func inspectVorbisNames(tags map[string][]string) (normalizedMediaNames, error) {
 	var names normalizedMediaNames
 	var err error
 	if names.Title, err = requiredSingleTag(tags, "TITLE"); err != nil {
