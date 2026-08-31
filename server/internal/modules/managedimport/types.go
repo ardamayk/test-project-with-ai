@@ -88,9 +88,10 @@ type importJob struct {
 }
 
 type ValidationError struct {
-	Code  string
-	Field string
-	Err   error
+	Code   string
+	Field  string
+	Reason string
+	Err    error
 }
 
 func (validationErr *ValidationError) Error() string {
@@ -107,7 +108,7 @@ func (validationErr *ValidationError) Unwrap() error {
 func validationError(err error) error {
 	var inspectionErr *library.InspectionError
 	if errors.As(err, &inspectionErr) {
-		return &ValidationError{Code: string(inspectionErr.Code), Field: inspectionErr.Field, Err: inspectionErr}
+		return &ValidationError{Code: string(inspectionErr.Code), Field: inspectionErr.Field, Reason: inspectionErr.Reason, Err: inspectionErr.Err}
 	}
 	return err
 }

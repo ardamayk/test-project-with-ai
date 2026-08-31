@@ -144,6 +144,40 @@ describe('createApiClient', () => {
     })
   })
 
+  it('preserves structured Managed Import validation fields', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json(
+        {
+          error: 'invalid_metadata',
+          code: 'invalid_metadata',
+          message: 'File failed the Strict Import Profile at TITLE',
+          field: 'TITLE',
+          reason: 'required tag is missing',
+        },
+        { status: 422 },
+      ),
+    )
+    const client = createApiClient({
+      baseUrl: 'http://music.test',
+      transport,
+    })
+
+    await expect(
+      client.uploadManagedImportFile(
+        'import-1',
+        'missing-title.flac',
+        new Blob(['flac bytes'], { type: 'audio/flac' }),
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      body: {
+        code: 'invalid_metadata',
+        field: 'TITLE',
+        reason: 'required tag is missing',
+      },
+    })
+  })
+
   it('normalizes legacy library responses at the client boundary', async () => {
     const transport = vi.fn<typeof fetch>(async (input) => {
       if (input.toString().includes('/library/albums/')) {
