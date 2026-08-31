@@ -64,7 +64,7 @@ func (store *Store) GetJob(ctx context.Context, jobID string) (importJob, error)
 
 func (store *Store) UpdateValidationProgress(ctx context.Context, jobID string, progress int) error {
 	if progress < 0 || progress > 100 {
-		return fmt.Errorf("Managed Import validation progress must be between 0 and 100: got %d", progress)
+		return fmt.Errorf("managed import validation progress must be between 0 and 100: got %d", progress)
 	}
 	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
