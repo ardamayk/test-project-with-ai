@@ -668,14 +668,14 @@ export interface components {
             year?: number;
             durationMs: number;
             /** @enum {string} */
-            format: "flac";
+            format: "flac" | "mp3";
             /** @enum {string} */
-            container: "flac";
+            container: "flac" | "mp3";
             /** @enum {string} */
-            codec: "flac";
+            codec: "flac" | "mp3";
             sampleRateHz: number;
             channelCount: number;
-            bitDepth: number;
+            bitDepth?: number;
             bitrateKbps: number;
             /** @enum {string} */
             artworkMediaType: "image/jpeg" | "image/png" | "image/webp";

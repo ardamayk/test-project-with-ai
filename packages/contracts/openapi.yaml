@@ -1227,7 +1227,6 @@ components:
         - codec
         - sampleRateHz
         - channelCount
-        - bitDepth
         - bitrateKbps
         - artworkMediaType
       properties:
@@ -1271,13 +1270,13 @@ components:
           minimum: 1
         format:
           type: string
-          enum: [flac]
+          enum: [flac, mp3]
         container:
           type: string
-          enum: [flac]
+          enum: [flac, mp3]
         codec:
           type: string
-          enum: [flac]
+          enum: [flac, mp3]
         sampleRateHz:
           type: integer
           minimum: 1
