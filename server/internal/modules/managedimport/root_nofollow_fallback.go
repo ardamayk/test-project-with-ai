@@ -1,9 +1,12 @@
-//go:build !darwin && !dragonfly && !freebsd && !linux && !netbsd && !openbsd
+//go:build !aix && !darwin && !dragonfly && !freebsd && !linux && !netbsd && !openbsd && !solaris && !windows && !zos
 
 package managedimport
 
-import "os"
+import (
+	"fmt"
+	"os"
+)
 
-func openManagedStorageRoot(path string) (*os.Root, error) {
-	return os.OpenRoot(path)
+func openManagedStorageRoot(string) (*os.Root, error) {
+	return nil, fmt.Errorf("%w: secure Managed Storage roots are unsupported on this platform", ErrUnsafeStoragePath)
 }
