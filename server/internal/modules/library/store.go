@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	internaldb "github.com/ardam/navidrome-replacement/server/internal/db"
@@ -17,29 +18,68 @@ type Artist struct {
 	AlbumCount int    `json:"albumCount,omitempty"`
 }
 
+type ArtistCredit struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Genre struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type ReleaseIdentifier struct {
+	Scheme string `json:"scheme"`
+	Value  string `json:"value"`
+}
+
+type AlbumArtworkMetadata struct {
+	SourceTrackID string `json:"sourceTrackId,omitempty"`
+	ContentSHA256 string `json:"contentSha256"`
+	MediaType     string `json:"mediaType,omitempty"`
+	Width         int    `json:"width,omitempty"`
+	Height        int    `json:"height,omitempty"`
+	SizeBytes     int64  `json:"sizeBytes"`
+}
+
 type Album struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	ArtistID   string   `json:"artistId"`
-	ArtistName string   `json:"artistName"`
-	Year       *int     `json:"year,omitempty"`
-	TrackCount int      `json:"trackCount,omitempty"`
-	Genres     []string `json:"genres,omitempty"`
+	ID                 string                `json:"id"`
+	Title              string                `json:"title"`
+	ArtistID           string                `json:"artistId"`
+	ArtistName         string                `json:"artistName"`
+	AlbumArtists       []ArtistCredit        `json:"albumArtists"`
+	Year               *int                  `json:"year,omitempty"`
+	ReleaseDate        *string               `json:"releaseDate,omitempty"`
+	ReleaseIdentifiers []ReleaseIdentifier   `json:"releaseIdentifiers"`
+	TrackCount         int                   `json:"trackCount,omitempty"`
+	Genres             []string              `json:"genres,omitempty"`
+	GenreItems         []Genre               `json:"genreItems"`
+	Artwork            *AlbumArtworkMetadata `json:"artwork,omitempty"`
 }
 
 type Track struct {
 	ID           string             `json:"id"`
 	Title        string             `json:"title"`
 	ArtistName   string             `json:"artistName"`
+	Artists      []ArtistCredit     `json:"artists"`
 	AlbumID      string             `json:"albumId"`
 	AlbumTitle   string             `json:"albumTitle,omitempty"`
+	DiscNo       int                `json:"discNo"`
 	TrackNo      *int               `json:"trackNo,omitempty"`
+	TrackTotal   *int               `json:"trackTotal,omitempty"`
+	DiscTotal    *int               `json:"discTotal,omitempty"`
 	DurationMs   int                `json:"durationMs"`
 	Format       string             `json:"format"`
+	Codec        string             `json:"codec,omitempty"`
+	Container    string             `json:"container,omitempty"`
+	SampleFormat string             `json:"sampleFormat,omitempty"`
 	SizeBytes    int64              `json:"sizeBytes,omitempty"`
 	Genre        string             `json:"genre,omitempty"`
+	Genres       []Genre            `json:"genres"`
 	SampleRateHz int                `json:"sampleRateHz,omitempty"`
 	BitDepth     int                `json:"bitDepth,omitempty"`
+	ChannelCount int                `json:"channelCount,omitempty"`
+	BitrateBps   int                `json:"bitrateBps,omitempty"`
 	BitrateKbps  int                `json:"bitrateKbps,omitempty"`
 	ReplayGain   ReplayGainMetadata `json:"replayGain"`
 	FilePath     string             `json:"-"`
@@ -116,178 +156,192 @@ func runStoreMutation[T any](ctx context.Context, store *Store, operation string
 
 func (s *Store) ListArtists(ctx context.Context, limit, offset int, q string) (ArtistList, error) {
 	filter := ""
-	args := []any{}
+	queryArgs := []any{}
 	if q != "" {
 		filter = " AND a.name LIKE ?"
-		args = append(args, "%"+q+"%")
+		queryArgs = append(queryArgs, "%"+q+"%")
 	}
 
 	var total int
-	countQuery := `SELECT COUNT(DISTINCT a.id) FROM artists a
-		INNER JOIN albums al ON al.artist_id = a.id
-		INNER JOIN tracks t ON t.album_id = al.id AND t.missing_at IS NULL` + filter
-	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return ArtistList{}, fmt.Errorf("count artists: %w", err)
+	countQuery := activeArtistAlbumsCTE + `SELECT COUNT(DISTINCT a.id) FROM artists a
+		INNER JOIN active_artist_albums credits ON credits.artist_id = a.id
+		WHERE 1=1` + filter
+	if err := s.db.QueryRowContext(ctx, countQuery, queryArgs...).Scan(&total); err != nil {
+		return ArtistList{}, fmt.Errorf("count Artists for query %q: %w", q, err)
 	}
 
-	query := `SELECT a.id, a.name, COUNT(DISTINCT al.id) AS album_count
+	query := activeArtistAlbumsCTE + `SELECT a.id, a.name, COUNT(credits.album_id) AS album_count
 		FROM artists a
-		INNER JOIN albums al ON al.artist_id = a.id
-		INNER JOIN tracks t ON t.album_id = al.id AND t.missing_at IS NULL
+		INNER JOIN active_artist_albums credits ON credits.artist_id = a.id
 		WHERE 1=1` + filter + `
 		GROUP BY a.id, a.name
 		ORDER BY a.name_sort
 		LIMIT ? OFFSET ?`
-	queryArgs := append(append([]any{}, args...), limit, offset)
+	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
-		return ArtistList{}, fmt.Errorf("list artists: %w", err)
+		return ArtistList{}, fmt.Errorf("list Artists for query %q: %w", q, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	items := []Artist{}
 	for rows.Next() {
-		var a Artist
-		if err := rows.Scan(&a.ID, &a.Name, &a.AlbumCount); err != nil {
-			return ArtistList{}, err
+		var artist Artist
+		if err := rows.Scan(&artist.ID, &artist.Name, &artist.AlbumCount); err != nil {
+			return ArtistList{}, fmt.Errorf("scan Artist list row for query %q: %w", q, err)
 		}
-		items = append(items, a)
+		items = append(items, artist)
 	}
-	return ArtistList{Items: items, Total: total}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return ArtistList{}, fmt.Errorf("iterate Artist list for query %q: %w", q, err)
+	}
+	return ArtistList{Items: items, Total: total}, nil
 }
 
 func (s *Store) ListAlbums(ctx context.Context, limit, offset int, artistID, q string) (AlbumList, error) {
 	where := "WHERE t.missing_at IS NULL"
 	args := []any{}
 	if artistID != "" {
-		where += " AND al.artist_id = ?"
-		args = append(args, artistID)
+		where += ` AND (EXISTS (
+			SELECT 1 FROM album_artists filter_credit
+			WHERE filter_credit.album_id = al.id AND filter_credit.artist_id = ?
+		) OR EXISTS (
+			SELECT 1 FROM tracks filter_track
+			INNER JOIN track_artists filter_track_credit ON filter_track_credit.track_id = filter_track.id
+			WHERE filter_track.album_id = al.id AND filter_track.missing_at IS NULL
+				AND filter_track_credit.artist_id = ?
+		))`
+		args = append(args, artistID, artistID)
 	}
 	if q != "" {
-		where += " AND al.title LIKE ?"
-		args = append(args, "%"+q+"%")
+		where += ` AND (al.title LIKE ? OR EXISTS (
+			SELECT 1 FROM album_artists search_credit
+			INNER JOIN artists search_artist ON search_artist.id = search_credit.artist_id
+			WHERE search_credit.album_id = al.id AND search_artist.name LIKE ?
+		))`
+		args = append(args, "%"+q+"%", "%"+q+"%")
 	}
 
 	var total int
 	countQuery := `SELECT COUNT(DISTINCT al.id) FROM albums al
 		INNER JOIN tracks t ON t.album_id = al.id ` + where
 	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return AlbumList{}, fmt.Errorf("count albums: %w", err)
+		return AlbumList{}, fmt.Errorf("count Albums for Artist %q and query %q: %w", artistID, q, err)
 	}
 
-	query := `SELECT al.id, al.title, al.artist_id, ar.name, al.year, COALESCE(al.genres, '[]'), COUNT(t.id) AS track_count
+	query := `SELECT al.id, al.title, COALESCE(primary_artist.id, legacy_artist.id),
+			COALESCE(primary_artist.name, legacy_artist.name), al.year, al.release_date,
+			COALESCE(al.genres, '[]'), COUNT(t.id) AS track_count
 		FROM albums al
-		INNER JOIN artists ar ON ar.id = al.artist_id
+		INNER JOIN artists legacy_artist ON legacy_artist.id = al.artist_id
+		LEFT JOIN album_artists primary_credit ON primary_credit.album_id = al.id AND primary_credit.position = 0
+		LEFT JOIN artists primary_artist ON primary_artist.id = primary_credit.artist_id
 		INNER JOIN tracks t ON t.album_id = al.id AND t.missing_at IS NULL
 		` + where + `
-		GROUP BY al.id, al.title, al.artist_id, ar.name, al.year, al.genres
+		GROUP BY al.id, al.title, primary_artist.id, primary_artist.name,
+			legacy_artist.id, legacy_artist.name, al.year, al.release_date, al.genres
 		ORDER BY ` + albumListOrderBy(artistID) + `
 		LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return AlbumList{}, fmt.Errorf("list albums: %w", err)
+		return AlbumList{}, fmt.Errorf("list Albums for Artist %q and query %q: %w", artistID, q, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	items := []Album{}
 	for rows.Next() {
-		var a Album
+		var album Album
 		var year sql.NullInt64
+		var releaseDate sql.NullString
 		var genresRaw sql.NullString
-		if err := rows.Scan(&a.ID, &a.Title, &a.ArtistID, &a.ArtistName, &year, &genresRaw, &a.TrackCount); err != nil {
-			return AlbumList{}, err
+		if err := rows.Scan(&album.ID, &album.Title, &album.ArtistID, &album.ArtistName, &year, &releaseDate, &genresRaw, &album.TrackCount); err != nil {
+			return AlbumList{}, fmt.Errorf("scan Album list row for Artist %q and query %q: %w", artistID, q, err)
 		}
-		if year.Valid {
-			y := int(year.Int64)
-			a.Year = &y
-		}
-		a.Genres = scanAlbumGenres(genresRaw)
-		items = append(items, a)
+		setAlbumDates(&album, year, releaseDate)
+		album.Genres = decodeGenres(genresRaw.String)
+		items = append(items, album)
 	}
-	return AlbumList{Items: items, Total: total}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return AlbumList{}, fmt.Errorf("iterate Album list for Artist %q and query %q: %w", artistID, q, err)
+	}
+	if err := s.enrichAlbums(ctx, items); err != nil {
+		return AlbumList{}, fmt.Errorf("enrich Album list for Artist %q and query %q: %w", artistID, q, err)
+	}
+	return AlbumList{Items: items, Total: total}, nil
 }
 
 func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, error) {
-	var a AlbumDetail
+	var album AlbumDetail
 	var year sql.NullInt64
+	var releaseDate sql.NullString
 	var genresRaw sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT al.id, al.title, al.artist_id, ar.name, al.year, COALESCE(al.genres, '[]'),
+		SELECT al.id, al.title, COALESCE(primary_artist.id, legacy_artist.id),
+			COALESCE(primary_artist.name, legacy_artist.name), al.year, al.release_date,
+			COALESCE(al.genres, '[]'),
 			(SELECT COUNT(*) FROM tracks t WHERE t.album_id = al.id AND t.missing_at IS NULL)
 		FROM albums al
-		INNER JOIN artists ar ON ar.id = al.artist_id
+		INNER JOIN artists legacy_artist ON legacy_artist.id = al.artist_id
+		LEFT JOIN album_artists primary_credit ON primary_credit.album_id = al.id AND primary_credit.position = 0
+		LEFT JOIN artists primary_artist ON primary_artist.id = primary_credit.artist_id
 		WHERE al.id = ?`, albumID,
-	).Scan(&a.ID, &a.Title, &a.ArtistID, &a.ArtistName, &year, &genresRaw, &a.TrackCount)
+	).Scan(&album.ID, &album.Title, &album.ArtistID, &album.ArtistName, &year, &releaseDate, &genresRaw, &album.TrackCount)
 	if err == sql.ErrNoRows {
 		return AlbumDetail{}, ErrNotFound
 	}
 	if err != nil {
-		return AlbumDetail{}, fmt.Errorf("get album: %w", err)
+		return AlbumDetail{}, fmt.Errorf("get Album %q: %w", albumID, err)
 	}
-	if year.Valid {
-		y := int(year.Int64)
-		a.Year = &y
-	}
-	a.Genres = scanAlbumGenres(genresRaw)
+	setAlbumDates(&album.Album, year, releaseDate)
+	album.Genres = decodeGenres(genresRaw.String)
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, artist_name, album_id, track_no, duration_ms, format, size_bytes, COALESCE(genre, ''),
-			COALESCE(sample_rate_hz, 0), COALESCE(bit_depth, 0), replaygain_track_gain_db, replaygain_track_peak,
-			replaygain_album_gain_db, replaygain_album_peak
-		FROM tracks
-		WHERE album_id = ? AND missing_at IS NULL
-		ORDER BY COALESCE(track_no, 9999), title_sort`, albumID)
+	rows, err := s.db.QueryContext(ctx, trackReadSelect+`
+		WHERE t.album_id = ? AND t.missing_at IS NULL
+		ORDER BY COALESCE(t.disc_no, 1), COALESCE(t.track_no, 9999), t.title_sort, t.id`, albumID)
 	if err != nil {
-		return AlbumDetail{}, err
+		return AlbumDetail{}, fmt.Errorf("list Album %q Tracks: %w", albumID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	a.Tracks = []Track{}
+	album.Tracks = []Track{}
 	for rows.Next() {
-		t, err := scanTrackRow(rows, a.Title)
+		track, err := scanExpandedTrack(rows)
 		if err != nil {
-			return AlbumDetail{}, err
+			return AlbumDetail{}, fmt.Errorf("scan Album %q Track: %w", albumID, err)
 		}
-		a.Tracks = append(a.Tracks, t)
+		album.Tracks = append(album.Tracks, track)
 	}
 	if err := rows.Err(); err != nil {
-		return AlbumDetail{}, err
+		return AlbumDetail{}, fmt.Errorf("iterate Album %q Tracks: %w", albumID, err)
 	}
-	a.Tracks = dedupeAlbumTracks(a.Tracks)
-	a.TrackCount = len(a.Tracks)
-	return a, nil
-}
-
-func dedupeAlbumTracks(tracks []Track) []Track {
-	seen := make(map[string]struct{}, len(tracks))
-	result := make([]Track, 0, len(tracks))
-	for _, track := range tracks {
-		key := albumTrackDedupeKey(track)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		result = append(result, track)
+	albums := []Album{album.Album}
+	if err := s.enrichAlbums(ctx, albums); err != nil {
+		return AlbumDetail{}, fmt.Errorf("enrich Album %q: %w", albumID, err)
 	}
-	return result
-}
-
-func albumTrackDedupeKey(track Track) string {
-	trackNo := ""
-	if track.TrackNo != nil {
-		trackNo = fmt.Sprintf("%d", *track.TrackNo)
+	album.Album = albums[0]
+	if err := s.enrichTracks(ctx, album.Tracks); err != nil {
+		return AlbumDetail{}, fmt.Errorf("enrich Album %q Tracks: %w", albumID, err)
 	}
-	return fmt.Sprintf("%s|%s|%d|%s", trackNo, sortKey(track.Title), track.DurationMs, track.Format)
+	album.TrackCount = len(album.Tracks)
+	return album, nil
 }
 
 func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (TrackList, error) {
 	where := "WHERE t.missing_at IS NULL"
 	args := []any{}
 	if q != "" {
-		where += " AND (t.title LIKE ? OR t.artist_name LIKE ? OR al.title LIKE ? OR t.genre LIKE ?)"
+		where += ` AND (t.title LIKE ? OR al.title LIKE ? OR EXISTS (
+			SELECT 1 FROM track_artists search_credit
+			INNER JOIN artists search_artist ON search_artist.id = search_credit.artist_id
+			WHERE search_credit.track_id = t.id AND search_artist.name LIKE ?
+		) OR EXISTS (
+			SELECT 1 FROM track_genres search_relation
+			INNER JOIN genres search_genre ON search_genre.id = search_relation.genre_id
+			WHERE search_relation.track_id = t.id AND search_genre.name LIKE ?
+		))`
 		args = append(args, "%"+q+"%", "%"+q+"%", "%"+q+"%", "%"+q+"%")
 	}
 
@@ -296,69 +350,60 @@ func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (Tr
 		INNER JOIN albums al ON al.id = t.album_id
 		` + where
 	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return TrackList{}, err
+		return TrackList{}, fmt.Errorf("count Tracks for query %q: %w", q, err)
 	}
 
-	query := `SELECT t.id, t.title, t.artist_name, t.album_id, al.title, t.track_no, t.duration_ms, t.format, t.size_bytes, COALESCE(t.genre, ''),
-		COALESCE(t.sample_rate_hz, 0), COALESCE(t.bit_depth, 0), t.replaygain_track_gain_db, t.replaygain_track_peak,
-		t.replaygain_album_gain_db, t.replaygain_album_peak
-		FROM tracks t
-		INNER JOIN albums al ON al.id = t.album_id
-		` + where + `
+	query := trackReadSelect + where + `
 		ORDER BY t.title_sort
 		LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return TrackList{}, err
+		return TrackList{}, fmt.Errorf("list Tracks for query %q: %w", q, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	items := []Track{}
 	for rows.Next() {
-		t, err := scanTrackRowWithAlbum(rows)
+		track, err := scanExpandedTrack(rows)
 		if err != nil {
-			return TrackList{}, err
+			return TrackList{}, fmt.Errorf("scan Track list row for query %q: %w", q, err)
 		}
-		items = append(items, t)
+		items = append(items, track)
 	}
-	return TrackList{Items: items, Total: total}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return TrackList{}, fmt.Errorf("iterate Track list for query %q: %w", q, err)
+	}
+	if err := s.enrichTracks(ctx, items); err != nil {
+		return TrackList{}, fmt.Errorf("enrich Track list for query %q: %w", q, err)
+	}
+	return TrackList{Items: items, Total: total}, nil
 }
 
 func (s *Store) GetTrack(ctx context.Context, trackID string) (Track, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.title, t.artist_name, t.album_id, al.title, t.track_no, t.duration_ms, t.format, t.size_bytes, COALESCE(t.genre, ''), t.file_path,
-			COALESCE(t.sample_rate_hz, 0), COALESCE(t.bit_depth, 0), t.replaygain_track_gain_db, t.replaygain_track_peak,
-			t.replaygain_album_gain_db, t.replaygain_album_peak
-		FROM tracks t
-		INNER JOIN albums al ON al.id = t.album_id
+	row := s.db.QueryRowContext(ctx, trackReadSelect+`
 		WHERE t.id = ? AND t.missing_at IS NULL`, trackID)
-
-	var t Track
-	var trackNo sql.NullInt64
-	var albumTitle string
-	err := row.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &albumTitle, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre, &t.FilePath, &t.SampleRateHz, &t.BitDepth,
-		&t.ReplayGain.TrackGainDB, &t.ReplayGain.TrackPeak, &t.ReplayGain.AlbumGainDB, &t.ReplayGain.AlbumPeak)
+	track, err := scanExpandedTrack(row)
 	if err == sql.ErrNoRows {
 		return Track{}, ErrNotFound
 	}
 	if err != nil {
-		return Track{}, err
+		return Track{}, fmt.Errorf("get Track %q: %w", trackID, err)
 	}
-	t.AlbumTitle = albumTitle
-	if trackNo.Valid {
-		n := int(trackNo.Int64)
-		t.TrackNo = &n
+	tracks := []Track{track}
+	if err := s.enrichTracks(ctx, tracks); err != nil {
+		return Track{}, fmt.Errorf("enrich Track %q: %w", trackID, err)
 	}
-	enrichTrackBitrate(&t)
-	return t, nil
+	return tracks[0], nil
 }
 
 func (s *Store) GetTrackFilePath(ctx context.Context, trackID string) (string, error) {
 	var path string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT file_path FROM tracks WHERE id = ? AND missing_at IS NULL`, trackID,
+		`SELECT COALESCE(track_sources.file_path, tracks.file_path)
+		FROM tracks LEFT JOIN track_sources ON track_sources.track_id = tracks.id
+		WHERE tracks.id = ? AND tracks.missing_at IS NULL`, trackID,
 	).Scan(&path)
 	if err == sql.ErrNoRows {
 		return "", ErrNotFound
@@ -702,6 +747,21 @@ func (s *Store) updateTrackAudioFormatIfZero(ctx context.Context, trackID string
 }
 
 func (s *Store) GetAlbumCover(ctx context.Context, albumID string) (mime string, data []byte, err error) {
+	var artworkPath string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT media_type, file_path FROM album_artwork WHERE album_id = ?`, albumID,
+	).Scan(&mime, &artworkPath)
+	if err == nil {
+		data, err = os.ReadFile(artworkPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("read Album Artwork %q: %w", albumID, err)
+		}
+		return mime, data, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", nil, fmt.Errorf("get Album Artwork %q: %w", albumID, err)
+	}
+
 	var coverMime sql.NullString
 	err = s.db.QueryRowContext(ctx,
 		`SELECT cover_mime, cover_data FROM albums WHERE id = ?`, albumID,
@@ -910,39 +970,6 @@ func (s *Store) GetScanStatus(ctx context.Context) (ScanStatus, error) {
 		st.FinishedAt = &t
 	}
 	return st, nil
-}
-
-func scanTrackRow(rows *sql.Rows, albumTitle string) (Track, error) {
-	var t Track
-	var trackNo sql.NullInt64
-	err := rows.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre, &t.SampleRateHz, &t.BitDepth,
-		&t.ReplayGain.TrackGainDB, &t.ReplayGain.TrackPeak, &t.ReplayGain.AlbumGainDB, &t.ReplayGain.AlbumPeak)
-	if err != nil {
-		return Track{}, err
-	}
-	t.AlbumTitle = albumTitle
-	if trackNo.Valid {
-		n := int(trackNo.Int64)
-		t.TrackNo = &n
-	}
-	enrichTrackBitrate(&t)
-	return t, nil
-}
-
-func scanTrackRowWithAlbum(rows *sql.Rows) (Track, error) {
-	var t Track
-	var trackNo sql.NullInt64
-	err := rows.Scan(&t.ID, &t.Title, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &trackNo, &t.DurationMs, &t.Format, &t.SizeBytes, &t.Genre, &t.SampleRateHz, &t.BitDepth,
-		&t.ReplayGain.TrackGainDB, &t.ReplayGain.TrackPeak, &t.ReplayGain.AlbumGainDB, &t.ReplayGain.AlbumPeak)
-	if err != nil {
-		return Track{}, err
-	}
-	if trackNo.Valid {
-		n := int(trackNo.Int64)
-		t.TrackNo = &n
-	}
-	enrichTrackBitrate(&t)
-	return t, nil
 }
 
 func nullableInt(v int) any {

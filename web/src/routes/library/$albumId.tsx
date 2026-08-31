@@ -5,6 +5,7 @@ import { AlbumDetailHeader } from "#/components/album-detail-header";
 import { MoreFromArtist } from "#/components/more-from-artist";
 import { TrackList } from "#/components/track-list";
 import { apiClient } from "#/lib/api";
+import { getAlbumArtistName } from "#/lib/library-display";
 
 export const Route = createFileRoute("/library/$albumId")({
 	component: AlbumDetailPage,
@@ -66,7 +67,7 @@ export function AlbumDetailContent({ albumId }: { albumId: string }) {
 
 			<MoreFromArtist
 				artistId={data.artistId}
-				artistName={data.artistName}
+				artistName={getAlbumArtistName(data)}
 				excludeAlbumId={data.id}
 			/>
 		</div>

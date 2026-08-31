@@ -56,7 +56,7 @@ const tracks = [
 		durationMs: 1,
 		format: "flac",
 	},
-];
+].map((track) => ({ ...track, artists: [], discNo: 1, genres: [] }));
 
 describe("CollectionCoverStrip", () => {
 	it("selects a stable four-track preview from a seed", () => {

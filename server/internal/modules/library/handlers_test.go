@@ -140,7 +140,7 @@ func TestHandlersGetAlbumReturnsGenresAndAudioFormat(t *testing.T) {
 	}
 }
 
-func TestHandlersGetAlbumDeduplicatesRepeatedTracks(t *testing.T) {
+func TestHandlersGetAlbumKeepsMatchingTrackNumbersOnDifferentDiscs(t *testing.T) {
 	h, db, musicRoot := setupHandlerFixture(t)
 	store := NewStore(db)
 	albumID, _ := seedTrack(t, db, store, musicRoot)
@@ -168,6 +168,9 @@ func TestHandlersGetAlbumDeduplicatesRepeatedTracks(t *testing.T) {
 	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`UPDATE tracks SET disc_no = CASE WHEN file_path = ? THEN 2 ELSE 1 END WHERE album_id = ?`, duplicatePath, albumID); err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -184,11 +187,14 @@ func TestHandlersGetAlbumDeduplicatesRepeatedTracks(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Tracks) != 1 {
-		t.Fatalf("tracks = %d, want 1", len(body.Tracks))
+	if len(body.Tracks) != 2 {
+		t.Fatalf("tracks = %d, want 2", len(body.Tracks))
 	}
-	if body.TrackCount != 1 {
-		t.Fatalf("trackCount = %d, want 1", body.TrackCount)
+	if body.TrackCount != 2 {
+		t.Fatalf("trackCount = %d, want 2", body.TrackCount)
+	}
+	if body.Tracks[0].DiscNo != 1 || body.Tracks[1].DiscNo != 2 {
+		t.Fatalf("disc order = [%d, %d], want [1, 2]", body.Tracks[0].DiscNo, body.Tracks[1].DiscNo)
 	}
 }
 

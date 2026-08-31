@@ -44,9 +44,12 @@ const sampleTrack = {
 	albumId: "a1",
 	albumTitle: "1989",
 	trackNo: 1,
+	discNo: 1,
 	durationMs: 212_000,
 	format: "flac",
 	genre: "Pop",
+	artists: [],
+	genres: [{ id: "genre-pop", name: "Pop" }],
 	bitDepth: 24,
 	sampleRateHz: 96_000,
 	sizeBytes: 50_059_000,
@@ -94,6 +97,27 @@ describe("TrackList", () => {
 		expect(screen.getByText("Taylor Swift")).toBeTruthy();
 	});
 
+	it("renders ordered Track Artist relationships", () => {
+		render(
+			<TrackList
+				tracks={[
+					{
+						...sampleTrack,
+						artistName: "Legacy / Guess",
+						artists: [
+							{ id: "artist-1", name: "Earth, Wind & Fire" },
+							{ id: "artist-2", name: "Guest / Artist" },
+						],
+					},
+				]}
+				compact
+			/>,
+		);
+
+		expect(screen.getByText("Earth, Wind & Fire, Guest / Artist")).toBeTruthy();
+		expect(screen.queryByText("Legacy / Guess")).toBeNull();
+	});
+
 	it("uses visible list numbering when requested", () => {
 		const secondTrack = {
 			...sampleTrack,
@@ -109,6 +133,24 @@ describe("TrackList", () => {
 			screen.getByRole("row", { name: /1 Welcome to New York/ }),
 		).toBeTruthy();
 		expect(screen.getByRole("row", { name: /2 Style/ })).toBeTruthy();
+	});
+
+	it("shows disc and track positions for multi-disc albums", () => {
+		const secondDiscTrack = {
+			...sampleTrack,
+			id: "t2",
+			title: "Second Disc Song",
+			discNo: 2,
+		};
+
+		render(<TrackList tracks={[sampleTrack, secondDiscTrack]} albumId="a1" />);
+
+		expect(
+			screen.getByRole("row", { name: /1\.1 Welcome to New York/ }),
+		).toBeTruthy();
+		expect(
+			screen.getByRole("row", { name: /2\.1 Second Disc Song/ }),
+		).toBeTruthy();
 	});
 
 	it("toggles favorites through the server-backed favorites hook", () => {
@@ -186,6 +228,7 @@ describe("TrackList", () => {
 		expect(within(dialog).getByText("Artist")).toBeTruthy();
 		expect(within(dialog).getByText("Album")).toBeTruthy();
 		expect(within(dialog).getByText("Track")).toBeTruthy();
+		expect(within(dialog).getByText("Disc")).toBeTruthy();
 		expect(within(dialog).getByText("Duration")).toBeTruthy();
 		expect(within(dialog).getByText("Codec")).toBeTruthy();
 		expect(within(dialog).getByText("Sample rate")).toBeTruthy();
@@ -203,7 +246,7 @@ describe("TrackList", () => {
 		expect(within(dialog).getByText("Id")).toBeTruthy();
 		expect(within(dialog).getByText("Taylor Swift")).toBeTruthy();
 		expect(within(dialog).getByText("1989")).toBeTruthy();
-		expect(within(dialog).getByText("1")).toBeTruthy();
+		expect(within(dialog).getAllByText("1")).toHaveLength(2);
 		expect(within(dialog).getByText("3m 32s")).toBeTruthy();
 		expect(within(dialog).getByText("flac")).toBeTruthy();
 		expect(within(dialog).getByText("96 kHz")).toBeTruthy();

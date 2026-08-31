@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRef } from "react";
 import { Button } from "#/components/ui/button";
 import { apiClient } from "#/lib/api";
+import { getAlbumArtistName } from "#/lib/library-display";
 import { sortAlbumsByYear } from "#/lib/sort-albums";
 
 export function MoreFromArtist({
@@ -98,7 +99,7 @@ export function MoreFromArtist({
 							{album.title}
 						</p>
 						<p className="truncate text-caption text-xs">
-							{album.artistName}
+							{getAlbumArtistName(album)}
 							{album.year != null ? ` · ${album.year}` : ""}
 						</p>
 					</Link>

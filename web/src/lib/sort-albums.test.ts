@@ -9,6 +9,9 @@ describe("sortAlbumsByYear", () => {
 				title: "B",
 				artistId: "a",
 				artistName: "Artist",
+				albumArtists: [],
+				releaseIdentifiers: [],
+				genreItems: [],
 				year: 2023,
 			},
 			{
@@ -16,6 +19,9 @@ describe("sortAlbumsByYear", () => {
 				title: "A",
 				artistId: "a",
 				artistName: "Artist",
+				albumArtists: [],
+				releaseIdentifiers: [],
+				genreItems: [],
 				year: 2025,
 			},
 			{
@@ -23,6 +29,9 @@ describe("sortAlbumsByYear", () => {
 				title: "C",
 				artistId: "a",
 				artistName: "Artist",
+				albumArtists: [],
+				releaseIdentifiers: [],
+				genreItems: [],
 				year: 2025,
 			},
 		]);

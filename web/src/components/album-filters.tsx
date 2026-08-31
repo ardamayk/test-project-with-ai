@@ -10,6 +10,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "#/components/ui/select";
+import { getAlbumGenreNames } from "#/lib/library-display";
 
 const ALL_ARTISTS = "all";
 const ALL_GENRES = "all";
@@ -24,7 +25,7 @@ export function collectAlbumGenres(albums: Album[]): string[] {
 	const seen = new Set<string>();
 	const out: string[] = [];
 	for (const album of albums) {
-		for (const genre of album.genres ?? []) {
+		for (const genre of getAlbumGenreNames(album)) {
 			const key = genre.toLowerCase();
 			if (seen.has(key)) continue;
 			seen.add(key);
@@ -42,7 +43,7 @@ export function filterAlbums(
 ): Album[] {
 	return albums.filter((album) => {
 		if (filters.genre && filters.genre !== ALL_GENRES) {
-			const genres = album.genres ?? [];
+			const genres = getAlbumGenreNames(album);
 			if (
 				!genres.some((g) => g.toLowerCase() === filters.genre.toLowerCase())
 			) {

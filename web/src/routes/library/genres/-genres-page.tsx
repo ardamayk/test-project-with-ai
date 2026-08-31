@@ -5,30 +5,14 @@ import { useMemo } from "react";
 import { CollectionCoverCardStack } from "#/components/collection-cover-strip";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { apiClient } from "#/lib/api";
+import { getTrackGenreNames } from "#/lib/library-display";
 
 const GENRES_WIDE_CENTER_CLASS =
 	"min-[1801px]:mx-auto min-[1801px]:w-full min-[1801px]:max-w-[1476px]";
 
-const genreDelimiterPattern = /[;/|,]+/;
-
-export function splitTrackGenres(value?: string | null): string[] {
-	if (!value) return [];
-	const seen = new Set<string>();
-	const genres: string[] = [];
-	for (const part of value.split(genreDelimiterPattern)) {
-		const genre = part.trim();
-		if (!genre) continue;
-		const key = genre.toLowerCase();
-		if (seen.has(key)) continue;
-		seen.add(key);
-		genres.push(genre);
-	}
-	return genres;
-}
-
 export function trackHasGenre(track: Track, genre: string): boolean {
 	const target = genre.toLowerCase();
-	return splitTrackGenres(track.genre).some(
+	return getTrackGenreNames(track).some(
 		(item) => item.toLowerCase() === target,
 	);
 }
@@ -39,7 +23,7 @@ function collectGenres(tracks: Track[]) {
 		{ name: string; trackCount: number; tracks: Track[] }
 	>();
 	for (const track of tracks) {
-		for (const genre of splitTrackGenres(track.genre)) {
+		for (const genre of getTrackGenreNames(track)) {
 			const key = genre.toLowerCase();
 			const current = byKey.get(key);
 			if (current) {

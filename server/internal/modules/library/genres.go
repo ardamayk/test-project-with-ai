@@ -2,7 +2,6 @@ package library
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -151,11 +150,4 @@ func (s *Store) setTrackGenre(ctx context.Context, trackID, genre string) error 
 		UPDATE tracks SET genre = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`, genre, trackID)
 	return err
-}
-
-func scanAlbumGenres(nullable sql.NullString) []string {
-	if !nullable.Valid {
-		return nil
-	}
-	return decodeGenres(nullable.String)
 }
