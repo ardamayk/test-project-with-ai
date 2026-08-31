@@ -118,6 +118,9 @@ func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stag
 	if err != nil {
 		return stagedUpload{}, fmt.Errorf("create Managed Import staging file: %w", err)
 	}
+	if err := restrictManagedStorageFile(file); err != nil {
+		return stagedUpload{}, errors.Join(err, file.Close(), removeRootedFile(root, relativePath, "Managed Import staging file"))
+	}
 	hash := sha256.New()
 	streamLimit, limitErr := storage.streamLimit()
 	destination := io.MultiWriter(file, hash)
@@ -381,7 +384,11 @@ func ensureDirectory(root *os.Root, path string, mode os.FileMode) error {
 	if err := root.Chmod(path, mode); err != nil {
 		return fmt.Errorf("protect Managed Storage directory %q: %w", path, err)
 	}
-	return nil
+	directory, err := root.Open(path)
+	if err != nil {
+		return fmt.Errorf("open Managed Storage directory %q to protect permissions: %w", path, err)
+	}
+	return errors.Join(restrictManagedStorageFile(directory), directory.Close())
 }
 
 func rejectSymlinks(root *os.Root, path string) error {
@@ -425,6 +432,9 @@ func writeRootedArtwork(root *os.Root, path string, data []byte) error {
 	temporary, err := root.OpenFile(temporaryPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create temporary Album Artwork: %w", err)
+	}
+	if err := restrictManagedStorageFile(temporary); err != nil {
+		return errors.Join(err, temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if _, err := temporary.Write(data); err != nil {
 		return errors.Join(fmt.Errorf("write Album Artwork: %w", err), temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))

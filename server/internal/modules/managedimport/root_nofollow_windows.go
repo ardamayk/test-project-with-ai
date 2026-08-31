@@ -17,6 +17,9 @@ func openManagedStorageRoot(path string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := restrictManagedStorageHandle(handles[len(handles)-1]); err != nil {
+		return nil, errors.Join(err, closeManagedStorageHandles(handles))
+	}
 	root, openErr := os.OpenRoot(path)
 	closeErr := closeManagedStorageHandles(handles)
 	if openErr != nil {
