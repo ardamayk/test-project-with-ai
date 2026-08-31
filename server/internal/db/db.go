@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,13 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 	if err := goose.Up(sqlDB, migrationsDir); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+	if err := BackfillExpandedLibrary(ctx, sqlDB); err != nil {
+		backfillErr := fmt.Errorf("backfill expanded library: %w", err)
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, errors.Join(backfillErr, fmt.Errorf("close database after backfill failure: %w", closeErr))
+		}
+		return nil, backfillErr
 	}
 
 	return sqlDB, nil
