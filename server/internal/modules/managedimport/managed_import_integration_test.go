@@ -892,6 +892,71 @@ func TestManagedImportReusesMatchingNormalizedAlbumArtwork(t *testing.T) {
 	assertNormalizedAlbum(t, router, tracks.Items[0].AlbumID, firstTrackID)
 }
 
+func TestManagedImportSerializesConcurrentCommitsForOneAlbum(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	fixture := readStrictFLACFixture(t)
+	firstTrackID := importOneFLAC(t, router, fixture, "first.flac")
+	var artworkPath string
+	if err := database.QueryRow(`SELECT album_artwork.file_path
+		FROM tracks JOIN album_artwork ON album_artwork.album_id = tracks.album_id
+		WHERE tracks.id = ?`, firstTrackID).Scan(&artworkPath); err != nil {
+		t.Fatalf("resolve first Album Artwork: %v", err)
+	}
+	if _, err := database.Exec(`DELETE FROM album_artwork WHERE file_path = ?`, artworkPath); err != nil {
+		t.Fatalf("remove first Album Artwork record: %v", err)
+	}
+	if err := os.Remove(artworkPath); err != nil {
+		t.Fatalf("remove first canonical Album Artwork: %v", err)
+	}
+	secondJobID, secondRevision := uploadFLACForPreview(t, router, secondTrackFixture(fixture), "second.flac")
+	thirdJobID, thirdRevision := uploadFLACForPreview(t, router, thirdTrackFixture(fixture), "third.flac")
+	type confirmationResult struct {
+		status int
+		body   string
+	}
+	results := make(chan confirmationResult, 2)
+	start := make(chan struct{})
+	for _, confirmation := range []struct {
+		jobID    string
+		revision int
+	}{
+		{jobID: secondJobID, revision: secondRevision},
+		{jobID: thirdJobID, revision: thirdRevision},
+	} {
+		confirmation := confirmation
+		go func() {
+			<-start
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+confirmation.jobID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, confirmation.revision)))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			results <- confirmationResult{status: response.Code, body: response.Body.String()}
+		}()
+	}
+	close(start)
+	for range 2 {
+		result := <-results
+		if result.status != http.StatusOK {
+			t.Fatalf("concurrent confirmation status = %d, body = %s", result.status, result.body)
+		}
+	}
+	if _, err := os.Stat(artworkPath); err != nil {
+		t.Fatalf("stat canonical Album Artwork after concurrent confirmations: %v", err)
+	}
+	var artworkCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM album_artwork WHERE file_path = ?`, artworkPath).Scan(&artworkCount); err != nil {
+		t.Fatalf("count committed Album Artwork records: %v", err)
+	}
+	if artworkCount != 1 {
+		t.Fatalf("committed Album Artwork records = %d, want 1", artworkCount)
+	}
+}
+
 func TestManagedImportRejectsExistingAlbumOutsideCanonicalLayout(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()
@@ -1008,6 +1073,11 @@ func newManagedImportTestRouter(t *testing.T, managedStoragePath string) http.Ha
 func secondTrackFixture(fixture []byte) []byte {
 	result := bytes.Replace(fixture, []byte("TITLE=  Inspection   Fixture  "), []byte("TITLE=  Inspection   Second!  "), 1)
 	return bytes.Replace(result, []byte("TRACKNUMBER=3/9"), []byte("TRACKNUMBER=4/9"), 1)
+}
+
+func thirdTrackFixture(fixture []byte) []byte {
+	result := bytes.Replace(fixture, []byte("TITLE=  Inspection   Fixture  "), []byte("TITLE=  Inspection   Third!!  "), 1)
+	return bytes.Replace(result, []byte("TRACKNUMBER=3/9"), []byte("TRACKNUMBER=5/9"), 1)
 }
 
 type stagingObservingReader struct {

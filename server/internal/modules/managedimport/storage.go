@@ -64,6 +64,7 @@ type placedFiles struct {
 	audioRelative   string
 	artworkRelative string
 	stagedRelative  string
+	artworkCreated  bool
 }
 
 func NewStorage(root string, limits StorageLimits) *Storage {
@@ -236,9 +237,11 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if !shouldCreateArtwork {
 		return placement, nil
 	}
-	if err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data, inspection.AlbumArtwork.SHA256); err != nil {
+	artworkCreated, err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data, inspection.AlbumArtwork.SHA256)
+	if err != nil {
 		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 	}
+	placement.artworkCreated = artworkCreated
 	return placement, nil
 }
 
@@ -325,8 +328,11 @@ func (storage *Storage) Rollback(placement placedFiles) (returnErr error) {
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
-	// Canonical artwork may already be referenced by a concurrent commit.
-	return restoreRootedFile(root, placement.audioRelative, placement.stagedRelative)
+	var removeArtworkErr error
+	if placement.artworkCreated {
+		removeArtworkErr = removeRootedFile(root, placement.artworkRelative, "Canonical Album Artwork")
+	}
+	return errors.Join(removeArtworkErr, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 }
 
 func (storage *Storage) openRoot() (*os.Root, error) {
@@ -441,30 +447,30 @@ func verifyRootedFileHash(root *os.Root, path, expectedHash string) error {
 	return nil
 }
 
-func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string) error {
+func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string) (bool, error) {
 	temporaryPath := filepath.Join(filepath.Dir(path), ".cover-"+uuid.NewString())
 	temporary, err := root.OpenFile(temporaryPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return fmt.Errorf("create temporary Album Artwork: %w", err)
+		return false, fmt.Errorf("create temporary Album Artwork: %w", err)
 	}
 	if err := restrictManagedStoragePath(absoluteRoot, temporaryPath, false); err != nil {
-		return errors.Join(err, closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(err, closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if _, err := temporary.Write(data); err != nil {
-		return errors.Join(fmt.Errorf("write Album Artwork: %w", err), closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(fmt.Errorf("write Album Artwork: %w", err), closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if err := closeManagedStorageFile(temporary, "temporary Album Artwork"); err != nil {
-		return errors.Join(err, removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(err, removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if err := root.Link(temporaryPath, path); errors.Is(err, os.ErrExist) {
-		return errors.Join(verifyMatchingArtwork(root, path, expectedHash), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(verifyMatchingArtwork(root, path, expectedHash), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	} else if err != nil {
-		return errors.Join(fmt.Errorf("place Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(fmt.Errorf("place Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if err := removeRootedFile(root, temporaryPath, "temporary Album Artwork"); err != nil {
-		return errors.Join(err, removeRootedFile(root, path, "Canonical Album Artwork"))
+		return false, errors.Join(err, removeRootedFile(root, path, "Canonical Album Artwork"))
 	}
-	return nil
+	return true, nil
 }
 
 func verifyMatchingArtwork(root *os.Root, path, expectedHash string) error {

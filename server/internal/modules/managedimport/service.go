@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 )
@@ -15,6 +16,7 @@ type Service struct {
 	store     *Store
 	storage   *Storage
 	inspector library.MediaInspector
+	commitMu  sync.Mutex
 }
 
 func NewService(store *Store, storage *Storage, inspector library.MediaInspector) *Service {
@@ -208,6 +210,9 @@ func (service *Service) preflightCommit(stagedBytes int64, inspection library.Me
 }
 
 func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
+	// Filesystem artwork ownership and its database commit form one serialized unit.
+	service.commitMu.Lock()
+	defer service.commitMu.Unlock()
 	identity, err := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
 	if err != nil {
 		return Result{}, err

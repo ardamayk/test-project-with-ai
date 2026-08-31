@@ -167,7 +167,7 @@ func TestManagedImportRejectsCanonicalLibrarySymlinkEscape(t *testing.T) {
 	assertDirectoryEmpty(t, outsidePath)
 }
 
-func TestManagedImportRollbackPreservesCanonicalArtworkUsedByConcurrentPlacement(t *testing.T) {
+func TestManagedImportRollbackRemovesUncommittedCanonicalArtwork(t *testing.T) {
 	fixture := readStorageSafetyFixture(t)
 	fixturePath := filepath.Join("..", "library", "testdata", "strict-import.flac")
 	inspection, err := library.NewMediaInspector().Inspect(context.Background(), fixturePath, nil)
@@ -190,28 +190,11 @@ func TestManagedImportRollbackPreservesCanonicalArtworkUsedByConcurrentPlacement
 	if err != nil {
 		t.Fatalf("place first Managed Track: %v", err)
 	}
-	secondUpload, err := storage.StageUpload(bytes.NewReader(fixture), int64(len(fixture)))
-	if err != nil {
-		t.Fatalf("stage second Managed Track: %v", err)
-	}
-
-	secondPlacement, err := storage.Place(secondUpload.Path, inspection, commitIdentity{
-		AlbumArtistID: "album-artist-id",
-		AlbumID:       "album-id",
-		TrackID:       "second-track-id",
-	})
-	if err != nil {
-		t.Fatalf("reuse canonical Album Artwork: %v", err)
-	}
 	if err := storage.Rollback(firstPlacement); err != nil {
-		t.Fatalf("rollback filesystem-winning Managed Track: %v", err)
+		t.Fatalf("rollback uncommitted Managed Track: %v", err)
 	}
-	artwork, err := os.ReadFile(secondPlacement.ArtworkPath)
-	if err != nil {
-		t.Fatalf("read canonical Album Artwork after rollback: %v", err)
-	}
-	if !bytes.Equal(artwork, inspection.AlbumArtwork.Data) {
-		t.Fatal("canonical Album Artwork changed after rollback")
+	if _, err := os.Stat(firstPlacement.ArtworkPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stat rolled-back canonical Album Artwork: %v", err)
 	}
 }
 
@@ -233,7 +216,8 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 	targetPath := filepath.Join(albumPath, "cover.png")
 	artworks := [][]byte{[]byte("first artwork"), []byte("second artwork")}
 	type writeResult struct {
-		err error
+		created bool
+		err     error
 	}
 	results := make(chan writeResult, len(artworks))
 	start := make(chan struct{})
@@ -242,7 +226,8 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 		go func() {
 			<-start
 			hash := sha256.Sum256(artwork)
-			results <- writeResult{err: writeRootedArtwork(root, storage.root, targetPath, artwork, fmt.Sprintf("%x", hash))}
+			created, err := writeRootedArtwork(root, storage.root, targetPath, artwork, fmt.Sprintf("%x", hash))
+			results <- writeResult{created: created, err: err}
 		}()
 	}
 	close(start)
@@ -250,7 +235,7 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 	conflictCount := 0
 	for range artworks {
 		result := <-results
-		if result.err == nil {
+		if result.created {
 			createdCount++
 		}
 		var validationError *ValidationError
