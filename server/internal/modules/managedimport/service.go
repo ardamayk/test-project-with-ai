@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 )
@@ -16,6 +16,7 @@ type Service struct {
 	store     *Store
 	storage   *Storage
 	inspector library.MediaInspector
+	commitMu  sync.Mutex
 }
 
 func NewService(store *Store, storage *Storage, inspector library.MediaInspector) *Service {
@@ -46,23 +47,35 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, err
 	}
-	stagedPath, _, err := service.storage.StageUpload(jobID, body, contentLength)
+	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
 		return Preview{}, err
 	}
-	inspection, err := service.inspector.Inspect(ctx, stagedPath, service.validationProgressReporter(ctx, jobID))
+	inspection, err := service.inspector.Inspect(ctx, upload.Path, service.validationProgressReporter(ctx, jobID))
 	if err != nil {
-		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationError(err))
+		return Preview{}, service.failUpload(ctx, jobID, upload.Path, validationError(err))
+	}
+	if inspection.FileSHA256 != upload.SHA256 {
+		hashErr := &ValidationError{
+			Code:   "staged_file_changed",
+			Field:  "file",
+			Reason: "staged file differs from uploaded bytes",
+			Err:    errors.New("staged file hash differs from uploaded bytes"),
+		}
+		return Preview{}, service.failUpload(ctx, jobID, upload.Path, hashErr)
 	}
 	if validationErr := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); validationErr != nil {
 		if ctx.Err() != nil {
 			validationErr = validationCancellationError(ctx)
 		}
-		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationErr)
+		return Preview{}, service.failUpload(ctx, jobID, upload.Path, validationErr)
 	}
-	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, stagedPath, inspection.FileSHA256)
+	if preflightErr := service.preflightCommit(upload.Size, inspection); preflightErr != nil {
+		return Preview{}, service.failUpload(ctx, jobID, upload.Path, preflightErr)
+	}
+	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, upload.Path, upload.SHA256)
 	if err != nil {
-		return service.recoverPreviewFailure(ctx, jobID, stagedPath, err, inspection)
+		return service.recoverPreviewFailure(ctx, jobID, upload.Path, err, inspection)
 	}
 	return previewFromInspection(job, inspection), nil
 }
@@ -164,6 +177,10 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
+	stagedBytes, err := service.storage.StagedFileSize(job.StagedFilePath)
+	if err != nil {
+		return Result{}, err
+	}
 	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
 	if err != nil {
 		return Result{}, validationError(err)
@@ -179,10 +196,23 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 			Err:    errors.New("staged file hash changed after Import Preview"),
 		}
 	}
+	if err := service.preflightCommit(stagedBytes, inspection); err != nil {
+		return Result{}, err
+	}
 	return service.commit(ctx, job, inspection)
 }
 
+func (service *Service) preflightCommit(stagedBytes int64, inspection library.MediaInspection) error {
+	return service.storage.Preflight(StorageRequirement{
+		SelectedBytes:  stagedBytes,
+		TemporaryBytes: int64(len(inspection.AlbumArtwork.Data)),
+	})
+}
+
 func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
+	// Filesystem artwork ownership and its database commit form one serialized unit.
+	service.commitMu.Lock()
+	defer service.commitMu.Unlock()
 	identity, err := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
 	if err != nil {
 		return Result{}, err
@@ -211,7 +241,7 @@ func (service *Service) failUpload(ctx context.Context, jobID, stagedPath string
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	return errors.Join(uploadErr, os.Remove(stagedPath), service.store.MarkFailed(cleanupCtx, jobID, errorCode))
+	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, jobID, errorCode))
 }
 
 func (service *Service) validationProgressReporter(ctx context.Context, jobID string) library.InspectionProgressReporter {
@@ -232,7 +262,10 @@ func safeOriginalFilename(value string) (string, error) {
 	if strings.ContainsAny(value, "\x00\r\n") {
 		return "", fmt.Errorf("%w: filename contains forbidden characters", ErrInvalidUpload)
 	}
-	value = filepath.Base(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
+	value = strings.TrimSpace(value)
+	if strings.ContainsAny(value, "/\\") || filepath.Base(value) != value {
+		return "", fmt.Errorf("%w: filename must not contain path segments", ErrInvalidUpload)
+	}
 	if value == "." || value == "" || len(value) > MAX_ORIGINAL_FILENAME_BYTES {
 		return "", fmt.Errorf("%w: filename is missing or too long", ErrInvalidUpload)
 	}

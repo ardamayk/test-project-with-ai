@@ -3,9 +3,9 @@ package managedimport_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -26,6 +26,7 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	flacmeta "github.com/mewkiz/flac/meta"
 )
 
@@ -57,7 +58,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	playbackModule.RegisterRoutes(router)
 	fixture := readStrictFLACFixture(t)
 
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 	if jobResponse.Code != http.StatusCreated {
 		t.Fatalf("create Import Job status = %d, body = %s", jobResponse.Code, jobResponse.Body.String())
 	}
@@ -66,12 +67,12 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 		Status   string `json:"status"`
 		Revision int    `json:"revision"`
 	}
-	decodeJSON(t, jobResponse, &job)
+	testutil.DecodeJSON(t, jobResponse, &job)
 	if job.ID == "" || job.Status != "uploading" || job.Revision != 1 {
 		t.Fatalf("created Import Job = %+v", job)
 	}
 
-	uploadResponse := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "strict-import.flac",
 	})
@@ -101,7 +102,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 			ArtworkMediaType string   `json:"artworkMediaType"`
 		} `json:"file"`
 	}
-	decodeJSON(t, uploadResponse, &preview)
+	testutil.DecodeJSON(t, uploadResponse, &preview)
 	if preview.JobID != job.ID || preview.Status != "awaiting_confirmation" || preview.Revision != 2 {
 		t.Fatalf("Import Preview = %+v", preview)
 	}
@@ -114,6 +115,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if preview.File.Format != "flac" || preview.File.Container != "flac" || preview.File.Codec != "flac" || preview.File.ArtworkMediaType != "image/png" {
 		t.Fatalf("Import Preview media = %+v", preview.File)
 	}
+	assertStagedStorage(t, managedStoragePath, job.ID, fixture)
 	if preview.File.DurationMs <= 0 || preview.File.SampleRateHz <= 0 || preview.File.ChannelCount <= 0 || preview.File.BitDepth <= 0 || preview.File.BitrateKbps <= 0 {
 		t.Fatalf("Import Preview technical audio properties = %+v", preview.File)
 	}
@@ -122,13 +124,13 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if len(tracksBeforeConfirm.Items) != 0 {
 		t.Fatalf("Tracks before confirmation = %+v", tracksBeforeConfirm.Items)
 	}
-	staleResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":1}`), map[string]string{"Content-Type": "application/json"})
+	staleResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":1}`), map[string]string{"Content-Type": "application/json"})
 	if staleResponse.Code != http.StatusConflict {
 		t.Fatalf("stale confirmation status = %d, body = %s", staleResponse.Code, staleResponse.Body.String())
 	}
 
 	confirmationBody := strings.NewReader(`{"revision":2}`)
-	confirmResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", confirmationBody, map[string]string{"Content-Type": "application/json"})
+	confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", confirmationBody, map[string]string{"Content-Type": "application/json"})
 	if confirmResponse.Code != http.StatusOK {
 		t.Fatalf("confirm status = %d, body = %s", confirmResponse.Code, confirmResponse.Body.String())
 	}
@@ -138,7 +140,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 		Revision int    `json:"revision"`
 		TrackID  string `json:"trackId"`
 	}
-	decodeJSON(t, confirmResponse, &result)
+	testutil.DecodeJSON(t, confirmResponse, &result)
 	if result.JobID != job.ID || result.Status != "committed" || result.Revision != 3 || result.TrackID == "" {
 		t.Fatalf("Managed Import result = %+v", result)
 	}
@@ -154,14 +156,14 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if committedTrack.Container != "flac" || committedTrack.Codec != "flac" || committedTrack.DurationMs <= 0 || committedTrack.SampleRateHz <= 0 || committedTrack.ChannelCount <= 0 || committedTrack.BitDepth <= 0 || committedTrack.BitrateBps <= 0 {
 		t.Fatalf("persisted Managed Track technical properties = %+v", committedTrack)
 	}
-	idempotentResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{"Content-Type": "application/json"})
+	idempotentResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{"Content-Type": "application/json"})
 	if idempotentResponse.Code != http.StatusOK {
 		t.Fatalf("idempotent confirm status = %d, body = %s", idempotentResponse.Code, idempotentResponse.Body.String())
 	}
 	var idempotentResult struct {
 		TrackID string `json:"trackId"`
 	}
-	decodeJSON(t, idempotentResponse, &idempotentResult)
+	testutil.DecodeJSON(t, idempotentResponse, &idempotentResult)
 	if idempotentResult.TrackID != result.TrackID || len(listTracks(t, router).Items) != 1 {
 		t.Fatalf("idempotent result = %+v", idempotentResult)
 	}
@@ -170,7 +172,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if len(listTracks(t, router).Items) != 1 {
 		t.Fatal("legacy library reconciliation hid the committed Managed Track")
 	}
-	streamResponse := serveRequest(t, router, http.MethodGet, "/api/v1/tracks/"+result.TrackID+"/stream", nil, nil)
+	streamResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/tracks/"+result.TrackID+"/stream", nil, nil)
 	if streamResponse.Code != http.StatusOK {
 		t.Fatalf("stream status = %d, body = %s", streamResponse.Code, streamResponse.Body.String())
 	}
@@ -183,17 +185,17 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 
 func runLibraryScan(t *testing.T, router http.Handler) {
 	t.Helper()
-	response := serveRequest(t, router, http.MethodPost, "/api/v1/library/scan", nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library/scan", nil, nil)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("trigger library scan status = %d, body = %s", response.Code, response.Body.String())
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		statusResponse := serveRequest(t, router, http.MethodGet, "/api/v1/library/scan/status", nil, nil)
+		statusResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/scan/status", nil, nil)
 		var status struct {
 			Status string `json:"status"`
 		}
-		decodeJSON(t, statusResponse, &status)
+		testutil.DecodeJSON(t, statusResponse, &status)
 		if status.Status == "completed" {
 			return
 		}
@@ -212,17 +214,17 @@ func TestManagedImportStreamsUploadIntoServerOwnedStaging(t *testing.T) {
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 	var job struct {
 		ID string `json:"id"`
 	}
-	decodeJSON(t, jobResponse, &job)
+	testutil.DecodeJSON(t, jobResponse, &job)
 	reader := &stagingObservingReader{
 		data:               readStrictFLACFixture(t),
 		managedStoragePath: managedStoragePath,
 	}
 
-	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", reader, map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", reader, map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "strict-import.flac",
 	})
@@ -235,6 +237,49 @@ func TestManagedImportStreamsUploadIntoServerOwnedStaging(t *testing.T) {
 	}
 }
 
+func TestManagedImportEnforcesFileLimitWithoutContentLength(t *testing.T) {
+	assertManagedImportUploadLimit(t, 1024, 4096, -1, "upload_too_large")
+}
+
+func TestManagedImportEnforcesFileLimitWhenContentLengthIsFalse(t *testing.T) {
+	assertManagedImportUploadLimit(t, 1024, 4096, 512, "upload_too_large")
+}
+
+func TestManagedImportEnforcesBatchLimitWhileStreaming(t *testing.T) {
+	assertManagedImportUploadLimit(t, 4096, 1024, -1, "batch_upload_too_large")
+}
+
+func assertManagedImportUploadLimit(t *testing.T, fileLimit, batchLimit, contentLength int64, expectedCode string) {
+	t.Helper()
+	router := newConfiguredManagedImportRouter(t, config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedStorageReserveBytes:   0,
+		ManagedImportFileLimitBytes:  fileLimit,
+		ManagedImportBatchLimitBytes: batchLimit,
+	})
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(make([]byte, 2048)))
+	request.ContentLength = contentLength
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "oversized.flac")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	testutil.AssertErrorCode(t, response, http.StatusRequestEntityTooLarge, expectedCode)
+}
+
+func TestManagedImportRejectsClientFilenamePathSegments(t *testing.T) {
+	router := newConfiguredManagedImportRouter(t, config.Config{ManagedStoragePath: t.TempDir()})
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t)), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "../strict-import.flac",
+	})
+
+	testutil.AssertErrorCode(t, response, http.StatusBadRequest, "invalid_upload")
+}
+
 func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()
@@ -244,14 +289,14 @@ func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 	var job struct {
 		ID string `json:"id"`
 	}
-	decodeJSON(t, jobResponse, &job)
+	testutil.DecodeJSON(t, jobResponse, &job)
 	fixture := readStrictFLACFixture(t)
 
-	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture[:len(fixture)-8]), map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture[:len(fixture)-8]), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "truncated.flac",
 	})
@@ -262,7 +307,7 @@ func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 	var failure struct {
 		Code string `json:"code"`
 	}
-	decodeJSON(t, response, &failure)
+	testutil.DecodeJSON(t, response, &failure)
 	if failure.Code != "audio_decode_failed" {
 		t.Fatalf("invalid FLAC error code = %q", failure.Code)
 	}
@@ -323,7 +368,7 @@ func TestManagedImportDetectsFLACWithoutTrustingFilenameOrContentType(t *testing
 	router := newManagedImportRouter(t, library.NewMediaInspector())
 	jobID := createManagedImportJob(t, router)
 
-	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t)), map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t)), map[string]string{
 		"Content-Type":      "audio/mpeg",
 		"X-Import-Filename": "misleading.mp3",
 	})
@@ -341,12 +386,12 @@ type managedImportJobResult struct {
 
 func getManagedImportJob(t *testing.T, router http.Handler, jobID string) managedImportJobResult {
 	t.Helper()
-	response := serveRequest(t, router, http.MethodGet, "/api/v1/imports/"+jobID, nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/imports/"+jobID, nil, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("get Managed Import Job status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var result managedImportJobResult
-	decodeJSON(t, response, &result)
+	testutil.DecodeJSON(t, response, &result)
 	return result
 }
 
@@ -369,11 +414,11 @@ func (inspector *completionCancellingInspector) Inspect(ctx context.Context, pat
 
 func createManagedImportJob(t *testing.T, router http.Handler) string {
 	t.Helper()
-	response := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 	var job struct {
 		ID string `json:"id"`
 	}
-	decodeJSON(t, response, &job)
+	testutil.DecodeJSON(t, response, &job)
 	return job.ID
 }
 
@@ -429,7 +474,7 @@ func TestManagedImportRecommendsPicardForMissingEmbeddedArtwork(t *testing.T) {
 	jobID := createImportJob(t, router)
 	fixture := withoutFrontCover(t, secondTrackFixture(readStrictFLACFixture(t)))
 
-	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "missing-cover.flac",
 	})
@@ -441,7 +486,7 @@ func TestManagedImportRecommendsPicardForMissingEmbeddedArtwork(t *testing.T) {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
-	decodeJSON(t, response, &failure)
+	testutil.DecodeJSON(t, response, &failure)
 	if failure.Code != "missing_artwork" || !strings.Contains(failure.Message, "MusicBrainz Picard") {
 		t.Fatalf("missing artwork failure = %+v", failure)
 	}
@@ -459,7 +504,7 @@ func TestManagedImportRejectsConflictingAlbumArtworkWithoutPartialCommit(t *test
 	secondFixture := replaceFrontCover(t, secondTrackFixture(firstFixture), encodeAlternatePNG(t))
 	jobID, revision := uploadFLACForPreview(t, router, secondFixture, "second.flac")
 
-	confirmResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision)), map[string]string{"Content-Type": "application/json"})
+	confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision)), map[string]string{"Content-Type": "application/json"})
 
 	if confirmResponse.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("conflicting confirm status = %d, body = %s", confirmResponse.Code, confirmResponse.Body.String())
@@ -467,7 +512,7 @@ func TestManagedImportRejectsConflictingAlbumArtworkWithoutPartialCommit(t *test
 	var failure struct {
 		Code string `json:"code"`
 	}
-	decodeJSON(t, confirmResponse, &failure)
+	testutil.DecodeJSON(t, confirmResponse, &failure)
 	if failure.Code != "album_artwork_conflict" {
 		t.Fatalf("conflicting artwork error code = %q", failure.Code)
 	}
@@ -508,12 +553,12 @@ func TestManagedImportRejectsMissingAndEmptyIdentityMetadataWithoutLibraryEntiti
 			importModule.RegisterRoutes(router)
 			fixture := replaceFixtureTag(t, readStrictFLACFixture(t), testCase.fixtureTag, testCase.replacement)
 
-			jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+			jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 			var job struct {
 				ID string `json:"id"`
 			}
-			decodeJSON(t, jobResponse, &job)
-			response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+			testutil.DecodeJSON(t, jobResponse, &job)
+			response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
 				"Content-Type":      "audio/flac",
 				"X-Import-Filename": "invalid-identity.flac",
 			})
@@ -525,7 +570,7 @@ func TestManagedImportRejectsMissingAndEmptyIdentityMetadataWithoutLibraryEntiti
 				Code  string `json:"code"`
 				Field string `json:"field"`
 			}
-			decodeJSON(t, response, &failure)
+			testutil.DecodeJSON(t, response, &failure)
 			if failure.Code != "invalid_metadata" || failure.Field != testCase.tag {
 				t.Fatalf("invalid identity error = %+v", failure)
 			}
@@ -557,7 +602,7 @@ func TestManagedImportUsesEffectiveDiscOneForSingleDiscFile(t *testing.T) {
 			DiscTotal int `json:"discTotal"`
 		} `json:"file"`
 	}
-	decodeJSON(t, response, &preview)
+	testutil.DecodeJSON(t, response, &preview)
 	if preview.File.DiscNo != 1 || preview.File.DiscTotal != 1 {
 		t.Fatalf("single-disc position = %d/%d", preview.File.DiscNo, preview.File.DiscTotal)
 	}
@@ -578,7 +623,7 @@ func TestManagedImportReadsSeparateTrackTotal(t *testing.T) {
 			TrackTotal int `json:"trackTotal"`
 		} `json:"file"`
 	}
-	decodeJSON(t, response, &preview)
+	testutil.DecodeJSON(t, response, &preview)
 	if preview.File.TrackNo != 3 || preview.File.TrackTotal != 9 {
 		t.Fatalf("Track position = %d/%d", preview.File.TrackNo, preview.File.TrackTotal)
 	}
@@ -599,7 +644,7 @@ func TestManagedImportReadsSeparateDiscTotal(t *testing.T) {
 			DiscTotal int `json:"discTotal"`
 		} `json:"file"`
 	}
-	decodeJSON(t, response, &preview)
+	testutil.DecodeJSON(t, response, &preview)
 	if preview.File.DiscNo != 1 || preview.File.DiscTotal != 2 {
 		t.Fatalf("Disc position = %d/%d", preview.File.DiscNo, preview.File.DiscTotal)
 	}
@@ -642,12 +687,12 @@ func TestManagedImportRequiresDiscNumberForExistingMultiDiscAlbum(t *testing.T) 
 	importOneFLAC(t, router, multiDiscFixture, "disc-two.flac")
 	untaggedFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "XISCNUMBER=1/1")
 
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 	var job struct {
 		ID string `json:"id"`
 	}
-	decodeJSON(t, jobResponse, &job)
-	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(untaggedFixture), map[string]string{
+	testutil.DecodeJSON(t, jobResponse, &job)
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(untaggedFixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "missing-disc-number.flac",
 	})
@@ -695,13 +740,13 @@ func TestManagedImportSeparatesDisplayValuesFromUnicodeComparisonKeys(t *testing
 	if len(tracks.Items) != 2 || tracks.Items[0].AlbumID != tracks.Items[1].AlbumID {
 		t.Fatalf("Unicode case-folded Albums = %+v", tracks.Items)
 	}
-	response := serveRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+tracks.Items[0].AlbumID, nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+tracks.Items[0].AlbumID, nil, nil)
 	var album struct {
 		AlbumArtists []struct {
 			Name string `json:"name"`
 		} `json:"albumArtists"`
 	}
-	decodeJSON(t, response, &album)
+	testutil.DecodeJSON(t, response, &album)
 	if len(album.AlbumArtists) != 1 || album.AlbumArtists[0].Name != "Straße Artist" {
 		t.Fatalf("Album Artist display value = %+v", album.AlbumArtists)
 	}
@@ -758,7 +803,7 @@ func TestManagedImportValidationErrorsExplainHowToRepairMetadata(t *testing.T) {
 		Message string `json:"message"`
 		Reason  string `json:"reason"`
 	}
-	decodeJSON(t, response, &failure)
+	testutil.DecodeJSON(t, response, &failure)
 
 	if failure.Reason != "required tag is missing" || !strings.Contains(failure.Message, failure.Reason) {
 		t.Fatalf("actionable validation error = %+v", failure)
@@ -773,7 +818,7 @@ func TestManagedImportValidationErrorsDoNotExposeParserDetails(t *testing.T) {
 		Field  string `json:"field"`
 		Reason string `json:"reason"`
 	}
-	decodeJSON(t, response, &failure)
+	testutil.DecodeJSON(t, response, &failure)
 
 	if failure.Code != "audio_decode_failed" || failure.Field != "audio" || failure.Reason != "audio stream failed full decode" {
 		t.Fatalf("safe validation error = %+v", failure)
@@ -811,12 +856,12 @@ func TestManagedImportRejectsTotalsConflictingWithExistingAlbum(t *testing.T) {
 			}
 			secondFixture = replaceFixtureTag(t, secondFixture, "TITLE=  Inspection   Fixture  ", "TITLE=  Inspection   Second!  ")
 
-			jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+			jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 			var job struct {
 				ID string `json:"id"`
 			}
-			decodeJSON(t, jobResponse, &job)
-			response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(secondFixture), map[string]string{
+			testutil.DecodeJSON(t, jobResponse, &job)
+			response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(secondFixture), map[string]string{
 				"Content-Type":      "audio/flac",
 				"X-Import-Filename": "conflicting-total.flac",
 			})
@@ -847,25 +892,111 @@ func TestManagedImportReusesMatchingNormalizedAlbumArtwork(t *testing.T) {
 	assertNormalizedAlbum(t, router, tracks.Items[0].AlbumID, firstTrackID)
 }
 
+func TestManagedImportSerializesConcurrentCommitsForOneAlbum(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	fixture := readStrictFLACFixture(t)
+	firstTrackID := importOneFLAC(t, router, fixture, "first.flac")
+	var artworkPath string
+	if err := database.QueryRow(`SELECT album_artwork.file_path
+		FROM tracks JOIN album_artwork ON album_artwork.album_id = tracks.album_id
+		WHERE tracks.id = ?`, firstTrackID).Scan(&artworkPath); err != nil {
+		t.Fatalf("resolve first Album Artwork: %v", err)
+	}
+	if _, err := database.Exec(`DELETE FROM album_artwork WHERE file_path = ?`, artworkPath); err != nil {
+		t.Fatalf("remove first Album Artwork record: %v", err)
+	}
+	if err := os.Remove(artworkPath); err != nil {
+		t.Fatalf("remove first canonical Album Artwork: %v", err)
+	}
+	secondJobID, secondRevision := uploadFLACForPreview(t, router, secondTrackFixture(fixture), "second.flac")
+	thirdJobID, thirdRevision := uploadFLACForPreview(t, router, thirdTrackFixture(fixture), "third.flac")
+	type confirmationResult struct {
+		status int
+		body   string
+	}
+	results := make(chan confirmationResult, 2)
+	start := make(chan struct{})
+	for _, confirmation := range []struct {
+		jobID    string
+		revision int
+	}{
+		{jobID: secondJobID, revision: secondRevision},
+		{jobID: thirdJobID, revision: thirdRevision},
+	} {
+		confirmation := confirmation
+		go func() {
+			<-start
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+confirmation.jobID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, confirmation.revision)))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			results <- confirmationResult{status: response.Code, body: response.Body.String()}
+		}()
+	}
+	close(start)
+	for range 2 {
+		result := <-results
+		if result.status != http.StatusOK {
+			t.Fatalf("concurrent confirmation status = %d, body = %s", result.status, result.body)
+		}
+	}
+	if _, err := os.Stat(artworkPath); err != nil {
+		t.Fatalf("stat canonical Album Artwork after concurrent confirmations: %v", err)
+	}
+	var artworkCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM album_artwork WHERE file_path = ?`, artworkPath).Scan(&artworkCount); err != nil {
+		t.Fatalf("count committed Album Artwork records: %v", err)
+	}
+	if artworkCount != 1 {
+		t.Fatalf("committed Album Artwork records = %d, want 1", artworkCount)
+	}
+}
+
+func TestManagedImportRejectsExistingAlbumOutsideCanonicalLayout(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	fixture := readStrictFLACFixture(t)
+	firstTrackID := importOneFLAC(t, router, fixture, "first.flac")
+	moveAlbumToLegacyPath(t, database, managedStoragePath, firstTrackID)
+	secondFixture := bytes.Replace(fixture, []byte("TITLE=  Inspection   Fixture  "), []byte("TITLE=  Inspection   Second!  "), 1)
+	secondFixture = bytes.Replace(secondFixture, []byte("TRACKNUMBER=3/9"), []byte("TRACKNUMBER=4/9"), 1)
+	jobID, revision := uploadFLACForPreview(t, router, secondFixture, "second.flac")
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision)), map[string]string{
+		"Content-Type": "application/json",
+	})
+
+	testutil.AssertErrorCode(t, response, http.StatusConflict, "unsafe_storage_path")
+}
+
 func importOneFLAC(t *testing.T, router http.Handler, fixture []byte, filename string) string {
 	t.Helper()
 	jobID, revision := uploadFLACForPreview(t, router, fixture, filename)
 	confirmation := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision))
-	confirmResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", confirmation, map[string]string{"Content-Type": "application/json"})
+	confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", confirmation, map[string]string{"Content-Type": "application/json"})
 	if confirmResponse.Code != http.StatusOK {
 		t.Fatalf("confirm %q status = %d, body = %s", filename, confirmResponse.Code, confirmResponse.Body.String())
 	}
 	var result struct {
 		TrackID string `json:"trackId"`
 	}
-	decodeJSON(t, confirmResponse, &result)
+	testutil.DecodeJSON(t, confirmResponse, &result)
 	return result.TrackID
 }
 
 func uploadFLACForPreview(t *testing.T, router http.Handler, fixture []byte, filename string) (string, int) {
 	t.Helper()
 	jobID := createImportJob(t, router)
-	uploadResponse := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": filename,
 	})
@@ -875,17 +1006,55 @@ func uploadFLACForPreview(t *testing.T, router http.Handler, fixture []byte, fil
 	var preview struct {
 		Revision int `json:"revision"`
 	}
-	decodeJSON(t, uploadResponse, &preview)
+	testutil.DecodeJSON(t, uploadResponse, &preview)
 	return jobID, preview.Revision
+}
+
+func moveAlbumToLegacyPath(t *testing.T, database *sql.DB, root, trackID string) {
+	t.Helper()
+	var audioPath, artworkPath string
+	err := database.QueryRow(`SELECT tracks.file_path, album_artwork.file_path
+		FROM tracks JOIN album_artwork ON album_artwork.album_id = tracks.album_id
+		WHERE tracks.id = ?`, trackID).Scan(&audioPath, &artworkPath)
+	if err != nil {
+		t.Fatalf("resolve committed Album paths: %v", err)
+	}
+	legacyAlbumPath := filepath.Join(root, "library", "test-album-artist", filepath.Base(filepath.Dir(audioPath)))
+	if err := os.MkdirAll(filepath.Dir(legacyAlbumPath), 0o750); err != nil {
+		t.Fatalf("create legacy Artist path: %v", err)
+	}
+	if err := os.Rename(filepath.Dir(audioPath), legacyAlbumPath); err != nil {
+		t.Fatalf("move Album to legacy path: %v", err)
+	}
+	updateLegacyAlbumPaths(t, database, trackID, audioPath, artworkPath, legacyAlbumPath)
+}
+
+func updateLegacyAlbumPaths(t *testing.T, database *sql.DB, trackID, audioPath, artworkPath, legacyAlbumPath string) {
+	t.Helper()
+	newAudioPath := filepath.Join(legacyAlbumPath, filepath.Base(audioPath))
+	newArtworkPath := filepath.Join(legacyAlbumPath, filepath.Base(artworkPath))
+	updates := []struct {
+		query string
+		args  []any
+	}{
+		{query: `UPDATE tracks SET file_path = ? WHERE id = ?`, args: []any{newAudioPath, trackID}},
+		{query: `UPDATE track_sources SET file_path = ? WHERE track_id = ?`, args: []any{newAudioPath, trackID}},
+		{query: `UPDATE album_artwork SET file_path = ? WHERE file_path = ?`, args: []any{newArtworkPath, artworkPath}},
+	}
+	for _, update := range updates {
+		if _, err := database.Exec(update.query, update.args...); err != nil {
+			t.Fatalf("update legacy Album path: %v", err)
+		}
+	}
 }
 
 func createImportJob(t *testing.T, router http.Handler) string {
 	t.Helper()
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 	var job struct {
 		ID string `json:"id"`
 	}
-	decodeJSON(t, jobResponse, &job)
+	testutil.DecodeJSON(t, jobResponse, &job)
 	return job.ID
 }
 
@@ -904,6 +1073,11 @@ func newManagedImportTestRouter(t *testing.T, managedStoragePath string) http.Ha
 func secondTrackFixture(fixture []byte) []byte {
 	result := bytes.Replace(fixture, []byte("TITLE=  Inspection   Fixture  "), []byte("TITLE=  Inspection   Second!  "), 1)
 	return bytes.Replace(result, []byte("TRACKNUMBER=3/9"), []byte("TRACKNUMBER=4/9"), 1)
+}
+
+func thirdTrackFixture(fixture []byte) []byte {
+	result := bytes.Replace(fixture, []byte("TITLE=  Inspection   Fixture  "), []byte("TITLE=  Inspection   Third!!  "), 1)
+	return bytes.Replace(result, []byte("TRACKNUMBER=3/9"), []byte("TRACKNUMBER=5/9"), 1)
 }
 
 type stagingObservingReader struct {
@@ -976,7 +1150,7 @@ type albumArtworkResponse struct {
 
 func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID, sourceTrackID string) {
 	t.Helper()
-	response := serveRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+albumID, nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+albumID, nil, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("get imported Album status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -991,7 +1165,7 @@ func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID, sourceTra
 		} `json:"genreItems"`
 		Artwork *albumArtworkResponse `json:"artwork"`
 	}
-	decodeJSON(t, response, &album)
+	testutil.DecodeJSON(t, response, &album)
 	if album.Title != "Strict Import Tests" || album.ReleaseDate != "2026" || len(album.AlbumArtists) != 1 || album.AlbumArtists[0].Name != "Test Album Artist" {
 		t.Fatalf("normalized imported Album = %+v", album)
 	}
@@ -999,7 +1173,7 @@ func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID, sourceTra
 		t.Fatalf("imported Album Genre/Artwork = %+v", album)
 	}
 	assertAlbumArtworkMetadata(t, album.Artwork, sourceTrackID)
-	coverResponse := serveRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+albumID+"/cover", nil, nil)
+	coverResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+albumID+"/cover", nil, nil)
 	if coverResponse.Code != http.StatusOK || coverResponse.Header().Get("Content-Type") != "image/png" || coverResponse.Body.Len() == 0 {
 		t.Fatalf("imported Album Artwork response = %d %q (%d bytes)", coverResponse.Code, coverResponse.Header().Get("Content-Type"), coverResponse.Body.Len())
 	}
@@ -1017,12 +1191,12 @@ func assertAlbumArtworkMetadata(t *testing.T, artwork *albumArtworkResponse, sou
 
 func listTracks(t *testing.T, router http.Handler) trackList {
 	t.Helper()
-	response := serveRequest(t, router, http.MethodGet, "/api/v1/library/tracks", nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/tracks", nil, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("list Tracks status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var result trackList
-	decodeJSON(t, response, &result)
+	testutil.DecodeJSON(t, response, &result)
 	return result
 }
 
@@ -1054,12 +1228,69 @@ func assertCanonicalStorage(t *testing.T, managedStoragePath string, fixture []b
 	if filepath.Base(audioPath) == "strict-import.flac" || !strings.Contains(audioPath, "strict-import-tests") || !strings.Contains(audioPath, "inspection-fixture") {
 		t.Fatalf("audio path is not canonical: %q", audioPath)
 	}
+	relativePath, err := filepath.Rel(managedStoragePath, audioPath)
+	if err != nil {
+		t.Fatalf("resolve canonical relative path: %v", err)
+	}
+	parts := strings.Split(relativePath, string(filepath.Separator))
+	if len(parts) != 4 || parts[0] != "library" {
+		t.Fatalf("canonical path parts = %v", parts)
+	}
+	assertCanonicalID(t, parts[1], "test-album-artist-")
+	assertCanonicalID(t, parts[2], "strict-import-tests-")
+	audioStem := strings.TrimSuffix(parts[3], ".flac")
+	assertCanonicalID(t, audioStem, "01-03-inspection-fixture-")
 	stored, err := os.ReadFile(audioPath)
 	if err != nil {
 		t.Fatalf("read canonical audio: %v", err)
 	}
 	if !bytes.Equal(stored, fixture) {
 		t.Fatal("canonical audio bytes differ from uploaded FLAC")
+	}
+}
+
+func assertStagedStorage(t *testing.T, managedStoragePath, jobID string, fixture []byte) {
+	t.Helper()
+	stagingPath := filepath.Join(managedStoragePath, ".staging")
+	stagingInfo, err := os.Stat(stagingPath)
+	if err != nil {
+		t.Fatalf("stat staging directory: %v", err)
+	}
+	if stagingInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("staging directory mode = %o", stagingInfo.Mode().Perm())
+	}
+	entries, err := os.ReadDir(stagingPath)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("staging entries = %v, error = %v", entries, err)
+	}
+	entry := entries[0]
+	if entry.Name() == jobID+".upload" || !strings.HasPrefix(entry.Name(), ".import-") {
+		t.Fatalf("staging filename is not an independent server-generated name: %q", entry.Name())
+	}
+	info, err := entry.Info()
+	if err != nil {
+		t.Fatalf("stat staged file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("staged file mode = %o", info.Mode().Perm())
+	}
+	stagedBytes, err := os.ReadFile(filepath.Join(stagingPath, entry.Name()))
+	if err != nil {
+		t.Fatalf("read staged file: %v", err)
+	}
+	if sha256.Sum256(stagedBytes) != sha256.Sum256(fixture) {
+		t.Fatal("staged file SHA-256 differs from uploaded bytes")
+	}
+}
+
+func assertCanonicalID(t *testing.T, value, prefix string) {
+	t.Helper()
+	stableID := strings.TrimPrefix(value, prefix)
+	if stableID == value {
+		t.Fatalf("canonical component %q does not start with %q", value, prefix)
+	}
+	if _, err := uuid.Parse(stableID); err != nil {
+		t.Fatalf("canonical component %q has invalid stable ID: %v", value, err)
 	}
 }
 
@@ -1231,12 +1462,12 @@ func uploadManagedImportFixture(t *testing.T, fixture []byte) (*httptest.Respons
 
 func uploadFixtureThroughRouter(t *testing.T, router http.Handler, fixture []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
 	var job struct {
 		ID string `json:"id"`
 	}
-	decodeJSON(t, jobResponse, &job)
-	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+	testutil.DecodeJSON(t, jobResponse, &job)
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "identity-test.flac",
 	})
@@ -1252,7 +1483,7 @@ func assertValidationFailure(t *testing.T, response *httptest.ResponseRecorder, 
 		Code  string `json:"code"`
 		Field string `json:"field"`
 	}
-	decodeJSON(t, response, &failure)
+	testutil.DecodeJSON(t, response, &failure)
 	if failure.Code != expectedCode || failure.Field != expectedField {
 		t.Fatalf("validation error = %+v", failure)
 	}
@@ -1273,20 +1504,11 @@ func assertNoLibraryEntities(t *testing.T, database interface {
 	}
 }
 
-func serveRequest(t *testing.T, router http.Handler, method string, path string, body io.Reader, headers map[string]string) *httptest.ResponseRecorder {
+func newConfiguredManagedImportRouter(t *testing.T, configuration config.Config) http.Handler {
 	t.Helper()
-	request := httptest.NewRequest(method, path, body)
-	for name, value := range headers {
-		request.Header.Set(name, value)
-	}
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	return response
-}
-
-func decodeJSON(t *testing.T, response *httptest.ResponseRecorder, target any) {
-	t.Helper()
-	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	database := testutil.OpenMigratedDB(t)
+	module := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+	return router
 }

@@ -78,7 +78,13 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	case errors.Is(err, ErrInvalidState):
 		respond.Error(writer, http.StatusConflict, "import_state_conflict", "Managed Import Job is not awaiting this operation")
 	case errors.Is(err, ErrUploadTooLarge):
-		respond.Error(writer, http.StatusRequestEntityTooLarge, "upload_too_large", fmt.Sprintf("Managed Import file exceeds the %d byte limit", MAX_UPLOAD_SIZE_BYTES))
+		respond.Error(writer, http.StatusRequestEntityTooLarge, "upload_too_large", "Managed Import file exceeds the configured per-file byte limit")
+	case errors.Is(err, ErrBatchTooLarge):
+		respond.Error(writer, http.StatusRequestEntityTooLarge, "batch_upload_too_large", "Managed Import batch exceeds the configured byte limit")
+	case errors.Is(err, ErrInsufficientStorage):
+		respond.Error(writer, http.StatusInsufficientStorage, "insufficient_storage", "Managed Storage does not have enough capacity for this import and its safety reserve")
+	case errors.Is(err, ErrUnsafeStoragePath):
+		respond.Error(writer, http.StatusConflict, "unsafe_storage_path", "Managed Storage path failed containment checks")
 	case errors.Is(err, ErrInvalidUpload):
 		respond.Error(writer, http.StatusBadRequest, "invalid_upload", err.Error())
 	default:

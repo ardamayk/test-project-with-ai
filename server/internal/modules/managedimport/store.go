@@ -147,7 +147,9 @@ func (store *Store) AwaitingPreviewPaths(ctx context.Context, excludedJobID stri
 		return nil, fmt.Errorf("list awaiting Import Preview files: %w", err)
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, rows.Close())
+		if err := rows.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close awaiting Import Preview rows: %w", err))
+		}
 	}()
 	for rows.Next() {
 		var path string
@@ -203,8 +205,13 @@ func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata lib
 
 func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) (commitIdentity, error) {
 	identity := commitIdentity{TrackID: uuid.NewString()}
+	albumArtistID, err := store.resolveAlbumArtistID(ctx, metadata.AlbumArtists[0])
+	if err != nil {
+		return commitIdentity{}, err
+	}
+	identity.AlbumArtistID = albumArtistID
 	var artworkPath, artworkSHA256 sql.NullString
-	err := store.database.QueryRowContext(ctx,
+	err = store.database.QueryRowContext(ctx,
 		`SELECT albums.id, album_artwork.file_path, album_artwork.content_sha256
 		FROM albums
 		LEFT JOIN album_artwork ON album_artwork.album_id = albums.id
@@ -222,6 +229,18 @@ func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.
 	return identity, nil
 }
 
+func (store *Store) resolveAlbumArtistID(ctx context.Context, name string) (string, error) {
+	var artistID string
+	err := store.database.QueryRowContext(ctx, `SELECT id FROM artists WHERE name_normalized = ?`, normalizeIdentity(name)).Scan(&artistID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return uuid.NewString(), nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve primary Album Artist identity: %w", err)
+	}
+	return artistID, nil
+}
+
 func (store *Store) Commit(ctx context.Context, data commitData) (result Result, returnErr error) {
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
@@ -233,7 +252,7 @@ func (store *Store) Commit(ctx context.Context, data commitData) (result Result,
 			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import transaction: %w", rollbackErr))
 		}
 	}()
-	artistIDs, err := upsertArtists(ctx, transaction, data.Inspection.Metadata)
+	artistIDs, err := upsertArtists(ctx, transaction, data.Inspection.Metadata, data.Identity)
 	if err != nil {
 		return Result{}, err
 	}
@@ -263,14 +282,19 @@ func (store *Store) Commit(ctx context.Context, data commitData) (result Result,
 	return result, nil
 }
 
-func upsertArtists(ctx context.Context, transaction *sql.Tx, metadata library.NormalizedMediaMetadata) (map[string]string, error) {
+func upsertArtists(ctx context.Context, transaction *sql.Tx, metadata library.NormalizedMediaMetadata, identity commitIdentity) (map[string]string, error) {
 	artistIDs := make(map[string]string)
+	primaryAlbumArtist := normalizeIdentity(metadata.AlbumArtists[0])
 	for _, name := range append(append([]string{}, metadata.AlbumArtists...), metadata.Artists...) {
 		normalizedName := normalizeIdentity(name)
 		if _, exists := artistIDs[normalizedName]; exists {
 			continue
 		}
-		artistID, err := upsertArtist(ctx, transaction, name, normalizedName)
+		preferredID := ""
+		if normalizedName == primaryAlbumArtist {
+			preferredID = identity.AlbumArtistID
+		}
+		artistID, err := upsertArtist(ctx, transaction, name, normalizedName, preferredID)
 		if err != nil {
 			return nil, err
 		}
@@ -279,16 +303,22 @@ func upsertArtists(ctx context.Context, transaction *sql.Tx, metadata library.No
 	return artistIDs, nil
 }
 
-func upsertArtist(ctx context.Context, transaction *sql.Tx, name, normalizedName string) (string, error) {
+func upsertArtist(ctx context.Context, transaction *sql.Tx, name, normalizedName, preferredID string) (string, error) {
 	var artistID string
 	err := transaction.QueryRowContext(ctx, `SELECT id FROM artists WHERE name_normalized = ?`, normalizedName).Scan(&artistID)
 	if err == nil {
+		if preferredID != "" && artistID != preferredID {
+			return "", fmt.Errorf("resolved Artist identity changed during Managed Import commit")
+		}
 		return artistID, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("lookup Artist %q: %w", name, err)
 	}
-	artistID = uuid.NewString()
+	artistID = preferredID
+	if artistID == "" {
+		artistID = uuid.NewString()
+	}
 	_, err = transaction.ExecContext(ctx,
 		`INSERT INTO artists (id, name, name_sort, name_normalized) VALUES (?, ?, ?, ?)`,
 		artistID, name, normalizedName, normalizedName,

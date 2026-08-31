@@ -32,7 +32,11 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	cfg := config.Load()
+	cfg, configErr := config.Load()
+	if configErr != nil {
+		slog.Error("configuration failed", "error", configErr)
+		os.Exit(1)
+	}
 	if err := config.ValidateServerAddress(cfg.Addr); err != nil {
 		slog.Error("unsafe server address", "error", err)
 		os.Exit(1)

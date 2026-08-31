@@ -2,22 +2,43 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
+const (
+	DEFAULT_MANAGED_STORAGE_RESERVE_BYTES    int64 = 2 * 1024 * 1024 * 1024
+	DEFAULT_MANAGED_IMPORT_FILE_LIMIT_BYTES  int64 = 2 * 1024 * 1024 * 1024
+	DEFAULT_MANAGED_IMPORT_BATCH_LIMIT_BYTES int64 = 2 * 1024 * 1024 * 1024
+)
+
 type Config struct {
-	Addr                string
-	DatabasePath        string
-	CORSOrigins         []string
-	Version             string
-	MusicPaths          []string
-	ManagedStoragePath  string
-	RadioBrowserBaseURL string
+	Addr                         string
+	DatabasePath                 string
+	CORSOrigins                  []string
+	Version                      string
+	MusicPaths                   []string
+	ManagedStoragePath           string
+	ManagedStorageReserveBytes   int64
+	ManagedImportFileLimitBytes  int64
+	ManagedImportBatchLimitBytes int64
+	RadioBrowserBaseURL          string
 }
 
-func Load() Config {
+type managedStorageSettings struct {
+	reserveBytes    int64
+	fileLimitBytes  int64
+	batchLimitBytes int64
+}
+
+func Load() (Config, error) {
+	managedStorage, err := loadManagedStorageSettings()
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:         getEnv("SERVER_ADDR", "127.0.0.1:8090"),
 		DatabasePath: getEnv("DATABASE_PATH", "./data/app.db"),
@@ -28,12 +49,35 @@ func Load() Config {
 			"MANAGED_STORAGE_PATH",
 			"./data/managed",
 		),
+		ManagedStorageReserveBytes:   managedStorage.reserveBytes,
+		ManagedImportFileLimitBytes:  managedStorage.fileLimitBytes,
+		ManagedImportBatchLimitBytes: managedStorage.batchLimitBytes,
 		RadioBrowserBaseURL: getEnv(
 			"RADIO_BROWSER_BASE_URL",
 			"https://de1.api.radio-browser.info",
 		),
 	}
-	return cfg
+	return cfg, nil
+}
+
+func loadManagedStorageSettings() (managedStorageSettings, error) {
+	reserveBytes, err := getEnvInt64("MANAGED_STORAGE_RESERVE_BYTES", DEFAULT_MANAGED_STORAGE_RESERVE_BYTES, true)
+	if err != nil {
+		return managedStorageSettings{}, err
+	}
+	fileLimitBytes, err := getEnvInt64("MANAGED_IMPORT_FILE_LIMIT_BYTES", DEFAULT_MANAGED_IMPORT_FILE_LIMIT_BYTES, false)
+	if err != nil {
+		return managedStorageSettings{}, err
+	}
+	batchLimitBytes, err := getEnvInt64("MANAGED_IMPORT_BATCH_LIMIT_BYTES", DEFAULT_MANAGED_IMPORT_BATCH_LIMIT_BYTES, false)
+	if err != nil {
+		return managedStorageSettings{}, err
+	}
+	return managedStorageSettings{
+		reserveBytes:    reserveBytes,
+		fileLimitBytes:  fileLimitBytes,
+		batchLimitBytes: batchLimitBytes,
+	}, nil
 }
 
 func ValidateServerAddress(address string) error {
@@ -68,4 +112,20 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getEnvInt64(key string, fallback int64, isZeroAllowed bool) (int64, error) {
+	rawValue := os.Getenv(key)
+	if rawValue == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(rawValue, 10, 64)
+	if err != nil || value < 0 || (!isZeroAllowed && value == 0) || value == math.MaxInt64 {
+		description := "positive"
+		if isZeroAllowed {
+			description = "non-negative"
+		}
+		return 0, fmt.Errorf("%s must be a valid %s supported byte count", key, description)
+	}
+	return value, nil
 }

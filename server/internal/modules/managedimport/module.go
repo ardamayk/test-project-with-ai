@@ -13,8 +13,24 @@ type Module struct {
 }
 
 func NewModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector) *Module {
+	return newModule(database, configuration, inspector, availableStorageBytes)
+}
+
+func newModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector, capacity storageCapacity) *Module {
 	store := NewStore(database)
-	storage := NewStorage(configuration.ManagedStoragePath)
+	fileLimit := configuration.ManagedImportFileLimitBytes
+	if fileLimit <= 0 {
+		fileLimit = config.DEFAULT_MANAGED_IMPORT_FILE_LIMIT_BYTES
+	}
+	batchLimit := configuration.ManagedImportBatchLimitBytes
+	if batchLimit <= 0 {
+		batchLimit = config.DEFAULT_MANAGED_IMPORT_BATCH_LIMIT_BYTES
+	}
+	storage := newStorage(configuration.ManagedStoragePath, StorageLimits{
+		ReserveBytes: configuration.ManagedStorageReserveBytes,
+		FileBytes:    fileLimit,
+		BatchBytes:   batchLimit,
+	}, capacity)
 	service := NewService(store, storage, inspector)
 	return &Module{handlers: NewHandlers(service)}
 }
