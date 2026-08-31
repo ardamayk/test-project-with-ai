@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,18 +20,58 @@ import (
 
 	"github.com/mewkiz/flac"
 	flacmeta "github.com/mewkiz/flac/meta"
+	_ "golang.org/x/image/webp"
 	"golang.org/x/text/unicode/norm"
 )
 
 const (
-	MAX_ARTWORK_SIZE_BYTES                = 20 * 1024 * 1024
-	MAX_ARTWORK_PIXELS                    = 50_000_000
-	FLAC_SIGNATURE_SIZE_BYTES             = 4
-	FLAC_METADATA_BLOCK_HEADER_SIZE_BYTES = 4
-	FLAC_STREAM_INFO_SIZE_BYTES           = 34
-	MAX_IDENTITY_VALUE_BYTES              = 200
-	MAX_MEDIA_POSITION                    = 9999
+	MAX_ARTWORK_SIZE_BYTES                       = 20 * 1024 * 1024
+	MAX_ARTWORK_PIXELS                           = 50_000_000
+	FLAC_SIGNATURE                               = "fLaC"
+	FLAC_SIGNATURE_SIZE_BYTES                    = 4
+	FLAC_METADATA_BLOCK_HEADER_SIZE_BYTES        = 4
+	FLAC_STREAM_INFO_SIZE_BYTES                  = 34
+	JPEG_SIGNATURE                               = "\xff\xd8\xff"
+	PNG_SIGNATURE                                = "\x89PNG\r\n\x1a\n"
+	RIFF_SIGNATURE                               = "RIFF"
+	WEBP_SIGNATURE                               = "WEBP"
+	PNG_ANIMATION_CHUNK                          = "acTL"
+	WEBP_EXTENDED_CHUNK                          = "VP8X"
+	WEBP_ANIMATION_CHUNK                         = "ANIM"
+	WEBP_ANIMATION_FRAME_CHUNK                   = "ANMF"
+	PNG_CHUNK_OVERHEAD_BYTES                     = 12
+	WEBP_HEADER_SIZE_BYTES                       = 12
+	WEBP_CHUNK_HEADER_SIZE_BYTES                 = 8
+	RIFF_FORM_TYPE_OFFSET_BYTES                  = 8
+	IMAGE_CHUNK_FIELD_SIZE_BYTES                 = 4
+	IMAGE_CHUNK_LENGTH_OFFSET_BYTES              = 4
+	WEBP_CHUNK_ALIGNMENT_BYTES                   = 2
+	WEBP_ANIMATION_FLAG                   byte   = 0x02
+	FLAC_PICTURE_TYPE_OTHER               uint32 = 0
+	FLAC_PICTURE_TYPE_FRONT_COVER         uint32 = 3
+	FLAC_PICTURE_TYPE_BACK_COVER          uint32 = 4
+	MAX_IDENTITY_VALUE_BYTES                     = 200
+	MAX_MEDIA_POSITION                           = 9999
 )
+
+type artworkFormat string
+
+const (
+	ARTWORK_FORMAT_JPEG artworkFormat = "jpeg"
+	ARTWORK_FORMAT_PNG  artworkFormat = "png"
+	ARTWORK_FORMAT_WEBP artworkFormat = "webp"
+)
+
+var artworkMIMETypes = map[artworkFormat]string{
+	ARTWORK_FORMAT_JPEG: "image/jpeg",
+	ARTWORK_FORMAT_PNG:  "image/png",
+	ARTWORK_FORMAT_WEBP: "image/webp",
+}
+
+var artworkAnimationDetectors = map[artworkFormat]func([]byte) bool{
+	ARTWORK_FORMAT_PNG:  hasPNGAnimationChunk,
+	ARTWORK_FORMAT_WEBP: hasWebPAnimation,
+}
 
 type InspectionErrorCode string
 
@@ -168,7 +209,7 @@ func validateFLACSignature(file *os.File) error {
 	if _, err := io.ReadFull(file, signature[:]); err != nil {
 		return fmt.Errorf("read FLAC signature: %w", err)
 	}
-	if string(signature[:]) != "fLaC" {
+	if string(signature[:]) != FLAC_SIGNATURE {
 		return errors.New("FLAC signature is missing")
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -426,37 +467,121 @@ func inspectFLACArtwork(blocks []*flacmeta.Block) (AlbumArtwork, error) {
 	var frontCover *flacmeta.Picture
 	for _, block := range blocks {
 		picture, ok := block.Body.(*flacmeta.Picture)
-		if !ok || picture.Type != 3 {
+		if !ok {
 			continue
 		}
-		if frontCover != nil {
-			return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple front covers are ambiguous"))
+		if picture.Type == FLAC_PICTURE_TYPE_FRONT_COVER {
+			if frontCover != nil {
+				return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple front covers are ambiguous"))
+			}
+			frontCover = picture
 		}
-		frontCover = picture
 	}
-	if frontCover == nil {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
+	if frontCover != nil {
+		return validateArtwork(frontCover)
 	}
-	return validateArtwork(frontCover)
+	return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
 }
 
 func validateArtwork(picture *flacmeta.Picture) (AlbumArtwork, error) {
-	if len(picture.Data) == 0 || len(picture.Data) > MAX_ARTWORK_SIZE_BYTES {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("encoded artwork size is invalid"))
-	}
-	config, format, err := image.DecodeConfig(bytes.NewReader(picture.Data))
+	format, err := validateArtworkFormat(picture)
 	if err != nil {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", fmt.Errorf("decode image: %w", err))
+		return AlbumArtwork{}, err
 	}
-	mimeType := map[string]string{"jpeg": "image/jpeg", "png": "image/png"}[format]
-	if mimeType == "" || picture.MIME != mimeType {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("declared and detected image formats differ or are unsupported"))
-	}
-	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > MAX_ARTWORK_PIXELS {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("decoded artwork dimensions are invalid"))
+	config, err := decodeArtwork(picture.Data, format)
+	if err != nil {
+		return AlbumArtwork{}, err
 	}
 	hash := sha256.Sum256(picture.Data)
-	return AlbumArtwork{MIMEType: mimeType, Width: config.Width, Height: config.Height, Data: append([]byte(nil), picture.Data...), SHA256: hex.EncodeToString(hash[:])}, nil
+	return AlbumArtwork{MIMEType: artworkMIMETypes[format], Width: config.Width, Height: config.Height, Data: append([]byte(nil), picture.Data...), SHA256: hex.EncodeToString(hash[:])}, nil
+}
+
+func validateArtworkFormat(picture *flacmeta.Picture) (artworkFormat, error) {
+	if len(picture.Data) == 0 || len(picture.Data) > MAX_ARTWORK_SIZE_BYTES {
+		return "", inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("encoded artwork size is invalid"))
+	}
+	format := detectArtworkFormat(picture.Data)
+	mimeType := artworkMIMETypes[format]
+	if mimeType == "" || picture.MIME != mimeType {
+		return "", inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("declared and detected image formats differ or are unsupported"))
+	}
+	if isAnimatedArtwork(format, picture.Data) {
+		return "", inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("animated artwork is not supported"))
+	}
+	return format, nil
+}
+
+func decodeArtwork(data []byte, format artworkFormat) (image.Config, error) {
+	config, decodedFormat, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return image.Config{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", fmt.Errorf("decode image config: %w", err))
+	}
+	if artworkFormat(decodedFormat) != format {
+		return image.Config{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("declared and detected image formats differ or are unsupported"))
+	}
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > MAX_ARTWORK_PIXELS {
+		return image.Config{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("decoded artwork dimensions are invalid"))
+	}
+	if _, decodedFormat, err = image.Decode(bytes.NewReader(data)); err != nil {
+		return image.Config{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", fmt.Errorf("decode image: %w", err))
+	}
+	if artworkFormat(decodedFormat) != format {
+		return image.Config{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("decoded image format changed"))
+	}
+	return config, nil
+}
+
+func detectArtworkFormat(data []byte) artworkFormat {
+	switch {
+	case len(data) >= len(JPEG_SIGNATURE) && string(data[:len(JPEG_SIGNATURE)]) == JPEG_SIGNATURE:
+		return ARTWORK_FORMAT_JPEG
+	case len(data) >= len(PNG_SIGNATURE) && string(data[:len(PNG_SIGNATURE)]) == PNG_SIGNATURE:
+		return ARTWORK_FORMAT_PNG
+	case len(data) >= WEBP_HEADER_SIZE_BYTES && string(data[:len(RIFF_SIGNATURE)]) == RIFF_SIGNATURE && string(data[RIFF_FORM_TYPE_OFFSET_BYTES:WEBP_HEADER_SIZE_BYTES]) == WEBP_SIGNATURE:
+		return ARTWORK_FORMAT_WEBP
+	default:
+		return ""
+	}
+}
+
+func isAnimatedArtwork(format artworkFormat, data []byte) bool {
+	detector := artworkAnimationDetectors[format]
+	if detector == nil {
+		return false
+	}
+	return detector(data)
+}
+
+func hasPNGAnimationChunk(data []byte) bool {
+	for offset := len(PNG_SIGNATURE); offset+PNG_CHUNK_OVERHEAD_BYTES <= len(data); {
+		length := int(binary.BigEndian.Uint32(data[offset : offset+IMAGE_CHUNK_FIELD_SIZE_BYTES]))
+		if length > len(data)-offset-PNG_CHUNK_OVERHEAD_BYTES {
+			return false
+		}
+		chunkTypeOffset := offset + IMAGE_CHUNK_LENGTH_OFFSET_BYTES
+		if string(data[chunkTypeOffset:chunkTypeOffset+IMAGE_CHUNK_FIELD_SIZE_BYTES]) == PNG_ANIMATION_CHUNK {
+			return true
+		}
+		offset += PNG_CHUNK_OVERHEAD_BYTES + length
+	}
+	return false
+}
+
+func hasWebPAnimation(data []byte) bool {
+	for offset := WEBP_HEADER_SIZE_BYTES; offset+WEBP_CHUNK_HEADER_SIZE_BYTES <= len(data); {
+		lengthOffset := offset + IMAGE_CHUNK_LENGTH_OFFSET_BYTES
+		length := int(binary.LittleEndian.Uint32(data[lengthOffset : lengthOffset+IMAGE_CHUNK_FIELD_SIZE_BYTES]))
+		dataOffset := offset + WEBP_CHUNK_HEADER_SIZE_BYTES
+		if length > len(data)-dataOffset {
+			return false
+		}
+		chunkType := string(data[offset : offset+IMAGE_CHUNK_FIELD_SIZE_BYTES])
+		if chunkType == WEBP_ANIMATION_CHUNK || chunkType == WEBP_ANIMATION_FRAME_CHUNK || chunkType == WEBP_EXTENDED_CHUNK && length > 0 && data[dataOffset]&WEBP_ANIMATION_FLAG != 0 {
+			return true
+		}
+		offset = dataOffset + length + length%WEBP_CHUNK_ALIGNMENT_BYTES
+	}
+	return false
 }
 
 func inspectFLACAudio(stream *flac.Stream, sizeBytes int64) (TechnicalAudioProperties, error) {

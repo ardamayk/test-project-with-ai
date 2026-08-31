@@ -2,13 +2,45 @@ package library_test
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	flacmeta "github.com/mewkiz/flac/meta"
+)
+
+const (
+	FLAC_METADATA_BLOCK_LAST_FLAG           byte = 0x80
+	FLAC_METADATA_BLOCK_TYPE_MASK           byte = 0x7f
+	TEST_ARTWORK_WIDTH                           = 2
+	TEST_ARTWORK_HEIGHT                          = 2
+	TEST_ARTWORK_DEPTH                           = 24
+	PNG_CHUNK_LENGTH_SIZE_BYTES                  = 4
+	PNG_IHDR_WIDTH_OFFSET                        = 16
+	PNG_IHDR_HEIGHT_OFFSET                       = 20
+	PNG_IHDR_CRC_OFFSET                          = 29
+	PNG_IHDR_CRC_INPUT_OFFSET                    = 12
+	PNG_ANIMATION_CONTROL_FIELD_COUNT            = 2
+	ANIMATED_WEBP_FIXTURE_BASE64                 = "UklGRhYAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAA"
+	FLAC_METADATA_LENGTH_HIGH_BYTE_OFFSET        = 1
+	FLAC_METADATA_LENGTH_MIDDLE_BYTE_OFFSET      = 2
+	FLAC_METADATA_LENGTH_LOW_BYTE_OFFSET         = 3
+	FLAC_METADATA_LENGTH_HIGH_SHIFT              = 16
+	FLAC_METADATA_LENGTH_MIDDLE_SHIFT            = 8
+	TRUNCATED_PNG_SUFFIX_BYTES                   = 8
+	PNG_ANIMATION_FRAME_COUNT                    = 1
+	OVERSIZED_ARTWORK_WIDTH                      = 10_000
+	OVERSIZED_ARTWORK_HEIGHT                     = 5_001
 )
 
 func TestMediaInspectorInspectsStrictFLACFixture(t *testing.T) {
@@ -115,6 +147,262 @@ func TestMediaInspectorRejectsTruncatedAudioWithStructuredCode(t *testing.T) {
 	if inspectionErr.Code != library.INSPECTION_ERROR_AUDIO_DECODE {
 		t.Fatalf("inspection error = %+v", inspectionErr)
 	}
+}
+
+func TestMediaInspectorAcceptsSupportedStaticArtworkFormats(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		picture embeddedPicture
+	}{
+		{name: "JPEG", picture: frontCover("image/jpeg", encodeJPEG(t))},
+		{name: "PNG", picture: frontCover("image/png", encodePNG(t))},
+		{name: "WebP", picture: frontCover("image/webp", decodeBase64(t, "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8MQL/yC5YXXI1/8gP+QH/ID/+PIAAAA="))},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := writeFLACWithPictures(t, []embeddedPicture{testCase.picture})
+
+			inspection, err := library.NewMediaInspector().Inspect(path)
+			if err != nil {
+				t.Fatalf("inspect %s artwork: %v", testCase.name, err)
+			}
+			if inspection.AlbumArtwork.MIMEType != testCase.picture.mimeType || inspection.AlbumArtwork.Width != TEST_ARTWORK_WIDTH || inspection.AlbumArtwork.Height != TEST_ARTWORK_HEIGHT {
+				t.Fatalf("%s artwork = %+v", testCase.name, inspection.AlbumArtwork)
+			}
+		})
+	}
+}
+
+func TestMediaInspectorRejectsUnsafeEmbeddedArtwork(t *testing.T) {
+	pngData := encodePNG(t)
+	testCases := []struct {
+		name         string
+		pictures     []embeddedPicture
+		expectedCode library.InspectionErrorCode
+	}{
+		{name: "missing front cover", expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "generic picture is not a front cover", pictures: []embeddedPicture{genericCover("image/png", pngData)}, expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "multiple generic pictures are not front covers", pictures: []embeddedPicture{genericCover("image/png", pngData), genericCover("image/png", pngData)}, expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "ambiguous front covers", pictures: []embeddedPicture{frontCover("image/png", pngData), frontCover("image/png", pngData)}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "declared type mismatch", pictures: []embeddedPicture{frontCover("image/jpeg", pngData)}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "truncated image", pictures: []embeddedPicture{frontCover("image/png", pngData[:len(pngData)-TRUNCATED_PNG_SUFFIX_BYTES])}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "animated PNG", pictures: []embeddedPicture{frontCover("image/png", addPNGAnimationControl(t, pngData))}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "animated WebP", pictures: []embeddedPicture{frontCover("image/webp", animatedWebP(t))}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "decoded pixel limit", pictures: []embeddedPicture{frontCover("image/png", oversizedPNG(t, pngData))}, expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := writeFLACWithPictures(t, testCase.pictures)
+
+			_, err := library.NewMediaInspector().Inspect(path)
+			var inspectionErr *library.InspectionError
+			if !errors.As(err, &inspectionErr) {
+				t.Fatalf("error = %T %v", err, err)
+			}
+			if inspectionErr.Code != testCase.expectedCode || inspectionErr.Field != "artwork" {
+				t.Fatalf("inspection error = %+v", inspectionErr)
+			}
+		})
+	}
+}
+
+type embeddedPicture struct {
+	pictureType uint32
+	mimeType    string
+	data        []byte
+}
+
+func frontCover(mimeType string, data []byte) embeddedPicture {
+	return embeddedPicture{pictureType: library.FLAC_PICTURE_TYPE_FRONT_COVER, mimeType: mimeType, data: data}
+}
+
+func genericCover(mimeType string, data []byte) embeddedPicture {
+	return embeddedPicture{pictureType: library.FLAC_PICTURE_TYPE_OTHER, mimeType: mimeType, data: data}
+}
+
+type flacMetadataBlock struct {
+	blockType byte
+	body      []byte
+}
+
+func writeFLACWithPictures(t *testing.T, pictures []embeddedPicture) string {
+	t.Helper()
+	fixture := readInspectionFixture(t)
+	blocks, audio := splitFLACMetadata(t, fixture)
+	output := encodeFLACFixture(t, replaceFLACPictureBlocks(t, blocks, pictures), audio)
+	path := filepath.Join(t.TempDir(), "artwork.flac")
+	if err := os.WriteFile(path, output, 0o600); err != nil {
+		t.Fatalf("write artwork FLAC: %v", err)
+	}
+	return path
+}
+
+func replaceFLACPictureBlocks(t *testing.T, blocks []flacMetadataBlock, pictures []embeddedPicture) []flacMetadataBlock {
+	t.Helper()
+	rewritten := make([]flacMetadataBlock, 0, len(blocks)+len(pictures))
+	picturesInserted := false
+	for _, block := range blocks {
+		if block.blockType != byte(flacmeta.TypePicture) {
+			rewritten = append(rewritten, block)
+			continue
+		}
+		if picturesInserted {
+			continue
+		}
+		for _, picture := range pictures {
+			rewritten = append(rewritten, flacMetadataBlock{blockType: byte(flacmeta.TypePicture), body: encodeFLACPicture(t, picture)})
+		}
+		picturesInserted = true
+	}
+	if !picturesInserted {
+		t.Fatal("strict FLAC fixture has no Picture block")
+	}
+	return rewritten
+}
+
+func encodeFLACFixture(t *testing.T, blocks []flacMetadataBlock, audio []byte) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	output.WriteString(library.FLAC_SIGNATURE)
+	for index, block := range blocks {
+		header := block.blockType
+		if index == len(blocks)-1 {
+			header |= FLAC_METADATA_BLOCK_LAST_FLAG
+		}
+		output.WriteByte(header)
+		length := len(block.body)
+		output.Write([]byte{byte(length >> FLAC_METADATA_LENGTH_HIGH_SHIFT), byte(length >> FLAC_METADATA_LENGTH_MIDDLE_SHIFT), byte(length)})
+		output.Write(block.body)
+	}
+	output.Write(audio)
+	return output.Bytes()
+}
+
+func splitFLACMetadata(t *testing.T, fixture []byte) ([]flacMetadataBlock, []byte) {
+	t.Helper()
+	if len(fixture) < library.FLAC_SIGNATURE_SIZE_BYTES || string(fixture[:library.FLAC_SIGNATURE_SIZE_BYTES]) != library.FLAC_SIGNATURE {
+		t.Fatal("strict FLAC fixture signature is invalid")
+	}
+	offset := library.FLAC_SIGNATURE_SIZE_BYTES
+	var blocks []flacMetadataBlock
+	for {
+		if offset+library.FLAC_METADATA_BLOCK_HEADER_SIZE_BYTES > len(fixture) {
+			t.Fatal("strict FLAC fixture metadata is truncated")
+		}
+		header := fixture[offset]
+		length := int(fixture[offset+FLAC_METADATA_LENGTH_HIGH_BYTE_OFFSET])<<FLAC_METADATA_LENGTH_HIGH_SHIFT |
+			int(fixture[offset+FLAC_METADATA_LENGTH_MIDDLE_BYTE_OFFSET])<<FLAC_METADATA_LENGTH_MIDDLE_SHIFT |
+			int(fixture[offset+FLAC_METADATA_LENGTH_LOW_BYTE_OFFSET])
+		offset += library.FLAC_METADATA_BLOCK_HEADER_SIZE_BYTES
+		if offset+length > len(fixture) {
+			t.Fatal("strict FLAC fixture block is truncated")
+		}
+		blocks = append(blocks, flacMetadataBlock{blockType: header & FLAC_METADATA_BLOCK_TYPE_MASK, body: append([]byte(nil), fixture[offset:offset+length]...)})
+		offset += length
+		if header&FLAC_METADATA_BLOCK_LAST_FLAG != 0 {
+			return blocks, fixture[offset:]
+		}
+	}
+}
+
+func encodeFLACPicture(t *testing.T, picture embeddedPicture) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	values := []uint32{picture.pictureType, uint32(len(picture.mimeType))}
+	for _, value := range values {
+		if err := binary.Write(&output, binary.BigEndian, value); err != nil {
+			t.Fatalf("encode FLAC Picture: %v", err)
+		}
+	}
+	output.WriteString(picture.mimeType)
+	for _, value := range []uint32{0, TEST_ARTWORK_WIDTH, TEST_ARTWORK_HEIGHT, TEST_ARTWORK_DEPTH, 0, uint32(len(picture.data))} {
+		if err := binary.Write(&output, binary.BigEndian, value); err != nil {
+			t.Fatalf("encode FLAC Picture: %v", err)
+		}
+	}
+	output.Write(picture.data)
+	return output.Bytes()
+}
+
+func encodePNG(t *testing.T) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	if err := png.Encode(&output, testImage()); err != nil {
+		t.Fatalf("encode PNG: %v", err)
+	}
+	return output.Bytes()
+}
+
+func encodeJPEG(t *testing.T) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	if err := jpeg.Encode(&output, testImage(), nil); err != nil {
+		t.Fatalf("encode JPEG: %v", err)
+	}
+	return output.Bytes()
+}
+
+func testImage() image.Image {
+	result := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	result.Set(0, 0, color.RGBA{R: 255, A: 255})
+	result.Set(1, 0, color.RGBA{G: 255, A: 255})
+	result.Set(0, 1, color.RGBA{B: 255, A: 255})
+	result.Set(1, 1, color.RGBA{R: 255, G: 255, A: 255})
+	return result
+}
+
+func decodeBase64(t *testing.T, value string) []byte {
+	t.Helper()
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		t.Fatalf("decode base64: %v", err)
+	}
+	return decoded
+}
+
+func addPNGAnimationControl(t *testing.T, data []byte) []byte {
+	t.Helper()
+	idatOffset := bytes.Index(data, []byte("IDAT")) - PNG_CHUNK_LENGTH_SIZE_BYTES
+	if idatOffset < len(library.PNG_SIGNATURE) {
+		t.Fatal("PNG has no IDAT chunk")
+	}
+	chunkData := make([]byte, PNG_CHUNK_LENGTH_SIZE_BYTES*PNG_ANIMATION_CONTROL_FIELD_COUNT)
+	binary.BigEndian.PutUint32(chunkData[:PNG_CHUNK_LENGTH_SIZE_BYTES], PNG_ANIMATION_FRAME_COUNT)
+	chunk := encodePNGChunk(t, library.PNG_ANIMATION_CHUNK, chunkData)
+	result := append([]byte(nil), data[:idatOffset]...)
+	result = append(result, chunk...)
+	return append(result, data[idatOffset:]...)
+}
+
+func encodePNGChunk(t *testing.T, chunkType string, data []byte) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	if err := binary.Write(&output, binary.BigEndian, uint32(len(data))); err != nil {
+		t.Fatalf("encode PNG chunk length: %v", err)
+	}
+	output.WriteString(chunkType)
+	output.Write(data)
+	checksum := crc32.ChecksumIEEE(output.Bytes()[PNG_CHUNK_LENGTH_SIZE_BYTES:])
+	if err := binary.Write(&output, binary.BigEndian, checksum); err != nil {
+		t.Fatalf("encode PNG chunk checksum: %v", err)
+	}
+	return output.Bytes()
+}
+
+func oversizedPNG(t *testing.T, data []byte) []byte {
+	t.Helper()
+	if len(data) < PNG_IHDR_CRC_OFFSET+PNG_CHUNK_LENGTH_SIZE_BYTES || string(data[PNG_IHDR_CRC_INPUT_OFFSET:PNG_IHDR_WIDTH_OFFSET]) != "IHDR" {
+		t.Fatal("PNG has no IHDR chunk")
+	}
+	result := append([]byte(nil), data...)
+	binary.BigEndian.PutUint32(result[PNG_IHDR_WIDTH_OFFSET:PNG_IHDR_HEIGHT_OFFSET], OVERSIZED_ARTWORK_WIDTH)
+	binary.BigEndian.PutUint32(result[PNG_IHDR_HEIGHT_OFFSET:PNG_IHDR_HEIGHT_OFFSET+PNG_CHUNK_LENGTH_SIZE_BYTES], OVERSIZED_ARTWORK_HEIGHT)
+	binary.BigEndian.PutUint32(result[PNG_IHDR_CRC_OFFSET:PNG_IHDR_CRC_OFFSET+PNG_CHUNK_LENGTH_SIZE_BYTES], crc32.ChecksumIEEE(result[PNG_IHDR_CRC_INPUT_OFFSET:PNG_IHDR_CRC_OFFSET]))
+	return result
+}
+
+func animatedWebP(t *testing.T) []byte {
+	t.Helper()
+	return decodeBase64(t, ANIMATED_WEBP_FIXTURE_BASE64)
 }
 
 func readInspectionFixture(t *testing.T) []byte {
