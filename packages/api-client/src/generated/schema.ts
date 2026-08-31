@@ -1024,6 +1024,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description Managed Storage cannot satisfy the configured reserve and temporary-space requirements */
+        InsufficientStorage: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description Range not satisfiable */
         RangeNotSatisfiable: {
             headers: {
@@ -1446,7 +1455,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
-            /** @description File exceeds the Managed Import upload limit */
+            /** @description File or batch exceeds the configured Managed Import byte limit */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -1464,6 +1473,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            507: components["responses"]["InsufficientStorage"];
         };
     };
     confirmManagedImport: {
@@ -1493,6 +1503,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            507: components["responses"]["InsufficientStorage"];
         };
     };
     getPlaybackQueue: {

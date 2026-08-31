@@ -224,7 +224,8 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if err := ensureDirectory(root, storage.root, filepath.Dir(placement.audioRelative), 0o750); err != nil {
 		return placedFiles{}, err
 	}
-	if err := storage.prepareArtwork(root, &placement, inspection, identity); err != nil {
+	shouldCreateArtwork, err := storage.prepareArtwork(root, &placement, inspection, identity)
+	if err != nil {
 		return placedFiles{}, err
 	}
 	if err := root.Rename(placement.stagedRelative, placement.audioRelative); err != nil {
@@ -233,13 +234,14 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if err := verifyRootedFileHash(root, placement.audioRelative, inspection.FileSHA256); err != nil {
 		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 	}
-	if identity.ExistingArtworkPath != "" {
+	if !shouldCreateArtwork {
 		return placement, nil
 	}
-	if err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data); err != nil {
+	artworkCreated, err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data, inspection.AlbumArtwork.SHA256)
+	if err != nil {
 		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 	}
-	placement.artworkCreated = true
+	placement.artworkCreated = artworkCreated
 	return placement, nil
 }
 
@@ -293,10 +295,10 @@ func (storage *Storage) existingCanonicalAlbum(identity commitIdentity, inspecti
 	return artworkRelative, albumRelative, nil
 }
 
-func (storage *Storage) prepareArtwork(root *os.Root, placement *placedFiles, inspection library.MediaInspection, identity commitIdentity) error {
+func (storage *Storage) prepareArtwork(root *os.Root, placement *placedFiles, inspection library.MediaInspection, identity commitIdentity) (bool, error) {
 	if identity.ExistingArtworkPath != "" {
 		if identity.ExistingArtworkSHA256 != inspection.AlbumArtwork.SHA256 {
-			return &ValidationError{
+			return false, &ValidationError{
 				Code:   "album_artwork_conflict",
 				Field:  "artwork",
 				Reason: "embedded Album Artwork differs from the existing Album",
@@ -305,16 +307,19 @@ func (storage *Storage) prepareArtwork(root *os.Root, placement *placedFiles, in
 		}
 		placement.ArtworkPath = identity.ExistingArtworkPath
 		if err := verifyRootedFileHash(root, placement.artworkRelative, identity.ExistingArtworkSHA256); err != nil {
-			return fmt.Errorf("verify existing Album Artwork: %w", err)
+			return false, fmt.Errorf("verify existing Album Artwork: %w", err)
 		}
-		return nil
+		return false, nil
 	}
 	if _, err := root.Stat(placement.artworkRelative); err == nil {
-		return fmt.Errorf("canonical Album Artwork already exists at %q", placement.ArtworkPath)
+		if err := verifyMatchingArtwork(root, placement.artworkRelative, inspection.AlbumArtwork.SHA256); err != nil {
+			return false, err
+		}
+		return false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect Canonical Album Artwork path: %w", err)
+		return false, fmt.Errorf("inspect Canonical Album Artwork path: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func (storage *Storage) Rollback(placement placedFiles) (returnErr error) {
@@ -443,23 +448,40 @@ func verifyRootedFileHash(root *os.Root, path, expectedHash string) error {
 	return nil
 }
 
-func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte) error {
+func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string) (bool, error) {
 	temporaryPath := filepath.Join(filepath.Dir(path), ".cover-"+uuid.NewString())
 	temporary, err := root.OpenFile(temporaryPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return fmt.Errorf("create temporary Album Artwork: %w", err)
+		return false, fmt.Errorf("create temporary Album Artwork: %w", err)
 	}
 	if err := restrictManagedStoragePath(absoluteRoot, temporaryPath, false); err != nil {
-		return errors.Join(err, temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(err, temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if _, err := temporary.Write(data); err != nil {
-		return errors.Join(fmt.Errorf("write Album Artwork: %w", err), temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(fmt.Errorf("write Album Artwork: %w", err), temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if err := temporary.Close(); err != nil {
-		return errors.Join(fmt.Errorf("close Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return false, errors.Join(fmt.Errorf("close Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
-	if err := root.Rename(temporaryPath, path); err != nil {
-		return errors.Join(fmt.Errorf("place Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+	if err := root.Link(temporaryPath, path); errors.Is(err, os.ErrExist) {
+		return false, errors.Join(verifyMatchingArtwork(root, path, expectedHash), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+	} else if err != nil {
+		return false, errors.Join(fmt.Errorf("place Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+	}
+	if err := removeRootedFile(root, temporaryPath, "temporary Album Artwork"); err != nil {
+		return false, errors.Join(err, removeRootedFile(root, path, "Canonical Album Artwork"))
+	}
+	return true, nil
+}
+
+func verifyMatchingArtwork(root *os.Root, path, expectedHash string) error {
+	if err := verifyRootedFileHash(root, path, expectedHash); err != nil {
+		return &ValidationError{
+			Code:   "album_artwork_conflict",
+			Field:  "artwork",
+			Reason: "canonical Album Artwork differs from the selected Album",
+			Err:    err,
+		}
 	}
 	return nil
 }

@@ -325,7 +325,7 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
         "413":
-          description: File exceeds the Managed Import upload limit
+          description: File or batch exceeds the configured Managed Import byte limit
           content:
             application/json:
               schema:
@@ -336,6 +336,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
   /api/v1/imports/{importId}/confirm:
     post:
       tags: [imports]
@@ -362,6 +364,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
   /api/v1/playback/queue:
     get:
       tags: [playback]
@@ -982,6 +986,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Conflict:
       description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InsufficientStorage:
+      description: Managed Storage cannot satisfy the configured reserve and temporary-space requirements
       content:
         application/json:
           schema:

@@ -3,6 +3,9 @@ package managedimport
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -162,6 +165,114 @@ func TestManagedImportRejectsCanonicalLibrarySymlinkEscape(t *testing.T) {
 
 	testutil.AssertErrorCode(t, response, http.StatusConflict, "unsafe_storage_path")
 	assertDirectoryEmpty(t, outsidePath)
+}
+
+func TestManagedImportRollbackPreservesReusedCanonicalArtwork(t *testing.T) {
+	fixture := readStorageSafetyFixture(t)
+	fixturePath := filepath.Join("..", "library", "testdata", "strict-import.flac")
+	inspection, err := library.NewMediaInspector().Inspect(context.Background(), fixturePath, nil)
+	if err != nil {
+		t.Fatalf("inspect fixture: %v", err)
+	}
+	storage := newStorage(t.TempDir(), StorageLimits{
+		FileBytes:  int64(len(fixture) * 2),
+		BatchBytes: int64(len(fixture) * 2),
+	}, unlimitedStorageCapacity)
+	firstUpload, err := storage.StageUpload(bytes.NewReader(fixture), int64(len(fixture)))
+	if err != nil {
+		t.Fatalf("stage first Managed Track: %v", err)
+	}
+	firstPlacement, err := storage.Place(firstUpload.Path, inspection, commitIdentity{
+		AlbumArtistID: "album-artist-id",
+		AlbumID:       "album-id",
+		TrackID:       "first-track-id",
+	})
+	if err != nil {
+		t.Fatalf("place first Managed Track: %v", err)
+	}
+	secondUpload, err := storage.StageUpload(bytes.NewReader(fixture), int64(len(fixture)))
+	if err != nil {
+		t.Fatalf("stage second Managed Track: %v", err)
+	}
+
+	secondPlacement, err := storage.Place(secondUpload.Path, inspection, commitIdentity{
+		AlbumArtistID: "album-artist-id",
+		AlbumID:       "album-id",
+		TrackID:       "second-track-id",
+	})
+	if err != nil {
+		t.Fatalf("reuse canonical Album Artwork: %v", err)
+	}
+	if secondPlacement.artworkCreated {
+		t.Fatal("reused canonical Album Artwork was marked as created by the second placement")
+	}
+	if err := storage.Rollback(secondPlacement); err != nil {
+		t.Fatalf("rollback second Managed Track: %v", err)
+	}
+	artwork, err := os.ReadFile(firstPlacement.ArtworkPath)
+	if err != nil {
+		t.Fatalf("read canonical Album Artwork after rollback: %v", err)
+	}
+	if !bytes.Equal(artwork, inspection.AlbumArtwork.Data) {
+		t.Fatal("canonical Album Artwork changed after rollback")
+	}
+}
+
+func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testing.T) {
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	root, err := storage.openRoot()
+	if err != nil {
+		t.Fatalf("open Managed Storage root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close Managed Storage root: %v", err)
+		}
+	})
+	albumPath := filepath.Join("library", "album")
+	if err := ensureDirectory(root, storage.root, albumPath, 0o750); err != nil {
+		t.Fatalf("create canonical Album directory: %v", err)
+	}
+	targetPath := filepath.Join(albumPath, "cover.png")
+	artworks := [][]byte{[]byte("first artwork"), []byte("second artwork")}
+	type writeResult struct {
+		created bool
+		err     error
+	}
+	results := make(chan writeResult, len(artworks))
+	start := make(chan struct{})
+	for _, artwork := range artworks {
+		artwork := artwork
+		go func() {
+			<-start
+			hash := sha256.Sum256(artwork)
+			created, err := writeRootedArtwork(root, storage.root, targetPath, artwork, fmt.Sprintf("%x", hash))
+			results <- writeResult{created: created, err: err}
+		}()
+	}
+	close(start)
+	createdCount := 0
+	conflictCount := 0
+	for range artworks {
+		result := <-results
+		if result.created {
+			createdCount++
+		}
+		var validationError *ValidationError
+		if errors.As(result.err, &validationError) && validationError.Code == "album_artwork_conflict" {
+			conflictCount++
+		}
+	}
+	if createdCount != 1 || conflictCount != 1 {
+		t.Fatalf("concurrent Album Artwork results: created = %d, conflicts = %d", createdCount, conflictCount)
+	}
+	storedArtwork, err := root.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read winning Album Artwork: %v", err)
+	}
+	if !bytes.Equal(storedArtwork, artworks[0]) && !bytes.Equal(storedArtwork, artworks[1]) {
+		t.Fatalf("winning Album Artwork was overwritten with unexpected bytes: %q", storedArtwork)
+	}
 }
 
 func newStorageSafetyRouter(t *testing.T, configuration config.Config, capacity storageCapacity) http.Handler {
