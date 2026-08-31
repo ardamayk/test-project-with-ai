@@ -11,6 +11,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/google/uuid"
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -86,6 +87,84 @@ func (store *Store) MarkFailed(ctx context.Context, jobID, errorCode string) err
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
 	return nil
+}
+
+func (store *Store) AlbumRequiresDiscNumber(ctx context.Context, metadata library.NormalizedMediaMetadata) (bool, error) {
+	var requiresDiscNumber bool
+	err := store.database.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM albums
+			JOIN tracks ON tracks.album_id = albums.id
+			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL
+				AND (tracks.disc_no > 1 OR tracks.disc_total > 1)
+		)`, albumIdentityKey(metadata),
+	).Scan(&requiresDiscNumber)
+	if err != nil {
+		return false, fmt.Errorf("inspect existing Album disc positions: %w", err)
+	}
+	return requiresDiscNumber, nil
+}
+
+func (store *Store) AwaitingPreviewPaths(ctx context.Context, excludedJobID string) (paths []string, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT staged_file_path FROM managed_import_jobs
+		WHERE status = ? AND id != ? AND staged_file_path IS NOT NULL`, STATUS_AWAITING_CONFIRMATION, excludedJobID)
+	if err != nil {
+		return nil, fmt.Errorf("list awaiting Import Preview files: %w", err)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, rows.Close())
+	}()
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("scan awaiting Import Preview file: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate awaiting Import Preview files: %w", err)
+	}
+	return paths, nil
+}
+
+func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {
+	var hasDiscConflict, hasTrackConflict bool
+	err := store.database.QueryRowContext(ctx, `
+		WITH matching_tracks AS (
+			SELECT tracks.disc_no, tracks.disc_total, tracks.track_no, tracks.track_total
+			FROM albums JOIN tracks ON tracks.album_id = albums.id
+			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL
+		)
+		SELECT
+			EXISTS (
+				SELECT 1 FROM matching_tracks
+				WHERE ? > 0 AND ((disc_total IS NOT NULL AND disc_total != ?) OR disc_no > ?)
+			),
+			EXISTS (
+				SELECT 1 FROM matching_tracks
+				WHERE disc_no = ? AND ? > 0
+					AND ((track_total IS NOT NULL AND track_total != ?) OR track_no > ?)
+			)`,
+		albumIdentityKey(metadata),
+		metadata.DiscPosition.Total,
+		metadata.DiscPosition.Total,
+		metadata.DiscPosition.Total,
+		metadata.DiscPosition.Number,
+		metadata.TrackPosition.Total,
+		metadata.TrackPosition.Total,
+		metadata.TrackPosition.Total,
+	).Scan(&hasDiscConflict, &hasTrackConflict)
+	if err != nil {
+		return "", fmt.Errorf("inspect existing Album position totals: %w", err)
+	}
+	if hasDiscConflict {
+		return "TOTALDISCS", nil
+	}
+	if hasTrackConflict {
+		return "TOTALTRACKS", nil
+	}
+	return "", nil
 }
 
 func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) (commitIdentity, error) {
@@ -356,7 +435,7 @@ func requireMutation(result sql.Result) error {
 }
 
 func normalizeIdentity(value string) string {
-	return strings.ToLower(strings.Join(strings.Fields(norm.NFC.String(value)), " "))
+	return cases.Fold().String(strings.Join(strings.Fields(norm.NFC.String(value)), " "))
 }
 
 func albumIdentityKey(metadata library.NormalizedMediaMetadata) string {

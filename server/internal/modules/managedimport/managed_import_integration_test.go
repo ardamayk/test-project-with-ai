@@ -2,6 +2,7 @@ package managedimport_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -246,6 +247,357 @@ func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 	}
 }
 
+func TestManagedImportRejectsMissingAndEmptyIdentityMetadataWithoutLibraryEntities(t *testing.T) {
+	testCases := []struct {
+		name        string
+		tag         string
+		fixtureTag  string
+		replacement string
+	}{
+		{name: "missing TITLE", tag: "TITLE", fixtureTag: "TITLE=  Inspection   Fixture  ", replacement: "XITLE=  Inspection   Fixture  "},
+		{name: "empty TITLE", tag: "TITLE", fixtureTag: "TITLE=  Inspection   Fixture  "},
+		{name: "missing ARTIST", tag: "ARTIST", fixtureTag: "ARTIST=Test Artist", replacement: "XRTIST=Test Artist"},
+		{name: "empty ARTIST", tag: "ARTIST", fixtureTag: "ARTIST=Test Artist"},
+		{name: "missing ALBUMARTIST", tag: "ALBUMARTIST", fixtureTag: "ALBUMARTIST=Test Album Artist", replacement: "XLBUMARTIST=Test Album Artist"},
+		{name: "empty ALBUMARTIST", tag: "ALBUMARTIST", fixtureTag: "ALBUMARTIST=Test Album Artist"},
+		{name: "missing ALBUM", tag: "ALBUM", fixtureTag: "ALBUM=Strict Import Tests", replacement: "XLBUM=Strict Import Tests"},
+		{name: "empty ALBUM", tag: "ALBUM", fixtureTag: "ALBUM=Strict Import Tests"},
+		{name: "missing TRACKNUMBER", tag: "TRACKNUMBER", fixtureTag: "TRACKNUMBER=3/9", replacement: "XRACKNUMBER=3/9"},
+		{name: "empty TRACKNUMBER", tag: "TRACKNUMBER", fixtureTag: "TRACKNUMBER=3/9"},
+		{name: "missing GENRE", tag: "GENRE", fixtureTag: "GENRE=Electronic", replacement: "XENRE=Electronic"},
+		{name: "empty GENRE", tag: "GENRE", fixtureTag: "GENRE=Electronic"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			database := testutil.OpenMigratedDB(t)
+			configuration := config.Config{ManagedStoragePath: t.TempDir()}
+			importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+			router := chi.NewRouter()
+			importModule.RegisterRoutes(router)
+			fixture := replaceFixtureTag(t, readStrictFLACFixture(t), testCase.fixtureTag, testCase.replacement)
+
+			jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+			var job struct {
+				ID string `json:"id"`
+			}
+			decodeJSON(t, jobResponse, &job)
+			response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+				"Content-Type":      "audio/flac",
+				"X-Import-Filename": "invalid-identity.flac",
+			})
+
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("invalid identity status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var failure struct {
+				Code  string `json:"code"`
+				Field string `json:"field"`
+			}
+			decodeJSON(t, response, &failure)
+			if failure.Code != "invalid_metadata" || failure.Field != testCase.tag {
+				t.Fatalf("invalid identity error = %+v", failure)
+			}
+			assertNoLibraryEntities(t, database)
+		})
+	}
+}
+
+func TestManagedImportRequiresDiscNumberForTaggedMultiDiscFile(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "XISCNUMBER=1/1")
+	fixture = replaceFixtureTag(t, fixture, "encoder=Lavf63.1.101", "TOTALDISCS=2")
+	response, database := uploadManagedImportFixture(t, fixture)
+
+	assertValidationFailure(t, response, "invalid_metadata", "DISCNUMBER")
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportUsesEffectiveDiscOneForSingleDiscFile(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "XISCNUMBER=1/1")
+	fixture = replaceFixtureTag(t, fixture, "encoder=Lavf63.1.101", "TOTALDISCS=1")
+	response, database := uploadManagedImportFixture(t, fixture)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("single-disc upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var preview struct {
+		File struct {
+			DiscNo    int `json:"discNo"`
+			DiscTotal int `json:"discTotal"`
+		} `json:"file"`
+	}
+	decodeJSON(t, response, &preview)
+	if preview.File.DiscNo != 1 || preview.File.DiscTotal != 1 {
+		t.Fatalf("single-disc position = %d/%d", preview.File.DiscNo, preview.File.DiscTotal)
+	}
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportReadsSeparateTrackTotal(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "TRACKNUMBER=3/9", "TRACKNUMBER=3")
+	fixture = replaceFixtureTag(t, fixture, "encoder=Lavf63.1.101", "TOTALTRACKS=9")
+	response, database := uploadManagedImportFixture(t, fixture)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("separate Track total upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var preview struct {
+		File struct {
+			TrackNo    int `json:"trackNo"`
+			TrackTotal int `json:"trackTotal"`
+		} `json:"file"`
+	}
+	decodeJSON(t, response, &preview)
+	if preview.File.TrackNo != 3 || preview.File.TrackTotal != 9 {
+		t.Fatalf("Track position = %d/%d", preview.File.TrackNo, preview.File.TrackTotal)
+	}
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportReadsSeparateDiscTotal(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "DISCNUMBER=1")
+	fixture = replaceFixtureTag(t, fixture, "encoder=Lavf63.1.101", "TOTALDISCS=2")
+	response, database := uploadManagedImportFixture(t, fixture)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("separate Disc total upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var preview struct {
+		File struct {
+			DiscNo    int `json:"discNo"`
+			DiscTotal int `json:"discTotal"`
+		} `json:"file"`
+	}
+	decodeJSON(t, response, &preview)
+	if preview.File.DiscNo != 1 || preview.File.DiscTotal != 2 {
+		t.Fatalf("Disc position = %d/%d", preview.File.DiscNo, preview.File.DiscTotal)
+	}
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportRejectsInvalidOptionalTotals(t *testing.T) {
+	testCases := []struct {
+		name  string
+		tag   string
+		value string
+	}{
+		{name: "Track total below Track number", tag: "TOTALTRACKS", value: "TOTALTRACKS=2"},
+		{name: "Track total conflicts with inline total", tag: "TOTALTRACKS", value: "TOTALTRACKS=8"},
+		{name: "Disc total conflicts with inline total", tag: "TOTALDISCS", value: "TOTALDISCS=2"},
+		{name: "Disc total is not positive", tag: "TOTALDISCS", value: "TOTALDISCS=0"},
+		{name: "Disc total exceeds supported range", tag: "TOTALDISCS", value: "TOTALDISCS=10000"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "encoder=Lavf63.1.101", testCase.value)
+			response, database := uploadManagedImportFixture(t, fixture)
+
+			assertValidationFailure(t, response, "invalid_metadata", testCase.tag)
+			assertNoLibraryEntities(t, database)
+		})
+	}
+}
+
+func TestManagedImportRequiresDiscNumberForExistingMultiDiscAlbum(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	libraryModule := library.NewModule(database, configuration)
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	libraryModule.RegisterRoutes(router)
+	multiDiscFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "DISCNUMBER=2/2")
+	importOneFLAC(t, router, multiDiscFixture, "disc-two.flac")
+	untaggedFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "XISCNUMBER=1/1")
+
+	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	var job struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, jobResponse, &job)
+	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(untaggedFixture), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "missing-disc-number.flac",
+	})
+
+	assertValidationFailure(t, response, "invalid_metadata", "DISCNUMBER")
+	if tracks := listTracks(t, router); len(tracks.Items) != 1 || tracks.Items[0].DiscNo != 2 {
+		t.Fatalf("existing multi-disc Album Tracks = %+v", tracks.Items)
+	}
+}
+
+func TestManagedImportRequiresDiscNumberForAwaitingMultiDiscSibling(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	multiDiscFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "DISCNUMBER=2/2")
+	firstResponse := uploadFixtureThroughRouter(t, router, multiDiscFixture)
+	if firstResponse.Code != http.StatusOK {
+		t.Fatalf("multi-disc sibling upload status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	untaggedFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "DISCNUMBER=1/1", "XISCNUMBER=1/1")
+	secondResponse := uploadFixtureThroughRouter(t, router, untaggedFixture)
+
+	assertValidationFailure(t, secondResponse, "invalid_metadata", "DISCNUMBER")
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportSeparatesDisplayValuesFromUnicodeComparisonKeys(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	libraryModule := library.NewModule(database, configuration)
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	libraryModule.RegisterRoutes(router)
+	firstFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "ALBUMARTIST=Test Album Artist", "ALBUMARTIST=Straße Artist")
+	importOneFLAC(t, router, firstFixture, "first-case.flac")
+	secondFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "ALBUMARTIST=Test Album Artist", "ALBUMARTIST=STRASSE ARTIST")
+	secondFixture = replaceFixtureTag(t, secondFixture, "TITLE=  Inspection   Fixture  ", "TITLE=  Inspection   Second!  ")
+	secondFixture = replaceFixtureTag(t, secondFixture, "TRACKNUMBER=3/9", "TRACKNUMBER=4/9")
+	importOneFLAC(t, router, secondFixture, "second-case.flac")
+
+	tracks := listTracks(t, router)
+	if len(tracks.Items) != 2 || tracks.Items[0].AlbumID != tracks.Items[1].AlbumID {
+		t.Fatalf("Unicode case-folded Albums = %+v", tracks.Items)
+	}
+	response := serveRequest(t, router, http.MethodGet, "/api/v1/library/albums/"+tracks.Items[0].AlbumID, nil, nil)
+	var album struct {
+		AlbumArtists []struct {
+			Name string `json:"name"`
+		} `json:"albumArtists"`
+	}
+	decodeJSON(t, response, &album)
+	if len(album.AlbumArtists) != 1 || album.AlbumArtists[0].Name != "Straße Artist" {
+		t.Fatalf("Album Artist display value = %+v", album.AlbumArtists)
+	}
+}
+
+func TestManagedImportRejectsControlCharactersInIdentityValues(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "ARTIST=Test Artist", "ARTIST=Test\x1fArtist")
+	response, database := uploadManagedImportFixture(t, fixture)
+
+	assertValidationFailure(t, response, "invalid_metadata", "ARTIST")
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportRejectsControlWhitespaceAtIdentityValueEdges(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value string
+	}{
+		{name: "Leading tab", value: "ARTIST=\tTest Artis"},
+		{name: "Trailing newline", value: "ARTIST=Test Artis\n"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "ARTIST=Test Artist", testCase.value)
+			response, database := uploadManagedImportFixture(t, fixture)
+
+			assertValidationFailure(t, response, "invalid_metadata", "ARTIST")
+			assertNoLibraryEntities(t, database)
+		})
+	}
+}
+
+func TestManagedImportRejectsBidirectionalControlsInIdentityValues(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "ARTIST=Test Artist", "ARTIST=A\u202e Artist")
+	response, database := uploadManagedImportFixture(t, fixture)
+
+	assertValidationFailure(t, response, "invalid_metadata", "ARTIST")
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportRejectsInvalidUTF8InIdentityValues(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "ARTIST=Test Artist", "ARTIST=\xffest Artist")
+	response, database := uploadManagedImportFixture(t, fixture)
+
+	assertValidationFailure(t, response, "invalid_metadata", "ARTIST")
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportValidationErrorsExplainHowToRepairMetadata(t *testing.T) {
+	fixture := replaceFixtureTag(t, readStrictFLACFixture(t), "TITLE=  Inspection   Fixture  ", "XITLE=  Inspection   Fixture  ")
+	response, _ := uploadManagedImportFixture(t, fixture)
+	var failure struct {
+		Message string `json:"message"`
+		Reason  string `json:"reason"`
+	}
+	decodeJSON(t, response, &failure)
+
+	if failure.Reason != "required tag is missing" || !strings.Contains(failure.Message, failure.Reason) {
+		t.Fatalf("actionable validation error = %+v", failure)
+	}
+}
+
+func TestManagedImportValidationErrorsDoNotExposeParserDetails(t *testing.T) {
+	fixture := readStrictFLACFixture(t)
+	response, _ := uploadManagedImportFixture(t, fixture[:len(fixture)-8])
+	var failure struct {
+		Code   string `json:"code"`
+		Field  string `json:"field"`
+		Reason string `json:"reason"`
+	}
+	decodeJSON(t, response, &failure)
+
+	if failure.Code != "audio_decode_failed" || failure.Field != "audio" || failure.Reason != "audio stream failed full decode" {
+		t.Fatalf("safe validation error = %+v", failure)
+	}
+}
+
+func TestManagedImportRejectsTotalsConflictingWithExistingAlbum(t *testing.T) {
+	testCases := []struct {
+		name             string
+		firstPosition    string
+		secondPosition   string
+		expectedField    string
+		positionTagValue string
+	}{
+		{name: "Disc total", firstPosition: "DISCNUMBER=1/2", secondPosition: "DISCNUMBER=2/3", expectedField: "TOTALDISCS", positionTagValue: "DISCNUMBER=1/1"},
+		{name: "Disc total below existing position", firstPosition: "DISCNUMBER=2", secondPosition: "DISCNUMBER=1/1", expectedField: "TOTALDISCS", positionTagValue: "DISCNUMBER=1/1"},
+		{name: "Track total on same disc", firstPosition: "TRACKNUMBER=2/9", secondPosition: "TRACKNUMBER=4/8", expectedField: "TOTALTRACKS", positionTagValue: "TRACKNUMBER=3/9"},
+		{name: "Track total below existing position", firstPosition: "TRACKNUMBER=10", secondPosition: "TRACKNUMBER=1/9", expectedField: "TOTALTRACKS", positionTagValue: "TRACKNUMBER=3/9"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			database := testutil.OpenMigratedDB(t)
+			configuration := config.Config{ManagedStoragePath: t.TempDir()}
+			importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+			libraryModule := library.NewModule(database, configuration)
+			router := chi.NewRouter()
+			importModule.RegisterRoutes(router)
+			libraryModule.RegisterRoutes(router)
+			firstFixture := replaceFixtureTag(t, readStrictFLACFixture(t), testCase.positionTagValue, testCase.firstPosition)
+			importOneFLAC(t, router, firstFixture, "first-total.flac")
+			secondFixture := readStrictFLACFixture(t)
+			if testCase.secondPosition != testCase.positionTagValue {
+				secondFixture = replaceFixtureTag(t, secondFixture, testCase.positionTagValue, testCase.secondPosition)
+			}
+			secondFixture = replaceFixtureTag(t, secondFixture, "TITLE=  Inspection   Fixture  ", "TITLE=  Inspection   Second!  ")
+
+			jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+			var job struct {
+				ID string `json:"id"`
+			}
+			decodeJSON(t, jobResponse, &job)
+			response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(secondFixture), map[string]string{
+				"Content-Type":      "audio/flac",
+				"X-Import-Filename": "conflicting-total.flac",
+			})
+
+			assertValidationFailure(t, response, "invalid_metadata", testCase.expectedField)
+			if tracks := listTracks(t, router); len(tracks.Items) != 1 {
+				t.Fatalf("Tracks after conflicting total = %+v", tracks.Items)
+			}
+		})
+	}
+}
+
 func TestManagedImportReusesMatchingNormalizedAlbumArtwork(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	configuration := config.Config{ManagedStoragePath: t.TempDir()}
@@ -440,6 +792,79 @@ func readStrictFLACFixture(t *testing.T) []byte {
 		t.Fatalf("read strict FLAC fixture: %v", err)
 	}
 	return fixture
+}
+
+func replaceFixtureTag(t *testing.T, fixture []byte, oldValue string, newValue string) []byte {
+	t.Helper()
+	if newValue == "" {
+		separatorIndex := strings.Index(oldValue, "=")
+		newValue = oldValue[:separatorIndex+1] + strings.Repeat(" ", len(oldValue)-separatorIndex-1)
+	}
+	if len(newValue) < len(oldValue) {
+		newValue += strings.Repeat(" ", len(oldValue)-len(newValue))
+	}
+	if len(oldValue) != len(newValue) {
+		t.Fatalf("fixture tag replacement lengths differ: %d != %d", len(oldValue), len(newValue))
+	}
+	updated := bytes.Replace(fixture, []byte(oldValue), []byte(newValue), 1)
+	if bytes.Equal(updated, fixture) {
+		t.Fatalf("fixture tag %q not found", oldValue)
+	}
+	return updated
+}
+
+func uploadManagedImportFixture(t *testing.T, fixture []byte) (*httptest.ResponseRecorder, *sql.DB) {
+	t.Helper()
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	return uploadFixtureThroughRouter(t, router, fixture), database
+}
+
+func uploadFixtureThroughRouter(t *testing.T, router http.Handler, fixture []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	var job struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, jobResponse, &job)
+	response := serveRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "identity-test.flac",
+	})
+	return response
+}
+
+func assertValidationFailure(t *testing.T, response *httptest.ResponseRecorder, expectedCode, expectedField string) {
+	t.Helper()
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("validation status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var failure struct {
+		Code  string `json:"code"`
+		Field string `json:"field"`
+	}
+	decodeJSON(t, response, &failure)
+	if failure.Code != expectedCode || failure.Field != expectedField {
+		t.Fatalf("validation error = %+v", failure)
+	}
+}
+
+func assertNoLibraryEntities(t *testing.T, database interface {
+	QueryRow(query string, args ...any) *sql.Row
+}) {
+	t.Helper()
+	for _, tableName := range []string{"artists", "albums", "genres", "album_artwork", "tracks"} {
+		var count int
+		if err := database.QueryRow("SELECT COUNT(*) FROM " + tableName).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", tableName, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s row count = %d, want 0", tableName, count)
+		}
+	}
 }
 
 func serveRequest(t *testing.T, router http.Handler, method string, path string, body io.Reader, headers map[string]string) *httptest.ResponseRecorder {
