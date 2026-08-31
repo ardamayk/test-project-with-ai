@@ -373,7 +373,7 @@ func insertTrack(ctx context.Context, transaction *sql.Tx, data commitData) erro
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		data.Identity.TrackID, data.Identity.AlbumID, metadata.Title, normalizeIdentity(metadata.Title), strings.Join(metadata.Artists, ", "),
 		metadata.TrackPosition.Number, audio.DurationMs, audio.Format, fileInfo.Size(), data.Placement.AudioPath, fileInfo.ModTime().Unix(),
-		metadata.Genres[0], audio.SampleRateHz, audio.BitDepth, metadata.DiscPosition.Number,
+		metadata.Genres[0], audio.SampleRateHz, nullablePositive(audio.BitDepth), metadata.DiscPosition.Number,
 		nullablePositive(metadata.TrackPosition.Total), nullablePositive(metadata.DiscPosition.Total), audio.ChannelCount,
 		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Container, trackIdentityKey(metadata),
 	)

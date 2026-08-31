@@ -668,14 +668,15 @@ export interface components {
             year?: number;
             durationMs: number;
             /** @enum {string} */
-            format: "flac";
+            format: "flac" | "ogg" | "opus";
             /** @enum {string} */
-            container: "flac";
+            container: "flac" | "ogg";
             /** @enum {string} */
-            codec: "flac";
+            codec: "flac" | "vorbis" | "opus";
             sampleRateHz: number;
             channelCount: number;
-            bitDepth: number;
+            /** @description Decoded PCM bit depth when applicable; omitted for lossy codecs such as Vorbis and Opus. */
+            bitDepth?: number;
             bitrateKbps: number;
             /** @enum {string} */
             artworkMediaType: "image/jpeg" | "image/png" | "image/webp";

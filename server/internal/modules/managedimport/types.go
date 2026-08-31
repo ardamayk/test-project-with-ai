@@ -66,7 +66,7 @@ type PreviewFile struct {
 	Codec            string   `json:"codec"`
 	SampleRateHz     int      `json:"sampleRateHz"`
 	ChannelCount     int      `json:"channelCount"`
-	BitDepth         int      `json:"bitDepth"`
+	BitDepth         int      `json:"bitDepth,omitempty"`
 	BitrateKbps      int      `json:"bitrateKbps"`
 	ArtworkMediaType string   `json:"artworkMediaType"`
 }

@@ -175,7 +175,7 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
-	inspection, inspectionErr := inspectOpenFLAC(ctx, file, reportProgress)
+	inspection, inspectionErr := inspectOpenMedia(ctx, file, reportProgress)
 	closeErr := file.Close()
 	if closeErr != nil {
 		closeFailure := inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("close file: %w", closeErr))
@@ -188,6 +188,24 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 		return MediaInspection{}, inspectionErr
 	}
 	return inspection, nil
+}
+
+func inspectOpenMedia(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
+	var signature [FLAC_SIGNATURE_SIZE_BYTES]byte
+	if _, err := io.ReadFull(file, signature[:]); err != nil {
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("read container signature: %w", err))
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind after container signature: %w", err))
+	}
+	switch string(signature[:]) {
+	case FLAC_SIGNATURE:
+		return inspectOpenFLAC(ctx, file, reportProgress)
+	case OGG_SIGNATURE:
+		return inspectOpenOGG(ctx, file, reportProgress)
+	default:
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("supported container signature is missing"))
+	}
 }
 
 func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
@@ -272,7 +290,10 @@ func (reader contextReader) Read(buffer []byte) (int, error) {
 }
 
 func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, error) {
-	tags := collectVorbisTags(blocks)
+	return inspectVorbisMetadata(collectVorbisTags(blocks))
+}
+
+func inspectVorbisMetadata(tags map[string][]string) (NormalizedMediaMetadata, error) {
 	names, err := inspectFLACNames(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
@@ -741,7 +762,7 @@ func publicInspectionReason(code InspectionErrorCode, err error) string {
 	case INSPECTION_ERROR_FILE_READ:
 		return "file could not be read"
 	case INSPECTION_ERROR_UNSUPPORTED_FORMAT:
-		return "file is not a supported FLAC stream"
+		return "file is not a supported audio stream"
 	case INSPECTION_ERROR_INVALID_ARTWORK:
 		return "embedded artwork is invalid"
 	case INSPECTION_ERROR_AUDIO_DECODE:

@@ -1227,7 +1227,6 @@ components:
         - codec
         - sampleRateHz
         - channelCount
-        - bitDepth
         - bitrateKbps
         - artworkMediaType
       properties:
@@ -1271,13 +1270,13 @@ components:
           minimum: 1
         format:
           type: string
-          enum: [flac]
+          enum: [flac, ogg, opus]
         container:
           type: string
-          enum: [flac]
+          enum: [flac, ogg]
         codec:
           type: string
-          enum: [flac]
+          enum: [flac, vorbis, opus]
         sampleRateHz:
           type: integer
           minimum: 1
@@ -1287,6 +1286,7 @@ components:
         bitDepth:
           type: integer
           minimum: 1
+          description: Decoded PCM bit depth when applicable; omitted for lossy codecs such as Vorbis and Opus.
         bitrateKbps:
           type: integer
           minimum: 1
