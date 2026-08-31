@@ -26,7 +26,7 @@ func openManagedStorageRoot(path string) (*os.Root, error) {
 		return nil, errors.Join(openErr, closeErr)
 	}
 	if closeErr != nil {
-		return nil, errors.Join(closeErr, root.Close())
+		return nil, errors.Join(closeErr, closeManagedStorageRoot(root))
 	}
 	return root, nil
 }
@@ -77,13 +77,13 @@ func openManagedStorageObject(path string, shouldWriteDACL, mustBeDirectory bool
 	}
 	var information windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &information); err != nil {
-		return windows.InvalidHandle, errors.Join(fmt.Errorf("inspect Managed Storage path component %q: %w", path, err), windows.CloseHandle(handle))
+		return windows.InvalidHandle, errors.Join(fmt.Errorf("inspect Managed Storage path component %q: %w", path, err), closeManagedStorageHandle(handle))
 	}
 	if information.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		return windows.InvalidHandle, errors.Join(fmt.Errorf("%w: Managed Storage root component %q is a reparse point", ErrUnsafeStoragePath, path), windows.CloseHandle(handle))
+		return windows.InvalidHandle, errors.Join(fmt.Errorf("%w: Managed Storage root component %q is a reparse point", ErrUnsafeStoragePath, path), closeManagedStorageHandle(handle))
 	}
 	if mustBeDirectory && information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
-		return windows.InvalidHandle, errors.Join(fmt.Errorf("%w: Managed Storage root component %q is not a directory", ErrUnsafeStoragePath, path), windows.CloseHandle(handle))
+		return windows.InvalidHandle, errors.Join(fmt.Errorf("%w: Managed Storage root component %q is not a directory", ErrUnsafeStoragePath, path), closeManagedStorageHandle(handle))
 	}
 	return handle, nil
 }
@@ -103,7 +103,14 @@ func createManagedStorageDirectory(path string) error {
 func closeManagedStorageHandles(handles []windows.Handle) error {
 	var closeErr error
 	for _, handle := range handles {
-		closeErr = errors.Join(closeErr, windows.CloseHandle(handle))
+		closeErr = errors.Join(closeErr, closeManagedStorageHandle(handle))
 	}
 	return closeErr
+}
+
+func closeManagedStorageHandle(handle windows.Handle) error {
+	if err := windows.CloseHandle(handle); err != nil {
+		return fmt.Errorf("close Managed Storage directory handle %d: %w", handle, err)
+	}
+	return nil
 }

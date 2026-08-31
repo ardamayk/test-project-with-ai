@@ -238,60 +238,35 @@ func TestManagedImportStreamsUploadIntoServerOwnedStaging(t *testing.T) {
 }
 
 func TestManagedImportEnforcesFileLimitWithoutContentLength(t *testing.T) {
-	router := newConfiguredManagedImportRouter(t, config.Config{
-		ManagedStoragePath:           t.TempDir(),
-		ManagedStorageReserveBytes:   0,
-		ManagedImportFileLimitBytes:  1024,
-		ManagedImportBatchLimitBytes: 4096,
-	})
-	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
-	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(make([]byte, 2048)))
-	request.ContentLength = -1
-	request.Header.Set("Content-Type", "audio/flac")
-	request.Header.Set("X-Import-Filename", "oversized.flac")
-	response := httptest.NewRecorder()
-
-	router.ServeHTTP(response, request)
-
-	testutil.AssertErrorCode(t, response, http.StatusRequestEntityTooLarge, "upload_too_large")
+	assertManagedImportUploadLimit(t, 1024, 4096, -1, "upload_too_large")
 }
 
 func TestManagedImportEnforcesFileLimitWhenContentLengthIsFalse(t *testing.T) {
-	router := newConfiguredManagedImportRouter(t, config.Config{
-		ManagedStoragePath:           t.TempDir(),
-		ManagedStorageReserveBytes:   0,
-		ManagedImportFileLimitBytes:  1024,
-		ManagedImportBatchLimitBytes: 4096,
-	})
-	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
-	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(make([]byte, 2048)))
-	request.ContentLength = 512
-	request.Header.Set("Content-Type", "audio/flac")
-	request.Header.Set("X-Import-Filename", "oversized.flac")
-	response := httptest.NewRecorder()
-
-	router.ServeHTTP(response, request)
-
-	testutil.AssertErrorCode(t, response, http.StatusRequestEntityTooLarge, "upload_too_large")
+	assertManagedImportUploadLimit(t, 1024, 4096, 512, "upload_too_large")
 }
 
 func TestManagedImportEnforcesBatchLimitWhileStreaming(t *testing.T) {
+	assertManagedImportUploadLimit(t, 4096, 1024, -1, "batch_upload_too_large")
+}
+
+func assertManagedImportUploadLimit(t *testing.T, fileLimit, batchLimit, contentLength int64, expectedCode string) {
+	t.Helper()
 	router := newConfiguredManagedImportRouter(t, config.Config{
 		ManagedStoragePath:           t.TempDir(),
 		ManagedStorageReserveBytes:   0,
-		ManagedImportFileLimitBytes:  4096,
-		ManagedImportBatchLimitBytes: 1024,
+		ManagedImportFileLimitBytes:  fileLimit,
+		ManagedImportBatchLimitBytes: batchLimit,
 	})
 	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
 	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(make([]byte, 2048)))
-	request.ContentLength = -1
+	request.ContentLength = contentLength
 	request.Header.Set("Content-Type", "audio/flac")
 	request.Header.Set("X-Import-Filename", "oversized.flac")
 	response := httptest.NewRecorder()
 
 	router.ServeHTTP(response, request)
 
-	testutil.AssertErrorCode(t, response, http.StatusRequestEntityTooLarge, "batch_upload_too_large")
+	testutil.AssertErrorCode(t, response, http.StatusRequestEntityTooLarge, expectedCode)
 }
 
 func TestManagedImportRejectsClientFilenamePathSegments(t *testing.T) {

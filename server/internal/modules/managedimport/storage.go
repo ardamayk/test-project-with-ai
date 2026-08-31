@@ -64,7 +64,6 @@ type placedFiles struct {
 	audioRelative   string
 	artworkRelative string
 	stagedRelative  string
-	artworkCreated  bool
 }
 
 func NewStorage(root string, limits StorageLimits) *Storage {
@@ -105,7 +104,7 @@ func (storage *Storage) StageUpload(source io.Reader, contentLength int64) (uplo
 	if err != nil {
 		return stagedUpload{}, err
 	}
-	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
 	if err := ensureDirectory(root, storage.root, ".staging", 0o700); err != nil {
 		return stagedUpload{}, err
 	}
@@ -119,13 +118,13 @@ func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stag
 		return stagedUpload{}, fmt.Errorf("create Managed Import staging file: %w", err)
 	}
 	if err := restrictManagedStoragePath(storage.root, relativePath, false); err != nil {
-		return stagedUpload{}, errors.Join(err, file.Close(), removeRootedFile(root, relativePath, "Managed Import staging file"))
+		return stagedUpload{}, errors.Join(err, closeManagedStorageFile(file, "Managed Import staging file"), removeRootedFile(root, relativePath, "Managed Import staging file"))
 	}
 	hash := sha256.New()
 	streamLimit, limitErr := storage.streamLimit()
 	destination := io.MultiWriter(file, hash)
 	written, copyErr := io.Copy(&capacityWriter{storage: storage, destination: destination}, io.LimitReader(source, streamLimit+1))
-	closeErr := file.Close()
+	closeErr := closeManagedStorageFile(file, "Managed Import staging file")
 	if copyErr != nil || closeErr != nil || written > streamLimit {
 		removeErr := removeRootedFile(root, relativePath, "Managed Import staging file")
 		if written > streamLimit {
@@ -184,7 +183,7 @@ func (storage *Storage) StagedFileSize(path string) (size int64, returnErr error
 	if err != nil {
 		return 0, err
 	}
-	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
 	if symlinkErr := rejectSymlinks(root, relativePath); symlinkErr != nil {
 		return 0, symlinkErr
 	}
@@ -207,7 +206,7 @@ func (storage *Storage) RemoveStaged(path string) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
 	return removeRootedFile(root, relativePath, "Managed Import staging file")
 }
 
@@ -216,7 +215,7 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if err != nil {
 		return placedFiles{}, err
 	}
-	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
 	placement, err = storage.planPlacement(stagedPath, inspection, identity)
 	if err != nil {
 		return placedFiles{}, err
@@ -237,11 +236,9 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if !shouldCreateArtwork {
 		return placement, nil
 	}
-	artworkCreated, err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data, inspection.AlbumArtwork.SHA256)
-	if err != nil {
+	if err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data, inspection.AlbumArtwork.SHA256); err != nil {
 		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 	}
-	placement.artworkCreated = artworkCreated
 	return placement, nil
 }
 
@@ -327,13 +324,9 @@ func (storage *Storage) Rollback(placement placedFiles) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
-	var removeArtworkErr error
-	if placement.artworkCreated {
-		removeArtworkErr = removeRootedFile(root, placement.artworkRelative, "Canonical Album Artwork")
-	}
-	moveAudioErr := restoreRootedFile(root, placement.audioRelative, placement.stagedRelative)
-	return errors.Join(removeArtworkErr, moveAudioErr)
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	// Canonical artwork may already be referenced by a concurrent commit.
+	return restoreRootedFile(root, placement.audioRelative, placement.stagedRelative)
 }
 
 func (storage *Storage) openRoot() (*os.Root, error) {
@@ -346,14 +339,14 @@ func (storage *Storage) openRoot() (*os.Root, error) {
 	}
 	openedInfo, err := root.Stat(".")
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("inspect opened Managed Storage root: %w", err), root.Close())
+		return nil, errors.Join(fmt.Errorf("inspect opened Managed Storage root: %w", err), closeManagedStorageRoot(root))
 	}
 	pathInfo, err := os.Lstat(storage.root)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("inspect Managed Storage root identity: %w", err), root.Close())
+		return nil, errors.Join(fmt.Errorf("inspect Managed Storage root identity: %w", err), closeManagedStorageRoot(root))
 	}
 	if !os.SameFile(pathInfo, openedInfo) {
-		return nil, errors.Join(fmt.Errorf("%w: Managed Storage root changed while opening", ErrUnsafeStoragePath), root.Close())
+		return nil, errors.Join(fmt.Errorf("%w: Managed Storage root changed while opening", ErrUnsafeStoragePath), closeManagedStorageRoot(root))
 	}
 	return root, nil
 }
@@ -363,7 +356,7 @@ func (storage *Storage) ensureRoot() error {
 	if err != nil {
 		return err
 	}
-	return root.Close()
+	return closeManagedStorageRoot(root)
 }
 
 func (storage *Storage) relativePath(path string) (string, error) {
@@ -437,7 +430,7 @@ func verifyRootedFileHash(root *os.Root, path, expectedHash string) error {
 	}
 	hash := sha256.New()
 	_, copyErr := io.Copy(hash, file)
-	closeErr := file.Close()
+	closeErr := closeManagedStorageFile(file, "Managed Storage verification file")
 	if copyErr != nil || closeErr != nil {
 		return fmt.Errorf("hash Managed Storage file: %w", errors.Join(copyErr, closeErr))
 	}
@@ -448,30 +441,30 @@ func verifyRootedFileHash(root *os.Root, path, expectedHash string) error {
 	return nil
 }
 
-func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string) (bool, error) {
+func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string) error {
 	temporaryPath := filepath.Join(filepath.Dir(path), ".cover-"+uuid.NewString())
 	temporary, err := root.OpenFile(temporaryPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return false, fmt.Errorf("create temporary Album Artwork: %w", err)
+		return fmt.Errorf("create temporary Album Artwork: %w", err)
 	}
 	if err := restrictManagedStoragePath(absoluteRoot, temporaryPath, false); err != nil {
-		return false, errors.Join(err, temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return errors.Join(err, closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if _, err := temporary.Write(data); err != nil {
-		return false, errors.Join(fmt.Errorf("write Album Artwork: %w", err), temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return errors.Join(fmt.Errorf("write Album Artwork: %w", err), closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
-	if err := temporary.Close(); err != nil {
-		return false, errors.Join(fmt.Errorf("close Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+	if err := closeManagedStorageFile(temporary, "temporary Album Artwork"); err != nil {
+		return errors.Join(err, removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if err := root.Link(temporaryPath, path); errors.Is(err, os.ErrExist) {
-		return false, errors.Join(verifyMatchingArtwork(root, path, expectedHash), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return errors.Join(verifyMatchingArtwork(root, path, expectedHash), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	} else if err != nil {
-		return false, errors.Join(fmt.Errorf("place Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+		return errors.Join(fmt.Errorf("place Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if err := removeRootedFile(root, temporaryPath, "temporary Album Artwork"); err != nil {
-		return false, errors.Join(err, removeRootedFile(root, path, "Canonical Album Artwork"))
+		return errors.Join(err, removeRootedFile(root, path, "Canonical Album Artwork"))
 	}
-	return true, nil
+	return nil
 }
 
 func verifyMatchingArtwork(root *os.Root, path, expectedHash string) error {
@@ -482,6 +475,22 @@ func verifyMatchingArtwork(root *os.Root, path, expectedHash string) error {
 			Reason: "canonical Album Artwork differs from the selected Album",
 			Err:    err,
 		}
+	}
+	return nil
+}
+
+func closeManagedStorageRoot(root *os.Root) error {
+	name := root.Name()
+	if err := root.Close(); err != nil {
+		return fmt.Errorf("close Managed Storage root %q: %w", name, err)
+	}
+	return nil
+}
+
+func closeManagedStorageFile(file *os.File, description string) error {
+	name := file.Name()
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close %s %q: %w", description, name, err)
 	}
 	return nil
 }

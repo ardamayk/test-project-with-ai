@@ -21,12 +21,12 @@ func openManagedStorageRoot(path string) (*os.Root, error) {
 	}
 	for _, component := range strings.Split(strings.TrimPrefix(filepath.Clean(path), string(filepath.Separator)), string(filepath.Separator)) {
 		nextDescriptor, openErr := openManagedStorageDirectoryAt(descriptor, component, flags)
-		closeErr := unix.Close(descriptor)
+		closeErr := closeManagedStorageDescriptor(descriptor)
 		if openErr != nil {
 			return nil, errors.Join(openErr, closeErr)
 		}
 		if closeErr != nil {
-			return nil, errors.Join(closeErr, unix.Close(nextDescriptor))
+			return nil, errors.Join(closeErr, closeManagedStorageDescriptor(nextDescriptor))
 		}
 		descriptor = nextDescriptor
 	}
@@ -35,14 +35,21 @@ func openManagedStorageRoot(path string) (*os.Root, error) {
 		descriptorRoot = "/proc/self/fd"
 	}
 	root, openErr := os.OpenRoot(filepath.Join(descriptorRoot, fmt.Sprint(descriptor)))
-	closeErr := unix.Close(descriptor)
+	closeErr := closeManagedStorageDescriptor(descriptor)
 	if openErr != nil {
 		return nil, errors.Join(fmt.Errorf("open descriptor-backed Managed Storage root: %w", openErr), closeErr)
 	}
 	if closeErr != nil {
-		return nil, errors.Join(closeErr, root.Close())
+		return nil, errors.Join(closeErr, closeManagedStorageRoot(root))
 	}
 	return root, nil
+}
+
+func closeManagedStorageDescriptor(descriptor int) error {
+	if err := unix.Close(descriptor); err != nil {
+		return fmt.Errorf("close Managed Storage directory descriptor %d: %w", descriptor, err)
+	}
+	return nil
 }
 
 func openManagedStorageDirectoryAt(parentDescriptor int, component string, flags int) (int, error) {

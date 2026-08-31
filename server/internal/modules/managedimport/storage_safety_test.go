@@ -167,7 +167,7 @@ func TestManagedImportRejectsCanonicalLibrarySymlinkEscape(t *testing.T) {
 	assertDirectoryEmpty(t, outsidePath)
 }
 
-func TestManagedImportRollbackPreservesReusedCanonicalArtwork(t *testing.T) {
+func TestManagedImportRollbackPreservesCanonicalArtworkUsedByConcurrentPlacement(t *testing.T) {
 	fixture := readStorageSafetyFixture(t)
 	fixturePath := filepath.Join("..", "library", "testdata", "strict-import.flac")
 	inspection, err := library.NewMediaInspector().Inspect(context.Background(), fixturePath, nil)
@@ -203,13 +203,10 @@ func TestManagedImportRollbackPreservesReusedCanonicalArtwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reuse canonical Album Artwork: %v", err)
 	}
-	if secondPlacement.artworkCreated {
-		t.Fatal("reused canonical Album Artwork was marked as created by the second placement")
+	if err := storage.Rollback(firstPlacement); err != nil {
+		t.Fatalf("rollback filesystem-winning Managed Track: %v", err)
 	}
-	if err := storage.Rollback(secondPlacement); err != nil {
-		t.Fatalf("rollback second Managed Track: %v", err)
-	}
-	artwork, err := os.ReadFile(firstPlacement.ArtworkPath)
+	artwork, err := os.ReadFile(secondPlacement.ArtworkPath)
 	if err != nil {
 		t.Fatalf("read canonical Album Artwork after rollback: %v", err)
 	}
@@ -236,8 +233,7 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 	targetPath := filepath.Join(albumPath, "cover.png")
 	artworks := [][]byte{[]byte("first artwork"), []byte("second artwork")}
 	type writeResult struct {
-		created bool
-		err     error
+		err error
 	}
 	results := make(chan writeResult, len(artworks))
 	start := make(chan struct{})
@@ -246,8 +242,7 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 		go func() {
 			<-start
 			hash := sha256.Sum256(artwork)
-			created, err := writeRootedArtwork(root, storage.root, targetPath, artwork, fmt.Sprintf("%x", hash))
-			results <- writeResult{created: created, err: err}
+			results <- writeResult{err: writeRootedArtwork(root, storage.root, targetPath, artwork, fmt.Sprintf("%x", hash))}
 		}()
 	}
 	close(start)
@@ -255,7 +250,7 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 	conflictCount := 0
 	for range artworks {
 		result := <-results
-		if result.created {
+		if result.err == nil {
 			createdCount++
 		}
 		var validationError *ValidationError

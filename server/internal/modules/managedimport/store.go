@@ -147,7 +147,9 @@ func (store *Store) AwaitingPreviewPaths(ctx context.Context, excludedJobID stri
 		return nil, fmt.Errorf("list awaiting Import Preview files: %w", err)
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, rows.Close())
+		if err := rows.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close awaiting Import Preview rows: %w", err))
+		}
 	}()
 	for rows.Next() {
 		var path string
