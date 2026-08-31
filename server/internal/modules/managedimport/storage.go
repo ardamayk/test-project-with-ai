@@ -258,9 +258,15 @@ func (storage *Storage) planPlacement(stagedPath string, inspection library.Medi
 		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
 		slug(metadata.Album)+"-"+identity.AlbumID,
 	)
+	artworkRelative := filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
+	if identity.ExistingArtworkPath != "" {
+		artworkRelative, albumRelative, err = storage.existingCanonicalAlbum(identity, inspection)
+		if err != nil {
+			return placedFiles{}, err
+		}
+	}
 	audioFilename := fmt.Sprintf("%02d-%02d-%s-%s%s", metadata.DiscPosition.Number, metadata.TrackPosition.Number, slug(metadata.Title), identity.TrackID, extension)
 	audioRelative := filepath.Join(albumRelative, audioFilename)
-	artworkRelative := filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
 	return placedFiles{
 		AudioPath:       storage.absolutePath(audioRelative),
 		ArtworkPath:     storage.absolutePath(artworkRelative),
@@ -270,21 +276,35 @@ func (storage *Storage) planPlacement(stagedPath string, inspection library.Medi
 	}, nil
 }
 
+func (storage *Storage) existingCanonicalAlbum(identity commitIdentity, inspection library.MediaInspection) (string, string, error) {
+	artworkRelative, err := storage.relativePath(identity.ExistingArtworkPath)
+	if err != nil {
+		return "", "", err
+	}
+	albumRelative := filepath.Dir(artworkRelative)
+	parts := strings.Split(filepath.Clean(albumRelative), string(filepath.Separator))
+	isCanonical := len(parts) == 3 && parts[0] == "library" &&
+		strings.HasSuffix(parts[1], "-"+identity.AlbumArtistID) &&
+		strings.HasSuffix(parts[2], "-"+identity.AlbumID) &&
+		filepath.Base(artworkRelative) == "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType)
+	if !isCanonical {
+		return "", "", fmt.Errorf("%w: existing Album Artwork path is not canonical", ErrUnsafeStoragePath)
+	}
+	return artworkRelative, albumRelative, nil
+}
+
 func (storage *Storage) prepareArtwork(root *os.Root, placement *placedFiles, inspection library.MediaInspection, identity commitIdentity) error {
 	if identity.ExistingArtworkPath != "" {
 		if identity.ExistingArtworkSHA256 != inspection.AlbumArtwork.SHA256 {
-			return &ValidationError{Code: "album_artwork_conflict", Field: "artwork", Err: errors.New("embedded Album Artwork differs from the existing Album")}
-		}
-		existingRelative, err := storage.relativePath(identity.ExistingArtworkPath)
-		if err != nil {
-			return err
-		}
-		if existingRelative != placement.artworkRelative {
-			return fmt.Errorf("%w: existing Album Artwork path is not canonical", ErrUnsafeStoragePath)
+			return &ValidationError{
+				Code:   "album_artwork_conflict",
+				Field:  "artwork",
+				Reason: "embedded Album Artwork differs from the existing Album",
+				Err:    errors.New("embedded Album Artwork differs from the existing Album"),
+			}
 		}
 		placement.ArtworkPath = identity.ExistingArtworkPath
-		placement.artworkRelative = existingRelative
-		if err := verifyRootedFileHash(root, existingRelative, identity.ExistingArtworkSHA256); err != nil {
+		if err := verifyRootedFileHash(root, placement.artworkRelative, identity.ExistingArtworkSHA256); err != nil {
 			return fmt.Errorf("verify existing Album Artwork: %w", err)
 		}
 		return nil

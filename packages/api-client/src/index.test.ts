@@ -47,11 +47,38 @@ describe('Track ReplayGain Metadata', () => {
 })
 
 describe('createApiClient', () => {
+  it('polls observable Managed Import validation results', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        id: 'import-1',
+        status: 'failed',
+        revision: 1,
+        validationProgress: 40,
+        errorCode: 'validation_cancelled',
+      }),
+    )
+    const client = createApiClient({ baseUrl: 'http://music.test', transport })
+
+    const result = await client.getManagedImportJob('import-1')
+
+    expect(result.validationProgress).toBe(40)
+    expect(result.errorCode).toBe('validation_cancelled')
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/imports/import-1',
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    )
+  })
+
   it('streams one Managed Import file and confirms its preview revision', async () => {
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(
         Response.json(
-          { id: 'import-1', status: 'uploading', revision: 1 },
+          {
+            id: 'import-1',
+            status: 'uploading',
+            revision: 1,
+            validationProgress: 0,
+          },
           { status: 201 },
         ),
       )
@@ -71,6 +98,12 @@ describe('createApiClient', () => {
             discNo: 1,
             durationMs: 250,
             format: 'flac',
+            container: 'flac',
+            codec: 'flac',
+            sampleRateHz: 44_100,
+            channelCount: 1,
+            bitDepth: 16,
+            bitrateKbps: 134,
             artworkMediaType: 'image/png',
           },
         }),
@@ -108,6 +141,40 @@ describe('createApiClient', () => {
     expect(uploadHeaders.get('X-Import-Filename')).toBe('fixture.flac')
     expect(JSON.parse(String(transport.mock.calls[2]?.[1]?.body))).toEqual({
       revision: 2,
+    })
+  })
+
+  it('preserves structured Managed Import validation fields', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json(
+        {
+          error: 'invalid_metadata',
+          code: 'invalid_metadata',
+          message: 'File failed the Strict Import Profile at TITLE',
+          field: 'TITLE',
+          reason: 'required tag is missing',
+        },
+        { status: 422 },
+      ),
+    )
+    const client = createApiClient({
+      baseUrl: 'http://music.test',
+      transport,
+    })
+
+    await expect(
+      client.uploadManagedImportFile(
+        'import-1',
+        'missing-title.flac',
+        new Blob(['flac bytes'], { type: 'audio/flac' }),
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      body: {
+        code: 'invalid_metadata',
+        field: 'TITLE',
+        reason: 'required tag is missing',
+      },
     })
   })
 

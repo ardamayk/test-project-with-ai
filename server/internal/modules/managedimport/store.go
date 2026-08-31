@@ -11,6 +11,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/google/uuid"
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -42,11 +43,12 @@ func (store *Store) CreateJob(ctx context.Context) (Job, error) {
 
 func (store *Store) GetJob(ctx context.Context, jobID string) (importJob, error) {
 	var job importJob
-	var originalFilename, stagedFilePath, contentSHA256, trackID sql.NullString
+	var originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
 	err := store.database.QueryRowContext(ctx, `
-		SELECT id, status, revision, original_filename, staged_file_path, content_sha256, track_id
+		SELECT id, status, revision, validation_progress, original_filename, staged_file_path,
+			content_sha256, error_code, track_id
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &originalFilename, &stagedFilePath, &contentSHA256, &trackID)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
@@ -56,15 +58,45 @@ func (store *Store) GetJob(ctx context.Context, jobID string) (importJob, error)
 	job.OriginalFilename = originalFilename.String
 	job.StagedFilePath = stagedFilePath.String
 	job.ContentSHA256 = contentSHA256.String
+	job.ErrorCode = errorCode.String
 	job.TrackID = trackID.String
 	return job, nil
+}
+
+func (store *Store) UpdateValidationProgress(ctx context.Context, jobID string, progress int) error {
+	if progress < 0 || progress > 100 {
+		return fmt.Errorf("managed import validation progress must be between 0 and 100: got %d", progress)
+	}
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_jobs
+		SET validation_progress = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ? AND validation_progress < ?`,
+		progress, jobID, STATUS_UPLOADING, progress,
+	)
+	if err != nil {
+		return fmt.Errorf("update Managed Import validation progress: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read Managed Import validation progress result: %w", err)
+	}
+	if affected == 0 {
+		job, getErr := store.GetJob(ctx, jobID)
+		if getErr != nil {
+			return getErr
+		}
+		if job.Status != STATUS_UPLOADING {
+			return ErrInvalidState
+		}
+	}
+	return nil
 }
 
 func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256 string) (importJob, error) {
 	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
-			content_sha256 = ?, error_code = NULL, updated_at = CURRENT_TIMESTAMP
+			content_sha256 = ?, error_code = NULL, validation_progress = 100, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ?`,
 		STATUS_AWAITING_CONFIRMATION, originalFilename, stagedFilePath, contentSHA256, jobID, STATUS_UPLOADING,
 	)
@@ -78,14 +110,95 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 }
 
 func (store *Store) MarkFailed(ctx context.Context, jobID, errorCode string) error {
-	_, err := store.database.ExecContext(ctx, `
+	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, error_code = ?, staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ?`, STATUS_FAILED, errorCode, jobID, STATUS_UPLOADING)
 	if err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("mark Managed Import failed: %w", err)
+	}
 	return nil
+}
+
+func (store *Store) AlbumRequiresDiscNumber(ctx context.Context, metadata library.NormalizedMediaMetadata) (bool, error) {
+	var requiresDiscNumber bool
+	err := store.database.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM albums
+			JOIN tracks ON tracks.album_id = albums.id
+			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL
+				AND (tracks.disc_no > 1 OR tracks.disc_total > 1)
+		)`, albumIdentityKey(metadata),
+	).Scan(&requiresDiscNumber)
+	if err != nil {
+		return false, fmt.Errorf("inspect existing Album disc positions: %w", err)
+	}
+	return requiresDiscNumber, nil
+}
+
+func (store *Store) AwaitingPreviewPaths(ctx context.Context, excludedJobID string) (paths []string, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT staged_file_path FROM managed_import_jobs
+		WHERE status = ? AND id != ? AND staged_file_path IS NOT NULL`, STATUS_AWAITING_CONFIRMATION, excludedJobID)
+	if err != nil {
+		return nil, fmt.Errorf("list awaiting Import Preview files: %w", err)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, rows.Close())
+	}()
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("scan awaiting Import Preview file: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate awaiting Import Preview files: %w", err)
+	}
+	return paths, nil
+}
+
+func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {
+	var hasDiscConflict, hasTrackConflict bool
+	err := store.database.QueryRowContext(ctx, `
+		WITH matching_tracks AS (
+			SELECT tracks.disc_no, tracks.disc_total, tracks.track_no, tracks.track_total
+			FROM albums JOIN tracks ON tracks.album_id = albums.id
+			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL
+		)
+		SELECT
+			EXISTS (
+				SELECT 1 FROM matching_tracks
+				WHERE ? > 0 AND ((disc_total IS NOT NULL AND disc_total != ?) OR disc_no > ?)
+			),
+			EXISTS (
+				SELECT 1 FROM matching_tracks
+				WHERE disc_no = ? AND ? > 0
+					AND ((track_total IS NOT NULL AND track_total != ?) OR track_no > ?)
+			)`,
+		albumIdentityKey(metadata),
+		metadata.DiscPosition.Total,
+		metadata.DiscPosition.Total,
+		metadata.DiscPosition.Total,
+		metadata.DiscPosition.Number,
+		metadata.TrackPosition.Total,
+		metadata.TrackPosition.Total,
+		metadata.TrackPosition.Total,
+	).Scan(&hasDiscConflict, &hasTrackConflict)
+	if err != nil {
+		return "", fmt.Errorf("inspect existing Album position totals: %w", err)
+	}
+	if hasDiscConflict {
+		return "TOTALDISCS", nil
+	}
+	if hasTrackConflict {
+		return "TOTALTRACKS", nil
+	}
+	return "", nil
 }
 
 func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) (commitIdentity, error) {
@@ -260,7 +373,7 @@ func insertTrack(ctx context.Context, transaction *sql.Tx, data commitData) erro
 		metadata.TrackPosition.Number, audio.DurationMs, audio.Format, fileInfo.Size(), data.Placement.AudioPath, fileInfo.ModTime().Unix(),
 		metadata.Genres[0], audio.SampleRateHz, audio.BitDepth, metadata.DiscPosition.Number,
 		nullablePositive(metadata.TrackPosition.Total), nullablePositive(metadata.DiscPosition.Total), audio.ChannelCount,
-		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Format, trackIdentityKey(metadata),
+		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Container, trackIdentityKey(metadata),
 	)
 	if err != nil {
 		return fmt.Errorf("create Managed Track: %w", err)
@@ -384,7 +497,7 @@ func requireMutation(result sql.Result) error {
 }
 
 func normalizeIdentity(value string) string {
-	return strings.ToLower(strings.Join(strings.Fields(norm.NFC.String(value)), " "))
+	return cases.Fold().String(strings.Join(strings.Fields(norm.NFC.String(value)), " "))
 }
 
 func albumIdentityKey(metadata library.NormalizedMediaMetadata) string {

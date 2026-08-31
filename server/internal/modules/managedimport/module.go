@@ -41,6 +41,7 @@ func (module *Module) Name() string {
 
 func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Post("/api/v1/imports", module.handlers.CreateJob)
+	router.Get("/api/v1/imports/{importId}", module.handlers.GetJob)
 	router.Put("/api/v1/imports/{importId}/file", module.handlers.UploadFile)
 	router.Post("/api/v1/imports/{importId}/confirm", module.handlers.Confirm)
 }

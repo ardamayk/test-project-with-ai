@@ -9,6 +9,18 @@ type ErrorResponse struct {
 	Error   string `json:"error"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Field   string `json:"field,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func ErrorWithField(w http.ResponseWriter, status int, code, message, field, reason string) {
+	JSON(w, status, ErrorResponse{
+		Error:   code,
+		Code:    code,
+		Message: message,
+		Field:   field,
+		Reason:  reason,
+	})
 }
 
 func JSON(w http.ResponseWriter, status int, v any) {

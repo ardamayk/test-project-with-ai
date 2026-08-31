@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"mime"
 	"net/http"
 
 	"github.com/ardam/navidrome-replacement/server/internal/api/respond"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -29,12 +29,16 @@ func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Re
 	respond.JSON(writer, http.StatusCreated, job)
 }
 
-func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
-	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-	if err != nil || mediaType != "audio/flac" {
-		respond.Error(writer, http.StatusBadRequest, "invalid_content_type", "Managed Import requires Content-Type audio/flac")
+func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Request) {
+	job, err := handlers.service.GetJob(request.Context(), chi.URLParam(request, "importId"))
+	if err != nil {
+		handleError(writer, request, err)
 		return
 	}
+	respond.JSON(writer, http.StatusOK, job)
+}
+
+func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
 	preview, err := handlers.service.Upload(
 		request.Context(),
 		chi.URLParam(request, "importId"),
@@ -86,7 +90,8 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	default:
 		var validationErr *ValidationError
 		if errors.As(err, &validationErr) {
-			respond.Error(writer, http.StatusUnprocessableEntity, validationErr.Code, strictValidationMessage(validationErr))
+			reason := strictValidationReason(validationErr)
+			respond.ErrorWithField(writer, http.StatusUnprocessableEntity, validationErr.Code, strictValidationMessage(validationErr, reason), validationErr.Field, reason)
 			return
 		}
 		slog.ErrorContext(request.Context(), "Managed Import request failed", "path", request.URL.Path, "error", err)
@@ -94,9 +99,19 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	}
 }
 
-func strictValidationMessage(validationErr *ValidationError) string {
-	if validationErr.Field == "" {
-		return "File failed the Strict Import Profile"
+func strictValidationMessage(validationErr *ValidationError, reason string) string {
+	if validationErr.Code == string(library.INSPECTION_ERROR_MISSING_ARTWORK) {
+		return "Embedded front-cover artwork is required; add one with MusicBrainz Picard and retry"
 	}
-	return fmt.Sprintf("File failed the Strict Import Profile at %s", validationErr.Field)
+	if validationErr.Field == "" {
+		return fmt.Sprintf("File failed the Strict Import Profile: %s", reason)
+	}
+	return fmt.Sprintf("File failed the Strict Import Profile at %s: %s", validationErr.Field, reason)
+}
+
+func strictValidationReason(validationErr *ValidationError) string {
+	if validationErr.Reason == "" {
+		return "validation failed"
+	}
+	return validationErr.Reason
 }

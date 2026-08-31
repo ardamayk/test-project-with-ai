@@ -2,6 +2,7 @@ package managedimport
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,7 +40,7 @@ func TestManagedImportRejectsUploadWhenStorageReserveWouldBeExhausted(t *testing
 func TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit(t *testing.T) {
 	fixturePath := filepath.Join("..", "library", "testdata", "strict-import.flac")
 	fixture := readStorageSafetyFixture(t)
-	inspection, err := library.NewMediaInspector().Inspect(fixturePath)
+	inspection, err := library.NewMediaInspector().Inspect(context.Background(), fixturePath, nil)
 	if err != nil {
 		t.Fatalf("inspect fixture: %v", err)
 	}
