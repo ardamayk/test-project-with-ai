@@ -80,7 +80,8 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	default:
 		var validationErr *ValidationError
 		if errors.As(err, &validationErr) {
-			respond.Error(writer, http.StatusUnprocessableEntity, validationErr.Code, strictValidationMessage(validationErr))
+			reason := strictValidationReason(validationErr)
+			respond.ErrorWithField(writer, http.StatusUnprocessableEntity, validationErr.Code, strictValidationMessage(validationErr, reason), validationErr.Field, reason)
 			return
 		}
 		slog.ErrorContext(request.Context(), "Managed Import request failed", "path", request.URL.Path, "error", err)
@@ -88,9 +89,16 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	}
 }
 
-func strictValidationMessage(validationErr *ValidationError) string {
+func strictValidationMessage(validationErr *ValidationError, reason string) string {
 	if validationErr.Field == "" {
-		return "File failed the Strict Import Profile"
+		return fmt.Sprintf("File failed the Strict Import Profile: %s", reason)
 	}
-	return fmt.Sprintf("File failed the Strict Import Profile at %s", validationErr.Field)
+	return fmt.Sprintf("File failed the Strict Import Profile at %s: %s", validationErr.Field, reason)
+}
+
+func strictValidationReason(validationErr *ValidationError) string {
+	if validationErr.Reason == "" {
+		return "validation failed"
+	}
+	return validationErr.Reason
 }

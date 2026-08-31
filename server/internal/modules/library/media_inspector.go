@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mewkiz/flac"
 	flacmeta "github.com/mewkiz/flac/meta"
@@ -27,6 +28,8 @@ const (
 	FLAC_SIGNATURE_SIZE_BYTES             = 4
 	FLAC_METADATA_BLOCK_HEADER_SIZE_BYTES = 4
 	FLAC_STREAM_INFO_SIZE_BYTES           = 34
+	MAX_IDENTITY_VALUE_BYTES              = 200
+	MAX_MEDIA_POSITION                    = 9999
 )
 
 type InspectionErrorCode string
@@ -41,9 +44,10 @@ const (
 )
 
 type InspectionError struct {
-	Code  InspectionErrorCode
-	Field string
-	Err   error
+	Code   InspectionErrorCode
+	Field  string
+	Reason string
+	Err    error
 }
 
 func (inspectionErr *InspectionError) Error() string {
@@ -77,6 +81,7 @@ type NormalizedMediaMetadata struct {
 	Album         string
 	TrackPosition MediaPosition
 	DiscPosition  MediaPosition
+	HasDiscNumber bool
 	Genres        []string
 	Year          int
 }
@@ -190,11 +195,11 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
-	trackPosition, err := requiredPosition(tags, "TRACKNUMBER")
+	trackPosition, err := inspectTrackPosition(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
-	discPosition, err := optionalPosition(tags, "DISCNUMBER", 1)
+	discPosition, err := inspectDiscPosition(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
@@ -209,9 +214,38 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 		Album:         names.Album,
 		TrackPosition: trackPosition,
 		DiscPosition:  discPosition,
+		HasDiscNumber: len(tags["DISCNUMBER"]) > 0,
 		Genres:        names.Genres,
 		Year:          year,
 	}, nil
+}
+
+func inspectTrackPosition(tags map[string][]string) (MediaPosition, error) {
+	position, err := requiredPosition(tags, "TRACKNUMBER")
+	if err != nil {
+		return MediaPosition{}, err
+	}
+	return mergePositionTotal(tags, position, "TOTALTRACKS")
+}
+
+func inspectDiscPosition(tags map[string][]string) (MediaPosition, error) {
+	hasDiscNumber := len(tags["DISCNUMBER"]) > 0
+	position := MediaPosition{Number: 1}
+	var err error
+	if hasDiscNumber {
+		position, err = requiredPosition(tags, "DISCNUMBER")
+		if err != nil {
+			return MediaPosition{}, err
+		}
+	}
+	position, err = mergePositionTotal(tags, position, "TOTALDISCS")
+	if err != nil {
+		return MediaPosition{}, err
+	}
+	if !hasDiscNumber && position.Total > 1 {
+		return MediaPosition{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "DISCNUMBER", errors.New("required for a multi-disc Album"))
+	}
+	return position, nil
 }
 
 type normalizedMediaNames struct {
@@ -278,7 +312,7 @@ func requiredTags(tags map[string][]string, key string) ([]string, error) {
 	for _, rawValue := range rawValues {
 		value, isValid := normalizeMetadataValue(rawValue)
 		if !isValid {
-			return nil, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, errors.New("tag is empty or contains control characters"))
+			return nil, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, errors.New("tag is empty, too long, or contains unsafe characters"))
 		}
 		values = append(values, value)
 	}
@@ -286,12 +320,21 @@ func requiredTags(tags map[string][]string, key string) ([]string, error) {
 }
 
 func normalizeMetadataValue(value string) (string, bool) {
+	if !utf8.ValidString(value) || strings.IndexFunc(value, isUnsafeIdentityRune) >= 0 {
+		return "", false
+	}
 	value = norm.NFC.String(strings.TrimSpace(value))
-	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
+	if len(value) > MAX_IDENTITY_VALUE_BYTES || strings.IndexFunc(value, isUnsafeIdentityRune) >= 0 {
 		return "", false
 	}
 	value = strings.Join(strings.Fields(value), " ")
 	return value, value != ""
+}
+
+func isUnsafeIdentityRune(value rune) bool {
+	return unicode.IsControl(value) ||
+		unicode.Is(unicode.Bidi_Control, value) ||
+		unicode.Is(unicode.Noncharacter_Code_Point, value)
 }
 
 func requiredPosition(tags map[string][]string, key string) (MediaPosition, error) {
@@ -300,17 +343,10 @@ func requiredPosition(tags map[string][]string, key string) (MediaPosition, erro
 		return MediaPosition{}, err
 	}
 	position, err := parsePosition(value)
-	if err != nil || position.Number <= 0 {
-		return MediaPosition{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, errors.New("position must be a positive integer with an optional total"))
+	if err != nil {
+		return MediaPosition{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, fmt.Errorf("position must be between 1 and %d with an optional total: %w", MAX_MEDIA_POSITION, err))
 	}
 	return position, nil
-}
-
-func optionalPosition(tags map[string][]string, key string, defaultPosition int) (MediaPosition, error) {
-	if len(tags[key]) == 0 {
-		return MediaPosition{Number: defaultPosition}, nil
-	}
-	return requiredPosition(tags, key)
 }
 
 func parsePosition(value string) (MediaPosition, error) {
@@ -322,14 +358,50 @@ func parsePosition(value string) (MediaPosition, error) {
 	if err != nil {
 		return MediaPosition{}, err
 	}
+	if position <= 0 || position > MAX_MEDIA_POSITION {
+		return MediaPosition{}, errors.New("position is outside the supported range")
+	}
 	if len(parts) == 1 || strings.TrimSpace(parts[1]) == "" {
 		return MediaPosition{Number: position}, nil
 	}
 	total, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err != nil || total < position {
+	if err != nil || total < position || total > MAX_MEDIA_POSITION {
 		return MediaPosition{}, errors.New("position total is invalid")
 	}
 	return MediaPosition{Number: position, Total: total}, nil
+}
+
+func mergePositionTotal(tags map[string][]string, position MediaPosition, totalKey string) (MediaPosition, error) {
+	total, hasTotal, err := optionalTotal(tags, totalKey)
+	if err != nil {
+		return MediaPosition{}, err
+	}
+	if !hasTotal {
+		return position, nil
+	}
+	if position.Total > 0 && position.Total != total {
+		return MediaPosition{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, totalKey, errors.New("total conflicts with the position tag"))
+	}
+	if total < position.Number {
+		return MediaPosition{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, totalKey, errors.New("total must not be less than the position"))
+	}
+	position.Total = total
+	return position, nil
+}
+
+func optionalTotal(tags map[string][]string, key string) (int, bool, error) {
+	if len(tags[key]) == 0 {
+		return 0, false, nil
+	}
+	value, err := requiredSingleTag(tags, key)
+	if err != nil {
+		return 0, false, err
+	}
+	total, parseErr := strconv.Atoi(value)
+	if parseErr != nil || total <= 0 || total > MAX_MEDIA_POSITION {
+		return 0, false, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, fmt.Errorf("total must be between 1 and %d", MAX_MEDIA_POSITION))
+	}
+	return total, true, nil
 }
 
 func optionalYear(tags map[string][]string) (int, error) {
@@ -439,5 +511,28 @@ func encodedFLACAudioSize(sizeBytes int64, blocks []*flacmeta.Block) int64 {
 }
 
 func inspectionError(code InspectionErrorCode, field string, err error) *InspectionError {
-	return &InspectionError{Code: code, Field: field, Err: err}
+	return &InspectionError{Code: code, Field: field, Reason: publicInspectionReason(code, err), Err: err}
+}
+
+func publicInspectionReason(code InspectionErrorCode, err error) string {
+	switch code {
+	case INSPECTION_ERROR_INVALID_METADATA:
+		reason := err.Error()
+		if separatorIndex := strings.Index(reason, ": "); separatorIndex >= 0 {
+			return reason[:separatorIndex]
+		}
+		return reason
+	case INSPECTION_ERROR_MISSING_ARTWORK:
+		return err.Error()
+	case INSPECTION_ERROR_FILE_READ:
+		return "file could not be read"
+	case INSPECTION_ERROR_UNSUPPORTED_FORMAT:
+		return "file is not a supported FLAC stream"
+	case INSPECTION_ERROR_INVALID_ARTWORK:
+		return "embedded artwork is invalid"
+	case INSPECTION_ERROR_AUDIO_DECODE:
+		return "audio stream failed full decode"
+	default:
+		return "validation failed"
+	}
 }

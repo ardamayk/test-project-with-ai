@@ -86,7 +86,12 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	}
 	if identity.ExistingArtworkPath != "" {
 		if identity.ExistingArtworkSHA256 != inspection.AlbumArtwork.SHA256 {
-			return placedFiles{}, &ValidationError{Code: "album_artwork_conflict", Field: "artwork", Err: errors.New("embedded Album Artwork differs from the existing Album")}
+			return placedFiles{}, &ValidationError{
+				Code:   "album_artwork_conflict",
+				Field:  "artwork",
+				Reason: "embedded Album Artwork differs from the existing Album",
+				Err:    errors.New("embedded Album Artwork differs from the existing Album"),
+			}
 		}
 		placement.ArtworkPath = identity.ExistingArtworkPath
 		if err := verifyFileHash(placement.ArtworkPath, identity.ExistingArtworkSHA256); err != nil {

@@ -46,11 +46,80 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationError(err))
 	}
+	if validationErr := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); validationErr != nil {
+		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationErr)
+	}
 	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, stagedPath, inspection.FileSHA256)
 	if err != nil {
 		return Preview{}, errors.Join(err, os.Remove(stagedPath))
 	}
 	return previewFromInspection(job, inspection), nil
+}
+
+func (service *Service) validateAlbumPositions(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata) error {
+	if metadata.HasDiscNumber {
+		return service.validateExistingAlbumTotals(ctx, metadata)
+	}
+	requiresDiscNumber, err := service.requiresDiscNumber(ctx, jobID, metadata)
+	if err != nil {
+		return err
+	}
+	if !requiresDiscNumber {
+		return service.validateExistingAlbumTotals(ctx, metadata)
+	}
+	return &ValidationError{
+		Code:   string(library.INSPECTION_ERROR_INVALID_METADATA),
+		Field:  "DISCNUMBER",
+		Reason: "DISCNUMBER is required for a known multi-disc Album",
+		Err:    errors.New("DISCNUMBER is required for a known multi-disc Album"),
+	}
+}
+
+func (service *Service) requiresDiscNumber(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata) (bool, error) {
+	requiresDiscNumber, err := service.store.AlbumRequiresDiscNumber(ctx, metadata)
+	if err != nil || requiresDiscNumber {
+		return requiresDiscNumber, err
+	}
+	return service.awaitingSiblingRequiresDiscNumber(ctx, jobID, metadata)
+}
+
+func (service *Service) awaitingSiblingRequiresDiscNumber(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata) (bool, error) {
+	paths, err := service.store.AwaitingPreviewPaths(ctx, jobID)
+	if err != nil {
+		return false, err
+	}
+	albumKey := albumIdentityKey(metadata)
+	for _, path := range paths {
+		inspection, inspectionErr := service.inspector.Inspect(path)
+		if inspectionErr != nil {
+			return false, fmt.Errorf("inspect awaiting sibling file: %w", inspectionErr)
+		}
+		sibling := inspection.Metadata
+		if albumIdentityKey(sibling) == albumKey && isMultiDisc(sibling) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func isMultiDisc(metadata library.NormalizedMediaMetadata) bool {
+	return metadata.DiscPosition.Number > 1 || metadata.DiscPosition.Total > 1
+}
+
+func (service *Service) validateExistingAlbumTotals(ctx context.Context, metadata library.NormalizedMediaMetadata) error {
+	field, err := service.store.AlbumPositionTotalConflict(ctx, metadata)
+	if err != nil {
+		return err
+	}
+	if field == "" {
+		return nil
+	}
+	return &ValidationError{
+		Code:   string(library.INSPECTION_ERROR_INVALID_METADATA),
+		Field:  field,
+		Reason: "position total conflicts with the existing Album",
+		Err:    errors.New("position total conflicts with the existing Album"),
+	}
 }
 
 func (service *Service) Confirm(ctx context.Context, jobID string, revision int) (Result, error) {
@@ -71,8 +140,16 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if err != nil {
 		return Result{}, validationError(err)
 	}
+	if err := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); err != nil {
+		return Result{}, err
+	}
 	if inspection.FileSHA256 != job.ContentSHA256 {
-		return Result{}, &ValidationError{Code: "staged_file_changed", Field: "file", Err: errors.New("staged file hash changed after Import Preview")}
+		return Result{}, &ValidationError{
+			Code:   "staged_file_changed",
+			Field:  "file",
+			Reason: "staged file changed after Import Preview",
+			Err:    errors.New("staged file hash changed after Import Preview"),
+		}
 	}
 	return service.commit(ctx, job, inspection)
 }
