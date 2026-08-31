@@ -22,17 +22,21 @@ type parsedMP4Atom struct {
 	end       int64
 }
 
-func readMP4StructuredCredits(path string) (map[string][]string, error) {
+func readMP4StructuredCredits(path string) (credits map[string][]string, returnErr error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open MP4 metadata: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close MP4 metadata: %w", closeErr))
+		}
+	}()
 	info, err := file.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("stat MP4 metadata: %w", err)
 	}
-	credits := make(map[string][]string)
+	credits = make(map[string][]string)
 	for offset := int64(0); offset < info.Size(); {
 		atom, err := readMP4Atom(file, offset, info.Size())
 		if err != nil {

@@ -98,14 +98,15 @@ func hashFile(ctx context.Context, path string) (string, error) {
 func probeM4A(ctx context.Context, path string) (m4aProbe, error) {
 	command := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path)
 	output := newBoundedBuffer(FFPROBE_OUTPUT_LIMIT_BYTES)
+	errorOutput := newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
 	command.Stdout = output
-	command.Stderr = newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
+	command.Stderr = errorOutput
 	err := command.Run()
 	if ctx.Err() != nil {
 		return m4aProbe{}, inspectionCancellationError(ctx)
 	}
 	if err != nil {
-		return m4aProbe{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("probe M4A container: %w", err))
+		return m4aProbe{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", commandFailure("probe M4A container", err, errorOutput))
 	}
 	if output.isTruncated {
 		return m4aProbe{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("M4A probe output exceeds limit"))
@@ -237,14 +238,15 @@ func inspectM4AArtwork(ctx context.Context, path string, stream m4aProbeStream) 
 	var output boundedBuffer
 	output.limit = MAX_ARTWORK_SIZE_BYTES + 1
 	command := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-xerror", "-nostdin", "-i", path, "-map", fmt.Sprintf("0:%d", stream.Index), "-frames:v", "1", "-c", "copy", "-f", "image2pipe", "pipe:1")
+	errorOutput := newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
 	command.Stdout = &output
-	command.Stderr = newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
+	command.Stderr = errorOutput
 	err := command.Run()
 	if ctx.Err() != nil {
 		return AlbumArtwork{}, inspectionCancellationError(ctx)
 	}
 	if err != nil {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", fmt.Errorf("extract embedded artwork: %w", err))
+		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", commandFailure("extract embedded artwork", err, errorOutput))
 	}
 	return validateArtwork(&flacmeta.Picture{MIME: mediaType, Data: output.Bytes()})
 }
@@ -277,13 +279,13 @@ func buildM4AAudioProperties(stream m4aProbeStream) (TechnicalAudioProperties, e
 	}
 	bitDepth := 0
 	if stream.CodecName == "alac" {
-		bitDepth, _ = strconv.Atoi(stream.BitsPerRawSample)
-		if bitDepth <= 0 {
+		var bitDepthErr error
+		bitDepth, bitDepthErr = strconv.Atoi(stream.BitsPerRawSample)
+		if bitDepthErr != nil || bitDepth <= 0 {
 			return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("ALAC bit depth is missing"))
 		}
 	}
-	durationSeconds, _ := strconv.ParseFloat(stream.Duration, 64)
-	return TechnicalAudioProperties{Format: "m4a", Container: "m4a", Codec: stream.CodecName, DurationMs: int(durationSeconds * MILLISECONDS_PER_SECOND), SampleRateHz: sampleRate, ChannelCount: stream.Channels, BitDepth: bitDepth}, nil
+	return TechnicalAudioProperties{Format: "m4a", Container: "m4a", Codec: stream.CodecName, SampleRateHz: sampleRate, ChannelCount: stream.Channels, BitDepth: bitDepth}, nil
 }
 
 func decodeM4AToEOF(ctx context.Context, path string, streamIndex int, audio TechnicalAudioProperties, reportProgress InspectionProgressReporter) (int, error) {
@@ -292,23 +294,28 @@ func decodeM4AToEOF(ctx context.Context, path string, streamIndex int, audio Tec
 	if err != nil {
 		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
-	command.Stderr = newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
+	errorOutput := newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
+	command.Stderr = errorOutput
 	if err := command.Start(); err != nil {
 		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
 	decodedMicroseconds, reportErr := readM4ADecodeProgress(progress, audio, reportProgress)
+	var killErr error
 	if reportErr != nil {
-		_ = command.Process.Kill()
+		killErr = command.Process.Kill()
 	}
 	waitErr := command.Wait()
 	if ctx.Err() != nil {
 		return 0, inspectionCancellationError(ctx)
 	}
 	if reportErr != nil {
+		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			reportErr = errors.Join(reportErr, fmt.Errorf("stop M4A decoder: %w", killErr))
+		}
 		return 0, inspectionProgressError(reportErr)
 	}
 	if waitErr != nil {
-		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("decode M4A stream: %w", waitErr))
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", commandFailure("decode M4A stream", waitErr, errorOutput))
 	}
 	durationMs := int(decodedMicroseconds / 1000)
 	if durationMs <= 0 {
@@ -331,7 +338,7 @@ func readM4ADecodeProgress(reader io.Reader, audio TechnicalAudioProperties, rep
 		}
 		microseconds, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			continue
+			return 0, fmt.Errorf("parse M4A decoder progress: %w", err)
 		}
 		decodedMicroseconds = max(decodedMicroseconds, microseconds)
 		decodedSamples := decodedMicroseconds * uint64(audio.SampleRateHz) / 1_000_000
@@ -349,7 +356,8 @@ func measureM4AEncodedBytes(ctx context.Context, path string, streamIndex int) (
 	if err != nil {
 		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
-	command.Stderr = newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
+	errorOutput := newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
+	command.Stderr = errorOutput
 	if err := command.Start(); err != nil {
 		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
@@ -362,7 +370,7 @@ func measureM4AEncodedBytes(ctx context.Context, path string, streamIndex int) (
 		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", scanErr)
 	}
 	if waitErr != nil {
-		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("measure M4A packets: %w", waitErr))
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", commandFailure("measure M4A packets", waitErr, errorOutput))
 	}
 	if encodedBytes <= 0 {
 		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("M4A encoded audio size is not positive"))
@@ -375,7 +383,15 @@ func sumM4APacketBytes(reader io.Reader, streamIndex int) (int64, error) {
 	var encodedBytes int64
 	for scanner.Scan() {
 		fields := strings.Split(scanner.Text(), ",")
-		if len(fields) < 2 || fields[0] != strconv.Itoa(streamIndex) {
+		if len(fields) < 2 {
+			return 0, errors.New("M4A packet record is invalid")
+		}
+		for _, extraField := range fields[2:] {
+			if extraField != "" {
+				return 0, errors.New("M4A packet record has unexpected fields")
+			}
+		}
+		if fields[0] != strconv.Itoa(streamIndex) {
 			continue
 		}
 		packetBytes, err := strconv.ParseInt(fields[1], 10, 64)
@@ -397,6 +413,17 @@ func newBoundedBuffer(limit int) *boundedBuffer {
 	return &boundedBuffer{limit: limit}
 }
 
+func commandFailure(action string, commandErr error, errorOutput *boundedBuffer) error {
+	details := strings.TrimSpace(string(errorOutput.Bytes()))
+	if errorOutput.isTruncated {
+		details += " [truncated]"
+	}
+	if details == "" {
+		return fmt.Errorf("%s: %w", action, commandErr)
+	}
+	return fmt.Errorf("%s: %w: %s", action, commandErr, details)
+}
+
 func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 	written := len(data)
 	remaining := buffer.limit - buffer.buffer.Len()
@@ -408,7 +435,9 @@ func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 		buffer.isTruncated = true
 		data = data[:remaining]
 	}
-	_, _ = buffer.buffer.Write(data)
+	if _, err := buffer.buffer.Write(data); err != nil {
+		return 0, err
+	}
 	return written, nil
 }
 
