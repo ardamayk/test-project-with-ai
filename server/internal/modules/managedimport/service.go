@@ -26,6 +26,14 @@ func (service *Service) CreateJob(ctx context.Context) (Job, error) {
 	return service.store.CreateJob(ctx)
 }
 
+func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
+	job, err := service.store.GetJob(ctx, jobID)
+	if err != nil {
+		return Job{}, err
+	}
+	return job.Job, nil
+}
+
 func (service *Service) Upload(ctx context.Context, jobID, originalFilename string, body io.Reader, contentLength int64) (Preview, error) {
 	job, err := service.store.GetJob(ctx, jobID)
 	if err != nil {
@@ -42,18 +50,38 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, err
 	}
-	inspection, err := service.inspector.Inspect(stagedPath)
+	inspection, err := service.inspector.Inspect(ctx, stagedPath, service.validationProgressReporter(ctx, jobID))
 	if err != nil {
 		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationError(err))
 	}
 	if validationErr := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); validationErr != nil {
+		if ctx.Err() != nil {
+			validationErr = validationCancellationError(ctx)
+		}
 		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationErr)
 	}
 	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, stagedPath, inspection.FileSHA256)
 	if err != nil {
-		return Preview{}, errors.Join(err, os.Remove(stagedPath))
+		return service.recoverPreviewFailure(ctx, jobID, stagedPath, err, inspection)
 	}
 	return previewFromInspection(job, inspection), nil
+}
+
+func (service *Service) recoverPreviewFailure(ctx context.Context, jobID, stagedPath string, transitionErr error, inspection library.MediaInspection) (Preview, error) {
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	job, getErr := service.store.GetJob(recoveryCtx, jobID)
+	if getErr == nil && job.Status == STATUS_AWAITING_CONFIRMATION {
+		return previewFromInspection(job, inspection), nil
+	}
+	if ctx.Err() != nil {
+		transitionErr = validationCancellationError(ctx)
+	}
+	return Preview{}, service.failUpload(ctx, jobID, stagedPath, errors.Join(transitionErr, getErr))
+}
+
+func validationCancellationError(ctx context.Context) error {
+	return validationError(&library.InspectionError{Code: library.INSPECTION_ERROR_VALIDATION_CANCELLED, Field: "validation", Err: ctx.Err()})
 }
 
 func (service *Service) validateAlbumPositions(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata) error {
@@ -90,7 +118,7 @@ func (service *Service) awaitingSiblingRequiresDiscNumber(ctx context.Context, j
 	}
 	albumKey := albumIdentityKey(metadata)
 	for _, path := range paths {
-		inspection, inspectionErr := service.inspector.Inspect(path)
+		inspection, inspectionErr := service.inspector.Inspect(ctx, path, nil)
 		if inspectionErr != nil {
 			return false, fmt.Errorf("inspect awaiting sibling file: %w", inspectionErr)
 		}
@@ -136,7 +164,7 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
-	inspection, err := service.inspector.Inspect(job.StagedFilePath)
+	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
 	if err != nil {
 		return Result{}, validationError(err)
 	}
@@ -181,7 +209,23 @@ func (service *Service) failUpload(ctx context.Context, jobID, stagedPath string
 	if errors.As(uploadErr, &validationErr) {
 		errorCode = validationErr.Code
 	}
-	return errors.Join(uploadErr, os.Remove(stagedPath), service.store.MarkFailed(ctx, jobID, errorCode))
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	return errors.Join(uploadErr, os.Remove(stagedPath), service.store.MarkFailed(cleanupCtx, jobID, errorCode))
+}
+
+func (service *Service) validationProgressReporter(ctx context.Context, jobID string) library.InspectionProgressReporter {
+	lastProgress := 0
+	return func(progress library.InspectionProgress) error {
+		if progress.Percent <= lastProgress {
+			return nil
+		}
+		if err := service.store.UpdateValidationProgress(ctx, jobID, progress.Percent); err != nil {
+			return err
+		}
+		lastProgress = progress.Percent
+		return nil
+	}
 }
 
 func safeOriginalFilename(value string) (string, error) {
@@ -191,9 +235,6 @@ func safeOriginalFilename(value string) (string, error) {
 	value = filepath.Base(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
 	if value == "." || value == "" || len(value) > MAX_ORIGINAL_FILENAME_BYTES {
 		return "", fmt.Errorf("%w: filename is missing or too long", ErrInvalidUpload)
-	}
-	if !strings.EqualFold(filepath.Ext(value), ".flac") {
-		return "", fmt.Errorf("%w: only FLAC files are accepted", ErrInvalidUpload)
 	}
 	return value, nil
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"mime"
 	"net/http"
 
 	"github.com/ardam/navidrome-replacement/server/internal/api/respond"
@@ -30,12 +29,16 @@ func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Re
 	respond.JSON(writer, http.StatusCreated, job)
 }
 
-func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
-	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-	if err != nil || mediaType != "audio/flac" {
-		respond.Error(writer, http.StatusBadRequest, "invalid_content_type", "Managed Import requires Content-Type audio/flac")
+func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Request) {
+	job, err := handlers.service.GetJob(request.Context(), chi.URLParam(request, "importId"))
+	if err != nil {
+		handleError(writer, request, err)
 		return
 	}
+	respond.JSON(writer, http.StatusOK, job)
+}
+
+func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
 	preview, err := handlers.service.Upload(
 		request.Context(),
 		chi.URLParam(request, "importId"),

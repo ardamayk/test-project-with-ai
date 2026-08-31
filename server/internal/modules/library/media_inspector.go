@@ -2,6 +2,7 @@ package library
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/binary"
@@ -76,12 +77,13 @@ var artworkAnimationDetectors = map[artworkFormat]func([]byte) bool{
 type InspectionErrorCode string
 
 const (
-	INSPECTION_ERROR_FILE_READ          InspectionErrorCode = "file_read_failed"
-	INSPECTION_ERROR_UNSUPPORTED_FORMAT InspectionErrorCode = "unsupported_format"
-	INSPECTION_ERROR_INVALID_METADATA   InspectionErrorCode = "invalid_metadata"
-	INSPECTION_ERROR_MISSING_ARTWORK    InspectionErrorCode = "missing_artwork"
-	INSPECTION_ERROR_INVALID_ARTWORK    InspectionErrorCode = "invalid_artwork"
-	INSPECTION_ERROR_AUDIO_DECODE       InspectionErrorCode = "audio_decode_failed"
+	INSPECTION_ERROR_FILE_READ            InspectionErrorCode = "file_read_failed"
+	INSPECTION_ERROR_UNSUPPORTED_FORMAT   InspectionErrorCode = "unsupported_format"
+	INSPECTION_ERROR_INVALID_METADATA     InspectionErrorCode = "invalid_metadata"
+	INSPECTION_ERROR_MISSING_ARTWORK      InspectionErrorCode = "missing_artwork"
+	INSPECTION_ERROR_INVALID_ARTWORK      InspectionErrorCode = "invalid_artwork"
+	INSPECTION_ERROR_AUDIO_DECODE         InspectionErrorCode = "audio_decode_failed"
+	INSPECTION_ERROR_VALIDATION_CANCELLED InspectionErrorCode = "validation_cancelled"
 )
 
 type InspectionError struct {
@@ -105,8 +107,16 @@ func (inspectionErr *InspectionError) Unwrap() error {
 // MediaInspector validates one stable local file through the Strict Import Profile.
 // A successful result guarantees that the complete audio stream decoded to EOF.
 type MediaInspector interface {
-	Inspect(path string) (MediaInspection, error)
+	Inspect(ctx context.Context, path string, reportProgress InspectionProgressReporter) (MediaInspection, error)
 }
+
+type InspectionProgress struct {
+	DecodedSamples uint64
+	TotalSamples   uint64
+	Percent        int
+}
+
+type InspectionProgressReporter func(InspectionProgress) error
 
 type MediaInspection struct {
 	Metadata     NormalizedMediaMetadata
@@ -142,6 +152,7 @@ type AlbumArtwork struct {
 
 type TechnicalAudioProperties struct {
 	Format       string
+	Container    string
 	Codec        string
 	DurationMs   int
 	SampleRateHz int
@@ -156,12 +167,15 @@ func NewMediaInspector() MediaInspector {
 	return defaultMediaInspector{}
 }
 
-func (defaultMediaInspector) Inspect(path string) (MediaInspection, error) {
+func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportProgress InspectionProgressReporter) (MediaInspection, error) {
+	if err := inspectionCancellationError(ctx); err != nil {
+		return MediaInspection{}, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
-	inspection, inspectionErr := inspectOpenFLAC(file)
+	inspection, inspectionErr := inspectOpenFLAC(ctx, file, reportProgress)
 	closeErr := file.Close()
 	if closeErr != nil {
 		closeFailure := inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("close file: %w", closeErr))
@@ -176,17 +190,21 @@ func (defaultMediaInspector) Inspect(path string) (MediaInspection, error) {
 	return inspection, nil
 }
 
-func inspectOpenFLAC(file *os.File) (MediaInspection, error) {
-	fileHash, sizeBytes, err := hashAndRewind(file)
+func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
+	fileHash, sizeBytes, err := hashAndRewind(ctx, file)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return MediaInspection{}, inspectionError(INSPECTION_ERROR_VALIDATION_CANCELLED, "validation", err)
+		}
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
 	if signatureErr := validateFLACSignature(file); signatureErr != nil {
-		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "format", signatureErr)
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", signatureErr)
 	}
-	stream, err := flac.Parse(file)
+	decoderReader := &countingReader{reader: file}
+	stream, err := flac.Parse(decoderReader)
 	if err != nil {
-		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "format", err)
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", err)
 	}
 
 	metadata, err := inspectFLACMetadata(stream.Blocks)
@@ -197,7 +215,7 @@ func inspectOpenFLAC(file *os.File) (MediaInspection, error) {
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	audio, err := inspectFLACAudio(stream, sizeBytes)
+	audio, err := inspectFLACAudio(ctx, stream, decoderReader, sizeBytes, reportProgress)
 	if err != nil {
 		return MediaInspection{}, err
 	}
@@ -218,9 +236,9 @@ func validateFLACSignature(file *os.File) error {
 	return nil
 }
 
-func hashAndRewind(file *os.File) (string, int64, error) {
+func hashAndRewind(ctx context.Context, file *os.File) (string, int64, error) {
 	fileHash := sha256.New()
-	sizeBytes, err := io.Copy(fileHash, file)
+	sizeBytes, err := io.Copy(fileHash, contextReader{ctx: ctx, reader: file})
 	if err != nil {
 		return "", 0, fmt.Errorf("hash file: %w", err)
 	}
@@ -228,6 +246,29 @@ func hashAndRewind(file *os.File) (string, int64, error) {
 		return "", 0, fmt.Errorf("rewind file: %w", err)
 	}
 	return hex.EncodeToString(fileHash.Sum(nil)), sizeBytes, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+type countingReader struct {
+	reader    io.Reader
+	bytesRead int64
+}
+
+func (reader *countingReader) Read(buffer []byte) (int, error) {
+	read, err := reader.reader.Read(buffer)
+	reader.bytesRead += int64(read)
+	return read, err
+}
+
+func (reader contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
 }
 
 func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, error) {
@@ -584,10 +625,13 @@ func hasWebPAnimation(data []byte) bool {
 	return false
 }
 
-func inspectFLACAudio(stream *flac.Stream, sizeBytes int64) (TechnicalAudioProperties, error) {
+func inspectFLACAudio(ctx context.Context, stream *flac.Stream, decoderReader *countingReader, sizeBytes int64, reportProgress InspectionProgressReporter) (TechnicalAudioProperties, error) {
 	decodedHash := md5.New()
 	var decodedSamples uint64
 	for {
+		if err := inspectionCancellationError(ctx); err != nil {
+			return TechnicalAudioProperties{}, err
+		}
 		frame, err := stream.ParseNext()
 		if errors.Is(err, io.EOF) {
 			break
@@ -600,12 +644,22 @@ func inspectFLACAudio(stream *flac.Stream, sizeBytes int64) (TechnicalAudioPrope
 		}
 		decodedSamples += uint64(len(frame.Subframes[0].Samples))
 		frame.Hash(decodedHash)
+		if err := reportDecodedProgress(reportProgress, decodedSamples, stream.Info.NSamples, decoderReader.bytesRead, sizeBytes, false); err != nil {
+			return TechnicalAudioProperties{}, inspectionProgressError(err)
+		}
 	}
-	return buildFLACAudioProperties(stream.Info, stream.Blocks, decodedHash.Sum(nil), decodedSamples, sizeBytes)
+	audio, err := buildFLACAudioProperties(stream.Info, stream.Blocks, decodedHash.Sum(nil), decodedSamples, sizeBytes)
+	if err != nil {
+		return TechnicalAudioProperties{}, err
+	}
+	if err := reportDecodedProgress(reportProgress, decodedSamples, stream.Info.NSamples, decoderReader.bytesRead, sizeBytes, true); err != nil {
+		return TechnicalAudioProperties{}, inspectionProgressError(err)
+	}
+	return audio, nil
 }
 
 func buildFLACAudioProperties(info *flacmeta.StreamInfo, blocks []*flacmeta.Block, decodedHash []byte, decodedSamples uint64, sizeBytes int64) (TechnicalAudioProperties, error) {
-	if decodedSamples == 0 || info.SampleRate == 0 || info.NChannels == 0 {
+	if decodedSamples == 0 || info.SampleRate == 0 || info.NChannels == 0 || info.BitsPerSample == 0 {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("decoded stream has invalid technical properties"))
 	}
 	if info.NSamples != 0 && decodedSamples != info.NSamples {
@@ -624,7 +678,42 @@ func buildFLACAudioProperties(info *flacmeta.StreamInfo, blocks []*flacmeta.Bloc
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("encoded audio size is not positive"))
 	}
 	bitrateKbps := int((audioSizeBytes*8 + int64(durationMs)/2) / int64(durationMs))
-	return TechnicalAudioProperties{Format: "flac", Codec: "flac", DurationMs: durationMs, SampleRateHz: int(info.SampleRate), ChannelCount: int(info.NChannels), BitDepth: int(info.BitsPerSample), BitrateKbps: bitrateKbps}, nil
+	if bitrateKbps <= 0 {
+		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("average encoded bitrate is not positive"))
+	}
+	return TechnicalAudioProperties{Format: "flac", Container: "flac", Codec: "flac", DurationMs: durationMs, SampleRateHz: int(info.SampleRate), ChannelCount: int(info.NChannels), BitDepth: int(info.BitsPerSample), BitrateKbps: bitrateKbps}, nil
+}
+
+func inspectionCancellationError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return inspectionError(INSPECTION_ERROR_VALIDATION_CANCELLED, "validation", err)
+	}
+	return nil
+}
+
+func inspectionProgressError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return inspectionError(INSPECTION_ERROR_VALIDATION_CANCELLED, "validation", err)
+	}
+	return err
+}
+
+func reportDecodedProgress(reportProgress InspectionProgressReporter, decodedSamples, totalSamples uint64, encodedBytes, totalBytes int64, isComplete bool) error {
+	if reportProgress == nil {
+		return nil
+	}
+	percent := 0
+	if totalSamples > 0 {
+		percent = int(decodedSamples * 100 / totalSamples)
+	} else if totalBytes > 0 {
+		percent = int(encodedBytes * 100 / totalBytes)
+	}
+	if isComplete {
+		percent = 100
+	} else if percent >= 100 {
+		percent = 99
+	}
+	return reportProgress(InspectionProgress{DecodedSamples: decodedSamples, TotalSamples: totalSamples, Percent: percent})
 }
 
 func encodedFLACAudioSize(sizeBytes int64, blocks []*flacmeta.Block) int64 {
