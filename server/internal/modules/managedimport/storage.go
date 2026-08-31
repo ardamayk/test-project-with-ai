@@ -37,10 +37,9 @@ type StorageLimits struct {
 }
 
 type StorageRequirement struct {
-	SelectedBytes        int64
-	ArtworkBytes         int64
-	ReplacementCopyBytes int64
-	MigrationCopyBytes   int64
+	SelectedBytes int64
+	// TemporaryBytes includes artwork plus replacement or migration copies that must coexist during commit.
+	TemporaryBytes int64
 }
 
 type storageCapacity func(string) (int64, error)
@@ -147,7 +146,7 @@ func (storage *Storage) validateUploadLength(contentLength int64) error {
 }
 
 func (storage *Storage) Preflight(requirement StorageRequirement) error {
-	if requirement.SelectedBytes < 0 || requirement.ArtworkBytes < 0 || requirement.ReplacementCopyBytes < 0 || requirement.MigrationCopyBytes < 0 {
+	if requirement.SelectedBytes < 0 || requirement.TemporaryBytes < 0 {
 		return errors.New("managed storage preflight byte counts must not be negative")
 	}
 	if err := storage.ensureRoot(); err != nil {
@@ -156,9 +155,7 @@ func (storage *Storage) Preflight(requirement StorageRequirement) error {
 	requiredBytes, err := addByteCounts(
 		storage.reserveBytes,
 		requirement.SelectedBytes,
-		requirement.ArtworkBytes,
-		requirement.ReplacementCopyBytes,
-		requirement.MigrationCopyBytes,
+		requirement.TemporaryBytes,
 	)
 	if err != nil {
 		return err
@@ -256,13 +253,6 @@ func (storage *Storage) planPlacement(stagedPath string, inspection library.Medi
 		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
 		slug(metadata.Album)+"-"+identity.AlbumID,
 	)
-	if identity.ExistingArtworkPath != "" {
-		existingArtworkRelative, relativeErr := storage.relativePath(identity.ExistingArtworkPath)
-		if relativeErr != nil {
-			return placedFiles{}, relativeErr
-		}
-		albumRelative = filepath.Dir(existingArtworkRelative)
-	}
 	audioFilename := fmt.Sprintf("%02d-%02d-%s-%s%s", metadata.DiscPosition.Number, metadata.TrackPosition.Number, slug(metadata.Title), identity.TrackID, extension)
 	audioRelative := filepath.Join(albumRelative, audioFilename)
 	artworkRelative := filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
@@ -283,6 +273,9 @@ func (storage *Storage) prepareArtwork(root *os.Root, placement *placedFiles, in
 		existingRelative, err := storage.relativePath(identity.ExistingArtworkPath)
 		if err != nil {
 			return err
+		}
+		if existingRelative != placement.artworkRelative {
+			return fmt.Errorf("%w: existing Album Artwork path is not canonical", ErrUnsafeStoragePath)
 		}
 		placement.ArtworkPath = identity.ExistingArtworkPath
 		placement.artworkRelative = existingRelative
@@ -330,6 +323,13 @@ func (storage *Storage) ensureRoot() error {
 	}
 	if err := os.MkdirAll(storage.root, 0o700); err != nil {
 		return fmt.Errorf("create Managed Storage root: %w", err)
+	}
+	info, err := os.Lstat(storage.root)
+	if err != nil {
+		return fmt.Errorf("inspect Managed Storage root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: Managed Storage root is a symbolic link", ErrUnsafeStoragePath)
 	}
 	return nil
 }

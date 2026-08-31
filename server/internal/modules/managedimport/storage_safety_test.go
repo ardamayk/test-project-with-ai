@@ -2,10 +2,7 @@ package managedimport
 
 import (
 	"bytes"
-	"encoding/json"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,14 +26,14 @@ func TestManagedImportRejectsUploadWhenStorageReserveWouldBeExhausted(t *testing
 	}, func(string) (int64, error) {
 		return availableBytes, nil
 	})
-	jobID := createStorageSafetyJob(t, router)
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
 
-	response := serveStorageSafetyRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "strict-import.flac",
 	})
 
-	assertStorageSafetyError(t, response, http.StatusInsufficientStorage, "insufficient_storage")
+	testutil.AssertErrorCode(t, response, http.StatusInsufficientStorage, "insufficient_storage")
 }
 
 func TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit(t *testing.T) {
@@ -57,8 +54,8 @@ func TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit(t *testing.T
 	}, func(string) (int64, error) {
 		return availableBytes, nil
 	})
-	jobID := createStorageSafetyJob(t, router)
-	uploadResponse := serveStorageSafetyRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "strict-import.flac",
 	})
@@ -68,14 +65,14 @@ func TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit(t *testing.T
 	var preview struct {
 		Revision int `json:"revision"`
 	}
-	decodeStorageSafetyJSON(t, uploadResponse, &preview)
+	testutil.DecodeJSON(t, uploadResponse, &preview)
 	availableBytes = reserveBytes + int64(len(fixture)) + int64(len(inspection.AlbumArtwork.Data)) - 1
 
-	response := serveStorageSafetyRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{
 		"Content-Type": "application/json",
 	})
 
-	assertStorageSafetyError(t, response, http.StatusInsufficientStorage, "insufficient_storage")
+	testutil.AssertErrorCode(t, response, http.StatusInsufficientStorage, "insufficient_storage")
 	assertNoCanonicalAudio(t, managedStoragePath)
 }
 
@@ -88,14 +85,34 @@ func TestManagedImportRejectsStagingSymlinkEscape(t *testing.T) {
 	router := newStorageSafetyRouter(t, config.Config{
 		ManagedStoragePath: managedStoragePath,
 	}, unlimitedStorageCapacity)
-	jobID := createStorageSafetyJob(t, router)
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
 
-	response := serveStorageSafetyRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStorageSafetyFixture(t)), map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStorageSafetyFixture(t)), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "strict-import.flac",
 	})
 
-	assertStorageSafetyError(t, response, http.StatusConflict, "unsafe_storage_path")
+	testutil.AssertErrorCode(t, response, http.StatusConflict, "unsafe_storage_path")
+	assertDirectoryEmpty(t, outsidePath)
+}
+
+func TestManagedImportRejectsManagedStorageRootSymlink(t *testing.T) {
+	outsidePath := t.TempDir()
+	managedStoragePath := filepath.Join(t.TempDir(), "managed")
+	if err := os.Symlink(outsidePath, managedStoragePath); err != nil {
+		t.Fatalf("create Managed Storage root symlink: %v", err)
+	}
+	router := newStorageSafetyRouter(t, config.Config{
+		ManagedStoragePath: managedStoragePath,
+	}, unlimitedStorageCapacity)
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStorageSafetyFixture(t)), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "strict-import.flac",
+	})
+
+	testutil.AssertErrorCode(t, response, http.StatusConflict, "unsafe_storage_path")
 	assertDirectoryEmpty(t, outsidePath)
 }
 
@@ -108,8 +125,8 @@ func TestManagedImportRejectsCanonicalLibrarySymlinkEscape(t *testing.T) {
 	router := newStorageSafetyRouter(t, config.Config{
 		ManagedStoragePath: managedStoragePath,
 	}, unlimitedStorageCapacity)
-	jobID := createStorageSafetyJob(t, router)
-	uploadResponse := serveStorageSafetyRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStorageSafetyFixture(t)), map[string]string{
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStorageSafetyFixture(t)), map[string]string{
 		"Content-Type":      "audio/flac",
 		"X-Import-Filename": "strict-import.flac",
 	})
@@ -117,11 +134,11 @@ func TestManagedImportRejectsCanonicalLibrarySymlinkEscape(t *testing.T) {
 		t.Fatalf("upload status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
 	}
 
-	response := serveStorageSafetyRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{
 		"Content-Type": "application/json",
 	})
 
-	assertStorageSafetyError(t, response, http.StatusConflict, "unsafe_storage_path")
+	testutil.AssertErrorCode(t, response, http.StatusConflict, "unsafe_storage_path")
 	assertDirectoryEmpty(t, outsidePath)
 }
 
@@ -132,51 +149,6 @@ func newStorageSafetyRouter(t *testing.T, configuration config.Config, capacity 
 	router := chi.NewRouter()
 	module.RegisterRoutes(router)
 	return router
-}
-
-func createStorageSafetyJob(t *testing.T, router http.Handler) string {
-	t.Helper()
-	response := serveStorageSafetyRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
-	if response.Code != http.StatusCreated {
-		t.Fatalf("create Import Job status = %d, body = %s", response.Code, response.Body.String())
-	}
-	var job struct {
-		ID string `json:"id"`
-	}
-	decodeStorageSafetyJSON(t, response, &job)
-	return job.ID
-}
-
-func serveStorageSafetyRequest(t *testing.T, router http.Handler, method, path string, body io.Reader, headers map[string]string) *httptest.ResponseRecorder {
-	t.Helper()
-	request := httptest.NewRequest(method, path, body)
-	for name, value := range headers {
-		request.Header.Set(name, value)
-	}
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	return response
-}
-
-func assertStorageSafetyError(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
-	t.Helper()
-	if response.Code != status {
-		t.Fatalf("status = %d, want %d, body = %s", response.Code, status, response.Body.String())
-	}
-	var failure struct {
-		Code string `json:"code"`
-	}
-	decodeStorageSafetyJSON(t, response, &failure)
-	if failure.Code != code {
-		t.Fatalf("error code = %q, want %q", failure.Code, code)
-	}
-}
-
-func decodeStorageSafetyJSON(t *testing.T, response *httptest.ResponseRecorder, target any) {
-	t.Helper()
-	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
 }
 
 func assertNoCanonicalAudio(t *testing.T, root string) {

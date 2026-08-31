@@ -7,5 +7,5 @@ import (
 )
 
 func availableStorageBytes(string) (int64, error) {
-	return 0, errors.New("Managed Storage capacity inspection is unsupported on this platform")
+	return 0, errors.New("managed storage capacity inspection is unsupported on this platform")
 }

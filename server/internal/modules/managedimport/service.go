@@ -92,8 +92,8 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 
 func (service *Service) preflightCommit(stagedBytes int64, inspection library.MediaInspection) error {
 	return service.storage.Preflight(StorageRequirement{
-		SelectedBytes: stagedBytes,
-		ArtworkBytes:  int64(len(inspection.AlbumArtwork.Data)),
+		SelectedBytes:  stagedBytes,
+		TemporaryBytes: int64(len(inspection.AlbumArtwork.Data)),
 	})
 }
 
