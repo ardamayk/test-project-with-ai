@@ -316,7 +316,7 @@ func (storage *Storage) openRoot() (*os.Root, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inspect Managed Storage root identity: %w", err)
 	}
-	root, err := os.OpenRoot(storage.root)
+	root, err := openManagedStorageRoot(storage.root)
 	if err != nil {
 		return nil, fmt.Errorf("open Managed Storage root: %w", err)
 	}
