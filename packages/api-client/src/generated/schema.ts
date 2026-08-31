@@ -211,6 +211,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports/{importId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Observe Managed Import validation progress and terminal result */
+        get: operations["getManagedImportJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/imports/{importId}/file": {
         parameters: {
             query?: never;
@@ -614,8 +631,16 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            status: "uploading";
+            status: "uploading" | "awaiting_confirmation" | "committed" | "failed";
             revision: number;
+            validationProgress: number;
+            /** @description Stable failure code when status is failed. */
+            errorCode?: string;
+            /**
+             * Format: uuid
+             * @description Created Track when status is committed.
+             */
+            trackId?: string;
         };
         ManagedImportPreview: {
             /** Format: uuid */
@@ -640,10 +665,14 @@ export interface components {
             durationMs: number;
             /** @enum {string} */
             format: "flac";
-            sampleRateHz?: number;
-            channelCount?: number;
-            bitDepth?: number;
-            bitrateKbps?: number;
+            /** @enum {string} */
+            container: "flac";
+            /** @enum {string} */
+            codec: "flac";
+            sampleRateHz: number;
+            channelCount: number;
+            bitDepth: number;
+            bitrateKbps: number;
             /** @enum {string} */
             artworkMediaType: "image/jpeg" | "image/png" | "image/webp";
         };
@@ -1357,6 +1386,29 @@ export interface operations {
                     "application/json": components["schemas"]["ManagedImportJob"];
                 };
             };
+        };
+    };
+    getManagedImportJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importId: components["parameters"]["importId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current Managed Import Job result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportJob"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     uploadManagedImportFile: {

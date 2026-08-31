@@ -29,6 +29,15 @@ func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Re
 	respond.JSON(writer, http.StatusCreated, job)
 }
 
+func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Request) {
+	job, err := handlers.service.GetJob(request.Context(), chi.URLParam(request, "importId"))
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, job)
+}
+
 func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "audio/flac" {

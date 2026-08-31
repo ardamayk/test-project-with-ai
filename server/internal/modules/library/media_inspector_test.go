@@ -2,6 +2,7 @@ package library_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,7 +14,11 @@ import (
 
 func TestMediaInspectorInspectsStrictFLACFixture(t *testing.T) {
 	inspector := library.NewMediaInspector()
-	inspection, err := inspector.Inspect(filepath.Join("testdata", "strict-import.flac"))
+	var progress []library.InspectionProgress
+	inspection, err := inspector.Inspect(context.Background(), filepath.Join("testdata", "strict-import.flac"), func(update library.InspectionProgress) error {
+		progress = append(progress, update)
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("inspect fixture: %v", err)
 	}
@@ -22,6 +27,22 @@ func TestMediaInspectorInspectsStrictFLACFixture(t *testing.T) {
 	assertTechnicalAudio(t, inspection.Audio)
 	if inspection.FileSHA256 != "7b64eef8dfac0c8b47b2601f9e7b6f748d8c110328c6d95a34c1d994988ac220" {
 		t.Fatalf("file SHA-256 = %q", inspection.FileSHA256)
+	}
+	assertCompletedInspectionProgress(t, progress)
+}
+
+func TestMediaInspectorDetectsFLACIndependentlyOfExtension(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "misleading.mp3")
+	if err := os.WriteFile(path, readInspectionFixture(t), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	inspection, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+	if err != nil {
+		t.Fatalf("inspect renamed fixture: %v", err)
+	}
+	if inspection.Audio.Container != "flac" || inspection.Audio.Codec != "flac" {
+		t.Fatalf("detected container/codec = %s/%s", inspection.Audio.Container, inspection.Audio.Codec)
 	}
 }
 
@@ -68,8 +89,8 @@ func assertAlbumArtwork(t *testing.T, artwork library.AlbumArtwork) {
 
 func assertTechnicalAudio(t *testing.T, audio library.TechnicalAudioProperties) {
 	t.Helper()
-	if audio.Format != "flac" || audio.Codec != "flac" {
-		t.Fatalf("format/codec = %s/%s", audio.Format, audio.Codec)
+	if audio.Format != "flac" || audio.Container != "flac" || audio.Codec != "flac" {
+		t.Fatalf("format/container/codec = %s/%s/%s", audio.Format, audio.Container, audio.Codec)
 	}
 	if audio.DurationMs != 250 || audio.SampleRateHz != 44100 {
 		t.Fatalf("duration/sample rate = %d/%d", audio.DurationMs, audio.SampleRateHz)
@@ -90,7 +111,7 @@ func TestMediaInspectorRejectsMissingRequiredMetadataWithStructuredCode(t *testi
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	_, err := library.NewMediaInspector().Inspect(path)
+	_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
 	var inspectionErr *library.InspectionError
 	if !errors.As(err, &inspectionErr) {
 		t.Fatalf("error = %T %v", err, err)
@@ -100,20 +121,111 @@ func TestMediaInspectorRejectsMissingRequiredMetadataWithStructuredCode(t *testi
 	}
 }
 
-func TestMediaInspectorRejectsTruncatedAudioWithStructuredCode(t *testing.T) {
+func TestMediaInspectorRejectsBeginningMiddleAndEndTruncation(t *testing.T) {
 	fixture := readInspectionFixture(t)
-	path := filepath.Join(t.TempDir(), "truncated.flac")
-	if err := os.WriteFile(path, fixture[:len(fixture)-8], 0o600); err != nil {
-		t.Fatalf("write fixture: %v", err)
+	tests := []struct {
+		name          string
+		fixture       []byte
+		expectedCode  library.InspectionErrorCode
+		expectedField string
+	}{
+		{name: "beginning", fixture: fixture[4:], expectedCode: library.INSPECTION_ERROR_UNSUPPORTED_FORMAT, expectedField: "container"},
+		{name: "middle", fixture: truncateMiddleAudio(t, fixture), expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
+		{name: "end", fixture: fixture[:len(fixture)-8], expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), test.name+"-truncated.flac")
+			if err := os.WriteFile(path, test.fixture, 0o600); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+			_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+			var inspectionErr *library.InspectionError
+			if !errors.As(err, &inspectionErr) {
+				t.Fatalf("error = %T %v", err, err)
+			}
+			if inspectionErr.Code != test.expectedCode || inspectionErr.Field != test.expectedField {
+				t.Fatalf("inspection error = %+v", inspectionErr)
+			}
+		})
+	}
+}
 
-	_, err := library.NewMediaInspector().Inspect(path)
+func TestMediaInspectorReportsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var lastProgress library.InspectionProgress
+
+	_, err := library.NewMediaInspector().Inspect(ctx, filepath.Join("testdata", "strict-import.flac"), func(update library.InspectionProgress) error {
+		lastProgress = update
+		if update.Percent > 0 {
+			cancel()
+		}
+		return nil
+	})
+
 	var inspectionErr *library.InspectionError
 	if !errors.As(err, &inspectionErr) {
 		t.Fatalf("error = %T %v", err, err)
 	}
-	if inspectionErr.Code != library.INSPECTION_ERROR_AUDIO_DECODE {
+	if inspectionErr.Code != library.INSPECTION_ERROR_VALIDATION_CANCELLED || inspectionErr.Field != "validation" {
 		t.Fatalf("inspection error = %+v", inspectionErr)
+	}
+	if lastProgress.Percent <= 0 || lastProgress.Percent >= 100 {
+		t.Fatalf("progress before cancellation = %+v", lastProgress)
+	}
+}
+
+func TestMediaInspectorReportsCancellationFromProgressObserver(t *testing.T) {
+	_, err := library.NewMediaInspector().Inspect(context.Background(), filepath.Join("testdata", "strict-import.flac"), func(library.InspectionProgress) error {
+		return context.Canceled
+	})
+
+	var inspectionErr *library.InspectionError
+	if !errors.As(err, &inspectionErr) || inspectionErr.Code != library.INSPECTION_ERROR_VALIDATION_CANCELLED {
+		t.Fatalf("inspection error = %T %v", err, err)
+	}
+}
+
+func assertCompletedInspectionProgress(t *testing.T, progress []library.InspectionProgress) {
+	t.Helper()
+	if len(progress) == 0 {
+		t.Fatal("inspection progress is empty")
+	}
+	previousPercent := 0
+	for _, update := range progress {
+		if update.Percent < previousPercent || update.Percent < 0 || update.Percent > 100 {
+			t.Fatalf("inspection progress is invalid: %+v", progress)
+		}
+		previousPercent = update.Percent
+	}
+	last := progress[len(progress)-1]
+	if last.Percent != 100 || last.DecodedSamples == 0 || last.DecodedSamples != last.TotalSamples {
+		t.Fatalf("completed inspection progress = %+v", last)
+	}
+}
+
+func truncateMiddleAudio(t *testing.T, fixture []byte) []byte {
+	t.Helper()
+	audioOffset := flacAudioOffset(t, fixture)
+	middle := audioOffset + (len(fixture)-audioOffset)/2
+	truncated := append([]byte(nil), fixture[:middle]...)
+	return append(truncated, fixture[middle+8:]...)
+}
+
+func flacAudioOffset(t *testing.T, fixture []byte) int {
+	t.Helper()
+	offset := 4
+	for {
+		if offset+4 > len(fixture) {
+			t.Fatal("FLAC fixture metadata header is truncated")
+		}
+		isLast := fixture[offset]&0x80 != 0
+		length := int(fixture[offset+1])<<16 | int(fixture[offset+2])<<8 | int(fixture[offset+3])
+		offset += 4 + length
+		if isLast {
+			return offset
+		}
 	}
 }
 

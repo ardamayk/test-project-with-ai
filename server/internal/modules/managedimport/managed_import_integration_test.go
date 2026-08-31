@@ -2,6 +2,7 @@ package managedimport_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +73,13 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 			TrackNo          int      `json:"trackNo"`
 			DiscNo           int      `json:"discNo"`
 			Format           string   `json:"format"`
+			Container        string   `json:"container"`
+			Codec            string   `json:"codec"`
+			DurationMs       int      `json:"durationMs"`
+			SampleRateHz     int      `json:"sampleRateHz"`
+			ChannelCount     int      `json:"channelCount"`
+			BitDepth         int      `json:"bitDepth"`
+			BitrateKbps      int      `json:"bitrateKbps"`
 			ArtworkMediaType string   `json:"artworkMediaType"`
 		} `json:"file"`
 	}
@@ -85,8 +93,11 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if strings.Join(preview.File.Artists, ",") != "Test Artist" || strings.Join(preview.File.AlbumArtists, ",") != "Test Album Artist" || strings.Join(preview.File.Genres, ",") != "Electronic" {
 		t.Fatalf("Import Preview relationships = %+v", preview.File)
 	}
-	if preview.File.Format != "flac" || preview.File.ArtworkMediaType != "image/png" {
+	if preview.File.Format != "flac" || preview.File.Container != "flac" || preview.File.Codec != "flac" || preview.File.ArtworkMediaType != "image/png" {
 		t.Fatalf("Import Preview media = %+v", preview.File)
+	}
+	if preview.File.DurationMs <= 0 || preview.File.SampleRateHz <= 0 || preview.File.ChannelCount <= 0 || preview.File.BitDepth <= 0 || preview.File.BitrateKbps <= 0 {
+		t.Fatalf("Import Preview technical audio properties = %+v", preview.File)
 	}
 
 	tracksBeforeConfirm := listTracks(t, router)
@@ -121,6 +132,9 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	committedTrack := tracksAfterConfirm.Items[0]
 	if committedTrack.AlbumTitle != "Strict Import Tests" || committedTrack.DiscNo != 1 || len(committedTrack.Artists) != 1 || committedTrack.Artists[0].Name != "Test Artist" || len(committedTrack.Genres) != 1 || committedTrack.Genres[0].Name != "Electronic" {
 		t.Fatalf("normalized Managed Track = %+v", committedTrack)
+	}
+	if committedTrack.Container != "flac" || committedTrack.Codec != "flac" || committedTrack.DurationMs <= 0 || committedTrack.SampleRateHz <= 0 || committedTrack.ChannelCount <= 0 || committedTrack.BitDepth <= 0 || committedTrack.BitrateBps <= 0 {
+		t.Fatalf("persisted Managed Track technical properties = %+v", committedTrack)
 	}
 	idempotentResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{"Content-Type": "application/json"})
 	if idempotentResponse.Code != http.StatusOK {
@@ -246,6 +260,89 @@ func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 	}
 }
 
+func TestManagedImportExposesValidationProgressAndCancellation(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	inspector := &cancellingInspector{reported: make(chan struct{})}
+	importModule := managedimport.NewModule(database, configuration, inspector)
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	jobResponse := serveRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+	var job struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, jobResponse, &job)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	uploadRequest := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(readStrictFLACFixture(t))).WithContext(ctx)
+	uploadRequest.Header.Set("Content-Type", "audio/flac")
+	uploadRequest.Header.Set("X-Import-Filename", "strict-import.flac")
+	uploadResponse := httptest.NewRecorder()
+	uploadDone := make(chan struct{})
+	go func() {
+		defer close(uploadDone)
+		router.ServeHTTP(uploadResponse, uploadRequest)
+	}()
+
+	select {
+	case <-inspector.reported:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation progress was not reported")
+	}
+	activeJob := getManagedImportJob(t, router, job.ID)
+	if activeJob.Status != "uploading" || activeJob.ValidationProgress != 40 || activeJob.ErrorCode != "" {
+		t.Fatalf("active Managed Import Job = %+v", activeJob)
+	}
+
+	cancel()
+	select {
+	case <-uploadDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation did not stop after cancellation")
+	}
+	if uploadResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("cancelled validation status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+	}
+	failedJob := getManagedImportJob(t, router, job.ID)
+	if failedJob.Status != "failed" || failedJob.ValidationProgress != 40 || failedJob.ErrorCode != "validation_cancelled" {
+		t.Fatalf("cancelled Managed Import Job = %+v", failedJob)
+	}
+}
+
+type managedImportJobResult struct {
+	Status             string `json:"status"`
+	ValidationProgress int    `json:"validationProgress"`
+	ErrorCode          string `json:"errorCode"`
+}
+
+func getManagedImportJob(t *testing.T, router http.Handler, jobID string) managedImportJobResult {
+	t.Helper()
+	response := serveRequest(t, router, http.MethodGet, "/api/v1/imports/"+jobID, nil, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("get Managed Import Job status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result managedImportJobResult
+	decodeJSON(t, response, &result)
+	return result
+}
+
+type cancellingInspector struct {
+	reported chan struct{}
+}
+
+func (inspector *cancellingInspector) Inspect(ctx context.Context, _ string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
+	if err := reportProgress(library.InspectionProgress{DecodedSamples: 40, TotalSamples: 100, Percent: 40}); err != nil {
+		return library.MediaInspection{}, err
+	}
+	close(inspector.reported)
+	<-ctx.Done()
+	return library.MediaInspection{}, &library.InspectionError{
+		Code:  library.INSPECTION_ERROR_VALIDATION_CANCELLED,
+		Field: "validation",
+		Err:   ctx.Err(),
+	}
+}
+
 func TestManagedImportReusesMatchingNormalizedAlbumArtwork(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	configuration := config.Config{ManagedStoragePath: t.TempDir()}
@@ -339,12 +436,19 @@ func (reader *stagingObservingReader) Read(buffer []byte) (int, error) {
 
 type trackList struct {
 	Items []struct {
-		ID         string `json:"id"`
-		Title      string `json:"title"`
-		AlbumID    string `json:"albumId"`
-		AlbumTitle string `json:"albumTitle"`
-		DiscNo     int    `json:"discNo"`
-		Artists    []struct {
+		ID           string `json:"id"`
+		Title        string `json:"title"`
+		AlbumID      string `json:"albumId"`
+		AlbumTitle   string `json:"albumTitle"`
+		DiscNo       int    `json:"discNo"`
+		DurationMs   int    `json:"durationMs"`
+		Container    string `json:"container"`
+		Codec        string `json:"codec"`
+		SampleRateHz int    `json:"sampleRateHz"`
+		ChannelCount int    `json:"channelCount"`
+		BitDepth     int    `json:"bitDepth"`
+		BitrateBps   int    `json:"bitrateBps"`
+		Artists      []struct {
 			Name string `json:"name"`
 		} `json:"artists"`
 		Genres []struct {

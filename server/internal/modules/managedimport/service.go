@@ -26,6 +26,14 @@ func (service *Service) CreateJob(ctx context.Context) (Job, error) {
 	return service.store.CreateJob(ctx)
 }
 
+func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
+	job, err := service.store.GetJob(ctx, jobID)
+	if err != nil {
+		return Job{}, err
+	}
+	return job.Job, nil
+}
+
 func (service *Service) Upload(ctx context.Context, jobID, originalFilename string, body io.Reader, contentLength int64) (Preview, error) {
 	job, err := service.store.GetJob(ctx, jobID)
 	if err != nil {
@@ -42,7 +50,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, err
 	}
-	inspection, err := service.inspector.Inspect(stagedPath)
+	inspection, err := service.inspector.Inspect(ctx, stagedPath, service.validationProgressReporter(ctx, jobID))
 	if err != nil {
 		return Preview{}, service.failUpload(ctx, jobID, stagedPath, validationError(err))
 	}
@@ -67,7 +75,7 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
-	inspection, err := service.inspector.Inspect(job.StagedFilePath)
+	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
 	if err != nil {
 		return Result{}, validationError(err)
 	}
@@ -104,7 +112,23 @@ func (service *Service) failUpload(ctx context.Context, jobID, stagedPath string
 	if errors.As(uploadErr, &validationErr) {
 		errorCode = validationErr.Code
 	}
-	return errors.Join(uploadErr, os.Remove(stagedPath), service.store.MarkFailed(ctx, jobID, errorCode))
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	return errors.Join(uploadErr, os.Remove(stagedPath), service.store.MarkFailed(cleanupCtx, jobID, errorCode))
+}
+
+func (service *Service) validationProgressReporter(ctx context.Context, jobID string) library.InspectionProgressReporter {
+	lastProgress := 0
+	return func(progress library.InspectionProgress) error {
+		if progress.Percent <= lastProgress {
+			return nil
+		}
+		if err := service.store.UpdateValidationProgress(ctx, jobID, progress.Percent); err != nil {
+			return err
+		}
+		lastProgress = progress.Percent
+		return nil
+	}
 }
 
 func safeOriginalFilename(value string) (string, error) {

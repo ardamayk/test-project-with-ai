@@ -311,6 +311,8 @@ export function createApiClient(config: ApiClientConfig) {
       }),
     createManagedImportJob: () =>
       request<ManagedImportJob>('/api/v1/imports', { method: 'POST' }),
+    getManagedImportJob: (importId: string) =>
+      request<ManagedImportJob>(`/api/v1/imports/${importId}`),
     uploadManagedImportFile: (
       importId: string,
       originalFilename: string,

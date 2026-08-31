@@ -271,6 +271,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ManagedImportJob"
+  /api/v1/imports/{importId}:
+    get:
+      tags: [imports]
+      operationId: getManagedImportJob
+      summary: Observe Managed Import validation progress and terminal result
+      parameters:
+        - $ref: "#/components/parameters/importId"
+      responses:
+        "200":
+          description: Current Managed Import Job result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/imports/{importId}/file:
     put:
       tags: [imports]
@@ -1137,17 +1153,28 @@ components:
           type: string
     ManagedImportJob:
       type: object
-      required: [id, status, revision]
+      required: [id, status, revision, validationProgress]
       properties:
         id:
           type: string
           format: uuid
         status:
           type: string
-          enum: [uploading]
+          enum: [uploading, awaiting_confirmation, committed, failed]
         revision:
           type: integer
           minimum: 1
+        validationProgress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        errorCode:
+          type: string
+          description: Stable failure code when status is failed.
+        trackId:
+          type: string
+          format: uuid
+          description: Created Track when status is committed.
     ManagedImportPreview:
       type: object
       required: [jobId, status, revision, file]
@@ -1176,6 +1203,12 @@ components:
         - discNo
         - durationMs
         - format
+        - container
+        - codec
+        - sampleRateHz
+        - channelCount
+        - bitDepth
+        - bitrateKbps
         - artworkMediaType
       properties:
         originalFilename:
@@ -1217,6 +1250,12 @@ components:
           type: integer
           minimum: 1
         format:
+          type: string
+          enum: [flac]
+        container:
+          type: string
+          enum: [flac]
+        codec:
           type: string
           enum: [flac]
         sampleRateHz:

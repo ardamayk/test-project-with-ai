@@ -17,11 +17,30 @@ import (
 )
 
 const (
-	LEGACY_MIGRATION_VERSION   = 13
-	STRICT_IDENTITY_VERSION    = 14
-	BACKFILL_MIGRATION_VERSION = 15
-	MANAGED_IMPORT_VERSION     = 16
+	LEGACY_MIGRATION_VERSION    = 13
+	STRICT_IDENTITY_VERSION     = 14
+	BACKFILL_MIGRATION_VERSION  = 15
+	MANAGED_IMPORT_VERSION      = 16
+	VALIDATION_PROGRESS_VERSION = 17
 )
+
+func TestManagedImportValidationProgressMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, MANAGED_IMPORT_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), VALIDATION_PROGRESS_VERSION); err != nil {
+		t.Fatalf("apply Managed Import validation progress migration: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO managed_import_jobs (id, status, revision) VALUES ('import-1', 'uploading', 1)`); err != nil {
+		t.Fatalf("create Managed Import Job: %v", err)
+	}
+	assertIntegerValue(t, sqlDB, `SELECT validation_progress FROM managed_import_jobs WHERE id = 'import-1'`, 0)
+	assertExecFails(t, sqlDB, `UPDATE managed_import_jobs SET validation_progress = 101 WHERE id = 'import-1'`, "CHECK constraint failed")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Managed Import validation progress migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, MANAGED_IMPORT_VERSION)
+	assertColumnMissing(t, sqlDB, "managed_import_jobs", "validation_progress")
+}
 
 func TestManagedImportMigrationAppliesAndRollsBack(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
@@ -606,7 +625,7 @@ func loadStrictImportArtwork(t *testing.T) (string, []byte) {
 		t.Fatal("resolve strict import fixture path")
 	}
 	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "modules", "library", "testdata", "strict-import.flac")
-	inspection, err := library.NewMediaInspector().Inspect(fixturePath)
+	inspection, err := library.NewMediaInspector().Inspect(context.Background(), fixturePath, nil)
 	if err != nil {
 		t.Fatalf("inspect strict import fixture: %v", err)
 	}

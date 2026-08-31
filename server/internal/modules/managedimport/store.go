@@ -42,11 +42,12 @@ func (store *Store) CreateJob(ctx context.Context) (Job, error) {
 
 func (store *Store) GetJob(ctx context.Context, jobID string) (importJob, error) {
 	var job importJob
-	var originalFilename, stagedFilePath, contentSHA256, trackID sql.NullString
+	var originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
 	err := store.database.QueryRowContext(ctx, `
-		SELECT id, status, revision, original_filename, staged_file_path, content_sha256, track_id
+		SELECT id, status, revision, validation_progress, original_filename, staged_file_path,
+			content_sha256, error_code, track_id
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &originalFilename, &stagedFilePath, &contentSHA256, &trackID)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
@@ -56,15 +57,42 @@ func (store *Store) GetJob(ctx context.Context, jobID string) (importJob, error)
 	job.OriginalFilename = originalFilename.String
 	job.StagedFilePath = stagedFilePath.String
 	job.ContentSHA256 = contentSHA256.String
+	job.ErrorCode = errorCode.String
 	job.TrackID = trackID.String
 	return job, nil
+}
+
+func (store *Store) UpdateValidationProgress(ctx context.Context, jobID string, progress int) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_jobs
+		SET validation_progress = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ? AND validation_progress < ?`,
+		progress, jobID, STATUS_UPLOADING, progress,
+	)
+	if err != nil {
+		return fmt.Errorf("update Managed Import validation progress: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read Managed Import validation progress result: %w", err)
+	}
+	if affected == 0 {
+		job, getErr := store.GetJob(ctx, jobID)
+		if getErr != nil {
+			return getErr
+		}
+		if job.Status != STATUS_UPLOADING {
+			return ErrInvalidState
+		}
+	}
+	return nil
 }
 
 func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256 string) (importJob, error) {
 	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
-			content_sha256 = ?, error_code = NULL, updated_at = CURRENT_TIMESTAMP
+			content_sha256 = ?, error_code = NULL, validation_progress = 100, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ?`,
 		STATUS_AWAITING_CONFIRMATION, originalFilename, stagedFilePath, contentSHA256, jobID, STATUS_UPLOADING,
 	)
@@ -78,11 +106,14 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 }
 
 func (store *Store) MarkFailed(ctx context.Context, jobID, errorCode string) error {
-	_, err := store.database.ExecContext(ctx, `
+	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, error_code = ?, staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ?`, STATUS_FAILED, errorCode, jobID, STATUS_UPLOADING)
 	if err != nil {
+		return fmt.Errorf("mark Managed Import failed: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
 	return nil
@@ -232,7 +263,7 @@ func insertTrack(ctx context.Context, transaction *sql.Tx, data commitData) erro
 		metadata.TrackPosition.Number, audio.DurationMs, audio.Format, fileInfo.Size(), data.Placement.AudioPath, fileInfo.ModTime().Unix(),
 		metadata.Genres[0], audio.SampleRateHz, audio.BitDepth, metadata.DiscPosition.Number,
 		nullablePositive(metadata.TrackPosition.Total), nullablePositive(metadata.DiscPosition.Total), audio.ChannelCount,
-		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Format, trackIdentityKey(metadata),
+		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Container, trackIdentityKey(metadata),
 	)
 	if err != nil {
 		return fmt.Errorf("create Managed Track: %w", err)
