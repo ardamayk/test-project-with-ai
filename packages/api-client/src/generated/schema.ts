@@ -609,6 +609,10 @@ export interface components {
             error: string;
             code: string;
             message: string;
+            /** @description Machine-readable field associated with a structured validation failure. */
+            field?: string;
+            /** @description Actionable reason for a structured validation failure. */
+            reason?: string;
         };
         ManagedImportJob: {
             /** Format: uuid */
