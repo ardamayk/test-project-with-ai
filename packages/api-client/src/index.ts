@@ -67,6 +67,10 @@ export type DeleteResult = Schemas['DeleteResult']
 export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track }
 export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] }
 export type ErrorResponse = Schemas['ErrorResponse']
+export type ManagedImportJob = Schemas['ManagedImportJob']
+export type ManagedImportPreview = Schemas['ManagedImportPreview']
+export type ManagedImportPreviewFile = Schemas['ManagedImportPreviewFile']
+export type ManagedImportResult = Schemas['ManagedImportResult']
 export type QueueConflictResponse = Omit<Schemas['QueueConflictResponse'], 'queue'> & {
   queue: Queue
 }
@@ -238,7 +242,7 @@ export function createApiClient(config: ApiClientConfig) {
   ): Promise<T> {
     const headers = new Headers(init?.headers)
     headers.set('Accept', 'application/json')
-    if (init?.body) {
+    if (init?.body && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json')
     }
     const token = getToken?.()
@@ -304,6 +308,26 @@ export function createApiClient(config: ApiClientConfig) {
     deleteTrack: (trackId: string) =>
       request<DeleteResult>(`/api/v1/library/tracks/${trackId}`, {
         method: 'DELETE',
+      }),
+    createManagedImportJob: () =>
+      request<ManagedImportJob>('/api/v1/imports', { method: 'POST' }),
+    uploadManagedImportFile: (
+      importId: string,
+      originalFilename: string,
+      file: Blob,
+    ) =>
+      request<ManagedImportPreview>(`/api/v1/imports/${importId}/file`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'audio/flac',
+          'X-Import-Filename': originalFilename,
+        },
+        body: file,
+      }),
+    confirmManagedImport: (importId: string, revision: number) =>
+      request<ManagedImportResult>(`/api/v1/imports/${importId}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ revision }),
       }),
 
     getPlaybackQueue: () =>

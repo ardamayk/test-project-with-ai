@@ -2,6 +2,16 @@ package config
 
 import "testing"
 
+func TestLoadConfiguresManagedStoragePath(t *testing.T) {
+	t.Setenv("MANAGED_STORAGE_PATH", "/srv/music-managed")
+
+	configuration := Load()
+
+	if configuration.ManagedStoragePath != "/srv/music-managed" {
+		t.Fatalf("ManagedStoragePath = %q", configuration.ManagedStoragePath)
+	}
+}
+
 func TestValidateServerAddressRequiresLoopback(t *testing.T) {
 	tests := []struct {
 		name    string

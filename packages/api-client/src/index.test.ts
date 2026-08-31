@@ -47,6 +47,70 @@ describe('Track ReplayGain Metadata', () => {
 })
 
 describe('createApiClient', () => {
+  it('streams one Managed Import file and confirms its preview revision', async () => {
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json(
+          { id: 'import-1', status: 'uploading', revision: 1 },
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          jobId: 'import-1',
+          status: 'awaiting_confirmation',
+          revision: 2,
+          file: {
+            originalFilename: 'fixture.flac',
+            title: 'Inspection Fixture',
+            artists: ['Test Artist'],
+            albumArtists: ['Test Album Artist'],
+            album: 'Strict Import Tests',
+            genres: ['Electronic'],
+            trackNo: 3,
+            discNo: 1,
+            durationMs: 250,
+            format: 'flac',
+            artworkMediaType: 'image/png',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          jobId: 'import-1',
+          status: 'committed',
+          revision: 3,
+          trackId: 'track-1',
+        }),
+      )
+    const client = createApiClient({
+      baseUrl: 'http://music.test',
+      transport,
+    })
+    const file = new Blob(['flac bytes'], { type: 'audio/flac' })
+
+    const job = await client.createManagedImportJob()
+    const preview = await client.uploadManagedImportFile(
+      job.id,
+      'fixture.flac',
+      file,
+    )
+    const result = await client.confirmManagedImport(job.id, preview.revision)
+
+    expect(result.trackId).toBe('track-1')
+    expect(transport).toHaveBeenNthCalledWith(
+      2,
+      'http://music.test/api/v1/imports/import-1/file',
+      expect.objectContaining({ method: 'PUT', body: file }),
+    )
+    const uploadHeaders = new Headers(transport.mock.calls[1]?.[1]?.headers)
+    expect(uploadHeaders.get('Content-Type')).toBe('audio/flac')
+    expect(uploadHeaders.get('X-Import-Filename')).toBe('fixture.flac')
+    expect(JSON.parse(String(transport.mock.calls[2]?.[1]?.body))).toEqual({
+      revision: 2,
+    })
+  })
+
   it('normalizes legacy library responses at the client boundary', async () => {
     const transport = vi.fn<typeof fetch>(async (input) => {
       if (input.toString().includes('/library/albums/')) {
@@ -424,5 +488,5 @@ function serverHealthResponse(capabilities: string[]) {
   return new Response(
     JSON.stringify({ status: 'ok', version: '0.1.0', capabilities }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
-  )
+	)
 }
