@@ -1,6 +1,6 @@
 import type { Track } from "@repo/api-client";
-import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
 	COLLECTION_PAGE_CONTAINER_CLASS,
@@ -8,9 +8,11 @@ import {
 } from "#/components/collection-grid-layout";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
+import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
 import { filterTracksByText } from "#/lib/filter-tracks";
+import { ImportMusicDialog } from "./-import-music-dialog";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
 	const [debounced, setDebounced] = useState(value);
@@ -26,6 +28,8 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 export function TracksPage() {
 	const [search, setSearch] = useState("");
 	const [lastTracks, setLastTracks] = useState<Track[]>([]);
+	const [isImportOpen, setIsImportOpen] = useState(false);
+	const queryClient = useQueryClient();
 	const debouncedSearch = useDebouncedValue(search.trim(), 250);
 	const tracks = useQuery({
 		queryKey: ["library", "tracks", debouncedSearch],
@@ -45,6 +49,10 @@ export function TracksPage() {
 		}
 	}, [tracks.data?.items]);
 
+	async function refreshTracks() {
+		await queryClient.invalidateQueries({ queryKey: ["library", "tracks"] });
+	}
+
 	return (
 		<PageShell
 			testId="tracks-page-shell"
@@ -55,15 +63,26 @@ export function TracksPage() {
 					description="All tracks in your library"
 					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 					actions={
-						<div className="relative w-full sm:max-w-md">
-							<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-caption" />
-							<Input
-								className="h-11 rounded-xl bg-[var(--player)] pl-10 text-sm"
-								placeholder="Search tracks…"
-								value={search}
-								onChange={(e) => setSearch(e.target.value)}
-							/>
-						</div>
+						<>
+							<div className="relative w-full sm:max-w-md">
+								<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-caption" />
+								<Input
+									className="h-11 rounded-xl bg-[var(--player)] pl-10 text-sm"
+									placeholder="Search tracks…"
+									value={search}
+									onChange={(e) => setSearch(e.target.value)}
+								/>
+							</div>
+							<Button
+								type="button"
+								aria-label="Import Music"
+								size="icon"
+								className="size-10 rounded-xl"
+								onClick={() => setIsImportOpen(true)}
+							>
+								<Plus className="size-5" />
+							</Button>
+						</>
 					}
 				/>
 			}
@@ -87,6 +106,11 @@ export function TracksPage() {
 					/>
 				)}
 			</CollectionPageContainer>
+			<ImportMusicDialog
+				isOpen={isImportOpen}
+				onOpenChange={setIsImportOpen}
+				onCommitted={refreshTracks}
+			/>
 		</PageShell>
 	);
 }

@@ -896,7 +896,12 @@ func (s *Store) listTrackAlbumIDs(ctx context.Context, trackIDs []string) ([]str
 }
 
 func (s *Store) listMissingTrackIDs(ctx context.Context, paths map[string]struct{}) (trackIDs []string, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, file_path FROM tracks WHERE missing_at IS NULL`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT tracks.id, COALESCE(track_sources.file_path, tracks.file_path)
+		FROM tracks
+		LEFT JOIN track_sources ON track_sources.track_id = tracks.id
+		WHERE tracks.missing_at IS NULL
+			AND COALESCE(track_sources.source_kind, 'legacy') = 'legacy'`)
 	if err != nil {
 		return nil, err
 	}

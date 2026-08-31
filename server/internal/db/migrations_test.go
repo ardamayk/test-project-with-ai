@@ -20,7 +20,27 @@ const (
 	LEGACY_MIGRATION_VERSION   = 13
 	STRICT_IDENTITY_VERSION    = 14
 	BACKFILL_MIGRATION_VERSION = 15
+	MANAGED_IMPORT_VERSION     = 16
 )
+
+func TestManagedImportMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), MANAGED_IMPORT_VERSION); err != nil {
+		t.Fatalf("apply Managed Import migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, MANAGED_IMPORT_VERSION)
+	if _, err := sqlDB.Exec(`INSERT INTO managed_import_jobs (id, status, revision) VALUES ('import-1', 'uploading', 1)`); err != nil {
+		t.Fatalf("create Managed Import Job: %v", err)
+	}
+	assertRowCount(t, sqlDB, "managed_import_jobs", 1)
+	assertExecFails(t, sqlDB, `UPDATE managed_import_jobs SET status = 'awaiting_confirmation' WHERE id = 'import-1'`, "CHECK constraint failed")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Managed Import migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, BACKFILL_MIGRATION_VERSION)
+	assertTableMissing(t, sqlDB, "managed_import_jobs")
+}
 
 func TestStrictTrackIdentityMigrationAppliesAndRollsBackOnEmptyDatabase(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)

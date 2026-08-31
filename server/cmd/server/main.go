@@ -17,6 +17,7 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/modules"
 	docsmodule "github.com/ardam/navidrome-replacement/server/internal/modules/docs"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/managedimport"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playlists"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/preferences"
@@ -63,6 +64,7 @@ func main() {
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB, cfg)
+	importModule := managedimport.NewModule(sqlDB, cfg, library.NewMediaInspector())
 	trackAccess := libModule.TrackAccess()
 	playModule := playback.NewModule(sqlDB, trackAccess)
 	playlistModule := playlists.NewModule(sqlDB, trackAccess)
@@ -70,7 +72,7 @@ func main() {
 	docsModule := docsmodule.NewModule()
 	apiHandler := api.NewHandler(cfg)
 
-	registry := modules.NewRegistry(libModule, playModule, playlistModule, radioModule, prefModule, docsModule)
+	registry := modules.NewRegistry(libModule, importModule, playModule, playlistModule, radioModule, prefModule, docsModule)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -80,7 +82,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -132,6 +134,9 @@ func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 
 func isStreamPath(path string) bool {
 	if path == "/api/v1/playback/queue/events" {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/imports/") && strings.HasSuffix(path, "/file") {
 		return true
 	}
 	return strings.HasSuffix(path, "/stream") &&

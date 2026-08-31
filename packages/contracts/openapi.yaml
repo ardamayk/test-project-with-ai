@@ -11,6 +11,7 @@ tags:
   - name: user
   - name: preferences
   - name: library
+  - name: imports
   - name: playback
   - name: playlists
   - name: radio
@@ -258,6 +259,89 @@ paths:
                 $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/imports:
+    post:
+      tags: [imports]
+      operationId: createManagedImportJob
+      summary: Create one server-owned Managed Import Job
+      responses:
+        "201":
+          description: Managed Import Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportJob"
+  /api/v1/imports/{importId}/file:
+    put:
+      tags: [imports]
+      operationId: uploadManagedImportFile
+      summary: Stream one FLAC into a Managed Import Job and produce an Import Preview
+      parameters:
+        - $ref: "#/components/parameters/importId"
+        - name: X-Import-Filename
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Display-only client filename; never used as a storage path.
+      requestBody:
+        required: true
+        content:
+          audio/flac:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Import Preview ready for confirmation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          description: File exceeds the Managed Import upload limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: File fails the Strict Import Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/imports/{importId}/confirm:
+    post:
+      tags: [imports]
+      operationId: confirmManagedImport
+      summary: Confirm an Import Preview and commit its Managed Track
+      parameters:
+        - $ref: "#/components/parameters/importId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagedImportConfirmation"
+      responses:
+        "200":
+          description: Managed Track committed, or the idempotent prior result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/playback/queue:
     get:
       tags: [playback]
@@ -918,6 +1002,13 @@ components:
       schema:
         type: string
         format: uuid
+    importId:
+      name: importId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     queueItemId:
       name: itemId
       in: path
@@ -955,7 +1046,8 @@ components:
             type: string
           description: >-
             Named server behaviors supported by this release. Queue event streaming
-            is advertised as playback.queue-events.v1.
+            is advertised as playback.queue-events.v1 and the first strict FLAC
+            Managed Import tracer bullet as managed-import.v1.
     User:
       type: object
       required: [id, username]
@@ -1043,6 +1135,128 @@ components:
           type: string
         message:
           type: string
+    ManagedImportJob:
+      type: object
+      required: [id, status, revision]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [uploading]
+        revision:
+          type: integer
+          minimum: 1
+    ManagedImportPreview:
+      type: object
+      required: [jobId, status, revision, file]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [awaiting_confirmation]
+        revision:
+          type: integer
+          minimum: 1
+        file:
+          $ref: "#/components/schemas/ManagedImportPreviewFile"
+    ManagedImportPreviewFile:
+      type: object
+      required:
+        - originalFilename
+        - title
+        - artists
+        - albumArtists
+        - album
+        - genres
+        - trackNo
+        - discNo
+        - durationMs
+        - format
+        - artworkMediaType
+      properties:
+        originalFilename:
+          type: string
+        title:
+          type: string
+        artists:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        albumArtists:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        album:
+          type: string
+        genres:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        trackNo:
+          type: integer
+          minimum: 1
+        trackTotal:
+          type: integer
+          minimum: 1
+        discNo:
+          type: integer
+          minimum: 1
+        discTotal:
+          type: integer
+          minimum: 1
+        year:
+          type: integer
+        durationMs:
+          type: integer
+          minimum: 1
+        format:
+          type: string
+          enum: [flac]
+        sampleRateHz:
+          type: integer
+          minimum: 1
+        channelCount:
+          type: integer
+          minimum: 1
+        bitDepth:
+          type: integer
+          minimum: 1
+        bitrateKbps:
+          type: integer
+          minimum: 1
+        artworkMediaType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+    ManagedImportConfirmation:
+      type: object
+      required: [revision]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+    ManagedImportResult:
+      type: object
+      required: [jobId, status, revision, trackId]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [committed]
+        revision:
+          type: integer
+          minimum: 1
+        trackId:
+          type: string
+          format: uuid
     Artist:
       type: object
       required: [id, name]

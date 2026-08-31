@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
 	getPlaylist: vi.fn(),
 	addPlaylistTrack: vi.fn(),
 	removePlaylistTrack: vi.fn(),
+	createManagedImportJob: vi.fn(),
+	uploadManagedImportFile: vi.fn(),
+	confirmManagedImport: vi.fn(),
 }));
 
 const libraryTracks = [
@@ -45,6 +48,9 @@ vi.mock("#/lib/api", () => ({
 		getPlaylist: mocks.getPlaylist,
 		addPlaylistTrack: mocks.addPlaylistTrack,
 		removePlaylistTrack: mocks.removePlaylistTrack,
+		createManagedImportJob: mocks.createManagedImportJob,
+		uploadManagedImportFile: mocks.uploadManagedImportFile,
+		confirmManagedImport: mocks.confirmManagedImport,
 	},
 }));
 
@@ -83,6 +89,9 @@ function renderWithQuery(ui: React.ReactElement) {
 describe("tracks route", () => {
 	beforeEach(() => {
 		mocks.listTracks.mockReset();
+		mocks.createManagedImportJob.mockReset();
+		mocks.uploadManagedImportFile.mockReset();
+		mocks.confirmManagedImport.mockReset();
 		mocks.listTracks.mockResolvedValue({
 			items: libraryTracks,
 		});
@@ -92,6 +101,35 @@ describe("tracks route", () => {
 		mocks.getPlaylist.mockResolvedValue({ tracks: [] });
 		mocks.addPlaylistTrack.mockResolvedValue({ tracks: [] });
 		mocks.removePlaylistTrack.mockResolvedValue({ tracks: [] });
+		mocks.createManagedImportJob.mockResolvedValue({
+			id: "import-1",
+			status: "uploading",
+			revision: 1,
+		});
+		mocks.uploadManagedImportFile.mockResolvedValue({
+			jobId: "import-1",
+			status: "awaiting_confirmation",
+			revision: 2,
+			file: {
+				originalFilename: "strict-import.flac",
+				title: "Inspection Fixture",
+				artists: ["Test Artist"],
+				albumArtists: ["Test Album Artist"],
+				album: "Strict Import Tests",
+				genres: ["Electronic"],
+				trackNo: 3,
+				discNo: 1,
+				durationMs: 250,
+				format: "flac",
+				artworkMediaType: "image/png",
+			},
+		});
+		mocks.confirmManagedImport.mockResolvedValue({
+			jobId: "import-1",
+			status: "committed",
+			revision: 3,
+			trackId: "imported-track",
+		});
 	});
 
 	afterEach(() => {
@@ -193,5 +231,52 @@ describe("tracks route", () => {
 		expect(screen.getByText("Anti-Hero")).toBeTruthy();
 		expect(screen.queryByText("Bad Blood")).toBeNull();
 		expect(screen.queryByText("Failed to load tracks")).toBeNull();
+	});
+
+	it("imports one FLAC through an accessible preview and confirmation modal", async () => {
+		mocks.listTracks
+			.mockResolvedValueOnce({ items: libraryTracks })
+			.mockResolvedValue({
+				items: [
+					...libraryTracks,
+					{
+						id: "imported-track",
+						title: "Inspection Fixture",
+						artistName: "Test Artist",
+						albumId: "imported-album",
+						durationMs: 250,
+						format: "flac",
+					},
+				],
+			});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
+		const file = new File(["flac bytes"], "strict-import.flac", {
+			type: "audio/flac",
+		});
+		fireEvent.change(screen.getByLabelText("FLAC file"), {
+			target: { files: [file] },
+		});
+
+		await screen.findByText("Inspection Fixture");
+		expect(screen.getByText("Test Artist")).toBeTruthy();
+		expect(screen.getByText("Strict Import Tests")).toBeTruthy();
+		expect(mocks.createManagedImportJob).toHaveBeenCalledOnce();
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledWith(
+			"import-1",
+			"strict-import.flac",
+			file,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+
+		await screen.findByText("Inspection Fixture");
+		expect(mocks.confirmManagedImport).toHaveBeenCalledWith("import-1", 2);
+		await vi.waitFor(() => expect(mocks.listTracks).toHaveBeenCalledTimes(2));
+		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 });

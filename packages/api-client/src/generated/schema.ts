@@ -194,6 +194,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create one server-owned Managed Import Job */
+        post: operations["createManagedImportJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/{importId}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Stream one FLAC into a Managed Import Job and produce an Import Preview */
+        put: operations["uploadManagedImportFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/{importId}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm an Import Preview and commit its Managed Track */
+        post: operations["confirmManagedImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playback/queue": {
         parameters: {
             query?: never;
@@ -517,7 +568,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1. */
+            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. */
             capabilities: string[];
         };
         User: {
@@ -558,6 +609,55 @@ export interface components {
             error: string;
             code: string;
             message: string;
+        };
+        ManagedImportJob: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "uploading";
+            revision: number;
+        };
+        ManagedImportPreview: {
+            /** Format: uuid */
+            jobId: string;
+            /** @enum {string} */
+            status: "awaiting_confirmation";
+            revision: number;
+            file: components["schemas"]["ManagedImportPreviewFile"];
+        };
+        ManagedImportPreviewFile: {
+            originalFilename: string;
+            title: string;
+            artists: string[];
+            albumArtists: string[];
+            album: string;
+            genres: string[];
+            trackNo: number;
+            trackTotal?: number;
+            discNo: number;
+            discTotal?: number;
+            year?: number;
+            durationMs: number;
+            /** @enum {string} */
+            format: "flac";
+            sampleRateHz?: number;
+            channelCount?: number;
+            bitDepth?: number;
+            bitrateKbps?: number;
+            /** @enum {string} */
+            artworkMediaType: "image/jpeg" | "image/png" | "image/webp";
+        };
+        ManagedImportConfirmation: {
+            revision: number;
+        };
+        ManagedImportResult: {
+            /** Format: uuid */
+            jobId: string;
+            /** @enum {string} */
+            status: "committed";
+            revision: number;
+            /** Format: uuid */
+            trackId: string;
         };
         Artist: {
             id: string;
@@ -906,6 +1006,7 @@ export interface components {
         offset: number;
         albumId: string;
         trackId: string;
+        importId: string;
         queueItemId: string;
         playlistId: string;
         stationId: string;
@@ -1236,6 +1337,105 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    createManagedImportJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Managed Import Job created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportJob"];
+                };
+            };
+        };
+    };
+    uploadManagedImportFile: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Display-only client filename; never used as a storage path. */
+                "X-Import-Filename": string;
+            };
+            path: {
+                importId: components["parameters"]["importId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "audio/flac": string;
+            };
+        };
+        responses: {
+            /** @description Import Preview ready for confirmation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportPreview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description File exceeds the Managed Import upload limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description File fails the Strict Import Profile */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    confirmManagedImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importId: components["parameters"]["importId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagedImportConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Managed Track committed, or the idempotent prior result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getPlaybackQueue: {

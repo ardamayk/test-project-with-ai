@@ -13,6 +13,7 @@ type Config struct {
 	CORSOrigins         []string
 	Version             string
 	MusicPaths          []string
+	ManagedStoragePath  string
 	RadioBrowserBaseURL string
 }
 
@@ -23,6 +24,10 @@ func Load() Config {
 		CORSOrigins:  []string{"http://localhost:3000", "http://127.0.0.1:3000"},
 		Version:      getEnv("APP_VERSION", "0.1.0"),
 		MusicPaths:   parseMusicPaths(getEnv("MUSIC_PATHS", "./music")),
+		ManagedStoragePath: getEnv(
+			"MANAGED_STORAGE_PATH",
+			"./data/managed",
+		),
 		RadioBrowserBaseURL: getEnv(
 			"RADIO_BROWSER_BASE_URL",
 			"https://de1.api.radio-browser.info",
