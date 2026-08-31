@@ -124,16 +124,20 @@ func (store *Store) Commit(ctx context.Context, data commitData) (result Result,
 	if err != nil {
 		return Result{}, err
 	}
-	if err := upsertAlbum(ctx, transaction, data, artistIDs); err != nil {
+	err = upsertAlbum(ctx, transaction, data, artistIDs)
+	if err != nil {
 		return Result{}, err
 	}
-	if err := insertTrack(ctx, transaction, data); err != nil {
+	err = insertTrack(ctx, transaction, data)
+	if err != nil {
 		return Result{}, err
 	}
-	if err := insertRelationships(ctx, transaction, data, artistIDs); err != nil {
+	err = insertRelationships(ctx, transaction, data, artistIDs)
+	if err != nil {
 		return Result{}, err
 	}
-	if err := insertArtwork(ctx, transaction, data); err != nil {
+	err = insertArtwork(ctx, transaction, data)
+	if err != nil {
 		return Result{}, err
 	}
 	result, err = markCommitted(ctx, transaction, data.Job, data.Identity.TrackID)

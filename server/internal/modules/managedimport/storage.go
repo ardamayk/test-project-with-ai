@@ -93,7 +93,7 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 			return placedFiles{}, fmt.Errorf("verify existing Album Artwork: %w", err)
 		}
 	} else if _, err := os.Stat(placement.ArtworkPath); err == nil {
-		return placedFiles{}, fmt.Errorf("Canonical Album Artwork already exists at %q", placement.ArtworkPath)
+		return placedFiles{}, fmt.Errorf("canonical Album Artwork already exists at %q", placement.ArtworkPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return placedFiles{}, fmt.Errorf("inspect Canonical Album Artwork path: %w", err)
 	}

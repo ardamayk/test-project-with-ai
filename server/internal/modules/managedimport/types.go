@@ -21,11 +21,11 @@ const (
 type ImportStatus string
 
 var (
-	ErrNotFound         = errors.New("Managed Import Job not found")
-	ErrInvalidState     = errors.New("Managed Import Job is not awaiting this operation")
-	ErrRevisionConflict = errors.New("Managed Import revision conflict")
-	ErrUploadTooLarge   = errors.New("Managed Import file exceeds upload limit")
-	ErrInvalidUpload    = errors.New("Managed Import upload is invalid")
+	ErrNotFound         = errors.New("managed import job not found")
+	ErrInvalidState     = errors.New("managed import job is not awaiting this operation")
+	ErrRevisionConflict = errors.New("managed import revision conflict")
+	ErrUploadTooLarge   = errors.New("managed import file exceeds upload limit")
+	ErrInvalidUpload    = errors.New("managed import upload is invalid")
 )
 
 type Job struct {
