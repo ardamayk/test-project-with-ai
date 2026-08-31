@@ -212,21 +212,22 @@ func (storage *Storage) RemoveStaged(path string) (returnErr error) {
 }
 
 func (storage *Storage) Place(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placement placedFiles, returnErr error) {
-	root, err := storage.openRoot()
-	if err != nil {
-		return placedFiles{}, err
+	root, openErr := storage.openRoot()
+	if openErr != nil {
+		return placedFiles{}, openErr
 	}
 	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
-	placement, err = storage.planPlacement(stagedPath, inspection, identity)
-	if err != nil {
-		return placedFiles{}, err
+	plannedPlacement, planErr := storage.planPlacement(stagedPath, inspection, identity)
+	if planErr != nil {
+		return placedFiles{}, planErr
 	}
+	placement = plannedPlacement
 	if err := ensureDirectory(root, storage.root, filepath.Dir(placement.audioRelative), 0o750); err != nil {
 		return placedFiles{}, err
 	}
-	shouldCreateArtwork, err := storage.prepareArtwork(root, &placement, inspection, identity)
-	if err != nil {
-		return placedFiles{}, err
+	shouldCreateArtwork, prepareErr := storage.prepareArtwork(root, &placement, inspection, identity)
+	if prepareErr != nil {
+		return placedFiles{}, prepareErr
 	}
 	if err := root.Rename(placement.stagedRelative, placement.audioRelative); err != nil {
 		return placedFiles{}, fmt.Errorf("place Managed Track at Canonical Library Path: %w", err)
@@ -312,8 +313,8 @@ func (storage *Storage) prepareArtwork(root *os.Root, placement *placedFiles, in
 		return false, nil
 	}
 	if _, err := root.Stat(placement.artworkRelative); err == nil {
-		if err := verifyMatchingArtwork(root, placement.artworkRelative, inspection.AlbumArtwork.SHA256); err != nil {
-			return false, err
+		if verifyErr := verifyMatchingArtwork(root, placement.artworkRelative, inspection.AlbumArtwork.SHA256); verifyErr != nil {
+			return false, verifyErr
 		}
 		return false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {

@@ -200,9 +200,9 @@ func TestManagedImportRollbackRemovesUncommittedCanonicalArtwork(t *testing.T) {
 
 func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testing.T) {
 	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
-	root, err := storage.openRoot()
-	if err != nil {
-		t.Fatalf("open Managed Storage root: %v", err)
+	root, openErr := storage.openRoot()
+	if openErr != nil {
+		t.Fatalf("open Managed Storage root: %v", openErr)
 	}
 	t.Cleanup(func() {
 		if err := root.Close(); err != nil {
@@ -226,8 +226,8 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 		go func() {
 			<-start
 			hash := sha256.Sum256(artwork)
-			created, err := writeRootedArtwork(root, storage.root, targetPath, artwork, fmt.Sprintf("%x", hash))
-			results <- writeResult{created: created, err: err}
+			created, writeErr := writeRootedArtwork(root, storage.root, targetPath, artwork, fmt.Sprintf("%x", hash))
+			results <- writeResult{created: created, err: writeErr}
 		}()
 	}
 	close(start)
