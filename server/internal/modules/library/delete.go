@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	internaldb "github.com/ardam/navidrome-replacement/server/internal/db"
 )
 
 type DeleteResult struct {
@@ -13,6 +15,32 @@ type DeleteResult struct {
 }
 
 func (s *Store) DeleteTrack(ctx context.Context, trackID string, removeFile func(path string) error) (DeleteResult, error) {
+	return runStoreMutation(ctx, s, "legacy Track deletion", func(store *Store, tx *sql.Tx) (DeleteResult, error) {
+		var albumID string
+		if err := store.db.QueryRowContext(ctx, `SELECT album_id FROM tracks WHERE id = ?`, trackID).Scan(&albumID); err != nil {
+			if err == sql.ErrNoRows {
+				return DeleteResult{}, ErrNotFound
+			}
+			return DeleteResult{}, fmt.Errorf("lookup Track Album: %w", err)
+		}
+		result, err := store.deleteTrack(ctx, trackID, removeFile)
+		if err != nil {
+			return DeleteResult{}, err
+		}
+		if err := store.recomputeAlbumGenres(ctx, albumID); err != nil && err != sql.ErrNoRows {
+			return DeleteResult{}, fmt.Errorf("recompute deleted Track Album Genres: %w", err)
+		}
+		if err := internaldb.SynchronizeLegacyAlbum(ctx, tx, albumID); err != nil {
+			return DeleteResult{}, err
+		}
+		if err := internaldb.FinalizeLegacyRemoval(ctx, tx); err != nil {
+			return DeleteResult{}, err
+		}
+		return result, nil
+	})
+}
+
+func (s *Store) deleteTrack(ctx context.Context, trackID string, removeFile func(path string) error) (DeleteResult, error) {
 	var filePath string
 	var albumID string
 	err := s.db.QueryRowContext(ctx,
@@ -43,6 +71,19 @@ func (s *Store) DeleteTrack(ctx context.Context, trackID string, removeFile func
 }
 
 func (s *Store) DeleteAlbum(ctx context.Context, albumID string, removeFile func(path string) error) (DeleteResult, error) {
+	return runStoreMutation(ctx, s, "legacy Album deletion", func(store *Store, tx *sql.Tx) (DeleteResult, error) {
+		result, err := store.deleteAlbum(ctx, albumID, removeFile)
+		if err != nil {
+			return DeleteResult{}, err
+		}
+		if err := internaldb.FinalizeLegacyRemoval(ctx, tx); err != nil {
+			return DeleteResult{}, err
+		}
+		return result, nil
+	})
+}
+
+func (s *Store) deleteAlbum(ctx context.Context, albumID string, removeFile func(path string) error) (DeleteResult, error) {
 	var artistID string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT artist_id FROM albums WHERE id = ?`, albumID,
