@@ -3,24 +3,32 @@
 package managedimport
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/windows"
 )
 
-func restrictManagedStorageFile(file *os.File) error {
-	connection, err := file.SyscallConn()
+func restrictManagedStoragePath(rootPath, relativePath string, isDirectory bool) error {
+	handles, err := lockManagedStoragePath(rootPath)
 	if err != nil {
-		return fmt.Errorf("access Managed Storage file handle: %w", err)
+		return err
 	}
-	var permissionErr error
-	if err := connection.Control(func(handle uintptr) {
-		permissionErr = restrictManagedStorageHandle(windows.Handle(handle))
-	}); err != nil {
-		return fmt.Errorf("control Managed Storage file handle: %w", err)
+	currentPath := rootPath
+	components := strings.Split(filepath.Clean(relativePath), string(filepath.Separator))
+	for index, component := range components {
+		currentPath = filepath.Join(currentPath, component)
+		isFinal := index == len(components)-1
+		handle, openErr := openManagedStorageObject(currentPath, isFinal, isFinal && isDirectory)
+		if openErr != nil {
+			return errors.Join(openErr, closeManagedStorageHandles(handles))
+		}
+		handles = append(handles, handle)
 	}
-	return permissionErr
+	permissionErr := restrictManagedStorageHandle(handles[len(handles)-1])
+	return errors.Join(permissionErr, closeManagedStorageHandles(handles))
 }
 
 func restrictManagedStorageHandle(handle windows.Handle) error {

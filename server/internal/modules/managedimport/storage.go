@@ -106,7 +106,7 @@ func (storage *Storage) StageUpload(source io.Reader, contentLength int64) (uplo
 		return stagedUpload{}, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
-	if err := ensureDirectory(root, ".staging", 0o700); err != nil {
+	if err := ensureDirectory(root, storage.root, ".staging", 0o700); err != nil {
 		return stagedUpload{}, err
 	}
 	return storage.writeStagedUpload(root, source)
@@ -118,7 +118,7 @@ func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stag
 	if err != nil {
 		return stagedUpload{}, fmt.Errorf("create Managed Import staging file: %w", err)
 	}
-	if err := restrictManagedStorageFile(file); err != nil {
+	if err := restrictManagedStoragePath(storage.root, relativePath, false); err != nil {
 		return stagedUpload{}, errors.Join(err, file.Close(), removeRootedFile(root, relativePath, "Managed Import staging file"))
 	}
 	hash := sha256.New()
@@ -221,7 +221,7 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if err != nil {
 		return placedFiles{}, err
 	}
-	if err := ensureDirectory(root, filepath.Dir(placement.audioRelative), 0o750); err != nil {
+	if err := ensureDirectory(root, storage.root, filepath.Dir(placement.audioRelative), 0o750); err != nil {
 		return placedFiles{}, err
 	}
 	if err := storage.prepareArtwork(root, &placement, inspection, identity); err != nil {
@@ -236,7 +236,7 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if identity.ExistingArtworkPath != "" {
 		return placement, nil
 	}
-	if err := writeRootedArtwork(root, placement.artworkRelative, inspection.AlbumArtwork.Data); err != nil {
+	if err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data); err != nil {
 		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 	}
 	placement.artworkCreated = true
@@ -360,7 +360,7 @@ func (storage *Storage) absolutePath(relativePath string) string {
 	return filepath.Join(storage.root, relativePath)
 }
 
-func ensureDirectory(root *os.Root, path string, mode os.FileMode) error {
+func ensureDirectory(root *os.Root, absoluteRoot, path string, mode os.FileMode) error {
 	currentPath := ""
 	for _, component := range strings.Split(filepath.Clean(path), string(filepath.Separator)) {
 		currentPath = filepath.Join(currentPath, component)
@@ -384,11 +384,7 @@ func ensureDirectory(root *os.Root, path string, mode os.FileMode) error {
 	if err := root.Chmod(path, mode); err != nil {
 		return fmt.Errorf("protect Managed Storage directory %q: %w", path, err)
 	}
-	directory, err := root.Open(path)
-	if err != nil {
-		return fmt.Errorf("open Managed Storage directory %q to protect permissions: %w", path, err)
-	}
-	return errors.Join(restrictManagedStorageFile(directory), directory.Close())
+	return restrictManagedStoragePath(absoluteRoot, path, true)
 }
 
 func rejectSymlinks(root *os.Root, path string) error {
@@ -427,13 +423,13 @@ func verifyRootedFileHash(root *os.Root, path, expectedHash string) error {
 	return nil
 }
 
-func writeRootedArtwork(root *os.Root, path string, data []byte) error {
+func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte) error {
 	temporaryPath := filepath.Join(filepath.Dir(path), ".cover-"+uuid.NewString())
 	temporary, err := root.OpenFile(temporaryPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create temporary Album Artwork: %w", err)
 	}
-	if err := restrictManagedStorageFile(temporary); err != nil {
+	if err := restrictManagedStoragePath(absoluteRoot, temporaryPath, false); err != nil {
 		return errors.Join(err, temporary.Close(), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
 	}
 	if _, err := temporary.Write(data); err != nil {

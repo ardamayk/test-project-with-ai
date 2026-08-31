@@ -40,11 +40,12 @@ func lockManagedStoragePath(path string) ([]windows.Handle, error) {
 		if index >= 0 {
 			currentPath = filepath.Join(currentPath, components[index])
 		}
-		handle, err := openManagedStorageDirectory(currentPath)
+		shouldWriteDACL := index == len(components)-1
+		handle, err := openManagedStorageDirectory(currentPath, shouldWriteDACL)
 		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 			err = createManagedStorageDirectory(currentPath)
 			if err == nil {
-				handle, err = openManagedStorageDirectory(currentPath)
+				handle, err = openManagedStorageDirectory(currentPath, shouldWriteDACL)
 			}
 		}
 		if err != nil {
@@ -55,12 +56,20 @@ func lockManagedStoragePath(path string) ([]windows.Handle, error) {
 	return handles, nil
 }
 
-func openManagedStorageDirectory(path string) (windows.Handle, error) {
+func openManagedStorageDirectory(path string, shouldWriteDACL bool) (windows.Handle, error) {
+	return openManagedStorageObject(path, shouldWriteDACL, true)
+}
+
+func openManagedStorageObject(path string, shouldWriteDACL, mustBeDirectory bool) (windows.Handle, error) {
 	pathPointer, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return windows.InvalidHandle, fmt.Errorf("encode Managed Storage path component %q: %w", path, err)
 	}
-	handle, err := windows.CreateFile(pathPointer, windows.FILE_READ_ATTRIBUTES,
+	desiredAccess := uint32(windows.FILE_READ_ATTRIBUTES)
+	if shouldWriteDACL {
+		desiredAccess |= windows.WRITE_DAC
+	}
+	handle, err := windows.CreateFile(pathPointer, desiredAccess,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
@@ -73,7 +82,7 @@ func openManagedStorageDirectory(path string) (windows.Handle, error) {
 	if information.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return windows.InvalidHandle, errors.Join(fmt.Errorf("%w: Managed Storage root component %q is a reparse point", ErrUnsafeStoragePath, path), windows.CloseHandle(handle))
 	}
-	if information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+	if mustBeDirectory && information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
 		return windows.InvalidHandle, errors.Join(fmt.Errorf("%w: Managed Storage root component %q is not a directory", ErrUnsafeStoragePath, path), windows.CloseHandle(handle))
 	}
 	return handle, nil

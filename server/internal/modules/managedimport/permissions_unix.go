@@ -2,8 +2,6 @@
 
 package managedimport
 
-import "os"
-
-func restrictManagedStorageFile(*os.File) error {
+func restrictManagedStoragePath(string, string, bool) error {
 	return nil
 }
