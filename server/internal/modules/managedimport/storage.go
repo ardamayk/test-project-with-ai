@@ -75,6 +75,8 @@ func newStorage(root string, limits StorageLimits, capacity storageCapacity) *St
 	absoluteRoot, err := filepath.Abs(root)
 	if strings.TrimSpace(root) == "" {
 		err = errors.New("managed storage root is not configured")
+	} else if filepath.Clean(absoluteRoot) == filepath.VolumeName(absoluteRoot)+string(filepath.Separator) {
+		err = fmt.Errorf("%w: filesystem root cannot be Managed Storage", ErrUnsafeStoragePath)
 	} else if limits.ReserveBytes < 0 || limits.FileBytes <= 0 || limits.BatchBytes <= 0 {
 		err = errors.New("managed storage limits are invalid")
 	} else if limits.FileBytes == math.MaxInt64 || limits.BatchBytes == math.MaxInt64 {
@@ -310,9 +312,20 @@ func (storage *Storage) openRoot() (*os.Root, error) {
 	if err := storage.ensureRoot(); err != nil {
 		return nil, err
 	}
+	expectedInfo, err := os.Lstat(storage.root)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Managed Storage root identity: %w", err)
+	}
 	root, err := os.OpenRoot(storage.root)
 	if err != nil {
 		return nil, fmt.Errorf("open Managed Storage root: %w", err)
+	}
+	openedInfo, err := root.Stat(".")
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("inspect opened Managed Storage root: %w", err), root.Close())
+	}
+	if !os.SameFile(expectedInfo, openedInfo) {
+		return nil, errors.Join(fmt.Errorf("%w: Managed Storage root changed while opening", ErrUnsafeStoragePath), root.Close())
 	}
 	return root, nil
 }
@@ -321,15 +334,31 @@ func (storage *Storage) ensureRoot() error {
 	if storage.initializationError != nil {
 		return storage.initializationError
 	}
+	if err := rejectRootSymlinks(storage.root); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(storage.root, 0o700); err != nil {
 		return fmt.Errorf("create Managed Storage root: %w", err)
 	}
-	info, err := os.Lstat(storage.root)
-	if err != nil {
-		return fmt.Errorf("inspect Managed Storage root: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: Managed Storage root is a symbolic link", ErrUnsafeStoragePath)
+	return rejectRootSymlinks(storage.root)
+}
+
+func rejectRootSymlinks(path string) error {
+	volume := filepath.VolumeName(path)
+	currentPath := volume + string(filepath.Separator)
+	relativePath := strings.TrimPrefix(path, currentPath)
+	for _, component := range strings.Split(relativePath, string(filepath.Separator)) {
+		currentPath = filepath.Join(currentPath, component)
+		info, err := os.Lstat(currentPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect Managed Storage root component %q: %w", currentPath, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: Managed Storage root component %q is a symbolic link", ErrUnsafeStoragePath, currentPath)
+		}
 	}
 	return nil
 }

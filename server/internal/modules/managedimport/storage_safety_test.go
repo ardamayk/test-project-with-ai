@@ -116,6 +116,27 @@ func TestManagedImportRejectsManagedStorageRootSymlink(t *testing.T) {
 	assertDirectoryEmpty(t, outsidePath)
 }
 
+func TestManagedImportRejectsManagedStorageAncestorSymlink(t *testing.T) {
+	outsidePath := t.TempDir()
+	ancestorPath := filepath.Join(t.TempDir(), "linked-parent")
+	if err := os.Symlink(outsidePath, ancestorPath); err != nil {
+		t.Fatalf("create Managed Storage ancestor symlink: %v", err)
+	}
+	managedStoragePath := filepath.Join(ancestorPath, "managed")
+	router := newStorageSafetyRouter(t, config.Config{
+		ManagedStoragePath: managedStoragePath,
+	}, unlimitedStorageCapacity)
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStorageSafetyFixture(t)), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "strict-import.flac",
+	})
+
+	testutil.AssertErrorCode(t, response, http.StatusConflict, "unsafe_storage_path")
+	assertDirectoryEmpty(t, outsidePath)
+}
+
 func TestManagedImportRejectsCanonicalLibrarySymlinkEscape(t *testing.T) {
 	managedStoragePath := t.TempDir()
 	outsidePath := t.TempDir()
