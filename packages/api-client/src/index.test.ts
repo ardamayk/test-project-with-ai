@@ -73,7 +73,7 @@ describe('Managed Import media contracts', () => {
       artworkMediaType: 'image/png',
     }
 
-    expect(file.bitDepth).toBeUndefined()
+    expect('bitDepth' in file).toBe(false)
   })
 })
 
