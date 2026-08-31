@@ -3,6 +3,7 @@ package managedimport_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -99,6 +100,28 @@ func TestManagedImportRejectsUnsupportedM4ACodec(t *testing.T) {
 	testutil.AssertErrorCode(t, response, http.StatusUnprocessableEntity, "unsupported_format")
 	if !strings.Contains(responseBody, `"field":"codec"`) {
 		t.Fatalf("unsupported codec response = %s", responseBody)
+	}
+}
+
+func TestManagedImportPreservesRepeatedM4ACredits(t *testing.T) {
+	router, _ := newM4AManagedImportRouter(t)
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+	fixture := readM4AFixture(t, "strict-import-aac.m4a")
+	fixture = appendM4AFreeformValues(t, fixture, "ARTISTS", []string{"Artist, One", "Artist & Two"})
+	fixture = appendM4AFreeformValues(t, fixture, "ALBUMARTISTS", []string{"Album Artist / One", "Album Artist Two"})
+	response := uploadM4AFixture(t, router, jobID, fixture)
+	if response.Code != http.StatusOK {
+		t.Fatalf("upload structured-credit M4A status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var preview struct {
+		File struct {
+			Artists      []string `json:"artists"`
+			AlbumArtists []string `json:"albumArtists"`
+		} `json:"file"`
+	}
+	testutil.DecodeJSON(t, response, &preview)
+	if strings.Join(preview.File.Artists, "|") != "Artist, One|Artist & Two" || strings.Join(preview.File.AlbumArtists, "|") != "Album Artist / One|Album Artist Two" {
+		t.Fatalf("structured M4A credits = %+v", preview.File)
 	}
 }
 
@@ -206,4 +229,85 @@ func assertCanonicalM4A(t *testing.T, managedStoragePath string, fixture []byte)
 	if !bytes.Equal(committed, fixture) {
 		t.Fatal("canonical M4A bytes differ from uploaded bytes")
 	}
+}
+
+func appendM4AFreeformValues(t *testing.T, fixture []byte, name string, values []string) []byte {
+	t.Helper()
+	atomPayload := append(testMP4Atom("mean", append(make([]byte, 4), []byte("com.apple.iTunes")...)), testMP4Atom("name", append(make([]byte, 4), []byte(name)...))...)
+	for _, value := range values {
+		atomPayload = append(atomPayload, testMP4Atom("data", append([]byte{0, 0, 0, 1, 0, 0, 0, 0}, []byte(value)...))...)
+	}
+	freeformAtom := testMP4Atom("----", atomPayload)
+	ilstMarker := bytes.Index(fixture, []byte("ilst"))
+	if ilstMarker < 4 {
+		t.Fatal("M4A fixture has no ilst atom")
+	}
+	ilstStart := ilstMarker - 4
+	ilstSize := int(binary.BigEndian.Uint32(fixture[ilstStart:ilstMarker]))
+	insertionOffset := ilstStart + ilstSize
+	if ilstSize < 8 || insertionOffset > len(fixture) {
+		t.Fatal("M4A fixture ilst atom is invalid")
+	}
+	updated := append([]byte(nil), fixture...)
+	incrementMP4ChunkOffsets(t, updated, len(freeformAtom))
+	incrementMP4AtomSize(t, updated, ilstStart, len(freeformAtom))
+	for _, parentName := range []string{"meta", "udta", "moov"} {
+		marker := bytes.LastIndex(updated[:ilstStart], []byte(parentName))
+		if marker < 4 {
+			t.Fatalf("M4A fixture has no %s parent", parentName)
+		}
+		incrementMP4AtomSize(t, updated, marker-4, len(freeformAtom))
+	}
+	updated = append(updated, make([]byte, len(freeformAtom))...)
+	copy(updated[insertionOffset+len(freeformAtom):], updated[insertionOffset:len(fixture)])
+	copy(updated[insertionOffset:], freeformAtom)
+	return updated
+}
+
+func incrementMP4ChunkOffsets(t *testing.T, fixture []byte, increment int) {
+	t.Helper()
+	for _, atomName := range []string{"stco", "co64"} {
+		for searchOffset := 0; searchOffset < len(fixture); {
+			marker := bytes.Index(fixture[searchOffset:], []byte(atomName))
+			if marker < 0 {
+				break
+			}
+			marker += searchOffset
+			atomStart := marker - 4
+			atomSize := int(binary.BigEndian.Uint32(fixture[atomStart:marker]))
+			entryCount := int(binary.BigEndian.Uint32(fixture[marker+8 : marker+12]))
+			entrySize := 4
+			if atomName == "co64" {
+				entrySize = 8
+			}
+			if atomStart < 0 || atomStart+atomSize > len(fixture) || marker+12+entryCount*entrySize > atomStart+atomSize {
+				t.Fatalf("M4A fixture %s atom is invalid", atomName)
+			}
+			for entryOffset := marker + 12; entryOffset < marker+12+entryCount*entrySize; entryOffset += entrySize {
+				if entrySize == 4 {
+					value := binary.BigEndian.Uint32(fixture[entryOffset : entryOffset+entrySize])
+					binary.BigEndian.PutUint32(fixture[entryOffset:entryOffset+entrySize], value+uint32(increment))
+				} else {
+					value := binary.BigEndian.Uint64(fixture[entryOffset : entryOffset+entrySize])
+					binary.BigEndian.PutUint64(fixture[entryOffset:entryOffset+entrySize], value+uint64(increment))
+				}
+			}
+			searchOffset = atomStart + atomSize
+		}
+	}
+}
+
+func incrementMP4AtomSize(t *testing.T, fixture []byte, atomStart, increment int) {
+	t.Helper()
+	size := int(binary.BigEndian.Uint32(fixture[atomStart : atomStart+4]))
+	if size < 8 || size > len(fixture)-atomStart || int64(size)+int64(increment) > int64(^uint32(0)) {
+		t.Fatal("M4A fixture parent atom is invalid")
+	}
+	binary.BigEndian.PutUint32(fixture[atomStart:atomStart+4], uint32(size+increment))
+}
+
+func testMP4Atom(name string, payload []byte) []byte {
+	atom := binary.BigEndian.AppendUint32(nil, uint32(len(payload)+8))
+	atom = append(atom, name...)
+	return append(atom, payload...)
 }

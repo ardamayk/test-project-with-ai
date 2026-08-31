@@ -34,7 +34,6 @@ type m4aProbeStream struct {
 	SampleRate       string            `json:"sample_rate"`
 	Channels         int               `json:"channels"`
 	BitsPerRawSample string            `json:"bits_per_raw_sample"`
-	BitRate          string            `json:"bit_rate"`
 	Duration         string            `json:"duration"`
 	Disposition      map[string]int    `json:"disposition"`
 	Tags             map[string]string `json:"tags"`
@@ -58,7 +57,11 @@ func inspectM4A(ctx context.Context, path string, reportProgress InspectionProgr
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	metadata, err := inspectM4AMetadata(probe.Format.Tags)
+	structuredCredits, err := readMP4StructuredCredits(path)
+	if err != nil {
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "credits", err)
+	}
+	metadata, err := inspectM4AMetadata(probe.Format.Tags, structuredCredits)
 	if err != nil {
 		return MediaInspection{}, err
 	}
@@ -121,19 +124,29 @@ func isM4AProbe(probe m4aProbe) bool {
 	if !strings.Contains(probe.Format.FormatName, "mp4") && !strings.Contains(probe.Format.FormatName, "m4a") {
 		return false
 	}
-	brands := probe.Format.Tags["major_brand"] + probe.Format.Tags["compatible_brands"]
-	return strings.Contains(strings.ToUpper(brands), "M4A")
+	if strings.EqualFold(probe.Format.Tags["major_brand"], "M4A ") {
+		return true
+	}
+	compatibleBrands := probe.Format.Tags["compatible_brands"]
+	for offset := 0; offset+4 <= len(compatibleBrands); offset += 4 {
+		if strings.EqualFold(compatibleBrands[offset:offset+4], "M4A ") {
+			return true
+		}
+	}
+	return false
 }
 
 func validateM4AStreams(probe m4aProbe) (m4aProbeStream, m4aProbeStream, error) {
 	var audioStreams []m4aProbeStream
 	var artworkStreams []m4aProbeStream
 	for _, stream := range probe.Streams {
-		if stream.CodecType == "audio" {
+		switch {
+		case stream.CodecType == "audio":
 			audioStreams = append(audioStreams, stream)
-		}
-		if stream.CodecType == "video" && stream.Disposition["attached_pic"] == 1 {
+		case stream.CodecType == "video" && stream.Disposition["attached_pic"] == 1:
 			artworkStreams = append(artworkStreams, stream)
+		default:
+			return m4aProbeStream{}, m4aProbeStream{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("unsupported M4A stream type %q", stream.CodecType))
 		}
 	}
 	if len(audioStreams) != 1 {
@@ -151,7 +164,7 @@ func validateM4AStreams(probe m4aProbe) (m4aProbeStream, m4aProbeStream, error) 
 	return audioStreams[0], artworkStreams[0], nil
 }
 
-func inspectM4AMetadata(rawTags map[string]string) (NormalizedMediaMetadata, error) {
+func inspectM4AMetadata(rawTags map[string]string, structuredCredits map[string][]string) (NormalizedMediaMetadata, error) {
 	tags := make(map[string][]string, len(rawTags))
 	for key, value := range rawTags {
 		tags[m4aMetadataKey(key)] = []string{value}
@@ -159,10 +172,10 @@ func inspectM4AMetadata(rawTags map[string]string) (NormalizedMediaMetadata, err
 	if genres := splitM4AGenres(m4aTagValue(rawTags, "genre")); len(genres) > 0 {
 		tags["GENRE"] = genres
 	}
-	if artists := m4aStructuredCredits(rawTags, "ARTISTS"); len(artists) > 0 {
+	if artists := structuredCredits["ARTISTS"]; len(artists) > 0 {
 		tags["ARTIST"] = artists
 	}
-	if albumArtists := m4aStructuredCredits(rawTags, "ALBUMARTISTS"); len(albumArtists) > 0 {
+	if albumArtists := structuredCredits["ALBUMARTISTS"]; len(albumArtists) > 0 {
 		tags["ALBUMARTIST"] = albumArtists
 	}
 	names, err := inspectFLACNames(tags)
@@ -192,14 +205,6 @@ func splitM4AGenres(value string) []string {
 	return strings.FieldsFunc(value, func(separator rune) bool {
 		return separator == ';' || separator == '/' || separator == '|'
 	})
-}
-
-func m4aStructuredCredits(tags map[string]string, key string) []string {
-	value := m4aTagValue(tags, key)
-	if value == "" {
-		return nil
-	}
-	return strings.Split(value, ";")
 }
 
 func m4aTagValue(tags map[string]string, key string) string {
@@ -249,18 +254,25 @@ func inspectM4AAudio(ctx context.Context, path string, stream m4aProbeStream, re
 	if err != nil {
 		return TechnicalAudioProperties{}, err
 	}
-	if err := decodeM4AToEOF(ctx, path, stream.Index, audio, reportProgress); err != nil {
+	durationMs, err := decodeM4AToEOF(ctx, path, stream.Index, audio, reportProgress)
+	if err != nil {
 		return TechnicalAudioProperties{}, err
+	}
+	encodedBytes, err := measureM4AEncodedBytes(ctx, path, stream.Index)
+	if err != nil {
+		return TechnicalAudioProperties{}, err
+	}
+	audio.DurationMs = durationMs
+	audio.BitrateKbps = int((encodedBytes*8 + int64(durationMs)/2) / int64(durationMs))
+	if audio.BitrateKbps <= 0 {
+		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("M4A average encoded bitrate is not positive"))
 	}
 	return audio, nil
 }
 
 func buildM4AAudioProperties(stream m4aProbeStream) (TechnicalAudioProperties, error) {
 	sampleRate, sampleRateErr := strconv.Atoi(stream.SampleRate)
-	bitrateBps, bitrateErr := strconv.ParseInt(stream.BitRate, 10, 64)
-	durationSeconds, durationErr := strconv.ParseFloat(stream.Duration, 64)
-	durationMs := int(durationSeconds * MILLISECONDS_PER_SECOND)
-	if sampleRateErr != nil || bitrateErr != nil || durationErr != nil || sampleRate <= 0 || stream.Channels <= 0 || bitrateBps <= 0 || durationMs <= 0 {
+	if sampleRateErr != nil || sampleRate <= 0 || stream.Channels <= 0 {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("M4A stream has invalid technical properties"))
 	}
 	bitDepth := 0
@@ -270,38 +282,48 @@ func buildM4AAudioProperties(stream m4aProbeStream) (TechnicalAudioProperties, e
 			return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("ALAC bit depth is missing"))
 		}
 	}
-	return TechnicalAudioProperties{Format: "m4a", Container: "m4a", Codec: stream.CodecName, DurationMs: durationMs, SampleRateHz: sampleRate, ChannelCount: stream.Channels, BitDepth: bitDepth, BitrateKbps: int((bitrateBps + 500) / 1000)}, nil
+	durationSeconds, _ := strconv.ParseFloat(stream.Duration, 64)
+	return TechnicalAudioProperties{Format: "m4a", Container: "m4a", Codec: stream.CodecName, DurationMs: int(durationSeconds * MILLISECONDS_PER_SECOND), SampleRateHz: sampleRate, ChannelCount: stream.Channels, BitDepth: bitDepth}, nil
 }
 
-func decodeM4AToEOF(ctx context.Context, path string, streamIndex int, audio TechnicalAudioProperties, reportProgress InspectionProgressReporter) error {
+func decodeM4AToEOF(ctx context.Context, path string, streamIndex int, audio TechnicalAudioProperties, reportProgress InspectionProgressReporter) (int, error) {
 	command := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-xerror", "-nostdin", "-i", path, "-map", fmt.Sprintf("0:%d", streamIndex), "-f", "null", "-", "-progress", "pipe:1", "-nostats")
 	progress, err := command.StdoutPipe()
 	if err != nil {
-		return inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
 	command.Stderr = newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
 	if err := command.Start(); err != nil {
-		return inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}
-	reportErr := readM4ADecodeProgress(progress, audio, reportProgress)
+	decodedMicroseconds, reportErr := readM4ADecodeProgress(progress, audio, reportProgress)
 	if reportErr != nil {
 		_ = command.Process.Kill()
 	}
 	waitErr := command.Wait()
 	if ctx.Err() != nil {
-		return inspectionCancellationError(ctx)
+		return 0, inspectionCancellationError(ctx)
 	}
 	if reportErr != nil {
-		return inspectionProgressError(reportErr)
+		return 0, inspectionProgressError(reportErr)
 	}
 	if waitErr != nil {
-		return inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("decode M4A stream: %w", waitErr))
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("decode M4A stream: %w", waitErr))
 	}
-	return reportDecodedProgress(reportProgress, uint64(audio.DurationMs*audio.SampleRateHz/MILLISECONDS_PER_SECOND), uint64(audio.DurationMs*audio.SampleRateHz/MILLISECONDS_PER_SECOND), 0, 0, true)
+	durationMs := int(decodedMicroseconds / 1000)
+	if durationMs <= 0 {
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("decoded M4A duration is not positive"))
+	}
+	decodedSamples := uint64(durationMs) * uint64(audio.SampleRateHz) / MILLISECONDS_PER_SECOND
+	if err := reportDecodedProgress(reportProgress, decodedSamples, decodedSamples, 0, 0, true); err != nil {
+		return 0, inspectionProgressError(err)
+	}
+	return durationMs, nil
 }
 
-func readM4ADecodeProgress(reader io.Reader, audio TechnicalAudioProperties, reportProgress InspectionProgressReporter) error {
+func readM4ADecodeProgress(reader io.Reader, audio TechnicalAudioProperties, reportProgress InspectionProgressReporter) (uint64, error) {
 	scanner := bufio.NewScanner(reader)
+	var decodedMicroseconds uint64
 	for scanner.Scan() {
 		key, value, ok := strings.Cut(scanner.Text(), "=")
 		if !ok || key != "out_time_us" {
@@ -311,13 +333,58 @@ func readM4ADecodeProgress(reader io.Reader, audio TechnicalAudioProperties, rep
 		if err != nil {
 			continue
 		}
-		decodedSamples := microseconds * uint64(audio.SampleRateHz) / 1_000_000
-		totalSamples := uint64(audio.DurationMs * audio.SampleRateHz / MILLISECONDS_PER_SECOND)
+		decodedMicroseconds = max(decodedMicroseconds, microseconds)
+		decodedSamples := decodedMicroseconds * uint64(audio.SampleRateHz) / 1_000_000
+		totalSamples := uint64(max(audio.DurationMs, 0)) * uint64(audio.SampleRateHz) / MILLISECONDS_PER_SECOND
 		if err := reportDecodedProgress(reportProgress, decodedSamples, totalSamples, 0, 0, false); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return scanner.Err()
+	return decodedMicroseconds, scanner.Err()
+}
+
+func measureM4AEncodedBytes(ctx context.Context, path string, streamIndex int) (int64, error) {
+	command := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "packet=stream_index,size", "-of", "csv=p=0", path)
+	packets, err := command.StdoutPipe()
+	if err != nil {
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+	}
+	command.Stderr = newBoundedBuffer(FFMPEG_ERROR_OUTPUT_LIMIT_BYTES)
+	if err := command.Start(); err != nil {
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+	}
+	encodedBytes, scanErr := sumM4APacketBytes(packets, streamIndex)
+	waitErr := command.Wait()
+	if ctx.Err() != nil {
+		return 0, inspectionCancellationError(ctx)
+	}
+	if scanErr != nil {
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", scanErr)
+	}
+	if waitErr != nil {
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("measure M4A packets: %w", waitErr))
+	}
+	if encodedBytes <= 0 {
+		return 0, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("M4A encoded audio size is not positive"))
+	}
+	return encodedBytes, nil
+}
+
+func sumM4APacketBytes(reader io.Reader, streamIndex int) (int64, error) {
+	scanner := bufio.NewScanner(reader)
+	var encodedBytes int64
+	for scanner.Scan() {
+		fields := strings.Split(scanner.Text(), ",")
+		if len(fields) < 2 || fields[0] != strconv.Itoa(streamIndex) {
+			continue
+		}
+		packetBytes, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || packetBytes < 0 {
+			return 0, errors.New("M4A packet size is invalid")
+		}
+		encodedBytes += packetBytes
+	}
+	return encodedBytes, scanner.Err()
 }
 
 type boundedBuffer struct {
