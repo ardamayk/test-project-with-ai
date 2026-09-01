@@ -119,8 +119,7 @@ func (storage *Storage) UploadReservationSize(contentLength int64) (int64, error
 	if contentLength >= 0 {
 		return contentLength, nil
 	}
-	streamLimit, _ := storage.streamLimit()
-	return streamLimit, nil
+	return 0, nil
 }
 
 func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stagedUpload, error) {
@@ -219,7 +218,11 @@ func (storage *Storage) RemoveStaged(path string) (returnErr error) {
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
-	return removeRootedFile(root, relativePath, "Managed Import staging file")
+	err = removeRootedFile(root, relativePath, "Managed Import staging file")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func (storage *Storage) Place(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placement placedFiles, returnErr error) {

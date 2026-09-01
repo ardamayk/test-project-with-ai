@@ -755,6 +755,13 @@ describe("tracks route", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 		await screen.findByText("confirmation response lost");
 		expect(checkbox).toHaveProperty("disabled", true);
+		expect(
+			screen.getByRole("button", { name: "Close Import Music" }),
+		).toHaveProperty("disabled", true);
+		expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
+			"disabled",
+			true,
+		);
 	});
 
 	it("uploads one desktop file at a time", async () => {

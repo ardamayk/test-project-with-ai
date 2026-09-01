@@ -34,6 +34,7 @@ export function useManagedImportWorkflow({
 	const state = useImportWorkflowState();
 	const isBusy = state.importState !== "idle";
 	const isCompleted = state.batch?.status === "completed";
+	const isCloseLocked = isBusy || state.batch?.status === "confirming";
 	const canConfirm = Boolean(
 		state.batch &&
 			state.entries.length > 0 &&
@@ -53,14 +54,15 @@ export function useManagedImportWorkflow({
 		entries: state.entries,
 		errorMessage: state.errorMessage,
 		isBusy,
-		isSelectionLocked: isBusy || state.batch?.status === "confirming",
+		isCloseLocked,
+		isSelectionLocked: isCloseLocked,
 		isCompleted,
 		canConfirm,
 		handleFiles: createFileHandler(state),
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
 		handleSelectionChange: (key: string, selected: boolean) =>
 			state.updateEntry(key, { selected, hasSelectionOverride: true }),
-		handleOpenChange: createOpenHandler(state, isBusy, onOpenChange),
+		handleOpenChange: createOpenHandler(state, isCloseLocked, onOpenChange),
 	};
 }
 

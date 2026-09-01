@@ -29,7 +29,7 @@ export function ImportMusicDialog({
 					aria-describedby="import-music-description"
 					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 grid max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl gap-5 overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl outline-none"
 				>
-					<ImportDialogHeader isBusy={workflow.isBusy} />
+					<ImportDialogHeader isBusy={workflow.isCloseLocked} />
 					<ImportFilePicker
 						isBusy={workflow.isSelectionLocked}
 						onFiles={workflow.handleFiles}
@@ -45,7 +45,7 @@ export function ImportMusicDialog({
 					/>
 					<ImportDialogFooter
 						canConfirm={workflow.canConfirm}
-						isBusy={workflow.isBusy}
+						isBusy={workflow.isCloseLocked}
 						isCompleted={workflow.isCompleted}
 						onCancel={() => workflow.handleOpenChange(false)}
 						onConfirm={workflow.handleConfirm}

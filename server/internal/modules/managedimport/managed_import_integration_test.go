@@ -302,6 +302,33 @@ func TestManagedImportBatchEnforcesCumulativeByteLimit(t *testing.T) {
 	}
 }
 
+func TestManagedImportBatchAllowsMultipleChunkedUploadsWithinActualLimit(t *testing.T) {
+	fixture := readStrictFLACFixture(t)
+	configuration := config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedImportFileLimitBytes:  int64(len(fixture) * 4),
+		ManagedImportBatchLimitBytes: int64(len(fixture)*2 + 1),
+	}
+	router := newConfiguredManagedImportRouter(t, configuration)
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	for index := 0; index < 2; index++ {
+		createBody := strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":%q}`, batchID, uuid.NewString()))
+		jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", createBody, map[string]string{"Content-Type": "application/json"})
+		var job managedimport.Job
+		testutil.DecodeJSON(t, jobResponse, &job)
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture))
+		request.ContentLength = -1
+		request.TransferEncoding = []string{"chunked"}
+		request.Header.Set("Content-Type", "audio/flac")
+		request.Header.Set("X-Import-Filename", fmt.Sprintf("chunked-%d.flac", index))
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("chunked upload %d status = %d, body = %s", index, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestManagedImportBatchCountsRejectedUploadBytes(t *testing.T) {
 	fixture := readStrictFLACFixture(t)
 	rejectedBytes := []byte("not audio")

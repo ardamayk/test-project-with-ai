@@ -76,6 +76,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
 	}
+	body = service.batchUploadReader(ctx, job, body, contentLength)
 	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
 		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
@@ -91,6 +92,35 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, err)
 	}
 	return service.persistPreview(ctx, job, originalFilename, upload, inspection)
+}
+
+type batchReservationReader struct {
+	source  io.Reader
+	reserve func(int64) error
+	read    int64
+}
+
+func (reader *batchReservationReader) Read(buffer []byte) (int, error) {
+	read, readErr := reader.source.Read(buffer)
+	reader.read += int64(read)
+	if read > 0 {
+		if reserveErr := reader.reserve(reader.read); reserveErr != nil {
+			return read, reserveErr
+		}
+	}
+	return read, readErr
+}
+
+func (service *Service) batchUploadReader(ctx context.Context, job importJob, body io.Reader, contentLength int64) io.Reader {
+	if job.BatchID == "" || contentLength >= 0 {
+		return body
+	}
+	return &batchReservationReader{
+		source: body,
+		reserve: func(uploadSize int64) error {
+			return service.store.ReserveBatchUpload(ctx, job.ID, uploadSize, service.storage.batchLimit)
+		},
+	}
 }
 
 func (service *Service) lockUpload(jobID string) func() {
@@ -136,11 +166,11 @@ func (service *Service) getUploadingJob(ctx context.Context, jobID string) (impo
 	if job.BatchID == "" {
 		return job, nil
 	}
-	batch, err := service.store.GetBatch(ctx, job.BatchID)
+	batchStatus, err := service.store.GetBatchStatus(ctx, job.BatchID)
 	if err != nil {
 		return importJob{}, err
 	}
-	if batch.Status != BATCH_STATUS_UPLOADING {
+	if batchStatus != BATCH_STATUS_UPLOADING {
 		return importJob{}, ErrInvalidState
 	}
 	return job, nil
@@ -407,9 +437,7 @@ func (service *Service) finishUncommittedBatchFile(ctx context.Context, job impo
 	defer cancel()
 	if job.StagedFilePath != "" {
 		if err := service.storage.RemoveStaged(job.StagedFilePath); err != nil {
-			outcome = OUTCOME_FAILED
-			errorCode = "commit_failed"
-			reason = "staging cleanup failed"
+			return fmt.Errorf("remove uncommitted Managed Import staging file: %w", err)
 		}
 	}
 	if outcome == OUTCOME_FAILED && errorCode == "" {

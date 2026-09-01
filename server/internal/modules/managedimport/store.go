@@ -141,6 +141,18 @@ func (store *Store) GetBatch(ctx context.Context, batchID string) (Batch, error)
 	return batch, nil
 }
 
+func (store *Store) GetBatchStatus(ctx context.Context, batchID string) (BatchStatus, error) {
+	var status BatchStatus
+	err := store.database.QueryRowContext(ctx, `SELECT status FROM managed_import_batches WHERE id = ?`, batchID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get Managed Import Batch %q status: %w", batchID, err)
+	}
+	return status, nil
+}
+
 func (store *Store) ListBatchJobs(ctx context.Context, batchID string) (jobs []importJob, returnErr error) {
 	rows, err := store.database.QueryContext(ctx, `SELECT id FROM managed_import_jobs WHERE batch_id = ? ORDER BY batch_position`, batchID)
 	if err != nil {
