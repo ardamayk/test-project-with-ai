@@ -1,146 +1,155 @@
-import type { components, operations } from './generated/schema'
+import type { components, operations } from './generated/schema';
 import {
   type QueueEvent,
   type QueueEventSource,
   subscribeQueueEvents,
-} from './queue-events'
+} from './queue-events';
 
-export type { QueueEvent, QueueEventSource } from './queue-events'
+export type { QueueEvent, QueueEventSource } from './queue-events';
 
 export type ApiClientConfig = {
-  baseUrl: string
-  mediaBaseUrl?: string | (() => string)
-  streamBaseUrl?: string | (() => string)
-  queueEventsBaseUrl?: string | (() => string | Promise<string>)
-  getToken?: () => string | undefined
-  transport?: typeof fetch
-  eventSourceFactory?: (url: string) => QueueEventSource
+  baseUrl: string;
+  mediaBaseUrl?: string | (() => string);
+  streamBaseUrl?: string | (() => string);
+  queueEventsBaseUrl?: string | (() => string | Promise<string>);
+  getToken?: () => string | undefined;
+  transport?: typeof fetch;
+  eventSourceFactory?: (url: string) => QueueEventSource;
   queueEventSubscriber?: (
     onEvent: (event: QueueEvent) => void,
     onError: (error: Error) => void,
-  ) => (() => void) | Promise<() => void>
-}
+  ) => (() => void) | Promise<() => void>;
+};
 
-type Schemas = components['schemas']
-type WireAlbum = Schemas['Album']
-type WireAlbumDetail = Schemas['AlbumDetail']
-type WireAlbumList = Schemas['AlbumList']
-type WireTrack = Schemas['Track']
-type WireTrackList = Schemas['TrackList']
-type WirePlaylistDetail = Schemas['PlaylistDetail']
-type WireQueue = Schemas['Queue']
-type WireQueueItem = Schemas['QueueItem']
+type Schemas = components['schemas'];
+type WireAlbum = Schemas['Album'];
+type WireAlbumDetail = Schemas['AlbumDetail'];
+type WireAlbumList = Schemas['AlbumList'];
+type WireTrack = Schemas['Track'];
+type WireTrackList = Schemas['TrackList'];
+type WirePlaylistDetail = Schemas['PlaylistDetail'];
+type WireQueue = Schemas['Queue'];
+type WireQueueItem = Schemas['QueueItem'];
 
-export type HealthResponse = Schemas['HealthResponse']
-export type ThemePreferences = Schemas['ThemePreferences']
-export type LayoutPreferences = Schemas['LayoutPreferences']
-export type UserPreferences = Schemas['UserPreferences']
-export type UserPreferencesPatch = Schemas['UserPreferencesPatch']
-export type User = Schemas['User']
-export type Artist = Schemas['Artist']
-export type ArtistCredit = Schemas['ArtistCredit']
-export type Genre = Schemas['Genre']
-export type ReleaseIdentifier = Schemas['ReleaseIdentifier']
-export type AlbumArtwork = Schemas['AlbumArtwork']
-export type ArtistList = Schemas['ArtistList']
-export type Album = Omit<WireAlbum, 'albumArtists' | 'genreItems' | 'releaseIdentifiers'> & {
-  albumArtists: ArtistCredit[]
-  genreItems: Genre[]
-  releaseIdentifiers: ReleaseIdentifier[]
-}
+export type HealthResponse = Schemas['HealthResponse'];
+export type ThemePreferences = Schemas['ThemePreferences'];
+export type LayoutPreferences = Schemas['LayoutPreferences'];
+export type UserPreferences = Schemas['UserPreferences'];
+export type UserPreferencesPatch = Schemas['UserPreferencesPatch'];
+export type User = Schemas['User'];
+export type Artist = Schemas['Artist'];
+export type ArtistCredit = Schemas['ArtistCredit'];
+export type Genre = Schemas['Genre'];
+export type ReleaseIdentifier = Schemas['ReleaseIdentifier'];
+export type AlbumArtwork = Schemas['AlbumArtwork'];
+export type ArtistList = Schemas['ArtistList'];
+export type Album = Omit<
+  WireAlbum,
+  'albumArtists' | 'genreItems' | 'releaseIdentifiers'
+> & {
+  albumArtists: ArtistCredit[];
+  genreItems: Genre[];
+  releaseIdentifiers: ReleaseIdentifier[];
+};
 export type Track = Omit<WireTrack, 'artists' | 'discNo' | 'genres'> & {
-  artists: ArtistCredit[]
-  discNo: number
-  genres: Genre[]
-}
-export type AlbumList = Omit<WireAlbumList, 'items'> & { items: Album[] }
+  artists: ArtistCredit[];
+  discNo: number;
+  genres: Genre[];
+};
+export type AlbumList = Omit<WireAlbumList, 'items'> & { items: Album[] };
 export type AlbumDetail = Omit<WireAlbumDetail, keyof Album | 'tracks'> &
-  Album & { tracks: Track[] }
-export type TrackList = Omit<WireTrackList, 'items'> & { items: Track[] }
-export type Playlist = Schemas['Playlist']
-export type PlaylistList = Schemas['PlaylistList']
-export type PlaylistDetail = Omit<WirePlaylistDetail, 'tracks'> & { tracks: Track[] }
-export type PlaylistCreate = Schemas['PlaylistCreate']
-export type PlaylistTrackAdd = Schemas['PlaylistTrackAdd']
-export type ScanStatus = Schemas['ScanStatus']
-export type DeleteResult = Schemas['DeleteResult']
-export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track }
-export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] }
-export type ErrorResponse = Schemas['ErrorResponse']
-export type ManagedImportJob = Schemas['ManagedImportJob']
-export type ManagedImportBatch = Schemas['ManagedImportBatch']
-export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile']
-export type ManagedImportPreview = Schemas['ManagedImportPreview']
-export type ManagedImportPreviewFile = Schemas['ManagedImportPreviewFile']
-export type ManagedImportResult = Schemas['ManagedImportResult']
-export type ManagedImportUploadProgress = (progress: number) => void
-export type QueueConflictResponse = Omit<Schemas['QueueConflictResponse'], 'queue'> & {
-  queue: Queue
-}
-export type QueueReplace = Schemas['QueueReplace']
-export type QueueItemAppend = Schemas['QueueItemAppend']
-export type QueueReorder = Schemas['QueueReorder']
-export type RadioNowPlaying = Schemas['RadioNowPlaying']
-export type RadioStation = Schemas['RadioStation']
-export type RadioStationList = Schemas['RadioStationList']
-export type RadioStationCreate = Schemas['RadioStationCreate']
-export type RadioStationPatch = Schemas['RadioStationPatch']
-export type RadioSearchResult = Schemas['RadioSearchResult']
-export type RadioSearchResultList = Schemas['RadioSearchResultList']
-export type RadioCatalogOption = Schemas['RadioCatalogOption']
-export type RadioCatalogOptionList = Schemas['RadioCatalogOptionList']
-export type RadioImportRequest = Schemas['RadioImportRequest']
+  Album & { tracks: Track[] };
+export type TrackList = Omit<WireTrackList, 'items'> & { items: Track[] };
+export type Playlist = Schemas['Playlist'];
+export type PlaylistList = Schemas['PlaylistList'];
+export type PlaylistDetail = Omit<WirePlaylistDetail, 'tracks'> & {
+  tracks: Track[];
+};
+export type PlaylistCreate = Schemas['PlaylistCreate'];
+export type PlaylistTrackAdd = Schemas['PlaylistTrackAdd'];
+export type ScanStatus = Schemas['ScanStatus'];
+export type DeleteResult = Schemas['DeleteResult'];
+export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track };
+export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] };
+export type ErrorResponse = Schemas['ErrorResponse'];
+export type ManagedImportJob = Schemas['ManagedImportJob'];
+export type ManagedImportBatch = Schemas['ManagedImportBatch'];
+export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile'];
+export type ManagedImportPreview = Schemas['ManagedImportPreview'];
+export type ManagedImportPreviewFile = Schemas['ManagedImportPreviewFile'];
+export type ManagedImportResult = Schemas['ManagedImportResult'];
+export type ManagedImportUploadProgress = (progress: number) => void;
+export type QueueConflictResponse = Omit<
+  Schemas['QueueConflictResponse'],
+  'queue'
+> & {
+  queue: Queue;
+};
+export type QueueReplace = Schemas['QueueReplace'];
+export type QueueItemAppend = Schemas['QueueItemAppend'];
+export type QueueReorder = Schemas['QueueReorder'];
+export type RadioNowPlaying = Schemas['RadioNowPlaying'];
+export type RadioStation = Schemas['RadioStation'];
+export type RadioStationList = Schemas['RadioStationList'];
+export type RadioStationCreate = Schemas['RadioStationCreate'];
+export type RadioStationPatch = Schemas['RadioStationPatch'];
+export type RadioSearchResult = Schemas['RadioSearchResult'];
+export type RadioSearchResultList = Schemas['RadioSearchResultList'];
+export type RadioCatalogOption = Schemas['RadioCatalogOption'];
+export type RadioCatalogOptionList = Schemas['RadioCatalogOptionList'];
+export type RadioImportRequest = Schemas['RadioImportRequest'];
 
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly body: ErrorResponse | QueueConflictResponse,
   ) {
-    super(body.message)
-    this.name = 'ApiError'
+    super(body.message);
+    this.name = 'ApiError';
   }
 }
 
 export type ListParams = NonNullable<
   operations['listAlbums']['parameters']['query']
->
+>;
 export type RadioSearchParams = NonNullable<
   operations['searchRadioStations']['parameters']['query']
->
+>;
 
 function buildQuery(params?: ListParams): string {
-  if (!params) return ''
-  const search = new URLSearchParams()
-  if (params.limit != null) search.set('limit', String(params.limit))
-  if (params.offset != null) search.set('offset', String(params.offset))
-  if (params.q) search.set('q', params.q)
-  if (params.artistId) search.set('artistId', params.artistId)
-  const qs = search.toString()
-  return qs ? `?${qs}` : ''
+  if (!params) return '';
+  const search = new URLSearchParams();
+  if (params.limit != null) search.set('limit', String(params.limit));
+  if (params.offset != null) search.set('offset', String(params.offset));
+  if (params.q) search.set('q', params.q);
+  if (params.artistId) search.set('artistId', params.artistId);
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
 }
 
 function buildRadioSearchQuery(params?: RadioSearchParams): string {
-  if (!params) return ''
-  const search = new URLSearchParams()
-  if (params.q) search.set('q', params.q)
-  if (params.country) search.set('country', params.country)
-  if (params.language) search.set('language', params.language)
-  if (params.tag) search.set('tag', params.tag)
-  if (params.codec) search.set('codec', params.codec)
-  if (params.codecGroup) search.set('codecGroup', params.codecGroup)
-  if (params.minBitrate != null) search.set('minBitrate', String(params.minBitrate))
-  if (params.limit != null) search.set('limit', String(params.limit))
-  if (params.offset != null) search.set('offset', String(params.offset))
-  const qs = search.toString()
-  return qs ? `?${qs}` : ''
+  if (!params) return '';
+  const search = new URLSearchParams();
+  if (params.q) search.set('q', params.q);
+  if (params.country) search.set('country', params.country);
+  if (params.language) search.set('language', params.language);
+  if (params.tag) search.set('tag', params.tag);
+  if (params.codec) search.set('codec', params.codec);
+  if (params.codecGroup) search.set('codecGroup', params.codecGroup);
+  if (params.minBitrate != null)
+    search.set('minBitrate', String(params.minBitrate));
+  if (params.limit != null) search.set('limit', String(params.limit));
+  if (params.offset != null) search.set('offset', String(params.offset));
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
 }
 
 function legacyArtistCredit(name: string): ArtistCredit {
-  return { id: `legacy-artist:${name}`, name }
+  return { id: `legacy-artist:${name}`, name };
 }
 
 function legacyGenre(name: string): Genre {
-  return { id: `legacy-genre:${name}`, name }
+  return { id: `legacy-genre:${name}`, name };
 }
 
 function normalizeTrack(track: WireTrack): Track {
@@ -149,7 +158,7 @@ function normalizeTrack(track: WireTrack): Track {
     artists: track.artists ?? [legacyArtistCredit(track.artistName)],
     discNo: track.discNo ?? 1,
     genres: track.genres ?? (track.genre ? [legacyGenre(track.genre)] : []),
-  }
+  };
 }
 
 function normalizeAlbum(album: WireAlbum): Album {
@@ -160,26 +169,26 @@ function normalizeAlbum(album: WireAlbum): Album {
     ],
     genreItems: album.genreItems ?? (album.genres ?? []).map(legacyGenre),
     releaseIdentifiers: album.releaseIdentifiers ?? [],
-  }
+  };
 }
 
 function normalizeAlbumList(albums: WireAlbumList): AlbumList {
-  return { ...albums, items: albums.items.map(normalizeAlbum) }
+  return { ...albums, items: albums.items.map(normalizeAlbum) };
 }
 
 function normalizeAlbumDetail(album: WireAlbumDetail): AlbumDetail {
   return {
     ...normalizeAlbum(album),
     tracks: album.tracks.map(normalizeTrack),
-  }
+  };
 }
 
 function normalizeTrackList(tracks: WireTrackList): TrackList {
-  return { ...tracks, items: tracks.items.map(normalizeTrack) }
+  return { ...tracks, items: tracks.items.map(normalizeTrack) };
 }
 
 function normalizePlaylistDetail(playlist: WirePlaylistDetail): PlaylistDetail {
-  return { ...playlist, tracks: playlist.tracks.map(normalizeTrack) }
+  return { ...playlist, tracks: playlist.tracks.map(normalizeTrack) };
 }
 
 function normalizeQueue(queue: WireQueue): Queue {
@@ -189,16 +198,16 @@ function normalizeQueue(queue: WireQueue): Queue {
       ...item,
       track: normalizeTrack(item.track),
     })),
-  }
+  };
 }
 
 function normalizeApiErrorBody(
   body: ErrorResponse | Schemas['QueueConflictResponse'],
 ): ErrorResponse | QueueConflictResponse {
   if ('queue' in body) {
-    return { ...body, queue: normalizeQueue(body.queue) }
+    return { ...body, queue: normalizeQueue(body.queue) };
   }
-  return body
+  return body;
 }
 
 export function createApiClient(config: ApiClientConfig) {
@@ -211,15 +220,15 @@ export function createApiClient(config: ApiClientConfig) {
     transport = globalThis.fetch,
     eventSourceFactory = (url) => new EventSource(url) as QueueEventSource,
     queueEventSubscriber,
-  } = config
+  } = config;
   const getMediaBaseUrl = () =>
-    typeof mediaBaseUrl === 'function' ? mediaBaseUrl() : mediaBaseUrl
+    typeof mediaBaseUrl === 'function' ? mediaBaseUrl() : mediaBaseUrl;
   const getStreamBaseUrl = () =>
-    typeof streamBaseUrl === 'function' ? streamBaseUrl() : streamBaseUrl
+    typeof streamBaseUrl === 'function' ? streamBaseUrl() : streamBaseUrl;
   const getQueueEventsBaseUrl = () =>
     typeof queueEventsBaseUrl === 'function'
       ? queueEventsBaseUrl()
-      : queueEventsBaseUrl
+      : queueEventsBaseUrl;
 
   function uploadManagedImportFile(
     importId: string,
@@ -228,7 +237,7 @@ export function createApiClient(config: ApiClientConfig) {
     onProgress?: ManagedImportUploadProgress,
   ): Promise<ManagedImportPreview> {
     if (config.transport || typeof XMLHttpRequest === 'undefined') {
-      onProgress?.(0)
+      onProgress?.(0);
       return request<ManagedImportPreview>(`/api/v1/imports/${importId}/file`, {
         method: 'PUT',
         headers: {
@@ -237,37 +246,46 @@ export function createApiClient(config: ApiClientConfig) {
         },
         body: file,
       }).then((preview) => {
-        onProgress?.(100)
-        return preview
-      })
+        onProgress?.(100);
+        return preview;
+      });
     }
     return new Promise((resolve, reject) => {
-      const upload = new XMLHttpRequest()
-      upload.open('PUT', `${baseUrl}/api/v1/imports/${importId}/file`)
-      upload.responseType = 'json'
-      upload.setRequestHeader('Accept', 'application/json')
-      upload.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-      upload.setRequestHeader('X-Import-Filename', originalFilename)
-      const token = getToken?.()
-      if (token) upload.setRequestHeader('Authorization', `Bearer ${token}`)
+      const upload = new XMLHttpRequest();
+      upload.open('PUT', `${baseUrl}/api/v1/imports/${importId}/file`);
+      upload.responseType = 'json';
+      upload.setRequestHeader('Accept', 'application/json');
+      upload.setRequestHeader(
+        'Content-Type',
+        file.type || 'application/octet-stream',
+      );
+      upload.setRequestHeader('X-Import-Filename', originalFilename);
+      const token = getToken?.();
+      if (token) upload.setRequestHeader('Authorization', `Bearer ${token}`);
       upload.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && event.total > 0) {
-          onProgress?.(Math.round((event.loaded / event.total) * 100))
+          onProgress?.(Math.round((event.loaded / event.total) * 100));
         }
-      })
+      });
       upload.addEventListener('load', () => {
         if (upload.status >= 200 && upload.status < 300) {
-          onProgress?.(100)
-          resolve(upload.response as ManagedImportPreview)
-          return
+          onProgress?.(100);
+          resolve(upload.response as ManagedImportPreview);
+          return;
         }
-        const body = upload.response as ErrorResponse | undefined
-        reject(body ? new ApiError(upload.status, body) : new Error(`HTTP ${upload.status}`))
-      })
-      upload.addEventListener('error', () => reject(new Error('Managed Import upload failed')))
-      onProgress?.(0)
-      upload.send(file)
-    })
+        const body = upload.response as ErrorResponse | undefined;
+        reject(
+          body
+            ? new ApiError(upload.status, body)
+            : new Error(`HTTP ${upload.status}`),
+        );
+      });
+      upload.addEventListener('error', () =>
+        reject(new Error('Managed Import upload failed')),
+      );
+      onProgress?.(0);
+      upload.send(file);
+    });
   }
 
   function subscribePlaybackQueueEvents(
@@ -277,7 +295,8 @@ export function createApiClient(config: ApiClientConfig) {
     return subscribeQueueEvents(
       {
         getBaseUrl: getQueueEventsBaseUrl,
-        getCapabilities: async () => (await request<HealthResponse>('/api/v1/health')).capabilities,
+        getCapabilities: async () =>
+          (await request<HealthResponse>('/api/v1/health')).capabilities,
         getToken,
         transport,
         eventSourceFactory,
@@ -285,42 +304,41 @@ export function createApiClient(config: ApiClientConfig) {
       },
       onEvent,
       onError,
-    )
+    );
   }
 
-  async function request<T>(
-    path: string,
-    init?: RequestInit,
-  ): Promise<T> {
-    const headers = new Headers(init?.headers)
-    headers.set('Accept', 'application/json')
+  async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    const headers = new Headers(init?.headers);
+    headers.set('Accept', 'application/json');
     if (init?.body && !headers.has('Content-Type')) {
-      headers.set('Content-Type', 'application/json')
+      headers.set('Content-Type', 'application/json');
     }
-    const token = getToken?.()
+    const token = getToken?.();
     if (token) {
-      headers.set('Authorization', `Bearer ${token}`)
+      headers.set('Authorization', `Bearer ${token}`);
     }
 
     const response = await transport(`${baseUrl}${path}`, {
       ...init,
       headers,
-    })
+    });
 
     if (!response.ok) {
-      const body = normalizeApiErrorBody(await response.json().catch(() => ({
-        error: 'unknown',
-        code: 'unknown',
-        message: response.statusText,
-      })) as ErrorResponse | Schemas['QueueConflictResponse'])
-      throw new ApiError(response.status, body)
+      const body = normalizeApiErrorBody(
+        (await response.json().catch(() => ({
+          error: 'unknown',
+          code: 'unknown',
+          message: response.statusText,
+        }))) as ErrorResponse | Schemas['QueueConflictResponse'],
+      );
+      throw new ApiError(response.status, body);
     }
 
     if (response.status === 204) {
-      return undefined as T
+      return undefined as T;
     }
 
-    return (await response.json()) as T
+    return (await response.json()) as T;
   }
 
   return {
@@ -340,9 +358,9 @@ export function createApiClient(config: ApiClientConfig) {
     listArtists: (params?: ListParams) =>
       request<ArtistList>(`/api/v1/library/artists${buildQuery(params)}`),
     listAlbums: (params?: ListParams) =>
-      request<WireAlbumList>(`/api/v1/library/albums${buildQuery(params)}`).then(
-        normalizeAlbumList,
-      ),
+      request<WireAlbumList>(
+        `/api/v1/library/albums${buildQuery(params)}`,
+      ).then(normalizeAlbumList),
     getAlbum: (albumId: string) =>
       request<WireAlbumDetail>(`/api/v1/library/albums/${albumId}`).then(
         normalizeAlbumDetail,
@@ -352,11 +370,13 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'DELETE',
       }),
     listTracks: (params?: ListParams) =>
-      request<WireTrackList>(`/api/v1/library/tracks${buildQuery(params)}`).then(
-        normalizeTrackList,
-      ),
+      request<WireTrackList>(
+        `/api/v1/library/tracks${buildQuery(params)}`,
+      ).then(normalizeTrackList),
     getTrack: (trackId: string) =>
-      request<WireTrack>(`/api/v1/library/tracks/${trackId}`).then(normalizeTrack),
+      request<WireTrack>(`/api/v1/library/tracks/${trackId}`).then(
+        normalizeTrack,
+      ),
     deleteTrack: (trackId: string) =>
       request<DeleteResult>(`/api/v1/library/tracks/${trackId}`, {
         method: 'DELETE',
@@ -474,7 +494,7 @@ export function createApiClient(config: ApiClientConfig) {
       `${getStreamBaseUrl()}/api/v1/tracks/${trackId}/stream`,
     getAlbumCoverUrl: (albumId: string) =>
       `${getMediaBaseUrl()}/api/v1/library/albums/${albumId}/cover`,
-  }
+  };
 }
 
-export type ApiClient = ReturnType<typeof createApiClient>
+export type ApiClient = ReturnType<typeof createApiClient>;

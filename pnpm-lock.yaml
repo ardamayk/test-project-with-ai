@@ -13,6 +13,9 @@ importers:
 
   .:
     devDependencies:
+      '@biomejs/biome':
+        specifier: 2.4.5
+        version: 2.4.5
       turbo:
         specifier: ^2.5.4
         version: 2.10.0
@@ -213,9 +216,6 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
-      '@biomejs/biome':
-        specifier: 2.4.5
-        version: 2.4.5
       '@playwright/test':
         specifier: ^1.55.0
         version: 1.61.1
@@ -1881,7 +1881,7 @@ packages:
       react: ^18 || ^19
 
   '@tanstack/react-query@5.102.6':
-    resolution: {integrity: sha512-ANz4KZ8z80D85fiz5IAHjpb8XBPLrjOb/0natlD9Ascyy/3p96V86Zw8UbOfA0HDLcvK/A4gNd95r723y5UT2w==}
+    resolution: {integrity: sha512-ANz4KZ8z80D85fiz5IAHjpb8XBPLrjOb/0natlD9Ascy/3p96V86Zw8UbOfA0HDLcvK/A4gNd95r723y5UT2w==}
     peerDependencies:
       react: ^18 || ^19
 

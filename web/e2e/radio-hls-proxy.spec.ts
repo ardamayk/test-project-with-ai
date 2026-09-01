@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-type BrowserPlaybackEngineModule = typeof import("../src/playback/BrowserPlaybackEngine");
+type BrowserPlaybackEngineModule =
+	typeof import("../src/playback/BrowserPlaybackEngine");
 
 test("browser HLS playback completes nested requests through Music Server proxy", async ({
 	page,
@@ -14,7 +15,10 @@ test("browser HLS playback completes nested requests through Music Server proxy"
 	const observedHLSRequests: string[] = [];
 	page.on("request", (request) => {
 		const requestUrl = request.url();
-		if (requestUrl.startsWith(proxyOrigin) || requestUrl.startsWith(upstreamOrigin)) {
+		if (
+			requestUrl.startsWith(proxyOrigin) ||
+			requestUrl.startsWith(upstreamOrigin)
+		) {
 			observedHLSRequests.push(requestUrl);
 		}
 	});
@@ -28,9 +32,8 @@ test("browser HLS playback completes nested requests through Music Server proxy"
 	await page.evaluate(async (playbackUrl) => {
 		const browserPlaybackEngineModulePath: string =
 			"/src/playback/BrowserPlaybackEngine.ts";
-		const browserPlaybackEngineModule: BrowserPlaybackEngineModule = await import(
-			browserPlaybackEngineModulePath,
-		);
+		const browserPlaybackEngineModule: BrowserPlaybackEngineModule =
+			await import(browserPlaybackEngineModulePath);
 		const { BrowserPlaybackEngine } = browserPlaybackEngineModule;
 		const engine = new BrowserPlaybackEngine();
 		Object.assign(window, { hlsFixtureEngine: engine });
@@ -62,10 +65,14 @@ test("browser HLS playback completes nested requests through Music Server proxy"
 				).length,
 		)
 		.toBeGreaterThanOrEqual(2);
-	expect(observedHLSRequests.every((requestUrl) => requestUrl.startsWith(proxyOrigin))).toBe(
-		true,
-	);
-	expect(observedHLSRequests.some((requestUrl) => requestUrl.startsWith(upstreamOrigin))).toBe(
-		false,
-	);
+	expect(
+		observedHLSRequests.every((requestUrl) =>
+			requestUrl.startsWith(proxyOrigin),
+		),
+	).toBe(true);
+	expect(
+		observedHLSRequests.some((requestUrl) =>
+			requestUrl.startsWith(upstreamOrigin),
+		),
+	).toBe(false);
 });

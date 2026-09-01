@@ -1,0 +1,164 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+
+const WORKSPACE_PACKAGES = ["@repo/api-client", "@repo/ui", "web"];
+
+function run(command, args) {
+	const result = spawnSync(command, args, {
+		cwd: new URL("..", import.meta.url),
+		encoding: "utf8",
+		env: { ...process.env, NO_COLOR: "1" },
+	});
+
+	assert.equal(
+		result.status,
+		0,
+		`${command} ${args.join(" ")} failed:\n${result.stderr}${result.stdout}`,
+	);
+
+	return result.stdout;
+}
+
+function parseDryRun(output) {
+	const jsonStart = output.indexOf("{");
+	assert.notEqual(jsonStart, -1, `Turbo JSON missing:\n${output}`);
+	return JSON.parse(output.slice(jsonStart));
+}
+
+function runMiseDry(task) {
+	return parseDryRun(run("mise", ["run", task, "--", "--dry=json"]));
+}
+
+function runTurboDry(task, packageName = "web") {
+	return parseDryRun(
+		run("pnpm", [
+			"exec",
+			"turbo",
+			"run",
+			task,
+			`--filter=${packageName}`,
+			"--dry=json",
+		]),
+	);
+}
+
+function taskPackages(dryRun, taskName) {
+	return dryRun.tasks
+		.filter(
+			(task) => task.task === taskName && task.command !== "<NONEXISTENT>",
+		)
+		.map((task) => task.package)
+		.sort();
+}
+
+test("aggregate Mise tasks select only workspace verification packages", () => {
+	assert.deepEqual(taskPackages(runMiseDry("workspace:build"), "build"), [
+		"web",
+	]);
+
+	for (const [miseTask, turboTask] of [
+		["workspace:format", "format"],
+		["workspace:check", "check"],
+		["workspace:typecheck", "typecheck"],
+		["workspace:test", "test:unit"],
+	]) {
+		assert.deepEqual(
+			taskPackages(runMiseDry(miseTask), turboTask),
+			WORKSPACE_PACKAGES,
+		);
+	}
+});
+
+test("targeted Mise tasks select one workspace package", () => {
+	const packageTasks = [
+		["web", "web"],
+		["ui", "@repo/ui"],
+		["api-client", "@repo/api-client"],
+	];
+
+	assert.deepEqual(taskPackages(runMiseDry("web:build"), "build"), ["web"]);
+
+	for (const [taskPrefix, packageName] of packageTasks) {
+		for (const [taskSuffix, turboTask] of [
+			["format", "format"],
+			["check", "check"],
+			["typecheck", "typecheck"],
+			["test", "test:unit"],
+		]) {
+			assert.deepEqual(
+				taskPackages(runMiseDry(`${taskPrefix}:${taskSuffix}`), turboTask),
+				[packageName],
+			);
+		}
+	}
+});
+
+test("Turbo verification tasks have no implicit build or generation edges", () => {
+	const buildTaskIds = runTurboDry("build").tasks.map((task) => task.taskId);
+	assert.equal(
+		buildTaskIds.some((taskId) => taskId.endsWith("#generate")),
+		false,
+	);
+
+	for (const taskName of ["lint", "test:unit"]) {
+		const taskIds = runTurboDry(taskName).tasks.map((task) => task.taskId);
+		assert.equal(
+			taskIds.some((taskId) => taskId.endsWith("#build")),
+			false,
+		);
+		assert.equal(
+			taskIds.some((taskId) => taskId.endsWith("#typecheck")),
+			false,
+		);
+	}
+});
+
+test("Turbo cache policy matches task side effects", () => {
+	for (const taskName of [
+		"build",
+		"format:check",
+		"lint",
+		"typecheck",
+		"test:unit",
+	]) {
+		const [task] = runTurboDry(taskName).tasks;
+		assert.equal(task.resolvedTaskDefinition.cache, true, taskName);
+	}
+
+	for (const [taskName, packageName] of [
+		["format", "web"],
+		["generate", "@repo/contracts"],
+		["test:e2e", "web"],
+		["test:integration", "web"],
+	]) {
+		const [task] = runTurboDry(taskName, packageName).tasks;
+		assert.notEqual(task.command, "<NONEXISTENT>", taskName);
+		assert.equal(task.resolvedTaskDefinition.cache, false, taskName);
+	}
+
+	const [devTask] = runTurboDry("dev").tasks;
+	assert.equal(devTask.resolvedTaskDefinition.cache, false);
+	assert.equal(devTask.resolvedTaskDefinition.persistent, true);
+});
+
+test("workspace Biome policy excludes generated static bundles", () => {
+	run("pnpm", [
+		"exec",
+		"biome",
+		"check",
+		"--no-errors-on-unmatched",
+		"server/internal/staticassets/web",
+	]);
+});
+
+test("compiler-only packages expose type checking instead of building", async () => {
+	for (const packagePath of [
+		"../packages/ui/package.json",
+		"../packages/api-client/package.json",
+	]) {
+		const packageJson = await import(packagePath, { with: { type: "json" } });
+		assert.equal(packageJson.default.scripts.build, undefined);
+		assert.equal(packageJson.default.scripts.typecheck, "tsc --noEmit");
+	}
+});
