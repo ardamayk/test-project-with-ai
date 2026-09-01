@@ -259,7 +259,8 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 	if batch.Status == BATCH_STATUS_COMPLETED {
 		return batch, nil
 	}
-	if err := service.startOrResumeBatch(ctx, batch, confirmation.Revision, selectedIDs); err != nil {
+	err = service.startOrResumeBatch(ctx, batch, confirmation.Revision, selectedIDs)
+	if err != nil {
 		return Batch{}, err
 	}
 	jobs, err := service.store.ListBatchJobs(ctx, batchID)

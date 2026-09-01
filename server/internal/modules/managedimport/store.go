@@ -30,7 +30,7 @@ func NewStore(database *sql.DB) *Store {
 	return &Store{database: database}
 }
 
-func (store *Store) CreateJob(ctx context.Context, batchID string) (Job, error) {
+func (store *Store) CreateJob(ctx context.Context, batchID string) (_ Job, returnErr error) {
 	job := Job{ID: uuid.NewString(), Status: STATUS_UPLOADING, Revision: 1}
 	if batchID == "" {
 		_, err := store.database.ExecContext(ctx, `
@@ -45,7 +45,12 @@ func (store *Store) CreateJob(ctx context.Context, batchID string) (Job, error) 
 	if err != nil {
 		return Job{}, fmt.Errorf("begin Managed Import Batch file creation: %w", err)
 	}
-	defer transaction.Rollback()
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Batch file creation: %w", rollbackErr))
+		}
+	}()
 	result, err := transaction.ExecContext(ctx, `
 		INSERT INTO managed_import_jobs (id, status, revision, batch_id, batch_position)
 		SELECT ?, ?, ?, id, (SELECT COALESCE(MAX(batch_position), 0) + 1 FROM managed_import_jobs WHERE batch_id = ?)
@@ -233,12 +238,17 @@ func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, err
 	return nil
 }
 
-func (store *Store) StartBatchConfirmation(ctx context.Context, batchID string, revision int, selectedIDs map[string]bool) error {
+func (store *Store) StartBatchConfirmation(ctx context.Context, batchID string, revision int, selectedIDs map[string]bool) (returnErr error) {
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin Managed Import Batch confirmation: %w", err)
 	}
-	defer transaction.Rollback()
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Batch confirmation: %w", rollbackErr))
+		}
+	}()
 	if err := ensureBatchResolved(ctx, transaction, batchID); err != nil {
 		return err
 	}
