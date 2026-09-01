@@ -471,7 +471,7 @@ func readLengthPrefixedValue(data []byte) ([]byte, []byte, error) {
 }
 
 func inspectOGGMetadataAndArtwork(tags map[string][]string) (NormalizedMediaMetadata, AlbumArtwork, error) {
-	metadata, err := inspectVorbisMetadata(tags)
+	metadata, err := normalizeMediaMetadata(tags, replayGainFromTags(tags))
 	if err != nil {
 		return NormalizedMediaMetadata{}, AlbumArtwork{}, err
 	}
