@@ -91,12 +91,16 @@ describe('createApiClient', () => {
     const client = createApiClient({ baseUrl: 'http://music.test', transport })
 
     const batch = await client.createManagedImportBatch()
-    await client.createManagedImportJob(batch.id)
+    await client.createManagedImportJob(
+      batch.id,
+      '00000000-0000-4000-8000-000000000001',
+    )
     const report = await client.confirmManagedImportBatch(batch.id, 2, ['import-1'])
 
     expect(report.status).toBe('completed')
     expect(JSON.parse(String(transport.mock.calls[1]?.[1]?.body))).toEqual({
       batchId: 'batch-1',
+      clientFileId: '00000000-0000-4000-8000-000000000001',
     })
     expect(JSON.parse(String(transport.mock.calls[2]?.[1]?.body))).toEqual({
       revision: 2,

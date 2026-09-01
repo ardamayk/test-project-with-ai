@@ -1265,11 +1265,16 @@ components:
           description: Created Track when status is committed.
     ManagedImportJobCreate:
       type: object
+      required: [batchId, clientFileId]
       properties:
         batchId:
           type: string
           format: uuid
           description: Import Batch that owns this per-file job.
+        clientFileId:
+          type: string
+          format: uuid
+          description: Client-generated identifier used to correlate a Batch file when the create response is lost.
     ManagedImportBatch:
       type: object
       required: [id, status, revision, files]
@@ -1292,6 +1297,9 @@ components:
       required: [jobId, state, status, revision, validationProgress, selected]
       properties:
         jobId:
+          type: string
+          format: uuid
+        clientFileId:
           type: string
           format: uuid
         state:

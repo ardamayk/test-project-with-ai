@@ -113,7 +113,7 @@ func TestManagedImportBatchPreservesConfirmationFailureCode(t *testing.T) {
 		return availableBytes, nil
 	})
 	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
-	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", strings.NewReader(fmt.Sprintf(`{"batchId":%q}`, batchID)), map[string]string{"Content-Type": "application/json"})
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":"00000000-0000-4000-8000-000000000001"}`, batchID)), map[string]string{"Content-Type": "application/json"})
 	var job Job
 	testutil.DecodeJSON(t, jobResponse, &job)
 	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{

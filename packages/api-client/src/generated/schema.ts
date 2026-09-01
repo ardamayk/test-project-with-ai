@@ -702,7 +702,12 @@ export interface components {
              * Format: uuid
              * @description Import Batch that owns this per-file job.
              */
-            batchId?: string;
+            batchId: string;
+            /**
+             * Format: uuid
+             * @description Client-generated identifier used to correlate a Batch file when the create response is lost.
+             */
+            clientFileId: string;
         };
         ManagedImportBatch: {
             /** Format: uuid */
@@ -715,6 +720,8 @@ export interface components {
         ManagedImportBatchFile: {
             /** Format: uuid */
             jobId: string;
+            /** Format: uuid */
+            clientFileId?: string;
             /** @enum {string} */
             state: "accepted" | "rejected" | "unresolved" | "completed";
             /** @enum {string} */

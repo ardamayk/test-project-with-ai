@@ -31,7 +31,7 @@ export function ImportMusicDialog({
 				>
 					<ImportDialogHeader isBusy={workflow.isBusy} />
 					<ImportFilePicker
-						isBusy={workflow.isBusy}
+						isBusy={workflow.isSelectionLocked}
 						onFiles={workflow.handleFiles}
 					/>
 					<ImportActivity
@@ -40,7 +40,7 @@ export function ImportMusicDialog({
 					/>
 					<ImportFileList
 						entries={workflow.entries}
-						isBusy={workflow.isBusy}
+						isBusy={workflow.isSelectionLocked}
 						onSelectionChange={workflow.handleSelectionChange}
 					/>
 					<ImportDialogFooter

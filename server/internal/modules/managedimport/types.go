@@ -72,7 +72,8 @@ type Job struct {
 }
 
 type JobCreate struct {
-	BatchID string `json:"batchId"`
+	BatchID      string `json:"batchId"`
+	ClientFileID string `json:"clientFileId"`
 }
 
 type Batch struct {
@@ -84,6 +85,7 @@ type Batch struct {
 
 type BatchFile struct {
 	JobID              string         `json:"jobId"`
+	ClientFileID       string         `json:"clientFileId,omitempty"`
 	State              BatchFileState `json:"state"`
 	Status             ImportStatus   `json:"status"`
 	Revision           int            `json:"revision"`
@@ -147,6 +149,7 @@ type Result struct {
 type importJob struct {
 	Job
 	BatchID          string
+	ClientFileID     string
 	OriginalFilename string
 	StagedFilePath   string
 	ContentSHA256    string
@@ -218,6 +221,7 @@ func previewFromInspection(job importJob, inspection library.MediaInspection) Pr
 func batchFileFromJob(job importJob) (BatchFile, error) {
 	file := BatchFile{
 		JobID:              job.ID,
+		ClientFileID:       job.ClientFileID,
 		State:              BATCH_FILE_UNRESOLVED,
 		Status:             job.Status,
 		Revision:           job.Revision,

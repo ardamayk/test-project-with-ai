@@ -203,8 +203,10 @@ func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 	testutil.DecodeJSON(t, batchResponse, &batch)
 
 	jobIDs := make([]string, 4)
+	clientFileIDs := make([]string, len(jobIDs))
 	for index := range jobIDs {
-		body := strings.NewReader(fmt.Sprintf(`{"batchId":%q}`, batch.ID))
+		clientFileIDs[index] = uuid.NewString()
+		body := strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":%q}`, batch.ID, clientFileIDs[index]))
 		response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", body, map[string]string{"Content-Type": "application/json"})
 		if response.Code != http.StatusCreated {
 			t.Fatalf("create batch file %d status = %d, body = %s", index, response.Code, response.Body.String())
@@ -234,6 +236,9 @@ func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 	testutil.DecodeJSON(t, previewResponse, &batch)
 	if batch.Status != managedimport.BATCH_STATUS_UPLOADING || len(batch.Files) != 4 {
 		t.Fatalf("Import Batch preview = %+v", batch)
+	}
+	if batch.Files[0].ClientFileID != clientFileIDs[0] {
+		t.Fatalf("Batch client file ID = %q, want %q", batch.Files[0].ClientFileID, clientFileIDs[0])
 	}
 	if batch.Files[0].State != managedimport.BATCH_FILE_ACCEPTED || batch.Files[2].State != managedimport.BATCH_FILE_REJECTED {
 		t.Fatalf("Import Batch file states = %+v", batch.Files)
@@ -269,7 +274,7 @@ func TestManagedImportBatchEnforcesCumulativeByteLimit(t *testing.T) {
 	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
 	jobIDs := make([]string, 2)
 	for index := range jobIDs {
-		body := strings.NewReader(fmt.Sprintf(`{"batchId":%q}`, batchID))
+		body := strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":%q}`, batchID, uuid.NewString()))
 		response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", body, map[string]string{"Content-Type": "application/json"})
 		if response.Code != http.StatusCreated {
 			t.Fatalf("create cumulative-limit batch file status = %d, body = %s", response.Code, response.Body.String())
@@ -330,7 +335,7 @@ func TestManagedImportBatchReservesConcurrentUploadBytesAtomically(t *testing.T)
 	}
 	jobIDs := make([]string, 2)
 	for index := range jobIDs {
-		job, createErr := store.CreateJob(ctx, batch.ID)
+		job, createErr := store.CreateJob(ctx, batch.ID, "")
 		if createErr != nil {
 			t.Fatalf("create reservation test job: %v", createErr)
 		}
@@ -366,7 +371,7 @@ func TestManagedImportBatchReservesConcurrentUploadBytesAtomically(t *testing.T)
 func TestManagedImportBatchRejectsConfirmationWhileFileIsUnresolved(t *testing.T) {
 	router := newConfiguredManagedImportRouter(t, config.Config{ManagedStoragePath: t.TempDir()})
 	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
-	body := strings.NewReader(fmt.Sprintf(`{"batchId":%q}`, batchID))
+	body := strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":%q}`, batchID, uuid.NewString()))
 	testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", body, map[string]string{"Content-Type": "application/json"})
 
 	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", strings.NewReader(`{"revision":2,"selectedFileIds":[]}`), map[string]string{"Content-Type": "application/json"})
@@ -387,7 +392,7 @@ func TestManagedImportBatchResumesConfirmationAfterInterruption(t *testing.T) {
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
-	body := strings.NewReader(fmt.Sprintf(`{"batchId":%q}`, batchID))
+	body := strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":%q}`, batchID, uuid.NewString()))
 	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", body, map[string]string{"Content-Type": "application/json"})
 	var job managedimport.Job
 	testutil.DecodeJSON(t, jobResponse, &job)
@@ -483,7 +488,7 @@ func TestManagedImportBatchPersistsCanceledUploadFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create canceled upload batch: %v", err)
 	}
-	job, err := service.CreateJob(context.Background(), batch.ID)
+	job, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("create canceled upload job: %v", err)
 	}
@@ -514,7 +519,7 @@ func TestManagedImportBatchLeavesCanceledConfirmationResumable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create canceled confirmation batch: %v", err)
 	}
-	job, err := service.CreateJob(context.Background(), batch.ID)
+	job, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("create canceled confirmation job: %v", err)
 	}
@@ -1549,7 +1554,7 @@ func createImportJob(t *testing.T, router http.Handler) string {
 
 func createBatchImportJob(t *testing.T, router http.Handler, batchID string) string {
 	t.Helper()
-	body := strings.NewReader(fmt.Sprintf(`{"batchId":%q}`, batchID))
+	body := strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":%q}`, batchID, uuid.NewString()))
 	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", body, map[string]string{"Content-Type": "application/json"})
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create batch Import Job status = %d, body = %s", response.Code, response.Body.String())

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/google/uuid"
 )
 
 type Service struct {
@@ -32,8 +33,13 @@ func NewService(store *Store, storage *Storage, inspector library.MediaInspector
 	return &Service{store: store, storage: storage, inspector: inspector, uploadLocks: make(map[string]*uploadLock)}
 }
 
-func (service *Service) CreateJob(ctx context.Context, batchID string) (Job, error) {
-	return service.store.CreateJob(ctx, batchID)
+func (service *Service) CreateJob(ctx context.Context, batchID, clientFileID string) (Job, error) {
+	if batchID != "" {
+		if _, err := uuid.Parse(clientFileID); err != nil {
+			return Job{}, fmt.Errorf("%w: clientFileId must be a UUID", ErrInvalidUpload)
+		}
+	}
+	return service.store.CreateJob(ctx, batchID, clientFileID)
 }
 
 func (service *Service) CreateBatch(ctx context.Context) (Batch, error) {

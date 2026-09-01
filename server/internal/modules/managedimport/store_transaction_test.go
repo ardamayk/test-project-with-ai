@@ -14,7 +14,7 @@ func TestMarkPreviewRollsBackJobWhenBatchRevisionFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create batch: %v", err)
 	}
-	job, err := store.CreateJob(context.Background(), batch.ID)
+	job, err := store.CreateJob(context.Background(), batch.ID, "")
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestMarkFailedRollsBackJobWhenBatchRevisionFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create batch: %v", err)
 	}
-	job, err := store.CreateJob(context.Background(), batch.ID)
+	job, err := store.CreateJob(context.Background(), batch.ID, "")
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}

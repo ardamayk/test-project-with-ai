@@ -29,7 +29,7 @@ func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Re
 		respond.Error(writer, http.StatusBadRequest, "invalid_import_job", "Managed Import Job request is invalid")
 		return
 	}
-	job, err := handlers.service.CreateJob(request.Context(), creation.BatchID)
+	job, err := handlers.service.CreateJob(request.Context(), creation.BatchID, creation.ClientFileID)
 	if err != nil {
 		handleError(writer, request, err)
 		return

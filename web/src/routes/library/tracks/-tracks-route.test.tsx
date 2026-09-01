@@ -369,7 +369,11 @@ describe("tracks route", () => {
 		expect(screen.getByText("Strict Import Tests")).toBeTruthy();
 		expect(mocks.createManagedImportBatch).toHaveBeenCalledOnce();
 		expect(mocks.createManagedImportJob).toHaveBeenCalledTimes(2);
-		expect(mocks.createManagedImportJob).toHaveBeenNthCalledWith(1, "batch-1");
+		expect(mocks.createManagedImportJob).toHaveBeenNthCalledWith(
+			1,
+			"batch-1",
+			expect.any(String),
+		);
 		expect(mocks.uploadManagedImportFile).toHaveBeenCalledWith(
 			"import-1",
 			"strict-import.flac",
@@ -513,17 +517,22 @@ describe("tracks route", () => {
 	});
 
 	it("retries an unresolved server job whose create response was lost", async () => {
+		let clientFileId = "";
 		mocks.createManagedImportJob
 			.mockReset()
-			.mockRejectedValueOnce(new Error("job response lost"));
+			.mockImplementationOnce((_batchId, currentClientFileId) => {
+				clientFileId = currentClientFileId;
+				return Promise.reject(new Error("job response lost"));
+			});
 		mocks.getManagedImportBatch
-			.mockResolvedValueOnce({
+			.mockImplementationOnce(async () => ({
 				id: "batch-1",
 				status: "uploading",
 				revision: 2,
 				files: [
 					{
 						jobId: "server-import-1",
+						clientFileId,
 						state: "unresolved",
 						status: "uploading",
 						revision: 1,
@@ -531,7 +540,7 @@ describe("tracks route", () => {
 						selected: false,
 					},
 				],
-			})
+			}))
 			.mockResolvedValueOnce({
 				id: "batch-1",
 				status: "uploading",
@@ -567,6 +576,68 @@ describe("tracks route", () => {
 		);
 		expect(await screen.findByText("Accepted")).toBeDefined();
 		expect(screen.queryByText("job response lost")).toBeNull();
+	});
+
+	it("correlates a recovered job after an earlier create genuinely fails", async () => {
+		let recoveredClientFileId = "";
+		mocks.createManagedImportJob
+			.mockReset()
+			.mockRejectedValueOnce(new Error("first create failed"))
+			.mockImplementationOnce((_batchId, clientFileId) => {
+				recoveredClientFileId = clientFileId;
+				return Promise.reject(new Error("second response lost"));
+			});
+		mocks.getManagedImportBatch
+			.mockImplementationOnce(async () => ({
+				id: "batch-1",
+				status: "uploading" as const,
+				revision: 2,
+				files: [
+					{
+						jobId: "server-import-2",
+						clientFileId: recoveredClientFileId,
+						state: "unresolved" as const,
+						status: "uploading" as const,
+						revision: 1,
+						validationProgress: 0,
+						selected: false,
+					},
+				],
+			}))
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 3,
+				files: [],
+			});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		const firstFile = new File(["first"], "first.flac", {
+			type: "audio/flac",
+		});
+		const secondFile = new File(["second"], "second.flac", {
+			type: "audio/flac",
+		});
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: { files: [firstFile, secondFile] },
+		});
+
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalled(),
+		);
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledWith(
+			"server-import-2",
+			"second.flac",
+			secondFile,
+			expect.any(Function),
+		);
+		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalledWith(
+			"server-import-2",
+			"first.flac",
+			firstFile,
+			expect.any(Function),
+		);
 	});
 
 	it("preserves an explicit deselection across confirmation refresh", async () => {
@@ -629,6 +700,61 @@ describe("tracks route", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 		await vi.waitFor(() => expect(checkbox).toHaveProperty("disabled", true));
 		finishConfirmation?.();
+	});
+
+	it("keeps selection frozen when the server batch remains confirming", async () => {
+		mocks.getManagedImportBatch
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 3,
+				files: [
+					{
+						jobId: "import-1",
+						state: "accepted",
+						status: "awaiting_confirmation",
+						revision: 2,
+						validationProgress: 100,
+						selected: true,
+					},
+				],
+			})
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "confirming",
+				revision: 4,
+				files: [
+					{
+						jobId: "import-1",
+						state: "accepted",
+						status: "awaiting_confirmation",
+						revision: 2,
+						validationProgress: 100,
+						selected: true,
+					},
+				],
+			});
+		mocks.confirmManagedImportBatch.mockRejectedValueOnce(
+			new Error("confirmation response lost"),
+		);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["flac bytes"], "strict-import.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+		const checkbox = await screen.findByRole("checkbox", {
+			name: "Select strict-import.flac",
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+		await screen.findByText("confirmation response lost");
+		expect(checkbox).toHaveProperty("disabled", true);
 	});
 
 	it("uploads one desktop file at a time", async () => {

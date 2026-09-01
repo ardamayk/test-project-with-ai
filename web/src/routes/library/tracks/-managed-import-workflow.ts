@@ -53,6 +53,7 @@ export function useManagedImportWorkflow({
 		entries: state.entries,
 		errorMessage: state.errorMessage,
 		isBusy,
+		isSelectionLocked: isBusy || state.batch?.status === "confirming",
 		isCompleted,
 		canConfirm,
 		handleFiles: createFileHandler(state),
@@ -212,7 +213,7 @@ async function createBatchJobs(
 	const preparedEntries: Array<{ entry: ImportFileEntry; jobId: string }> = [];
 	for (const entry of entries) {
 		try {
-			const job = await apiClient.createManagedImportJob(batchId);
+			const job = await apiClient.createManagedImportJob(batchId, entry.key);
 			updateEntry(entry.key, { jobId: job.id });
 			preparedEntries.push({ entry, jobId: job.id });
 		} catch (error) {
@@ -289,9 +290,9 @@ async function runWithConcurrency<T>(
 	await Promise.all(Array.from({ length: workerCount }, runWorker));
 }
 
-function createImportFileEntry(file: File, index: number): ImportFileEntry {
+function createImportFileEntry(file: File): ImportFileEntry {
 	return {
-		key: `${index}:${file.name}:${file.size}`,
+		key: crypto.randomUUID(),
 		file,
 		progress: 0,
 		state: "unresolved",
@@ -352,15 +353,13 @@ function attachServerJobs(
 	entries: ImportFileEntry[],
 	files: ManagedImportBatchFile[],
 ): ImportFileEntry[] {
-	const knownJobIds = new Set(entries.flatMap((entry) => entry.jobId ?? []));
-	const serverOnlyJobs = files.filter(
-		(file) => file.state === "unresolved" && !knownJobIds.has(file.jobId),
-	);
-	let nextServerJob = 0;
 	return entries.map((entry) => {
-		if (entry.jobId || nextServerJob >= serverOnlyJobs.length) return entry;
-		const file = serverOnlyJobs[nextServerJob];
-		nextServerJob += 1;
+		if (entry.jobId) return entry;
+		const file = files.find(
+			(candidate) =>
+				candidate.state === "unresolved" &&
+				candidate.clientFileId === entry.key,
+		);
 		return file
 			? {
 					...entry,

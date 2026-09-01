@@ -374,10 +374,10 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'POST',
         body: JSON.stringify({ revision, selectedFileIds }),
       }),
-    createManagedImportJob: (batchId?: string) =>
+    createManagedImportJob: (batchId?: string, clientFileId?: string) =>
       request<ManagedImportJob>('/api/v1/imports', {
         method: 'POST',
-        body: batchId ? JSON.stringify({ batchId }) : undefined,
+        body: batchId ? JSON.stringify({ batchId, clientFileId }) : undefined,
       }),
     getManagedImportJob: (importId: string) =>
       request<ManagedImportJob>(`/api/v1/imports/${importId}`),

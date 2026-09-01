@@ -30,12 +30,12 @@ func NewStore(database *sql.DB) *Store {
 	return &Store{database: database}
 }
 
-func (store *Store) CreateJob(ctx context.Context, batchID string) (_ Job, returnErr error) {
+func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string) (_ Job, returnErr error) {
 	job := Job{ID: uuid.NewString(), Status: STATUS_UPLOADING, Revision: 1}
 	if batchID == "" {
 		_, err := store.database.ExecContext(ctx, `
-			INSERT INTO managed_import_jobs (id, status, revision)
-			VALUES (?, ?, ?)`, job.ID, job.Status, job.Revision)
+			INSERT INTO managed_import_jobs (id, status, revision, client_file_id)
+			VALUES (?, ?, ?, NULLIF(?, ''))`, job.ID, job.Status, job.Revision, clientFileID)
 		if err != nil {
 			return Job{}, fmt.Errorf("create Managed Import Job: %w", err)
 		}
@@ -52,10 +52,10 @@ func (store *Store) CreateJob(ctx context.Context, batchID string) (_ Job, retur
 		}
 	}()
 	result, err := transaction.ExecContext(ctx, `
-		INSERT INTO managed_import_jobs (id, status, revision, batch_id, batch_position)
-		SELECT ?, ?, ?, id, (SELECT COALESCE(MAX(batch_position), 0) + 1 FROM managed_import_jobs WHERE batch_id = ?)
+		INSERT INTO managed_import_jobs (id, status, revision, batch_id, batch_position, client_file_id)
+		SELECT ?, ?, ?, id, (SELECT COALESCE(MAX(batch_position), 0) + 1 FROM managed_import_jobs WHERE batch_id = ?), NULLIF(?, '')
 		FROM managed_import_batches WHERE id = ? AND status = ?`,
-		job.ID, job.Status, job.Revision, batchID, batchID, BATCH_STATUS_UPLOADING)
+		job.ID, job.Status, job.Revision, batchID, clientFileID, batchID, BATCH_STATUS_UPLOADING)
 	if err != nil {
 		return Job{}, fmt.Errorf("create Managed Import Job: %w", err)
 	}
@@ -90,13 +90,13 @@ type queryRower interface {
 
 func getImportJob(ctx context.Context, queryer queryRower, jobID string) (importJob, error) {
 	var job importJob
-	var batchID, originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
+	var batchID, clientFileID, originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
 	var previewJSON, errorField, errorReason, outcome sql.NullString
 	err := queryer.QueryRowContext(ctx, `
-		SELECT id, status, revision, validation_progress, batch_id, original_filename, staged_file_path,
+		SELECT id, status, revision, validation_progress, batch_id, client_file_id, original_filename, staged_file_path,
 			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
@@ -104,6 +104,7 @@ func getImportJob(ctx context.Context, queryer queryRower, jobID string) (import
 		return importJob{}, fmt.Errorf("get Managed Import Job %q: %w", jobID, err)
 	}
 	job.BatchID = batchID.String
+	job.ClientFileID = clientFileID.String
 	job.OriginalFilename = originalFilename.String
 	job.StagedFilePath = stagedFilePath.String
 	job.ContentSHA256 = contentSHA256.String
