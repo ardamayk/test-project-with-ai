@@ -56,10 +56,10 @@ type wavFormatChunk struct {
 }
 
 type wavChunks struct {
-	format  *wavFormatChunk
-	data    wavDataChunk
-	tags    map[string][]string
-	artwork *id3AttachedPicture
+	format   *wavFormatChunk
+	data     wavDataChunk
+	tags     map[string][]string
+	pictures []taggedID3Picture
 }
 
 func inspectOpenWAV(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
@@ -101,7 +101,7 @@ func (input wavInspectionInput) inspect(ctx context.Context) (MediaInspection, e
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	embeddedArtwork, err := inspectWAVArtwork(chunks.artwork)
+	embeddedArtwork, err := inspectWAVArtwork(chunks.pictures)
 	if err != nil {
 		return MediaInspection{}, err
 	}
@@ -122,7 +122,7 @@ func (input wavInspectionInput) readChunks() (wavChunks, error) {
 	var data wavDataChunk
 	hasData := false
 	var tags map[string][]string
-	var artwork *id3AttachedPicture
+	var pictures []taggedID3Picture
 	offset := int64(RIFF_HEADER_SIZE_BYTES)
 	for {
 		var header [RIFF_CHUNK_HEADER_SIZE_BYTES]byte
@@ -152,7 +152,7 @@ func (input wavInspectionInput) readChunks() (wavChunks, error) {
 			hasData = true
 			data = wavDataChunk{offset: bodyOffset, size: chunkSize}
 		case "ID3 ", "id3 ":
-			parsedTags, parsedArtwork, err := parseID3v2Chunk(input.file, chunkSize)
+			parsedTags, parsedPictures, err := parseWAVID3Chunk(input.file, chunkSize)
 			if err != nil {
 				return wavChunks{}, err
 			}
@@ -160,7 +160,7 @@ func (input wavInspectionInput) readChunks() (wavChunks, error) {
 				return wavChunks{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "metadata", errors.New("multiple ID3 chunks are ambiguous"))
 			}
 			tags = parsedTags
-			artwork = parsedArtwork
+			pictures = parsedPictures
 		}
 		nextOffset := bodyOffset + chunkSize
 		if chunkSize%2 == 1 {
@@ -186,7 +186,7 @@ func (input wavInspectionInput) readChunks() (wavChunks, error) {
 	if tags == nil {
 		return wavChunks{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "metadata", errors.New("WAV ID3 chunk is missing; identity metadata is required"))
 	}
-	return wavChunks{format: format, data: data, tags: tags, artwork: artwork}, nil
+	return wavChunks{format: format, data: data, tags: tags, pictures: pictures}, nil
 }
 
 func readWAVFormatChunk(file *os.File, chunkSize int64) (*wavFormatChunk, error) {
@@ -259,9 +259,10 @@ func (format *wavFormatChunk) validate() error {
 	return nil
 }
 
-func inspectWAVArtwork(picture *id3AttachedPicture) (AlbumArtwork, error) {
-	if picture == nil {
-		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
+func inspectWAVArtwork(pictures []taggedID3Picture) (AlbumArtwork, error) {
+	picture, err := selectID3FrontCover(pictures)
+	if err != nil {
+		return AlbumArtwork{}, err
 	}
 	return validateArtworkData(picture.mimeType, picture.data)
 }

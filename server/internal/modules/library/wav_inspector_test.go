@@ -309,7 +309,7 @@ func TestMediaInspectorRejectsMalformedID3SyncsafeSize(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 	_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
-	assertInspectionError(t, err, library.INSPECTION_ERROR_INVALID_METADATA, "metadata")
+	assertInspectionError(t, err, library.INSPECTION_ERROR_INVALID_METADATA, "ID3")
 }
 
 func TestMediaInspectorRejectsEmptyID3Frame(t *testing.T) {
@@ -317,7 +317,7 @@ func TestMediaInspectorRejectsEmptyID3Frame(t *testing.T) {
 	fixture.id3Frames = append([]id3Frame{{id: "PRIV"}}, fixture.id3Frames...)
 
 	_, err := library.NewMediaInspector().Inspect(context.Background(), writeWAVFixture(t, fixture), nil)
-	assertInspectionError(t, err, library.INSPECTION_ERROR_INVALID_METADATA, "metadata")
+	assertInspectionError(t, err, library.INSPECTION_ERROR_INVALID_METADATA, "ID3")
 }
 
 func TestMediaInspectorRejectsNonPCMWAV(t *testing.T) {

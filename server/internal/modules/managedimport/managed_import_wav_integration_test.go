@@ -2,7 +2,6 @@ package managedimport_test
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -184,30 +183,15 @@ func TestManagedImportRejectsUntaggedWAVWithActionableError(t *testing.T) {
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 
-	// Ordinary recorder output: fmt + data only, no ID3, no artwork.
-	blockAlign := WAV_IMPORT_CHANNELS * WAV_IMPORT_BIT_DEPTH / 8
-	fmtBody := make([]byte, 16)
-	binary.LittleEndian.PutUint16(fmtBody[0:2], 1)
-	binary.LittleEndian.PutUint16(fmtBody[2:4], WAV_IMPORT_CHANNELS)
-	binary.LittleEndian.PutUint32(fmtBody[4:8], WAV_IMPORT_SAMPLE_RATE_HZ)
-	binary.LittleEndian.PutUint32(fmtBody[8:12], WAV_IMPORT_SAMPLE_RATE_HZ*uint32(blockAlign))
-	binary.LittleEndian.PutUint16(fmtBody[12:14], uint16(blockAlign))
-	binary.LittleEndian.PutUint16(fmtBody[14:16], WAV_IMPORT_BIT_DEPTH)
-	pcm := make([]byte, WAV_IMPORT_PCM_FRAMES*blockAlign)
-	var body bytes.Buffer
-	body.WriteString("fmt ")
-	binary.Write(&body, binary.LittleEndian, uint32(len(fmtBody)))
-	body.Write(fmtBody)
-	body.WriteString("data")
-	binary.Write(&body, binary.LittleEndian, uint32(len(pcm)))
-	body.Write(pcm)
-	var output bytes.Buffer
-	output.WriteString("RIFF")
-	binary.Write(&output, binary.LittleEndian, uint32(4+body.Len()))
-	output.WriteString("WAVE")
-	output.Write(body.Bytes())
-
-	response := uploadWAVThroughRouter(t, router, output.Bytes())
+	fixture := testutil.EncodeWAV(t, testutil.WAVFixture{
+		AudioFormat:  1,
+		ChannelCount: WAV_IMPORT_CHANNELS,
+		SampleRateHz: WAV_IMPORT_SAMPLE_RATE_HZ,
+		BitDepth:     WAV_IMPORT_BIT_DEPTH,
+		PCMFrames:    WAV_IMPORT_PCM_FRAMES,
+		OmitID3:      true,
+	})
+	response := uploadWAVThroughRouter(t, router, fixture)
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("untagged WAV status = %d, body = %s", response.Code, response.Body.String())
 	}
