@@ -201,19 +201,9 @@ func readID3Frames(file *os.File) ([]id3Frame, byte, int64, error) {
 	if _, err := io.ReadFull(file, header[:]); err != nil {
 		return nil, 0, 0, invalidID3Error(fmt.Errorf("read ID3 header: %w", err))
 	}
-	if string(header[:ID3_SIGNATURE_SIZE_BYTES]) != ID3_SIGNATURE {
-		return nil, 0, 0, invalidID3Error(errors.New("ID3v2 tag is required"))
-	}
-	version := header[ID3_MAJOR_VERSION_OFFSET]
-	if version < ID3_VERSION_2 || version > ID3_VERSION_4 || header[ID3_REVISION_OFFSET] != 0 {
-		return nil, 0, 0, invalidID3Error(fmt.Errorf("unsupported ID3v2 version %d.%d", version, header[ID3_REVISION_OFFSET]))
-	}
-	if header[ID3_FLAGS_OFFSET] != 0 {
-		return nil, 0, 0, invalidID3Error(errors.New("ID3 tag flags are not supported by the Strict Import Profile"))
-	}
-	size, err := decodeSyncSafeInt(header[ID3_SIZE_OFFSET:])
-	if err != nil || size <= 0 || size > MAX_ID3_TAG_SIZE_BYTES {
-		return nil, 0, 0, invalidID3Error(errors.New("ID3 tag size is invalid"))
+	version, size, err := parseID3Header(header[:])
+	if err != nil {
+		return nil, 0, 0, err
 	}
 	payload := make([]byte, size)
 	if _, err = io.ReadFull(file, payload); err != nil {
@@ -221,6 +211,24 @@ func readID3Frames(file *os.File) ([]id3Frame, byte, int64, error) {
 	}
 	frames, err := parseID3Frames(payload, version)
 	return frames, version, int64(ID3_HEADER_SIZE_BYTES + size), err
+}
+
+func parseID3Header(header []byte) (byte, int, error) {
+	if len(header) < ID3_HEADER_SIZE_BYTES || string(header[:ID3_SIGNATURE_SIZE_BYTES]) != ID3_SIGNATURE {
+		return 0, 0, invalidID3Error(errors.New("ID3v2 tag is required"))
+	}
+	version := header[ID3_MAJOR_VERSION_OFFSET]
+	if version < ID3_VERSION_2 || version > ID3_VERSION_4 || header[ID3_REVISION_OFFSET] != 0 {
+		return 0, 0, invalidID3Error(fmt.Errorf("unsupported ID3v2 version %d.%d", version, header[ID3_REVISION_OFFSET]))
+	}
+	if header[ID3_FLAGS_OFFSET] != 0 {
+		return 0, 0, invalidID3Error(errors.New("ID3 tag flags are not supported by the Strict Import Profile"))
+	}
+	size, err := decodeSyncSafeInt(header[ID3_SIZE_OFFSET:ID3_HEADER_SIZE_BYTES])
+	if err != nil || size <= 0 || size > MAX_ID3_TAG_SIZE_BYTES {
+		return 0, 0, invalidID3Error(errors.New("ID3 tag size is invalid"))
+	}
+	return version, size, nil
 }
 
 func parseID3Frames(payload []byte, version byte) ([]id3Frame, error) {

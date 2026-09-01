@@ -32,18 +32,11 @@ func parseWAVID3Chunk(file *os.File, chunkSize int64) (map[string][]string, []ta
 }
 
 func parseWAVID3Header(body []byte) (byte, []byte, error) {
-	if string(body[:ID3_SIGNATURE_SIZE_BYTES]) != ID3_SIGNATURE {
-		return 0, nil, invalidID3Error(errors.New("ID3 signature is missing"))
+	version, size, err := parseID3Header(body)
+	if err != nil {
+		return 0, nil, err
 	}
-	version := body[ID3_MAJOR_VERSION_OFFSET]
-	if version < ID3_VERSION_2 || version > ID3_VERSION_4 || body[ID3_REVISION_OFFSET] != 0 {
-		return 0, nil, invalidID3Error(fmt.Errorf("unsupported ID3v2 version %d.%d", version, body[ID3_REVISION_OFFSET]))
-	}
-	if body[ID3_FLAGS_OFFSET] != 0 {
-		return 0, nil, invalidID3Error(errors.New("ID3 tag flags are not supported by the Strict Import Profile"))
-	}
-	size, err := decodeSyncSafeInt(body[ID3_SIZE_OFFSET:ID3_HEADER_SIZE_BYTES])
-	if err != nil || size <= 0 || size > MAX_ID3_TAG_SIZE_BYTES || ID3_HEADER_SIZE_BYTES+size != len(body) {
+	if ID3_HEADER_SIZE_BYTES+size != len(body) {
 		return 0, nil, invalidID3Error(errors.New("ID3 tag size is invalid"))
 	}
 	return version, body[ID3_HEADER_SIZE_BYTES:], nil
