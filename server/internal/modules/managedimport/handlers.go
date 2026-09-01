@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -21,12 +22,53 @@ func NewHandlers(service *Service) *Handlers {
 }
 
 func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Request) {
-	job, err := handlers.service.CreateJob(request.Context())
+	var creation JobCreate
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_JOB_CREATE_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&creation); err != nil && !errors.Is(err, io.EOF) {
+		respond.Error(writer, http.StatusBadRequest, "invalid_import_job", "Managed Import Job request is invalid")
+		return
+	}
+	job, err := handlers.service.CreateJob(request.Context(), creation.BatchID)
 	if err != nil {
 		handleError(writer, request, err)
 		return
 	}
 	respond.JSON(writer, http.StatusCreated, job)
+}
+
+func (handlers *Handlers) CreateBatch(writer http.ResponseWriter, request *http.Request) {
+	batch, err := handlers.service.CreateBatch(request.Context())
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusCreated, batch)
+}
+
+func (handlers *Handlers) GetBatch(writer http.ResponseWriter, request *http.Request) {
+	batch, err := handlers.service.GetBatch(request.Context(), chi.URLParam(request, "batchId"))
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, batch)
+}
+
+func (handlers *Handlers) ConfirmBatch(writer http.ResponseWriter, request *http.Request) {
+	var confirmation BatchConfirmation
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_BATCH_CONFIRMATION_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&confirmation); err != nil || confirmation.Revision < 1 || confirmation.SelectedFileIDs == nil {
+		respond.Error(writer, http.StatusBadRequest, "invalid_batch_confirmation", "Managed Import Batch confirmation requires a positive revision and selected file IDs")
+		return
+	}
+	batch, err := handlers.service.ConfirmBatch(request.Context(), chi.URLParam(request, "batchId"), confirmation)
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, batch)
 }
 
 func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Request) {
@@ -75,12 +117,12 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 		respond.Error(writer, http.StatusNotFound, "import_not_found", "Managed Import Job not found")
 	case errors.Is(err, ErrRevisionConflict):
 		respond.Error(writer, http.StatusConflict, "import_revision_conflict", "Import Preview changed since the supplied revision")
+	case errors.Is(err, ErrBatchTooLarge):
+		respond.Error(writer, http.StatusRequestEntityTooLarge, "batch_upload_too_large", "Managed Import batch exceeds the configured byte limit")
 	case errors.Is(err, ErrInvalidState):
 		respond.Error(writer, http.StatusConflict, "import_state_conflict", "Managed Import Job is not awaiting this operation")
 	case errors.Is(err, ErrUploadTooLarge):
 		respond.Error(writer, http.StatusRequestEntityTooLarge, "upload_too_large", "Managed Import file exceeds the configured per-file byte limit")
-	case errors.Is(err, ErrBatchTooLarge):
-		respond.Error(writer, http.StatusRequestEntityTooLarge, "batch_upload_too_large", "Managed Import batch exceeds the configured byte limit")
 	case errors.Is(err, ErrInsufficientStorage):
 		respond.Error(writer, http.StatusInsufficientStorage, "insufficient_storage", "Managed Storage does not have enough capacity for this import and its safety reserve")
 	case errors.Is(err, ErrUnsafeStoragePath):

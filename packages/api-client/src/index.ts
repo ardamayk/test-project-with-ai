@@ -68,9 +68,12 @@ export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track }
 export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] }
 export type ErrorResponse = Schemas['ErrorResponse']
 export type ManagedImportJob = Schemas['ManagedImportJob']
+export type ManagedImportBatch = Schemas['ManagedImportBatch']
+export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile']
 export type ManagedImportPreview = Schemas['ManagedImportPreview']
 export type ManagedImportPreviewFile = Schemas['ManagedImportPreviewFile']
 export type ManagedImportResult = Schemas['ManagedImportResult']
+export type ManagedImportUploadProgress = (progress: number) => void
 export type QueueConflictResponse = Omit<Schemas['QueueConflictResponse'], 'queue'> & {
   queue: Queue
 }
@@ -218,6 +221,55 @@ export function createApiClient(config: ApiClientConfig) {
       ? queueEventsBaseUrl()
       : queueEventsBaseUrl
 
+  function uploadManagedImportFile(
+    importId: string,
+    originalFilename: string,
+    file: Blob,
+    onProgress?: ManagedImportUploadProgress,
+  ): Promise<ManagedImportPreview> {
+    if (config.transport || typeof XMLHttpRequest === 'undefined') {
+      onProgress?.(0)
+      return request<ManagedImportPreview>(`/api/v1/imports/${importId}/file`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Import-Filename': originalFilename,
+        },
+        body: file,
+      }).then((preview) => {
+        onProgress?.(100)
+        return preview
+      })
+    }
+    return new Promise((resolve, reject) => {
+      const upload = new XMLHttpRequest()
+      upload.open('PUT', `${baseUrl}/api/v1/imports/${importId}/file`)
+      upload.responseType = 'json'
+      upload.setRequestHeader('Accept', 'application/json')
+      upload.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+      upload.setRequestHeader('X-Import-Filename', originalFilename)
+      const token = getToken?.()
+      if (token) upload.setRequestHeader('Authorization', `Bearer ${token}`)
+      upload.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress?.(Math.round((event.loaded / event.total) * 100))
+        }
+      })
+      upload.addEventListener('load', () => {
+        if (upload.status >= 200 && upload.status < 300) {
+          onProgress?.(100)
+          resolve(upload.response as ManagedImportPreview)
+          return
+        }
+        const body = upload.response as ErrorResponse | undefined
+        reject(body ? new ApiError(upload.status, body) : new Error(`HTTP ${upload.status}`))
+      })
+      upload.addEventListener('error', () => reject(new Error('Managed Import upload failed')))
+      onProgress?.(0)
+      upload.send(file)
+    })
+  }
+
   function subscribePlaybackQueueEvents(
     onEvent: (event: QueueEvent) => void,
     onError?: (error: Error) => void,
@@ -309,23 +361,27 @@ export function createApiClient(config: ApiClientConfig) {
       request<DeleteResult>(`/api/v1/library/tracks/${trackId}`, {
         method: 'DELETE',
       }),
-    createManagedImportJob: () =>
-      request<ManagedImportJob>('/api/v1/imports', { method: 'POST' }),
+    createManagedImportBatch: () =>
+      request<ManagedImportBatch>('/api/v1/import-batches', { method: 'POST' }),
+    getManagedImportBatch: (batchId: string) =>
+      request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}`),
+    confirmManagedImportBatch: (
+      batchId: string,
+      revision: number,
+      selectedFileIds: string[],
+    ) =>
+      request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ revision, selectedFileIds }),
+      }),
+    createManagedImportJob: (batchId?: string) =>
+      request<ManagedImportJob>('/api/v1/imports', {
+        method: 'POST',
+        body: batchId ? JSON.stringify({ batchId }) : undefined,
+      }),
     getManagedImportJob: (importId: string) =>
       request<ManagedImportJob>(`/api/v1/imports/${importId}`),
-    uploadManagedImportFile: (
-      importId: string,
-      originalFilename: string,
-      file: Blob,
-    ) =>
-      request<ManagedImportPreview>(`/api/v1/imports/${importId}/file`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'audio/flac',
-          'X-Import-Filename': originalFilename,
-        },
-        body: file,
-      }),
+    uploadManagedImportFile,
     confirmManagedImport: (importId: string, revision: number) =>
       request<ManagedImportResult>(`/api/v1/imports/${importId}/confirm`, {
         method: 'POST',

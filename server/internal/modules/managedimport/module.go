@@ -40,6 +40,9 @@ func (module *Module) Name() string {
 }
 
 func (module *Module) RegisterRoutes(router chi.Router) {
+	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
+	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)
+	router.Post("/api/v1/import-batches/{batchId}/confirm", module.handlers.ConfirmBatch)
 	router.Post("/api/v1/imports", module.handlers.CreateJob)
 	router.Get("/api/v1/imports/{importId}", module.handlers.GetJob)
 	router.Put("/api/v1/imports/{importId}/file", module.handlers.UploadFile)

@@ -2,6 +2,7 @@ package managedimport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,8 +24,16 @@ func NewService(store *Store, storage *Storage, inspector library.MediaInspector
 	return &Service{store: store, storage: storage, inspector: inspector}
 }
 
-func (service *Service) CreateJob(ctx context.Context) (Job, error) {
-	return service.store.CreateJob(ctx)
+func (service *Service) CreateJob(ctx context.Context, batchID string) (Job, error) {
+	return service.store.CreateJob(ctx, batchID)
+}
+
+func (service *Service) CreateBatch(ctx context.Context) (Batch, error) {
+	return service.store.CreateBatch(ctx)
+}
+
+func (service *Service) GetBatch(ctx context.Context, batchID string) (Batch, error) {
+	return service.store.GetBatch(ctx, batchID)
 }
 
 func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
@@ -43,17 +52,26 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if job.Status != STATUS_UPLOADING {
 		return Preview{}, ErrInvalidState
 	}
+	if job.BatchID != "" {
+		batch, batchErr := service.store.GetBatch(ctx, job.BatchID)
+		if batchErr != nil {
+			return Preview{}, batchErr
+		}
+		if batch.Status != BATCH_STATUS_UPLOADING {
+			return Preview{}, ErrInvalidState
+		}
+	}
 	originalFilename, err = safeOriginalFilename(originalFilename)
 	if err != nil {
-		return Preview{}, err
+		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
 	}
 	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
-		return Preview{}, err
+		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
 	}
 	inspection, err := service.inspector.Inspect(ctx, upload.Path, service.validationProgressReporter(ctx, jobID))
 	if err != nil {
-		return Preview{}, service.failUpload(ctx, jobID, upload.Path, validationError(err))
+		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, validationError(err))
 	}
 	if inspection.FileSHA256 != upload.SHA256 {
 		hashErr := &ValidationError{
@@ -62,35 +80,47 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 			Reason: "staged file differs from uploaded bytes",
 			Err:    errors.New("staged file hash differs from uploaded bytes"),
 		}
-		return Preview{}, service.failUpload(ctx, jobID, upload.Path, hashErr)
+		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, hashErr)
 	}
 	if validationErr := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); validationErr != nil {
 		if ctx.Err() != nil {
 			validationErr = validationCancellationError(ctx)
 		}
-		return Preview{}, service.failUpload(ctx, jobID, upload.Path, validationErr)
+		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, validationErr)
 	}
 	if preflightErr := service.preflightCommit(upload.Size, inspection); preflightErr != nil {
-		return Preview{}, service.failUpload(ctx, jobID, upload.Path, preflightErr)
+		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, preflightErr)
 	}
-	job, err = service.store.MarkPreview(ctx, jobID, originalFilename, upload.Path, upload.SHA256)
+	previewJob := job
+	previewJob.Status = STATUS_AWAITING_CONFIRMATION
+	previewJob.Revision++
+	previewJob.OriginalFilename = originalFilename
+	preview := previewFromInspection(previewJob, inspection)
+	previewBytes, err := json.Marshal(preview)
 	if err != nil {
-		return service.recoverPreviewFailure(ctx, jobID, upload.Path, err, inspection)
+		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, fmt.Errorf("encode Import Preview: %w", err))
 	}
-	return previewFromInspection(job, inspection), nil
+	markedJob, err := service.store.MarkPreview(ctx, jobID, originalFilename, upload.Path, upload.SHA256, string(previewBytes), upload.Size, service.storage.batchLimit)
+	if err != nil {
+		return service.recoverPreviewFailure(ctx, job, originalFilename, upload.Path, err, inspection)
+	}
+	return previewFromInspection(markedJob, inspection), nil
 }
 
-func (service *Service) recoverPreviewFailure(ctx context.Context, jobID, stagedPath string, transitionErr error, inspection library.MediaInspection) (Preview, error) {
+func (service *Service) recoverPreviewFailure(ctx context.Context, originalJob importJob, originalFilename, stagedPath string, transitionErr error, inspection library.MediaInspection) (Preview, error) {
+	if errors.Is(transitionErr, ErrBatchTooLarge) {
+		return Preview{}, service.failUpload(ctx, originalJob, originalFilename, stagedPath, transitionErr)
+	}
 	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	job, getErr := service.store.GetJob(recoveryCtx, jobID)
+	job, getErr := service.store.GetJob(recoveryCtx, originalJob.ID)
 	if getErr == nil && job.Status == STATUS_AWAITING_CONFIRMATION {
 		return previewFromInspection(job, inspection), nil
 	}
 	if ctx.Err() != nil {
 		transitionErr = validationCancellationError(ctx)
 	}
-	return Preview{}, service.failUpload(ctx, jobID, stagedPath, errors.Join(transitionErr, getErr))
+	return Preview{}, service.failUpload(ctx, originalJob, originalFilename, stagedPath, errors.Join(transitionErr, getErr))
 }
 
 func validationCancellationError(ctx context.Context) error {
@@ -202,6 +232,58 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	return service.commit(ctx, job, inspection)
 }
 
+func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confirmation BatchConfirmation) (Batch, error) {
+	selectedIDs := make(map[string]bool, len(confirmation.SelectedFileIDs))
+	for _, jobID := range confirmation.SelectedFileIDs {
+		if jobID == "" || selectedIDs[jobID] {
+			return Batch{}, fmt.Errorf("%w: selected file IDs must be unique and non-empty", ErrInvalidUpload)
+		}
+		selectedIDs[jobID] = true
+	}
+	if err := service.store.StartBatchConfirmation(ctx, batchID, confirmation.Revision, selectedIDs); err != nil {
+		return Batch{}, err
+	}
+	jobs, err := service.store.ListBatchJobs(ctx, batchID)
+	if err != nil {
+		return Batch{}, err
+	}
+	for _, job := range jobs {
+		if job.Outcome == OUTCOME_REJECTED {
+			continue
+		}
+		if !job.Selected {
+			if err := service.finishUncommittedBatchFile(ctx, job, OUTCOME_NOT_ATTEMPTED, ""); err != nil {
+				return Batch{}, err
+			}
+			continue
+		}
+		if _, err := service.Confirm(ctx, job.ID, job.Revision); err != nil {
+			_, reason := failureDetails(err)
+			if finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, reason); finishErr != nil {
+				return Batch{}, errors.Join(err, finishErr)
+			}
+		}
+	}
+	if err := service.store.CompleteBatch(ctx, batchID); err != nil {
+		return Batch{}, err
+	}
+	return service.store.GetBatch(ctx, batchID)
+}
+
+func (service *Service) finishUncommittedBatchFile(ctx context.Context, job importJob, outcome ImportOutcome, reason string) error {
+	if job.StagedFilePath != "" {
+		if err := service.storage.RemoveStaged(job.StagedFilePath); err != nil {
+			outcome = OUTCOME_FAILED
+			reason = "staging cleanup failed"
+		}
+	}
+	errorCode := ""
+	if outcome == OUTCOME_FAILED {
+		errorCode = "commit_failed"
+	}
+	return service.store.MarkBatchFileOutcome(ctx, job.ID, outcome, errorCode, reason)
+}
+
 func (service *Service) preflightCommit(stagedBytes int64, inspection library.MediaInspection) error {
 	return service.storage.Preflight(StorageRequirement{
 		SelectedBytes:  stagedBytes,
@@ -233,15 +315,41 @@ func (service *Service) commit(ctx context.Context, job importJob, inspection li
 	return Result{}, errors.Join(err, service.storage.Rollback(placement))
 }
 
-func (service *Service) failUpload(ctx context.Context, jobID, stagedPath string, uploadErr error) error {
-	errorCode := "inspection_failed"
+func (service *Service) failUpload(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {
+	errorCode, reason := failureDetails(uploadErr)
+	errorField := ""
 	var validationErr *ValidationError
 	if errors.As(uploadErr, &validationErr) {
-		errorCode = validationErr.Code
+		errorField = validationErr.Field
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, jobID, errorCode))
+	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, job.ID, originalFilename, errorCode, errorField, reason))
+}
+
+func (service *Service) markRejected(ctx context.Context, job importJob, originalFilename string, uploadErr error) error {
+	if job.BatchID == "" {
+		return nil
+	}
+	errorCode, reason := failureDetails(uploadErr)
+	return service.store.MarkFailed(ctx, job.ID, originalFilename, errorCode, "file", reason)
+}
+
+func failureDetails(err error) (string, string) {
+	var validationErr *ValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.Code, validationErr.Reason
+	}
+	switch {
+	case errors.Is(err, ErrUploadTooLarge):
+		return "upload_too_large", "file exceeds the configured per-file byte limit"
+	case errors.Is(err, ErrBatchTooLarge):
+		return "batch_upload_too_large", "batch exceeds the configured byte limit"
+	case errors.Is(err, ErrInvalidUpload):
+		return "invalid_upload", "upload is invalid"
+	default:
+		return "inspection_failed", "file validation failed"
+	}
 }
 
 func (service *Service) validationProgressReporter(ctx context.Context, jobID string) library.InspectionProgressReporter {
