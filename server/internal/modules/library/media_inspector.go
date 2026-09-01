@@ -176,6 +176,20 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
+	isM4A, detectionErr := hasM4ASignature(file)
+	if detectionErr != nil {
+		closeErr := file.Close()
+		if closeErr != nil {
+			return MediaInspection{}, errors.Join(detectionErr, inspectionError(INSPECTION_ERROR_FILE_READ, "file", closeErr))
+		}
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", detectionErr)
+	}
+	if isM4A {
+		if err := file.Close(); err != nil {
+			return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
+		}
+		return inspectM4A(ctx, path, reportProgress)
+	}
 	inspection, inspectionErr := inspectOpenMedia(ctx, file, reportProgress)
 	closeErr := file.Close()
 	if closeErr != nil {
@@ -189,6 +203,18 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 		return MediaInspection{}, inspectionErr
 	}
 	return inspection, nil
+}
+
+func hasM4ASignature(file *os.File) (bool, error) {
+	var header [12]byte
+	read, err := io.ReadFull(file, header[:])
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return false, fmt.Errorf("read media signature: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return false, fmt.Errorf("rewind after media signature: %w", err)
+	}
+	return read >= 8 && string(header[4:8]) == "ftyp", nil
 }
 
 func inspectOpenMedia(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
@@ -329,18 +355,13 @@ func normalizeMediaMetadata(tags map[string][]string, replayGain ReplayGainMetad
 }
 
 func replayGainFromTags(tags map[string][]string) ReplayGainMetadata {
-	value := func(key string) string {
-		if len(tags[key]) == 0 {
-			return ""
+	values := make(map[string]string, len(tags))
+	for key, tagValues := range tags {
+		if len(tagValues) > 0 {
+			values[key] = tagValues[0]
 		}
-		return tags[key][0]
 	}
-	return ReplayGainMetadata{
-		TrackGainDB: parseReplayGainValue(value("REPLAYGAIN_TRACK_GAIN")),
-		TrackPeak:   parseReplayGainPeak(value("REPLAYGAIN_TRACK_PEAK")),
-		AlbumGainDB: parseReplayGainValue(value("REPLAYGAIN_ALBUM_GAIN")),
-		AlbumPeak:   parseReplayGainPeak(value("REPLAYGAIN_ALBUM_PEAK")),
-	}
+	return readReplayGainStringMetadata(values)
 }
 
 func inspectTrackPosition(tags map[string][]string) (MediaPosition, error) {
@@ -785,7 +806,7 @@ func publicInspectionReason(code InspectionErrorCode, err error) string {
 	case INSPECTION_ERROR_FILE_READ:
 		return "file could not be read"
 	case INSPECTION_ERROR_UNSUPPORTED_FORMAT:
-		return "file is not a supported audio stream"
+		return "file container or audio codec is not supported"
 	case INSPECTION_ERROR_INVALID_ARTWORK:
 		return "embedded artwork is invalid"
 	case INSPECTION_ERROR_AUDIO_DECODE:

@@ -654,7 +654,7 @@ export interface components {
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
         };
-        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
+        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
         ManagedImportPreviewFileCommon: {
             originalFilename: string;
             title: string;
@@ -688,6 +688,22 @@ export interface components {
              * @enum {string}
              */
             format: "flac";
+        };
+        ManagedImportM4aPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "m4a";
+            /** @constant */
+            container: "m4a";
+            /** @enum {string} */
+            codec: "aac" | "alac";
+            /** @description Source bit depth for ALAC; 0 for AAC. */
+            bitDepth: number;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "m4a";
         };
         ManagedImportMp3PreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
             /** @constant */

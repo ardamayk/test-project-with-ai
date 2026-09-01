@@ -109,6 +109,18 @@ func readReplayGainMetadata(raw map[string]interface{}) ReplayGainMetadata {
 		}
 	}
 
+	return replayGainFromStringValues(values)
+}
+
+func readReplayGainStringMetadata(raw map[string]string) ReplayGainMetadata {
+	values := make(map[string]string, len(raw))
+	for key, value := range raw {
+		values[strings.ToUpper(key)] = value
+	}
+	return replayGainFromStringValues(values)
+}
+
+func replayGainFromStringValues(values map[string]string) ReplayGainMetadata {
 	return ReplayGainMetadata{
 		TrackGainDB: parseReplayGainValue(values["REPLAYGAIN_TRACK_GAIN"]),
 		TrackPeak:   parseReplayGainPeak(values["REPLAYGAIN_TRACK_PEAK"]),
