@@ -1211,6 +1211,21 @@ components:
         file:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
     ManagedImportPreviewFile:
+      oneOf:
+        - $ref: "#/components/schemas/ManagedImportFlacPreviewFile"
+        - $ref: "#/components/schemas/ManagedImportM4aPreviewFile"
+        - $ref: "#/components/schemas/ManagedImportMp3PreviewFile"
+        - $ref: "#/components/schemas/ManagedImportOggPreviewFile"
+        - $ref: "#/components/schemas/ManagedImportOpusPreviewFile"
+      discriminator:
+        propertyName: format
+        mapping:
+          flac: "#/components/schemas/ManagedImportFlacPreviewFile"
+          m4a: "#/components/schemas/ManagedImportM4aPreviewFile"
+          mp3: "#/components/schemas/ManagedImportMp3PreviewFile"
+          ogg: "#/components/schemas/ManagedImportOggPreviewFile"
+          opus: "#/components/schemas/ManagedImportOpusPreviewFile"
+    ManagedImportPreviewFileCommon:
       type: object
       required:
         - originalFilename
@@ -1222,12 +1237,8 @@ components:
         - trackNo
         - discNo
         - durationMs
-        - format
-        - container
-        - codec
         - sampleRateHz
         - channelCount
-        - bitDepth
         - bitrateKbps
         - artworkMediaType
       properties:
@@ -1269,31 +1280,100 @@ components:
         durationMs:
           type: integer
           minimum: 1
-        format:
-          type: string
-          enum: [flac, m4a]
-        container:
-          type: string
-          enum: [flac, m4a]
-        codec:
-          type: string
-          enum: [flac, aac, alac]
         sampleRateHz:
           type: integer
           minimum: 1
         channelCount:
           type: integer
           minimum: 1
-        bitDepth:
-          type: integer
-          minimum: 0
-          description: Source bit depth when meaningful; 0 for lossy codecs such as AAC.
         bitrateKbps:
           type: integer
           minimum: 1
         artworkMediaType:
           type: string
           enum: [image/jpeg, image/png, image/webp]
+    ManagedImportFlacPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec, bitDepth]
+          properties:
+            format:
+              type: string
+              const: flac
+            container:
+              type: string
+              const: flac
+            codec:
+              type: string
+              const: flac
+            bitDepth:
+              type: integer
+              minimum: 1
+    ManagedImportM4aPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec, bitDepth]
+          properties:
+            format:
+              type: string
+              const: m4a
+            container:
+              type: string
+              const: m4a
+            codec:
+              type: string
+              enum: [aac, alac]
+            bitDepth:
+              type: integer
+              minimum: 0
+              description: Source bit depth for ALAC; 0 for AAC.
+    ManagedImportMp3PreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec]
+          properties:
+            format:
+              type: string
+              const: mp3
+            container:
+              type: string
+              const: mp3
+            codec:
+              type: string
+              const: mp3
+    ManagedImportOggPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec]
+          properties:
+            format:
+              type: string
+              const: ogg
+            container:
+              type: string
+              const: ogg
+            codec:
+              type: string
+              const: vorbis
+    ManagedImportOpusPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec]
+          properties:
+            format:
+              type: string
+              const: opus
+            container:
+              type: string
+              const: ogg
+            codec:
+              type: string
+              const: opus
     ManagedImportConfirmation:
       type: object
       required: [revision]

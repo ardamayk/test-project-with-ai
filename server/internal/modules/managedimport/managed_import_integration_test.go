@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -181,6 +182,100 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	}
 
 	assertCanonicalStorage(t, managedStoragePath, fixture)
+}
+
+func TestManagedImportCommitsOGGFormatsWithoutChangingSourceBytes(t *testing.T) {
+	tests := []struct {
+		name       string
+		filename   string
+		mediaType  string
+		format     string
+		codec      string
+		sampleRate int
+	}{
+		{name: "Vorbis", filename: "strict-import.ogg", mediaType: "audio/ogg", format: "ogg", codec: "vorbis", sampleRate: 44100},
+		{name: "Opus", filename: "strict-import.opus", mediaType: "audio/opus", format: "opus", codec: "opus", sampleRate: 48000},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			database := testutil.OpenMigratedDB(t)
+			managedStoragePath := t.TempDir()
+			configuration := config.Config{ManagedStoragePath: managedStoragePath, MusicPaths: []string{t.TempDir()}}
+			libraryModule := library.NewModule(database, configuration)
+			importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+			playbackModule := playback.NewModule(database, libraryModule.TrackAccess())
+			router := chi.NewRouter()
+			importModule.RegisterRoutes(router)
+			libraryModule.RegisterRoutes(router)
+			playbackModule.RegisterRoutes(router)
+			fixture, err := os.ReadFile(filepath.Join("..", "library", "testdata", testCase.filename))
+			if err != nil {
+				t.Fatalf("read %s fixture: %v", testCase.name, err)
+			}
+
+			jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", nil, nil)
+			var job managedimport.Job
+			testutil.DecodeJSON(t, jobResponse, &job)
+			uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+				"Content-Type": testCase.mediaType, "X-Import-Filename": testCase.filename,
+			})
+			if uploadResponse.Code != http.StatusOK {
+				t.Fatalf("upload status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+			}
+			if strings.Contains(uploadResponse.Body.String(), `"bitDepth"`) {
+				t.Fatalf("lossy Import Preview includes inapplicable bitDepth: %s", uploadResponse.Body.String())
+			}
+			var preview managedimport.Preview
+			testutil.DecodeJSON(t, uploadResponse, &preview)
+			if preview.File.Format != testCase.format || preview.File.Container != "ogg" || preview.File.Codec != testCase.codec || preview.File.SampleRateHz != testCase.sampleRate || preview.File.BitDepth != 0 || preview.File.BitrateKbps <= 0 {
+				t.Fatalf("Import Preview technical properties = %+v", preview.File)
+			}
+			if !reflect.DeepEqual(preview.File.Artists, []string{"First Artist", "Second Artist"}) || !reflect.DeepEqual(preview.File.Genres, []string{"Electronic", "Ambient"}) || preview.File.ArtworkMediaType != "image/png" {
+				t.Fatalf("Import Preview relationships/artwork = %+v", preview.File)
+			}
+
+			confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{"Content-Type": "application/json"})
+			if confirmResponse.Code != http.StatusOK {
+				t.Fatalf("confirm status = %d, body = %s", confirmResponse.Code, confirmResponse.Body.String())
+			}
+			var result managedimport.Result
+			testutil.DecodeJSON(t, confirmResponse, &result)
+			tracks := listTracks(t, router)
+			if len(tracks.Items) != 1 || len(tracks.Items[0].Artists) != 2 || len(tracks.Items[0].Genres) != 2 || tracks.Items[0].BitDepth != 0 || tracks.Items[0].BitrateBps <= 0 {
+				t.Fatalf("persisted Managed Track = %+v", tracks.Items)
+			}
+			var bitDepth sql.NullInt64
+			if err = database.QueryRow(`SELECT bit_depth FROM tracks WHERE id = ?`, result.TrackID).Scan(&bitDepth); err != nil || bitDepth.Valid {
+				t.Fatalf("lossy Track bit depth = %+v, error = %v", bitDepth, err)
+			}
+			streamResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/tracks/"+result.TrackID+"/stream", nil, nil)
+			if streamResponse.Code != http.StatusOK || !bytes.Equal(streamResponse.Body.Bytes(), fixture) {
+				t.Fatalf("streamed source differs: status = %d", streamResponse.Code)
+			}
+			assertCanonicalSource(t, managedStoragePath, "."+testCase.format, fixture)
+		})
+	}
+}
+
+func assertCanonicalSource(t *testing.T, managedStoragePath, extension string, fixture []byte) {
+	t.Helper()
+	var audioPath string
+	err := filepath.WalkDir(managedStoragePath, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && filepath.Ext(path) == extension {
+			audioPath = path
+		}
+		return nil
+	})
+	if err != nil || audioPath == "" {
+		t.Fatalf("find canonical %s source: path = %q, error = %v", extension, audioPath, err)
+	}
+	stored, err := os.ReadFile(audioPath)
+	if err != nil || !bytes.Equal(stored, fixture) {
+		t.Fatalf("canonical %s bytes differ: %v", extension, err)
+	}
 }
 
 func runLibraryScan(t *testing.T, router http.Handler) {

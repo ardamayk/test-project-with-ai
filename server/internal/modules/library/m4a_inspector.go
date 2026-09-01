@@ -19,7 +19,6 @@ import (
 const (
 	FFMPEG_ERROR_OUTPUT_LIMIT_BYTES = 64 * 1024
 	FFPROBE_OUTPUT_LIMIT_BYTES      = 1024 * 1024
-	MILLISECONDS_PER_SECOND         = 1000
 )
 
 type m4aProbe struct {
@@ -179,7 +178,7 @@ func inspectM4AMetadata(rawTags map[string]string, structuredCredits map[string]
 	if albumArtists := structuredCredits["ALBUMARTISTS"]; len(albumArtists) > 0 {
 		tags["ALBUMARTIST"] = albumArtists
 	}
-	names, err := inspectFLACNames(tags)
+	names, err := inspectVorbisNames(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}

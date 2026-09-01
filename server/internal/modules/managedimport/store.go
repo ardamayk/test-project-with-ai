@@ -369,15 +369,16 @@ func insertTrack(ctx context.Context, transaction *sql.Tx, data commitData) erro
 		INSERT INTO tracks (
 			id, album_id, title, title_sort, artist_name, track_no, duration_ms, format,
 			size_bytes, file_path, file_mtime, genre, sample_rate_hz, bit_depth, disc_no,
-			track_total, disc_total, channel_count, bitrate_bps, codec, container, identity_key,
-			replaygain_track_gain_db, replaygain_track_peak, replaygain_album_gain_db, replaygain_album_peak
+			track_total, disc_total, channel_count, bitrate_bps, codec, container,
+			replaygain_track_gain_db, replaygain_track_peak, replaygain_album_gain_db,
+			replaygain_album_peak, identity_key
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		data.Identity.TrackID, data.Identity.AlbumID, metadata.Title, normalizeIdentity(metadata.Title), strings.Join(metadata.Artists, ", "),
 		metadata.TrackPosition.Number, audio.DurationMs, audio.Format, fileInfo.Size(), data.Placement.AudioPath, fileInfo.ModTime().Unix(),
-		metadata.Genres[0], audio.SampleRateHz, audio.BitDepth, metadata.DiscPosition.Number,
+		metadata.Genres[0], audio.SampleRateHz, nullablePositive(audio.BitDepth), metadata.DiscPosition.Number,
 		nullablePositive(metadata.TrackPosition.Total), nullablePositive(metadata.DiscPosition.Total), audio.ChannelCount,
-		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Container, trackIdentityKey(metadata),
-		metadata.ReplayGain.TrackGainDB, metadata.ReplayGain.TrackPeak, metadata.ReplayGain.AlbumGainDB, metadata.ReplayGain.AlbumPeak,
+		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Container, metadata.ReplayGain.TrackGainDB,
+		metadata.ReplayGain.TrackPeak, metadata.ReplayGain.AlbumGainDB, metadata.ReplayGain.AlbumPeak, trackIdentityKey(metadata),
 	)
 	if err != nil {
 		return fmt.Errorf("create Managed Track: %w", err)
