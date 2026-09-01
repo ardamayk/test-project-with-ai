@@ -55,7 +55,14 @@ type wavFormatChunk struct {
 	subFormat      [16]byte
 }
 
-func inspectOpenWAV(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter, fileHash string, sizeBytes int64) (MediaInspection, error) {
+func inspectOpenWAV(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
+	fileHash, sizeBytes, err := hashAndRewind(ctx, file)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return MediaInspection{}, inspectionError(INSPECTION_ERROR_VALIDATION_CANCELLED, "validation", err)
+		}
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
+	}
 	if err := validateWAVHeader(file, sizeBytes); err != nil {
 		return MediaInspection{}, err
 	}
@@ -83,7 +90,7 @@ func (input wavInspectionInput) inspect(ctx context.Context) (MediaInspection, e
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	metadata, err := inspectMetadata(tags)
+	metadata, err := normalizeMediaMetadata(tags, ReplayGainMetadata{})
 	if err != nil {
 		return MediaInspection{}, err
 	}
@@ -249,7 +256,7 @@ func inspectWAVArtwork(picture *id3AttachedPicture) (AlbumArtwork, error) {
 	if picture == nil {
 		return AlbumArtwork{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
 	}
-	return validateEmbeddedArtwork(picture.data, picture.mimeType)
+	return validateArtworkData(picture.mimeType, picture.data)
 }
 
 // decodePCM verifies the complete data chunk: its length is a whole number of

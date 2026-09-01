@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
-import type { operations } from './generated/schema'
+import type { components, operations } from './generated/schema'
 import {
   type Album,
   type ArtistCredit,
@@ -43,6 +43,37 @@ describe('Track ReplayGain Metadata', () => {
       albumGainDb: null,
       albumPeak: 1.01,
     })
+  })
+})
+
+describe('Managed Import media contracts', () => {
+  it('requires source bit depth for FLAC', () => {
+    expectTypeOf<
+      components['schemas']['ManagedImportFlacPreviewFile']['bitDepth']
+    >().toEqualTypeOf<number>()
+  })
+
+  it('supports MP3 without a source bit depth', () => {
+    const file: components['schemas']['ManagedImportPreviewFile'] = {
+      originalFilename: 'fixture.mp3',
+      title: 'MP3 Inspection Fixture',
+      artists: ['Primary Artist'],
+      albumArtists: ['Album Artist'],
+      album: 'Strict MP3 Import Tests',
+      genres: ['Electronic'],
+      trackNo: 2,
+      discNo: 1,
+      durationMs: 626,
+      format: 'mp3',
+      container: 'mp3',
+      codec: 'mp3',
+      sampleRateHz: 22_050,
+      channelCount: 1,
+      bitrateKbps: 52,
+      artworkMediaType: 'image/png',
+    }
+
+    expect('bitDepth' in file).toBe(false)
   })
 })
 

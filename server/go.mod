@@ -8,8 +8,11 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.1
 	github.com/google/uuid v1.6.0
+	github.com/hajimehoshi/go-mp3 v0.3.4
+	github.com/jfreymuth/oggvorbis v1.0.5
 	github.com/mewkiz/flac v1.0.14
 	github.com/oapi-codegen/runtime v1.4.2
+	github.com/pion/opus v0.1.0
 	github.com/pressly/goose/v3 v3.24.2
 	golang.org/x/image v0.43.0
 	golang.org/x/sys v0.44.0
@@ -19,11 +22,13 @@ require (
 )
 
 require (
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-openapi/jsonpointer v0.22.4 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.4 // indirect
 	github.com/icza/bitio v1.1.0 // indirect
+	github.com/jfreymuth/vorbis v1.0.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

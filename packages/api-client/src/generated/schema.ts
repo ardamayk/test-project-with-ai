@@ -654,7 +654,8 @@ export interface components {
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
         };
-        ManagedImportPreviewFile: {
+        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportWavPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
+        ManagedImportPreviewFileCommon: {
             originalFilename: string;
             title: string;
             artists: string[];
@@ -667,18 +668,100 @@ export interface components {
             discTotal?: number;
             year?: number;
             durationMs: number;
-            /** @enum {string} */
-            format: "flac" | "wav";
-            /** @enum {string} */
-            container: "flac" | "wav";
-            /** @enum {string} */
-            codec: "flac" | "pcm_u8" | "pcm_s16le" | "pcm_s24le" | "pcm_s32le";
             sampleRateHz: number;
             channelCount: number;
-            bitDepth: number;
             bitrateKbps: number;
             /** @enum {string} */
             artworkMediaType: "image/jpeg" | "image/png" | "image/webp";
+        };
+        ManagedImportFlacPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "flac";
+            /** @constant */
+            container: "flac";
+            /** @constant */
+            codec: "flac";
+            bitDepth: number;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "flac";
+        };
+        ManagedImportWavPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "wav";
+            /** @constant */
+            container: "wav";
+            /** @enum {string} */
+            codec: "pcm_u8" | "pcm_s16le" | "pcm_s24le" | "pcm_s32le";
+            /** @enum {integer} */
+            bitDepth: 8 | 16 | 24 | 32;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "wav";
+        };
+        ManagedImportM4aPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "m4a";
+            /** @constant */
+            container: "m4a";
+            /** @enum {string} */
+            codec: "aac" | "alac";
+            /** @description Source bit depth for ALAC; 0 for AAC. */
+            bitDepth: number;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "m4a";
+        };
+        ManagedImportMp3PreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "mp3";
+            /** @constant */
+            container: "mp3";
+            /** @constant */
+            codec: "mp3";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "mp3";
+        };
+        ManagedImportOggPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "ogg";
+            /** @constant */
+            container: "ogg";
+            /** @constant */
+            codec: "vorbis";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "ogg";
+        };
+        ManagedImportOpusPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "opus";
+            /** @constant */
+            container: "ogg";
+            /** @constant */
+            codec: "opus";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "opus";
         };
         ManagedImportConfirmation: {
             revision: number;

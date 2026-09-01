@@ -21,27 +21,31 @@ import (
 )
 
 const (
-	FLAC_METADATA_BLOCK_LAST_FLAG           byte = 0x80
-	FLAC_METADATA_BLOCK_TYPE_MASK           byte = 0x7f
-	TEST_ARTWORK_WIDTH                           = 2
-	TEST_ARTWORK_HEIGHT                          = 2
-	TEST_ARTWORK_DEPTH                           = 24
-	PNG_CHUNK_LENGTH_SIZE_BYTES                  = 4
-	PNG_IHDR_WIDTH_OFFSET                        = 16
-	PNG_IHDR_HEIGHT_OFFSET                       = 20
-	PNG_IHDR_CRC_OFFSET                          = 29
-	PNG_IHDR_CRC_INPUT_OFFSET                    = 12
-	PNG_ANIMATION_CONTROL_FIELD_COUNT            = 2
-	ANIMATED_WEBP_FIXTURE_BASE64                 = "UklGRhYAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAA"
-	FLAC_METADATA_LENGTH_HIGH_BYTE_OFFSET        = 1
-	FLAC_METADATA_LENGTH_MIDDLE_BYTE_OFFSET      = 2
-	FLAC_METADATA_LENGTH_LOW_BYTE_OFFSET         = 3
-	FLAC_METADATA_LENGTH_HIGH_SHIFT              = 16
-	FLAC_METADATA_LENGTH_MIDDLE_SHIFT            = 8
-	TRUNCATED_PNG_SUFFIX_BYTES                   = 8
-	PNG_ANIMATION_FRAME_COUNT                    = 1
-	OVERSIZED_ARTWORK_WIDTH                      = 10_000
-	OVERSIZED_ARTWORK_HEIGHT                     = 5_001
+	FLAC_METADATA_BLOCK_LAST_FLAG           byte   = 0x80
+	FLAC_METADATA_BLOCK_TYPE_MASK           byte   = 0x7f
+	TEST_ARTWORK_WIDTH                             = 2
+	TEST_ARTWORK_HEIGHT                            = 2
+	TEST_ARTWORK_DEPTH                             = 24
+	PNG_CHUNK_LENGTH_SIZE_BYTES                    = 4
+	PNG_IHDR_WIDTH_OFFSET                          = 16
+	PNG_IHDR_HEIGHT_OFFSET                         = 20
+	PNG_IHDR_CRC_OFFSET                            = 29
+	PNG_IHDR_CRC_INPUT_OFFSET                      = 12
+	PNG_ANIMATION_CONTROL_FIELD_COUNT              = 2
+	ANIMATED_WEBP_FIXTURE_BASE64                   = "UklGRhYAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAA"
+	FLAC_METADATA_LENGTH_HIGH_BYTE_OFFSET          = 1
+	FLAC_METADATA_LENGTH_MIDDLE_BYTE_OFFSET        = 2
+	FLAC_METADATA_LENGTH_LOW_BYTE_OFFSET           = 3
+	FLAC_METADATA_LENGTH_HIGH_SHIFT                = 16
+	FLAC_METADATA_LENGTH_MIDDLE_SHIFT              = 8
+	TRUNCATED_PNG_SUFFIX_BYTES                     = 8
+	PNG_ANIMATION_FRAME_COUNT                      = 1
+	OVERSIZED_ARTWORK_WIDTH                        = 10_000
+	OVERSIZED_ARTWORK_HEIGHT                       = 5_001
+	OGG_CHECKSUM_OFFSET                            = 22
+	OGG_CHECKSUM_SIZE_BYTES                        = 4
+	OGG_PAGE_SEGMENT_COUNT_OFFSET                  = 26
+	OGG_CHECKSUM_POLYNOMIAL                 uint32 = 0x04c11db7
 )
 
 func TestMediaInspectorInspectsStrictFLACFixture(t *testing.T) {
@@ -76,6 +80,212 @@ func TestMediaInspectorDetectsFLACIndependentlyOfExtension(t *testing.T) {
 	if inspection.Audio.Container != "flac" || inspection.Audio.Codec != "flac" {
 		t.Fatalf("detected container/codec = %s/%s", inspection.Audio.Container, inspection.Audio.Codec)
 	}
+}
+
+func TestMediaInspectorInspectsStrictOGGFixtures(t *testing.T) {
+	tests := []struct {
+		name         string
+		filename     string
+		format       string
+		codec        string
+		expectedHash string
+		sampleRateHz int
+		bitrateKbps  int
+	}{
+		{name: "Vorbis", filename: "strict-import.ogg", format: "ogg", codec: "vorbis", expectedHash: "7d61b6f5fda0f02392177282bc79c4b96e33736ec41056891dff4de31fbc7f6a", sampleRateHz: 44100, bitrateKbps: 20},
+		{name: "Opus", filename: "strict-import.opus", format: "opus", codec: "opus", expectedHash: "6ba8a2b924835bec5cbb97d538b8077dd4d722faa15baf83a0139ad4a27867d4", sampleRateHz: 48000, bitrateKbps: 85},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			var progress []library.InspectionProgress
+			inspection, err := library.NewMediaInspector().Inspect(context.Background(), filepath.Join("testdata", testCase.filename), func(update library.InspectionProgress) error {
+				progress = append(progress, update)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("inspect %s fixture: %v", testCase.name, err)
+			}
+			assertOGGMetadata(t, inspection.Metadata)
+			assertAlbumArtwork(t, inspection.AlbumArtwork)
+			if inspection.Audio.Format != testCase.format || inspection.Audio.Container != "ogg" || inspection.Audio.Codec != testCase.codec {
+				t.Fatalf("format/container/codec = %s/%s/%s", inspection.Audio.Format, inspection.Audio.Container, inspection.Audio.Codec)
+			}
+			if inspection.Audio.DurationMs != 250 || inspection.Audio.SampleRateHz != testCase.sampleRateHz || inspection.Audio.ChannelCount != 1 {
+				t.Fatalf("duration/sample rate/channels = %d/%d/%d", inspection.Audio.DurationMs, inspection.Audio.SampleRateHz, inspection.Audio.ChannelCount)
+			}
+			if inspection.Audio.BitDepth != 0 || inspection.Audio.BitrateKbps != testCase.bitrateKbps {
+				t.Fatalf("bit depth/bitrate = %d/%d", inspection.Audio.BitDepth, inspection.Audio.BitrateKbps)
+			}
+			if inspection.FileSHA256 != testCase.expectedHash {
+				t.Fatalf("file SHA-256 = %q", inspection.FileSHA256)
+			}
+			assertCompletedInspectionProgress(t, progress)
+		})
+	}
+}
+
+func assertOGGMetadata(t *testing.T, metadata library.NormalizedMediaMetadata) {
+	t.Helper()
+	if metadata.Title != "OGG Inspection Fixture" || metadata.Album != "Strict OGG Import Tests" {
+		t.Fatalf("title/album = %q/%q", metadata.Title, metadata.Album)
+	}
+	if !reflect.DeepEqual(metadata.Artists, []string{"First Artist", "Second Artist"}) {
+		t.Fatalf("artists = %#v", metadata.Artists)
+	}
+	if !reflect.DeepEqual(metadata.AlbumArtists, []string{"Test Album Artist"}) {
+		t.Fatalf("album artists = %#v", metadata.AlbumArtists)
+	}
+	if !reflect.DeepEqual(metadata.Genres, []string{"Electronic", "Ambient"}) {
+		t.Fatalf("genres = %#v", metadata.Genres)
+	}
+	if metadata.TrackPosition != (library.MediaPosition{Number: 3, Total: 9}) || metadata.DiscPosition != (library.MediaPosition{Number: 1, Total: 1}) || metadata.Year != 2026 {
+		t.Fatalf("positions/year = %+v/%+v/%d", metadata.TrackPosition, metadata.DiscPosition, metadata.Year)
+	}
+}
+
+func TestMediaInspectorReturnsStableOGGErrors(t *testing.T) {
+	tests := []struct {
+		name          string
+		filename      string
+		mutate        func(*testing.T, []byte) []byte
+		expectedCode  library.InspectionErrorCode
+		expectedField string
+	}{
+		{name: "malformed Vorbis comment", filename: "strict-import.ogg", mutate: replaceOGGBytes([]byte("title="), []byte("title_")), expectedCode: library.INSPECTION_ERROR_INVALID_METADATA, expectedField: "comments"},
+		{name: "malformed Opus comment", filename: "strict-import.opus", mutate: replaceOGGBytes([]byte("title="), []byte("title_")), expectedCode: library.INSPECTION_ERROR_INVALID_METADATA, expectedField: "comments"},
+		{name: "unsupported OGG stream", filename: "strict-import.opus", mutate: replaceOGGBytes([]byte("OpusHead"), []byte("NopeHead")), expectedCode: library.INSPECTION_ERROR_UNSUPPORTED_FORMAT, expectedField: "container"},
+		{name: "truncated Vorbis stream", filename: "strict-import.ogg", mutate: truncateOGGEnd, expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
+		{name: "truncated Opus stream", filename: "strict-import.opus", mutate: truncateOGGEnd, expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
+		{name: "corrupt page after Vorbis EOS", filename: "strict-import.ogg", mutate: appendCorruptOGGPage, expectedCode: library.INSPECTION_ERROR_AUDIO_DECODE, expectedField: "audio"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := readOGGFixture(t, testCase.filename)
+			path := filepath.Join(t.TempDir(), testCase.filename)
+			if err := os.WriteFile(path, testCase.mutate(t, fixture), 0o600); err != nil {
+				t.Fatalf("write mutated OGG fixture: %v", err)
+			}
+			_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+			var inspectionErr *library.InspectionError
+			if !errors.As(err, &inspectionErr) {
+				t.Fatalf("error = %T %v", err, err)
+			}
+			if inspectionErr.Code != testCase.expectedCode || inspectionErr.Field != testCase.expectedField {
+				t.Fatalf("inspection error = %+v", inspectionErr)
+			}
+		})
+	}
+}
+
+func TestMediaInspectorAppliesFLACArtworkRulesToOGG(t *testing.T) {
+	tests := []struct {
+		name         string
+		filename     string
+		mutate       func(*testing.T, []byte) []byte
+		expectedCode library.InspectionErrorCode
+	}{
+		{name: "Vorbis missing front cover", filename: "strict-import.ogg", mutate: replaceOGGBytes([]byte("metadata_block_picture"), []byte("xetadata_block_picture")), expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "Opus missing front cover", filename: "strict-import.opus", mutate: replaceOGGBytes([]byte("metadata_block_picture"), []byte("xetadata_block_picture")), expectedCode: library.INSPECTION_ERROR_MISSING_ARTWORK},
+		{name: "Vorbis malformed picture", filename: "strict-import.ogg", mutate: replaceOGGBytes([]byte("metadata_block_picture=A"), []byte("metadata_block_picture=!")), expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+		{name: "Opus malformed picture", filename: "strict-import.opus", mutate: replaceOGGBytes([]byte("metadata_block_picture=A"), []byte("metadata_block_picture=!")), expectedCode: library.INSPECTION_ERROR_INVALID_ARTWORK},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), testCase.filename)
+			fixture := testCase.mutate(t, readOGGFixture(t, testCase.filename))
+			if err := os.WriteFile(path, fixture, 0o600); err != nil {
+				t.Fatalf("write artwork OGG fixture: %v", err)
+			}
+			_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+			var inspectionErr *library.InspectionError
+			if !errors.As(err, &inspectionErr) || inspectionErr.Code != testCase.expectedCode || inspectionErr.Field != "artwork" {
+				t.Fatalf("inspection error = %T %+v", err, inspectionErr)
+			}
+		})
+	}
+}
+
+func replaceOGGBytes(oldValue, newValue []byte) func(*testing.T, []byte) []byte {
+	return func(t *testing.T, fixture []byte) []byte {
+		t.Helper()
+		if len(oldValue) != len(newValue) || !bytes.Contains(fixture, oldValue) {
+			t.Fatalf("cannot replace OGG fixture value %q", oldValue)
+		}
+		result := bytes.Replace(append([]byte(nil), fixture...), oldValue, newValue, 1)
+		updateOGGChecksums(t, result)
+		return result
+	}
+}
+
+func truncateOGGEnd(t *testing.T, fixture []byte) []byte {
+	t.Helper()
+	return append([]byte(nil), fixture[:len(fixture)-8]...)
+}
+
+func appendCorruptOGGPage(t *testing.T, fixture []byte) []byte {
+	t.Helper()
+	lastPageOffset := 0
+	for offset := 0; offset < len(fixture); {
+		lastPageOffset = offset
+		segmentCount := int(fixture[offset+OGG_PAGE_SEGMENT_COUNT_OFFSET])
+		segmentTableEnd := offset + library.OGG_PAGE_HEADER_SIZE_BYTES + segmentCount
+		offset = segmentTableEnd
+		for _, size := range fixture[lastPageOffset+library.OGG_PAGE_HEADER_SIZE_BYTES : segmentTableEnd] {
+			offset += int(size)
+		}
+	}
+	result := append([]byte(nil), fixture...)
+	result = append(result, fixture[lastPageOffset:]...)
+	result[len(result)-1] ^= 0xff
+	return result
+}
+
+func readOGGFixture(t *testing.T, filename string) []byte {
+	t.Helper()
+	fixture, err := os.ReadFile(filepath.Join("testdata", filename))
+	if err != nil {
+		t.Fatalf("read OGG fixture: %v", err)
+	}
+	return fixture
+}
+
+func updateOGGChecksums(t *testing.T, fixture []byte) {
+	t.Helper()
+	for offset := 0; offset < len(fixture); {
+		if offset+library.OGG_PAGE_HEADER_SIZE_BYTES > len(fixture) || string(fixture[offset:offset+len(library.OGG_SIGNATURE)]) != library.OGG_SIGNATURE {
+			t.Fatal("OGG fixture page header is invalid")
+		}
+		segmentCount := int(fixture[offset+OGG_PAGE_SEGMENT_COUNT_OFFSET])
+		segmentTableEnd := offset + library.OGG_PAGE_HEADER_SIZE_BYTES + segmentCount
+		if segmentTableEnd > len(fixture) {
+			t.Fatal("OGG fixture segment table is truncated")
+		}
+		pageEnd := segmentTableEnd
+		for _, size := range fixture[offset+library.OGG_PAGE_HEADER_SIZE_BYTES : segmentTableEnd] {
+			pageEnd += int(size)
+		}
+		if pageEnd > len(fixture) {
+			t.Fatal("OGG fixture page is truncated")
+		}
+		clear(fixture[offset+OGG_CHECKSUM_OFFSET : offset+OGG_CHECKSUM_OFFSET+OGG_CHECKSUM_SIZE_BYTES])
+		binary.LittleEndian.PutUint32(fixture[offset+OGG_CHECKSUM_OFFSET:], oggChecksum(fixture[offset:pageEnd]))
+		offset = pageEnd
+	}
+}
+
+func oggChecksum(data []byte) uint32 {
+	var checksum uint32
+	for _, value := range data {
+		checksum ^= uint32(value) << 24
+		for range 8 {
+			if checksum&0x80000000 != 0 {
+				checksum = checksum<<1 ^ OGG_CHECKSUM_POLYNOMIAL
+			} else {
+				checksum <<= 1
+			}
+		}
+	}
+	return checksum
 }
 
 func assertNormalizedMetadata(t *testing.T, metadata library.NormalizedMediaMetadata) {

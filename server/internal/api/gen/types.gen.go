@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"path"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -39,6 +42,13 @@ const (
 	Right LayoutPreferencesSidebarPosition = "right"
 )
 
+// Defines values for ManagedImportFlacPreviewFileArtworkMediaType.
+const (
+	ManagedImportFlacPreviewFileArtworkMediaTypeImagejpeg ManagedImportFlacPreviewFileArtworkMediaType = "image/jpeg"
+	ManagedImportFlacPreviewFileArtworkMediaTypeImagepng  ManagedImportFlacPreviewFileArtworkMediaType = "image/png"
+	ManagedImportFlacPreviewFileArtworkMediaTypeImagewebp ManagedImportFlacPreviewFileArtworkMediaType = "image/webp"
+)
+
 // Defines values for ManagedImportJobStatus.
 const (
 	ManagedImportJobStatusAwaitingConfirmation ManagedImportJobStatus = "awaiting_confirmation"
@@ -47,42 +57,78 @@ const (
 	ManagedImportJobStatusUploading            ManagedImportJobStatus = "uploading"
 )
 
+// Defines values for ManagedImportM4aPreviewFileArtworkMediaType.
+const (
+	ManagedImportM4aPreviewFileArtworkMediaTypeImagejpeg ManagedImportM4aPreviewFileArtworkMediaType = "image/jpeg"
+	ManagedImportM4aPreviewFileArtworkMediaTypeImagepng  ManagedImportM4aPreviewFileArtworkMediaType = "image/png"
+	ManagedImportM4aPreviewFileArtworkMediaTypeImagewebp ManagedImportM4aPreviewFileArtworkMediaType = "image/webp"
+)
+
+// Defines values for ManagedImportM4aPreviewFileCodec.
+const (
+	ManagedImportM4aPreviewFileCodecAac  ManagedImportM4aPreviewFileCodec = "aac"
+	ManagedImportM4aPreviewFileCodecAlac ManagedImportM4aPreviewFileCodec = "alac"
+)
+
+// Defines values for ManagedImportMp3PreviewFileArtworkMediaType.
+const (
+	ManagedImportMp3PreviewFileArtworkMediaTypeImagejpeg ManagedImportMp3PreviewFileArtworkMediaType = "image/jpeg"
+	ManagedImportMp3PreviewFileArtworkMediaTypeImagepng  ManagedImportMp3PreviewFileArtworkMediaType = "image/png"
+	ManagedImportMp3PreviewFileArtworkMediaTypeImagewebp ManagedImportMp3PreviewFileArtworkMediaType = "image/webp"
+)
+
+// Defines values for ManagedImportOggPreviewFileArtworkMediaType.
+const (
+	ManagedImportOggPreviewFileArtworkMediaTypeImagejpeg ManagedImportOggPreviewFileArtworkMediaType = "image/jpeg"
+	ManagedImportOggPreviewFileArtworkMediaTypeImagepng  ManagedImportOggPreviewFileArtworkMediaType = "image/png"
+	ManagedImportOggPreviewFileArtworkMediaTypeImagewebp ManagedImportOggPreviewFileArtworkMediaType = "image/webp"
+)
+
+// Defines values for ManagedImportOpusPreviewFileArtworkMediaType.
+const (
+	ManagedImportOpusPreviewFileArtworkMediaTypeImagejpeg ManagedImportOpusPreviewFileArtworkMediaType = "image/jpeg"
+	ManagedImportOpusPreviewFileArtworkMediaTypeImagepng  ManagedImportOpusPreviewFileArtworkMediaType = "image/png"
+	ManagedImportOpusPreviewFileArtworkMediaTypeImagewebp ManagedImportOpusPreviewFileArtworkMediaType = "image/webp"
+)
+
 // Defines values for ManagedImportPreviewStatus.
 const (
 	ManagedImportPreviewStatusAwaitingConfirmation ManagedImportPreviewStatus = "awaiting_confirmation"
 )
 
-// Defines values for ManagedImportPreviewFileArtworkMediaType.
+// Defines values for ManagedImportPreviewFileCommonArtworkMediaType.
 const (
-	ManagedImportPreviewFileArtworkMediaTypeImagejpeg ManagedImportPreviewFileArtworkMediaType = "image/jpeg"
-	ManagedImportPreviewFileArtworkMediaTypeImagepng  ManagedImportPreviewFileArtworkMediaType = "image/png"
-	ManagedImportPreviewFileArtworkMediaTypeImagewebp ManagedImportPreviewFileArtworkMediaType = "image/webp"
-)
-
-// Defines values for ManagedImportPreviewFileCodec.
-const (
-	ManagedImportPreviewFileCodecFlac     ManagedImportPreviewFileCodec = "flac"
-	ManagedImportPreviewFileCodecPcmS16le ManagedImportPreviewFileCodec = "pcm_s16le"
-	ManagedImportPreviewFileCodecPcmS24le ManagedImportPreviewFileCodec = "pcm_s24le"
-	ManagedImportPreviewFileCodecPcmS32le ManagedImportPreviewFileCodec = "pcm_s32le"
-	ManagedImportPreviewFileCodecPcmU8    ManagedImportPreviewFileCodec = "pcm_u8"
-)
-
-// Defines values for ManagedImportPreviewFileContainer.
-const (
-	ManagedImportPreviewFileContainerFlac ManagedImportPreviewFileContainer = "flac"
-	ManagedImportPreviewFileContainerWav  ManagedImportPreviewFileContainer = "wav"
-)
-
-// Defines values for ManagedImportPreviewFileFormat.
-const (
-	Flac ManagedImportPreviewFileFormat = "flac"
-	Wav  ManagedImportPreviewFileFormat = "wav"
+	ManagedImportPreviewFileCommonArtworkMediaTypeImagejpeg ManagedImportPreviewFileCommonArtworkMediaType = "image/jpeg"
+	ManagedImportPreviewFileCommonArtworkMediaTypeImagepng  ManagedImportPreviewFileCommonArtworkMediaType = "image/png"
+	ManagedImportPreviewFileCommonArtworkMediaTypeImagewebp ManagedImportPreviewFileCommonArtworkMediaType = "image/webp"
 )
 
 // Defines values for ManagedImportResultStatus.
 const (
 	Committed ManagedImportResultStatus = "committed"
+)
+
+// Defines values for ManagedImportWavPreviewFileArtworkMediaType.
+const (
+	ManagedImportWavPreviewFileArtworkMediaTypeImagejpeg ManagedImportWavPreviewFileArtworkMediaType = "image/jpeg"
+	ManagedImportWavPreviewFileArtworkMediaTypeImagepng  ManagedImportWavPreviewFileArtworkMediaType = "image/png"
+	ManagedImportWavPreviewFileArtworkMediaTypeImagewebp ManagedImportWavPreviewFileArtworkMediaType = "image/webp"
+)
+
+// Defines values for ManagedImportWavPreviewFileBitDepth.
+const (
+	N16 ManagedImportWavPreviewFileBitDepth = 16
+	N24 ManagedImportWavPreviewFileBitDepth = 24
+	N32 ManagedImportWavPreviewFileBitDepth = 32
+	N8  ManagedImportWavPreviewFileBitDepth = 8
+)
+
+// Defines values for ManagedImportWavPreviewFileCodec.
+const (
+	PcmS16le ManagedImportWavPreviewFileCodec = "pcm_s16le"
+	PcmS24le ManagedImportWavPreviewFileCodec = "pcm_s24le"
+	PcmS32le ManagedImportWavPreviewFileCodec = "pcm_s32le"
+	PcmU8    ManagedImportWavPreviewFileCodec = "pcm_u8"
 )
 
 // Defines values for QueueEventInvalidates.
@@ -125,7 +171,7 @@ const (
 
 // Defines values for SearchRadioStationsParamsCodecGroup.
 const (
-	Aac SearchRadioStationsParamsCodecGroup = "aac"
+	SearchRadioStationsParamsCodecGroupAac SearchRadioStationsParamsCodecGroup = "aac"
 )
 
 // Album defines model for Album.
@@ -278,6 +324,33 @@ type ManagedImportConfirmation struct {
 	Revision int `json:"revision"`
 }
 
+// ManagedImportFlacPreviewFile defines model for ManagedImportFlacPreviewFile.
+type ManagedImportFlacPreviewFile struct {
+	Album            string                                       `json:"album"`
+	AlbumArtists     []string                                     `json:"albumArtists"`
+	Artists          []string                                     `json:"artists"`
+	ArtworkMediaType ManagedImportFlacPreviewFileArtworkMediaType `json:"artworkMediaType"`
+	BitDepth         int                                          `json:"bitDepth"`
+	BitrateKbps      int                                          `json:"bitrateKbps"`
+	ChannelCount     int                                          `json:"channelCount"`
+	Codec            string                                       `json:"codec"`
+	Container        string                                       `json:"container"`
+	DiscNo           int                                          `json:"discNo"`
+	DiscTotal        *int                                         `json:"discTotal,omitempty"`
+	DurationMs       int                                          `json:"durationMs"`
+	Format           string                                       `json:"format"`
+	Genres           []string                                     `json:"genres"`
+	OriginalFilename string                                       `json:"originalFilename"`
+	SampleRateHz     int                                          `json:"sampleRateHz"`
+	Title            string                                       `json:"title"`
+	TrackNo          int                                          `json:"trackNo"`
+	TrackTotal       *int                                         `json:"trackTotal,omitempty"`
+	Year             *int                                         `json:"year,omitempty"`
+}
+
+// ManagedImportFlacPreviewFileArtworkMediaType defines model for ManagedImportFlacPreviewFile.ArtworkMediaType.
+type ManagedImportFlacPreviewFileArtworkMediaType string
+
 // ManagedImportJob defines model for ManagedImportJob.
 type ManagedImportJob struct {
 	// ErrorCode Stable failure code when status is failed.
@@ -294,6 +367,116 @@ type ManagedImportJob struct {
 // ManagedImportJobStatus defines model for ManagedImportJob.Status.
 type ManagedImportJobStatus string
 
+// ManagedImportM4aPreviewFile defines model for ManagedImportM4aPreviewFile.
+type ManagedImportM4aPreviewFile struct {
+	Album            string                                      `json:"album"`
+	AlbumArtists     []string                                    `json:"albumArtists"`
+	Artists          []string                                    `json:"artists"`
+	ArtworkMediaType ManagedImportM4aPreviewFileArtworkMediaType `json:"artworkMediaType"`
+
+	// BitDepth Source bit depth for ALAC; 0 for AAC.
+	BitDepth         int                              `json:"bitDepth"`
+	BitrateKbps      int                              `json:"bitrateKbps"`
+	ChannelCount     int                              `json:"channelCount"`
+	Codec            ManagedImportM4aPreviewFileCodec `json:"codec"`
+	Container        string                           `json:"container"`
+	DiscNo           int                              `json:"discNo"`
+	DiscTotal        *int                             `json:"discTotal,omitempty"`
+	DurationMs       int                              `json:"durationMs"`
+	Format           string                           `json:"format"`
+	Genres           []string                         `json:"genres"`
+	OriginalFilename string                           `json:"originalFilename"`
+	SampleRateHz     int                              `json:"sampleRateHz"`
+	Title            string                           `json:"title"`
+	TrackNo          int                              `json:"trackNo"`
+	TrackTotal       *int                             `json:"trackTotal,omitempty"`
+	Year             *int                             `json:"year,omitempty"`
+}
+
+// ManagedImportM4aPreviewFileArtworkMediaType defines model for ManagedImportM4aPreviewFile.ArtworkMediaType.
+type ManagedImportM4aPreviewFileArtworkMediaType string
+
+// ManagedImportM4aPreviewFileCodec defines model for ManagedImportM4aPreviewFile.Codec.
+type ManagedImportM4aPreviewFileCodec string
+
+// ManagedImportMp3PreviewFile defines model for ManagedImportMp3PreviewFile.
+type ManagedImportMp3PreviewFile struct {
+	Album            string                                      `json:"album"`
+	AlbumArtists     []string                                    `json:"albumArtists"`
+	Artists          []string                                    `json:"artists"`
+	ArtworkMediaType ManagedImportMp3PreviewFileArtworkMediaType `json:"artworkMediaType"`
+	BitrateKbps      int                                         `json:"bitrateKbps"`
+	ChannelCount     int                                         `json:"channelCount"`
+	Codec            string                                      `json:"codec"`
+	Container        string                                      `json:"container"`
+	DiscNo           int                                         `json:"discNo"`
+	DiscTotal        *int                                        `json:"discTotal,omitempty"`
+	DurationMs       int                                         `json:"durationMs"`
+	Format           string                                      `json:"format"`
+	Genres           []string                                    `json:"genres"`
+	OriginalFilename string                                      `json:"originalFilename"`
+	SampleRateHz     int                                         `json:"sampleRateHz"`
+	Title            string                                      `json:"title"`
+	TrackNo          int                                         `json:"trackNo"`
+	TrackTotal       *int                                        `json:"trackTotal,omitempty"`
+	Year             *int                                        `json:"year,omitempty"`
+}
+
+// ManagedImportMp3PreviewFileArtworkMediaType defines model for ManagedImportMp3PreviewFile.ArtworkMediaType.
+type ManagedImportMp3PreviewFileArtworkMediaType string
+
+// ManagedImportOggPreviewFile defines model for ManagedImportOggPreviewFile.
+type ManagedImportOggPreviewFile struct {
+	Album            string                                      `json:"album"`
+	AlbumArtists     []string                                    `json:"albumArtists"`
+	Artists          []string                                    `json:"artists"`
+	ArtworkMediaType ManagedImportOggPreviewFileArtworkMediaType `json:"artworkMediaType"`
+	BitrateKbps      int                                         `json:"bitrateKbps"`
+	ChannelCount     int                                         `json:"channelCount"`
+	Codec            string                                      `json:"codec"`
+	Container        string                                      `json:"container"`
+	DiscNo           int                                         `json:"discNo"`
+	DiscTotal        *int                                        `json:"discTotal,omitempty"`
+	DurationMs       int                                         `json:"durationMs"`
+	Format           string                                      `json:"format"`
+	Genres           []string                                    `json:"genres"`
+	OriginalFilename string                                      `json:"originalFilename"`
+	SampleRateHz     int                                         `json:"sampleRateHz"`
+	Title            string                                      `json:"title"`
+	TrackNo          int                                         `json:"trackNo"`
+	TrackTotal       *int                                        `json:"trackTotal,omitempty"`
+	Year             *int                                        `json:"year,omitempty"`
+}
+
+// ManagedImportOggPreviewFileArtworkMediaType defines model for ManagedImportOggPreviewFile.ArtworkMediaType.
+type ManagedImportOggPreviewFileArtworkMediaType string
+
+// ManagedImportOpusPreviewFile defines model for ManagedImportOpusPreviewFile.
+type ManagedImportOpusPreviewFile struct {
+	Album            string                                       `json:"album"`
+	AlbumArtists     []string                                     `json:"albumArtists"`
+	Artists          []string                                     `json:"artists"`
+	ArtworkMediaType ManagedImportOpusPreviewFileArtworkMediaType `json:"artworkMediaType"`
+	BitrateKbps      int                                          `json:"bitrateKbps"`
+	ChannelCount     int                                          `json:"channelCount"`
+	Codec            string                                       `json:"codec"`
+	Container        string                                       `json:"container"`
+	DiscNo           int                                          `json:"discNo"`
+	DiscTotal        *int                                         `json:"discTotal,omitempty"`
+	DurationMs       int                                          `json:"durationMs"`
+	Format           string                                       `json:"format"`
+	Genres           []string                                     `json:"genres"`
+	OriginalFilename string                                       `json:"originalFilename"`
+	SampleRateHz     int                                          `json:"sampleRateHz"`
+	Title            string                                       `json:"title"`
+	TrackNo          int                                          `json:"trackNo"`
+	TrackTotal       *int                                         `json:"trackTotal,omitempty"`
+	Year             *int                                         `json:"year,omitempty"`
+}
+
+// ManagedImportOpusPreviewFileArtworkMediaType defines model for ManagedImportOpusPreviewFile.ArtworkMediaType.
+type ManagedImportOpusPreviewFileArtworkMediaType string
+
 // ManagedImportPreview defines model for ManagedImportPreview.
 type ManagedImportPreview struct {
 	File     ManagedImportPreviewFile   `json:"file"`
@@ -307,39 +490,31 @@ type ManagedImportPreviewStatus string
 
 // ManagedImportPreviewFile defines model for ManagedImportPreviewFile.
 type ManagedImportPreviewFile struct {
-	Album            string                                   `json:"album"`
-	AlbumArtists     []string                                 `json:"albumArtists"`
-	Artists          []string                                 `json:"artists"`
-	ArtworkMediaType ManagedImportPreviewFileArtworkMediaType `json:"artworkMediaType"`
-	BitDepth         int                                      `json:"bitDepth"`
-	BitrateKbps      int                                      `json:"bitrateKbps"`
-	ChannelCount     int                                      `json:"channelCount"`
-	Codec            ManagedImportPreviewFileCodec            `json:"codec"`
-	Container        ManagedImportPreviewFileContainer        `json:"container"`
-	DiscNo           int                                      `json:"discNo"`
-	DiscTotal        *int                                     `json:"discTotal,omitempty"`
-	DurationMs       int                                      `json:"durationMs"`
-	Format           ManagedImportPreviewFileFormat           `json:"format"`
-	Genres           []string                                 `json:"genres"`
-	OriginalFilename string                                   `json:"originalFilename"`
-	SampleRateHz     int                                      `json:"sampleRateHz"`
-	Title            string                                   `json:"title"`
-	TrackNo          int                                      `json:"trackNo"`
-	TrackTotal       *int                                     `json:"trackTotal,omitempty"`
-	Year             *int                                     `json:"year,omitempty"`
+	union json.RawMessage
 }
 
-// ManagedImportPreviewFileArtworkMediaType defines model for ManagedImportPreviewFile.ArtworkMediaType.
-type ManagedImportPreviewFileArtworkMediaType string
+// ManagedImportPreviewFileCommon defines model for ManagedImportPreviewFileCommon.
+type ManagedImportPreviewFileCommon struct {
+	Album            string                                         `json:"album"`
+	AlbumArtists     []string                                       `json:"albumArtists"`
+	Artists          []string                                       `json:"artists"`
+	ArtworkMediaType ManagedImportPreviewFileCommonArtworkMediaType `json:"artworkMediaType"`
+	BitrateKbps      int                                            `json:"bitrateKbps"`
+	ChannelCount     int                                            `json:"channelCount"`
+	DiscNo           int                                            `json:"discNo"`
+	DiscTotal        *int                                           `json:"discTotal,omitempty"`
+	DurationMs       int                                            `json:"durationMs"`
+	Genres           []string                                       `json:"genres"`
+	OriginalFilename string                                         `json:"originalFilename"`
+	SampleRateHz     int                                            `json:"sampleRateHz"`
+	Title            string                                         `json:"title"`
+	TrackNo          int                                            `json:"trackNo"`
+	TrackTotal       *int                                           `json:"trackTotal,omitempty"`
+	Year             *int                                           `json:"year,omitempty"`
+}
 
-// ManagedImportPreviewFileCodec defines model for ManagedImportPreviewFile.Codec.
-type ManagedImportPreviewFileCodec string
-
-// ManagedImportPreviewFileContainer defines model for ManagedImportPreviewFile.Container.
-type ManagedImportPreviewFileContainer string
-
-// ManagedImportPreviewFileFormat defines model for ManagedImportPreviewFile.Format.
-type ManagedImportPreviewFileFormat string
+// ManagedImportPreviewFileCommonArtworkMediaType defines model for ManagedImportPreviewFileCommon.ArtworkMediaType.
+type ManagedImportPreviewFileCommonArtworkMediaType string
 
 // ManagedImportResult defines model for ManagedImportResult.
 type ManagedImportResult struct {
@@ -351,6 +526,39 @@ type ManagedImportResult struct {
 
 // ManagedImportResultStatus defines model for ManagedImportResult.Status.
 type ManagedImportResultStatus string
+
+// ManagedImportWavPreviewFile defines model for ManagedImportWavPreviewFile.
+type ManagedImportWavPreviewFile struct {
+	Album            string                                      `json:"album"`
+	AlbumArtists     []string                                    `json:"albumArtists"`
+	Artists          []string                                    `json:"artists"`
+	ArtworkMediaType ManagedImportWavPreviewFileArtworkMediaType `json:"artworkMediaType"`
+	BitDepth         ManagedImportWavPreviewFileBitDepth         `json:"bitDepth"`
+	BitrateKbps      int                                         `json:"bitrateKbps"`
+	ChannelCount     int                                         `json:"channelCount"`
+	Codec            ManagedImportWavPreviewFileCodec            `json:"codec"`
+	Container        string                                      `json:"container"`
+	DiscNo           int                                         `json:"discNo"`
+	DiscTotal        *int                                        `json:"discTotal,omitempty"`
+	DurationMs       int                                         `json:"durationMs"`
+	Format           string                                      `json:"format"`
+	Genres           []string                                    `json:"genres"`
+	OriginalFilename string                                      `json:"originalFilename"`
+	SampleRateHz     int                                         `json:"sampleRateHz"`
+	Title            string                                      `json:"title"`
+	TrackNo          int                                         `json:"trackNo"`
+	TrackTotal       *int                                        `json:"trackTotal,omitempty"`
+	Year             *int                                        `json:"year,omitempty"`
+}
+
+// ManagedImportWavPreviewFileArtworkMediaType defines model for ManagedImportWavPreviewFile.ArtworkMediaType.
+type ManagedImportWavPreviewFileArtworkMediaType string
+
+// ManagedImportWavPreviewFileBitDepth defines model for ManagedImportWavPreviewFile.BitDepth.
+type ManagedImportWavPreviewFileBitDepth int
+
+// ManagedImportWavPreviewFileCodec defines model for ManagedImportWavPreviewFile.Codec.
+type ManagedImportWavPreviewFileCodec string
 
 // Playlist defines model for Playlist.
 type Playlist struct {
@@ -805,105 +1013,320 @@ type CreateRadioStationJSONRequestBody = RadioStationCreate
 // PatchRadioStationJSONRequestBody defines body for PatchRadioStation for application/json ContentType.
 type PatchRadioStationJSONRequestBody = RadioStationPatch
 
+// AsManagedImportFlacPreviewFile returns the union data inside the ManagedImportPreviewFile as a ManagedImportFlacPreviewFile
+func (t ManagedImportPreviewFile) AsManagedImportFlacPreviewFile() (ManagedImportFlacPreviewFile, error) {
+	var body ManagedImportFlacPreviewFile
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagedImportFlacPreviewFile overwrites any union data inside the ManagedImportPreviewFile as the provided ManagedImportFlacPreviewFile
+func (t *ManagedImportPreviewFile) FromManagedImportFlacPreviewFile(v ManagedImportFlacPreviewFile) error {
+	v.Format = "flac"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagedImportFlacPreviewFile performs a merge with any union data inside the ManagedImportPreviewFile, using the provided ManagedImportFlacPreviewFile
+func (t *ManagedImportPreviewFile) MergeManagedImportFlacPreviewFile(v ManagedImportFlacPreviewFile) error {
+	v.Format = "flac"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsManagedImportWavPreviewFile returns the union data inside the ManagedImportPreviewFile as a ManagedImportWavPreviewFile
+func (t ManagedImportPreviewFile) AsManagedImportWavPreviewFile() (ManagedImportWavPreviewFile, error) {
+	var body ManagedImportWavPreviewFile
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagedImportWavPreviewFile overwrites any union data inside the ManagedImportPreviewFile as the provided ManagedImportWavPreviewFile
+func (t *ManagedImportPreviewFile) FromManagedImportWavPreviewFile(v ManagedImportWavPreviewFile) error {
+	v.Format = "wav"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagedImportWavPreviewFile performs a merge with any union data inside the ManagedImportPreviewFile, using the provided ManagedImportWavPreviewFile
+func (t *ManagedImportPreviewFile) MergeManagedImportWavPreviewFile(v ManagedImportWavPreviewFile) error {
+	v.Format = "wav"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsManagedImportM4aPreviewFile returns the union data inside the ManagedImportPreviewFile as a ManagedImportM4aPreviewFile
+func (t ManagedImportPreviewFile) AsManagedImportM4aPreviewFile() (ManagedImportM4aPreviewFile, error) {
+	var body ManagedImportM4aPreviewFile
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagedImportM4aPreviewFile overwrites any union data inside the ManagedImportPreviewFile as the provided ManagedImportM4aPreviewFile
+func (t *ManagedImportPreviewFile) FromManagedImportM4aPreviewFile(v ManagedImportM4aPreviewFile) error {
+	v.Format = "m4a"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagedImportM4aPreviewFile performs a merge with any union data inside the ManagedImportPreviewFile, using the provided ManagedImportM4aPreviewFile
+func (t *ManagedImportPreviewFile) MergeManagedImportM4aPreviewFile(v ManagedImportM4aPreviewFile) error {
+	v.Format = "m4a"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsManagedImportMp3PreviewFile returns the union data inside the ManagedImportPreviewFile as a ManagedImportMp3PreviewFile
+func (t ManagedImportPreviewFile) AsManagedImportMp3PreviewFile() (ManagedImportMp3PreviewFile, error) {
+	var body ManagedImportMp3PreviewFile
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagedImportMp3PreviewFile overwrites any union data inside the ManagedImportPreviewFile as the provided ManagedImportMp3PreviewFile
+func (t *ManagedImportPreviewFile) FromManagedImportMp3PreviewFile(v ManagedImportMp3PreviewFile) error {
+	v.Format = "mp3"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagedImportMp3PreviewFile performs a merge with any union data inside the ManagedImportPreviewFile, using the provided ManagedImportMp3PreviewFile
+func (t *ManagedImportPreviewFile) MergeManagedImportMp3PreviewFile(v ManagedImportMp3PreviewFile) error {
+	v.Format = "mp3"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsManagedImportOggPreviewFile returns the union data inside the ManagedImportPreviewFile as a ManagedImportOggPreviewFile
+func (t ManagedImportPreviewFile) AsManagedImportOggPreviewFile() (ManagedImportOggPreviewFile, error) {
+	var body ManagedImportOggPreviewFile
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagedImportOggPreviewFile overwrites any union data inside the ManagedImportPreviewFile as the provided ManagedImportOggPreviewFile
+func (t *ManagedImportPreviewFile) FromManagedImportOggPreviewFile(v ManagedImportOggPreviewFile) error {
+	v.Format = "ogg"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagedImportOggPreviewFile performs a merge with any union data inside the ManagedImportPreviewFile, using the provided ManagedImportOggPreviewFile
+func (t *ManagedImportPreviewFile) MergeManagedImportOggPreviewFile(v ManagedImportOggPreviewFile) error {
+	v.Format = "ogg"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsManagedImportOpusPreviewFile returns the union data inside the ManagedImportPreviewFile as a ManagedImportOpusPreviewFile
+func (t ManagedImportPreviewFile) AsManagedImportOpusPreviewFile() (ManagedImportOpusPreviewFile, error) {
+	var body ManagedImportOpusPreviewFile
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagedImportOpusPreviewFile overwrites any union data inside the ManagedImportPreviewFile as the provided ManagedImportOpusPreviewFile
+func (t *ManagedImportPreviewFile) FromManagedImportOpusPreviewFile(v ManagedImportOpusPreviewFile) error {
+	v.Format = "opus"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagedImportOpusPreviewFile performs a merge with any union data inside the ManagedImportPreviewFile, using the provided ManagedImportOpusPreviewFile
+func (t *ManagedImportPreviewFile) MergeManagedImportOpusPreviewFile(v ManagedImportOpusPreviewFile) error {
+	v.Format = "opus"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ManagedImportPreviewFile) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"format"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t ManagedImportPreviewFile) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "flac":
+		return t.AsManagedImportFlacPreviewFile()
+	case "m4a":
+		return t.AsManagedImportM4aPreviewFile()
+	case "mp3":
+		return t.AsManagedImportMp3PreviewFile()
+	case "ogg":
+		return t.AsManagedImportOggPreviewFile()
+	case "opus":
+		return t.AsManagedImportOpusPreviewFile()
+	case "wav":
+		return t.AsManagedImportWavPreviewFile()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t ManagedImportPreviewFile) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ManagedImportPreviewFile) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"AP//GYYY5Y2iAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
