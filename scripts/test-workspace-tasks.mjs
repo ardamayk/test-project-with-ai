@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
 const WORKSPACE_PACKAGES = ["@repo/api-client", "@repo/ui", "web"];
@@ -28,6 +29,26 @@ function parseDryRun(output) {
 
 function runMiseDry(task) {
 	return parseDryRun(run("mise", ["run", task, "--", "--dry=json"]));
+}
+
+function runMiseTaskDryRun(task) {
+	const result = spawnSync("mise", ["run", "--dry-run", task], {
+		cwd: new URL("..", import.meta.url),
+		encoding: "utf8",
+		env: { ...process.env, NO_COLOR: "1" },
+	});
+
+	assert.equal(
+		result.status,
+		0,
+		`mise run --dry-run ${task} failed:\n${result.stderr}${result.stdout}`,
+	);
+
+	return `${result.stderr}${result.stdout}`;
+}
+
+function readMiseTasks() {
+	return JSON.parse(run("mise", ["tasks", "--json"]));
 }
 
 function runTurboDry(task, packageName = "web") {
@@ -77,7 +98,7 @@ test("targeted Mise tasks select one workspace package", () => {
 		["api-client", "@repo/api-client"],
 	];
 
-	assert.deepEqual(taskPackages(runMiseDry("web:build"), "build"), ["web"]);
+	assert.match(runMiseTaskDryRun("web:build"), /\[workspace:build\]/);
 
 	for (const [taskPrefix, packageName] of packageTasks) {
 		for (const [taskSuffix, turboTask] of [
@@ -92,6 +113,156 @@ test("targeted Mise tasks select one workspace package", () => {
 			);
 		}
 	}
+});
+
+test("Mise exposes the cross-language public task contract", () => {
+	const taskNames = new Set(readMiseTasks().map((task) => task.name));
+
+	for (const taskName of [
+		"dev",
+		"web:dev",
+		"desktop:dev",
+		"build",
+		"web:build",
+		"docs:build",
+		"server:build",
+		"desktop:build",
+		"format",
+		"server:format",
+		"desktop:format",
+		"check",
+		"server:check",
+		"desktop:check",
+		"test",
+		"server:test",
+		"desktop:test",
+		"generate:check",
+		"ci:fast",
+		"ci:integration",
+		"ci:full",
+	]) {
+		assert.equal(taskNames.has(taskName), true, taskName);
+	}
+});
+
+test("aggregate Mise tasks select every language domain", () => {
+	for (const [aggregateTask, selectedTasks] of [
+		[
+			"build",
+			["web:build", "docs:build", "server:build", "desktop:build"],
+		],
+		["format", ["workspace:format", "server:format", "desktop:format"]],
+		["check", ["workspace:check", "server:check", "desktop:check"]],
+		["test", ["workspace:test", "server:test", "desktop:test"]],
+	]) {
+		const dryRun = runMiseTaskDryRun(aggregateTask);
+		for (const selectedTask of selectedTasks) {
+			assert.match(dryRun, new RegExp(`\\[${selectedTask}\\]`), aggregateTask);
+		}
+	}
+});
+
+test("targeted native Mise tasks select their domain commands", () => {
+	for (const [taskName, expectedCommands] of [
+		["server:build", ["web:build", "docs:build", "[server:build]"]],
+		["server:check", ["server:format:check", "server:lint"]],
+		["server:test", ["go test ./..."]],
+		["desktop:build", ["web:build", "build:sidecar:prepared"]],
+		["desktop:check", ["desktop:format:check", "desktop:lint"]],
+		["desktop:test", ["test:unit"]],
+		["web:dev", ["run-with-music-server.sh", "web dev"]],
+		["desktop:dev", ["run-with-music-server.sh", "desktop:dev"]],
+	]) {
+		const dryRun = runMiseTaskDryRun(taskName);
+		for (const expectedCommand of expectedCommands) {
+			assert.equal(dryRun.includes(expectedCommand), true, taskName);
+		}
+	}
+});
+
+test("aggregate Mise tasks propagate dependency failures", () => {
+	const probeDirectory = mkdtempSync(
+		new URL("../server/.mise-failure-probe-", import.meta.url),
+	);
+	const probePath = `${probeDirectory}/probe.go`;
+	writeFileSync(probePath, "package server\n\nfunc miseFailureProbe( ){ }\n");
+
+	try {
+		const result = spawnSync("mise", ["run", "format:check"], {
+			cwd: new URL("..", import.meta.url),
+			encoding: "utf8",
+			env: { ...process.env, NO_COLOR: "1" },
+		});
+
+		assert.notEqual(result.status, 0);
+		assert.match(`${result.stderr}${result.stdout}`, /server:format:check/);
+	} finally {
+		rmSync(probeDirectory, { force: true, recursive: true });
+	}
+});
+
+test("CI policy tasks reuse public task compositions", () => {
+	const fastDryRun = runMiseTaskDryRun("ci:fast");
+	assert.match(fastDryRun, /\[check\]/);
+	assert.match(fastDryRun, /\[test\]/);
+
+	const integrationDryRun = runMiseTaskDryRun("ci:integration");
+	assert.match(integrationDryRun, /\[web:test:e2e\]/);
+	assert.match(integrationDryRun, /\[server:test:hls\]/);
+	assert.match(integrationDryRun, /\[desktop:test:mpv\]/);
+
+	const fullDryRun = runMiseTaskDryRun("ci:full");
+	assert.match(fullDryRun, /\[ci:fast\]/);
+	const fullTask = readMiseTasks().find((task) => task.name === "ci:full");
+	const fullRun = fullTask.run.join("\n");
+	const generateIndex = fullRun.indexOf("mise run generate:check");
+	const integrationIndex = fullRun.indexOf("mise run ci:integration");
+	const buildIndex = fullRun.indexOf("mise run build");
+	assert.notEqual(generateIndex, -1);
+	assert.equal(generateIndex < integrationIndex, true);
+	assert.equal(integrationIndex < buildIndex, true);
+
+	const generateCheck = readMiseTasks().find(
+		(task) => task.name === "generate:check",
+	);
+	assert.match(generateCheck.run.join("\n"), /mise run generate/);
+	assert.match(generateCheck.run.join("\n"), /git diff --exit-code/);
+});
+
+test("root pnpm compatibility commands delegate to Mise", async () => {
+	const packageJson = await import("../package.json", { with: { type: "json" } });
+
+	for (const scriptName of [
+		"build",
+		"dev",
+		"format",
+		"format:check",
+		"lint",
+		"typecheck",
+		"test",
+		"test:unit",
+		"test:core",
+		"test:desktop",
+		"test:e2e",
+		"test:e2e:hls",
+		"generate",
+		"check",
+		"start",
+	]) {
+		assert.match(packageJson.default.scripts[scriptName], /^mise run /, scriptName);
+	}
+});
+
+test("Desktop Client workspace scripts expose native Rust tools", async () => {
+	const packageJson = await import("../desktop/package.json", {
+		with: { type: "json" },
+	});
+
+	assert.match(packageJson.default.scripts.format, /^cargo fmt /);
+	assert.match(packageJson.default.scripts["format:check"], /^cargo fmt /);
+	assert.match(packageJson.default.scripts.lint, /^cargo clippy /);
+	assert.match(packageJson.default.scripts.lint, /-- -D warnings$/);
+	assert.match(packageJson.default.scripts["test:unit"], /^cargo test /);
 });
 
 test("Turbo verification tasks have no implicit build or generation edges", () => {

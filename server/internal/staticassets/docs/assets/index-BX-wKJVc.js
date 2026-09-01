@@ -25,7 +25,7 @@ Error generating stack: `+e.message+`
 `,(0,p.jsxs)(t.ul,{children:[`
 `,(0,p.jsx)(t.li,{children:`Go 1.23+`}),`
 `,(0,p.jsx)(t.li,{children:`Node 22+ and pnpm`}),`
-`,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.a,{href:`https://mise.jdx.dev/`,children:`mise`}),` (recommended)`]}),`
+`,(0,p.jsx)(t.li,{children:(0,p.jsx)(t.a,{href:`https://mise.jdx.dev/`,children:`mise`})}),`
 `]}),`
 `,(0,p.jsx)(t.h2,{children:`Development`}),`
 `,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-bash`,children:`pnpm install
@@ -40,12 +40,19 @@ mise run dev
 `,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-bash`,children:`export MUSIC_PATHS=/path/to/music,./music
 `})}),`
 `,(0,p.jsxs)(t.p,{children:[`Then open `,(0,p.jsx)(t.strong,{children:`Library`}),` in the web UI and click `,(0,p.jsx)(t.strong,{children:`Scan library`}),` to index audio files (mp3, flac, ogg, m4a, opus, wav).`]}),`
+`,(0,p.jsx)(t.h3,{children:`Managed Storage`}),`
+`,(0,p.jsx)(t.p,{children:`Managed imports use one server-owned storage root. The server keeps a 2 GiB safety reserve by default and enforces configurable per-file and per-batch streaming limits:`}),`
+`,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-bash`,children:`export MANAGED_STORAGE_PATH=./data/managed
+export MANAGED_STORAGE_RESERVE_BYTES=2147483648
+export MANAGED_IMPORT_FILE_LIMIT_BYTES=2147483648
+export MANAGED_IMPORT_BATCH_LIMIT_BYTES=2147483648
+`})}),`
+`,(0,p.jsxs)(t.p,{children:[`All byte-count settings use base-10 integer strings. Set `,(0,p.jsx)(t.code,{children:`MANAGED_STORAGE_RESERVE_BYTES=0`}),` only when intentionally disabling the safety reserve.`]}),`
 `,(0,p.jsx)(t.h2,{children:`Production build`}),`
-`,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-bash`,children:`pnpm build
-./scripts/sync-static.sh
-cd server && go build -o ../bin/server ./cmd/server
+`,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-bash`,children:`mise run build
 ./bin/server
 `})}),`
+`,(0,p.jsxs)(t.p,{children:[`Mise is the canonical interface for development and CI tasks. Run `,(0,p.jsx)(t.code,{children:`mise run ci:fast`}),` for static checks and unit tests, `,(0,p.jsx)(t.code,{children:`mise run ci:integration`}),` for integration tests, or `,(0,p.jsx)(t.code,{children:`mise run ci:full`}),` for the full local policy. Target one artifact or domain with commands such as `,(0,p.jsx)(t.code,{children:`mise run web:build`}),`, `,(0,p.jsx)(t.code,{children:`mise run server:test`}),`, and `,(0,p.jsx)(t.code,{children:`mise run desktop:check`}),`; root pnpm commands are compatibility proxies.`]}),`
 `,(0,p.jsx)(t.p,{children:`Single binary serves:`}),`
 `,(0,p.jsxs)(t.ul,{children:[`
 `,(0,p.jsxs)(t.li,{children:[`React SPA at `,(0,p.jsx)(t.code,{children:`/`})]}),`
@@ -68,7 +75,7 @@ cd server && go build -o ../bin/server ./cmd/server
 `,(0,p.jsxs)(t.li,{children:[`Raw OpenAPI YAML: `,(0,p.jsx)(t.code,{children:`/api/openapi.yaml`})]}),`
 `]}),`
 `,(0,p.jsx)(t.p,{children:`Use Swagger for endpoint details. Keep MDX docs focused on product concepts, workflows, and architecture.`}),`
-`,(0,p.jsxs)(t.p,{children:[`When adding API fields, edit the OpenAPI spec first, run `,(0,p.jsx)(t.code,{children:`pnpm generate`}),`, then update handlers and UI callers.`]})]})}function y(e={}){let{wrapper:t}=e.components||{};return t?(0,p.jsx)(t,{...e,children:(0,p.jsx)(v,{...e})}):v(e)}function b(e){let t={code:`code`,h1:`h1`,h2:`h2`,li:`li`,p:`p`,pre:`pre`,ul:`ul`,...e.components};return(0,p.jsxs)(p.Fragment,{children:[(0,p.jsx)(t.h1,{children:`Architecture`}),`
+`,(0,p.jsxs)(t.p,{children:[`When adding API fields, edit the OpenAPI spec first, run `,(0,p.jsx)(t.code,{children:`mise run generate`}),`, then update handlers and UI callers.`]})]})}function y(e={}){let{wrapper:t}=e.components||{};return t?(0,p.jsx)(t,{...e,children:(0,p.jsx)(v,{...e})}):v(e)}function b(e){let t={code:`code`,h1:`h1`,h2:`h2`,li:`li`,p:`p`,pre:`pre`,ul:`ul`,...e.components};return(0,p.jsxs)(p.Fragment,{children:[(0,p.jsx)(t.h1,{children:`Architecture`}),`
 `,(0,p.jsx)(t.p,{children:`Navidrome Replacement is a modular monolith with separate web, docs, contracts, and server packages.`}),`
 `,(0,p.jsx)(t.h2,{children:`Source flow`}),`
 `,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-text`,children:`packages/contracts/openapi.yaml

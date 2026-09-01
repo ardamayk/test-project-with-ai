@@ -81,7 +81,7 @@ Shared Queue invalidations use the OpenAPI-documented server-sent event stream. 
 ## Codegen
 
 ```bash
-pnpm generate
+mise run generate
 ```
 
 | Target | Tool | Output |
@@ -96,7 +96,7 @@ pnpm generate
 Generated files are committed. CI runs:
 
 ```bash
-pnpm generate
+mise run generate
 git diff --exit-code
 ```
 

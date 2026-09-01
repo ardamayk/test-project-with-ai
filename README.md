@@ -33,7 +33,7 @@ For **Figma**, **Google Stitch**, or visual design work, start here:
 ```bash
 mise install
 pnpm install
-pnpm generate   # OpenAPI codegen
+mise run generate   # OpenAPI codegen
 export MUSIC_PATHS=./music   # your music folder(s), comma-separated
 mise run dev    # Go :8090 + Vite :3000
 ```
@@ -43,10 +43,10 @@ The Music Server scans `MUSIC_PATHS` once at startup. Open http://localhost:3000
 ## Build
 
 ```bash
-pnpm build
-./scripts/sync-static.sh all
-cd server && go build -o ../bin/server ./cmd/server
+mise run build
 ```
+
+Mise is the canonical command interface. Use `mise run web:build`, `mise run server:build`, or `mise run desktop:build` for one artifact.
 
 ## Linux Desktop Client
 
@@ -59,7 +59,7 @@ mise run desktop:dev
 Build and start the release Desktop Client:
 
 ```bash
-mise run desktop:build
+mise run build
 mise run start       # or: pnpm start
 ```
 
@@ -68,9 +68,12 @@ The launcher automatically selects native Wayland with the NVIDIA explicit-sync 
 ## Test
 
 ```bash
-pnpm test       # unit tests
-pnpm test:e2e   # Playwright
+mise run ci:fast          # static checks and unit tests
+mise run ci:integration   # Playwright, HLS, and pinned-mpv tests
+mise run ci:full          # fast + integration + production builds
 ```
+
+Targeted commands include `mise run web:test`, `mise run ui:test`, `mise run api-client:test`, `mise run server:test`, and `mise run desktop:test`. Root pnpm commands remain compatibility proxies; new development and CI automation should call Mise.
 
 ## Developer docs
 
