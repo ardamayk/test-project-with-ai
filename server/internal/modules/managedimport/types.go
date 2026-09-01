@@ -1,6 +1,7 @@
 package managedimport
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -9,14 +10,43 @@ import (
 )
 
 const (
-	STATUS_UPLOADING             ImportStatus = "uploading"
-	STATUS_AWAITING_CONFIRMATION ImportStatus = "awaiting_confirmation"
-	STATUS_COMMITTED             ImportStatus = "committed"
-	STATUS_FAILED                ImportStatus = "failed"
-	MAX_CONFIRMATION_BODY_BYTES  int64        = 4 * 1024
-	MAX_ORIGINAL_FILENAME_BYTES               = 255
-	BITS_PER_KILOBIT                          = 1000
-	VALIDATION_CLEANUP_TIMEOUT                = 5 * time.Second
+	STATUS_UPLOADING                  ImportStatus = "uploading"
+	STATUS_AWAITING_CONFIRMATION      ImportStatus = "awaiting_confirmation"
+	STATUS_COMMITTED                  ImportStatus = "committed"
+	STATUS_FAILED                     ImportStatus = "failed"
+	MAX_CONFIRMATION_BODY_BYTES       int64        = 4 * 1024
+	MAX_BATCH_CONFIRMATION_BODY_BYTES              = 256 * 1024
+	MAX_JOB_CREATE_BODY_BYTES         int64        = 4 * 1024
+	MAX_ORIGINAL_FILENAME_BYTES                    = 255
+	BITS_PER_KILOBIT                               = 1000
+	VALIDATION_CLEANUP_TIMEOUT                     = 5 * time.Second
+)
+
+type BatchStatus string
+
+const (
+	BATCH_STATUS_UPLOADING  BatchStatus = "uploading"
+	BATCH_STATUS_CONFIRMING BatchStatus = "confirming"
+	BATCH_STATUS_COMPLETED  BatchStatus = "completed"
+)
+
+type BatchFileState string
+
+const (
+	BATCH_FILE_ACCEPTED   BatchFileState = "accepted"
+	BATCH_FILE_REJECTED   BatchFileState = "rejected"
+	BATCH_FILE_UNRESOLVED BatchFileState = "unresolved"
+	BATCH_FILE_COMPLETED  BatchFileState = "completed"
+)
+
+type ImportOutcome string
+
+const (
+	OUTCOME_IMPORTED      ImportOutcome = "imported"
+	OUTCOME_REJECTED      ImportOutcome = "rejected"
+	OUTCOME_FAILED        ImportOutcome = "failed"
+	OUTCOME_REPLACED      ImportOutcome = "replaced"
+	OUTCOME_NOT_ATTEMPTED ImportOutcome = "not_attempted"
 )
 
 type ImportStatus string
@@ -39,6 +69,40 @@ type Job struct {
 	ValidationProgress int          `json:"validationProgress"`
 	ErrorCode          string       `json:"errorCode,omitempty"`
 	TrackID            string       `json:"trackId,omitempty"`
+}
+
+type JobCreate struct {
+	BatchID      string `json:"batchId"`
+	ClientFileID string `json:"clientFileId"`
+}
+
+type Batch struct {
+	ID       string      `json:"id"`
+	Status   BatchStatus `json:"status"`
+	Revision int         `json:"revision"`
+	Files    []BatchFile `json:"files"`
+}
+
+type BatchFile struct {
+	JobID              string         `json:"jobId"`
+	ClientFileID       string         `json:"clientFileId,omitempty"`
+	State              BatchFileState `json:"state"`
+	Status             ImportStatus   `json:"status"`
+	Revision           int            `json:"revision"`
+	ValidationProgress int            `json:"validationProgress"`
+	OriginalFilename   string         `json:"originalFilename,omitempty"`
+	Selected           bool           `json:"selected"`
+	Preview            *Preview       `json:"preview,omitempty"`
+	ErrorCode          string         `json:"errorCode,omitempty"`
+	ErrorField         string         `json:"errorField,omitempty"`
+	ErrorReason        string         `json:"errorReason,omitempty"`
+	Outcome            ImportOutcome  `json:"outcome,omitempty"`
+	TrackID            string         `json:"trackId,omitempty"`
+}
+
+type BatchConfirmation struct {
+	Revision        int      `json:"revision"`
+	SelectedFileIDs []string `json:"selectedFileIds"`
 }
 
 type Preview struct {
@@ -84,9 +148,16 @@ type Result struct {
 
 type importJob struct {
 	Job
+	BatchID          string
+	ClientFileID     string
 	OriginalFilename string
 	StagedFilePath   string
 	ContentSHA256    string
+	PreviewJSON      string
+	ErrorField       string
+	ErrorReason      string
+	Outcome          ImportOutcome
+	Selected         bool
 }
 
 type ValidationError struct {
@@ -145,4 +216,40 @@ func previewFromInspection(job importJob, inspection library.MediaInspection) Pr
 			ArtworkMediaType: inspection.AlbumArtwork.MIMEType,
 		},
 	}
+}
+
+func batchFileFromJob(job importJob) (BatchFile, error) {
+	file := BatchFile{
+		JobID:              job.ID,
+		ClientFileID:       job.ClientFileID,
+		State:              BATCH_FILE_UNRESOLVED,
+		Status:             job.Status,
+		Revision:           job.Revision,
+		ValidationProgress: job.ValidationProgress,
+		OriginalFilename:   job.OriginalFilename,
+		Selected:           job.Selected,
+		ErrorCode:          job.ErrorCode,
+		ErrorField:         job.ErrorField,
+		ErrorReason:        job.ErrorReason,
+		Outcome:            job.Outcome,
+		TrackID:            job.TrackID,
+	}
+	if job.PreviewJSON != "" {
+		var preview Preview
+		if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
+			return BatchFile{}, fmt.Errorf("decode Import Preview for job %q: %w", job.ID, err)
+		}
+		file.Preview = &preview
+	}
+	switch {
+	case job.Outcome == OUTCOME_REJECTED:
+		file.State = BATCH_FILE_REJECTED
+	case job.Outcome != "":
+		file.State = BATCH_FILE_COMPLETED
+	case job.Status == STATUS_AWAITING_CONFIRMATION:
+		file.State = BATCH_FILE_ACCEPTED
+	case job.Status == STATUS_FAILED:
+		file.State = BATCH_FILE_REJECTED
+	}
+	return file, nil
 }

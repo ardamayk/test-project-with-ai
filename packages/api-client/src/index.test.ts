@@ -78,6 +78,36 @@ describe('Managed Import media contracts', () => {
 })
 
 describe('createApiClient', () => {
+  it('creates and confirms a multi-file Managed Import Batch', async () => {
+    const createdBatch = { id: 'batch-1', status: 'uploading', revision: 1, files: [] }
+    const completedBatch = { id: 'batch-1', status: 'completed', revision: 4, files: [] }
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(createdBatch, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(
+        { id: 'import-1', status: 'uploading', revision: 1, validationProgress: 0 },
+        { status: 201 },
+      ))
+      .mockResolvedValueOnce(Response.json(completedBatch))
+    const client = createApiClient({ baseUrl: 'http://music.test', transport })
+
+    const batch = await client.createManagedImportBatch()
+    await client.createManagedImportJob(
+      batch.id,
+      '00000000-0000-4000-8000-000000000001',
+    )
+    const report = await client.confirmManagedImportBatch(batch.id, 2, ['import-1'])
+
+    expect(report.status).toBe('completed')
+    expect(JSON.parse(String(transport.mock.calls[1]?.[1]?.body))).toEqual({
+      batchId: 'batch-1',
+      clientFileId: '00000000-0000-4000-8000-000000000001',
+    })
+    expect(JSON.parse(String(transport.mock.calls[2]?.[1]?.body))).toEqual({
+      revision: 2,
+      selectedFileIds: ['import-1'],
+    })
+  })
+
   it('polls observable Managed Import validation results', async () => {
     const transport = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({
@@ -152,16 +182,19 @@ describe('createApiClient', () => {
       transport,
     })
     const file = new Blob(['flac bytes'], { type: 'audio/flac' })
+    const progress: number[] = []
 
     const job = await client.createManagedImportJob()
     const preview = await client.uploadManagedImportFile(
       job.id,
       'fixture.flac',
       file,
+      (value) => progress.push(value),
     )
     const result = await client.confirmManagedImport(job.id, preview.revision)
 
     expect(result.trackId).toBe('track-1')
+    expect(progress).toEqual([0, 100])
     expect(transport).toHaveBeenNthCalledWith(
       2,
       'http://music.test/api/v1/imports/import-1/file',
