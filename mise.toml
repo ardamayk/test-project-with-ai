@@ -42,6 +42,78 @@ set -euo pipefail
 description = "Regenerate OpenAPI clients"
 run = "pnpm generate"
 
+[tasks."workspace:build"]
+description = "Build workspace production artifacts"
+run = "pnpm turbo run build --filter=web"
+
+[tasks."workspace:format"]
+description = "Format the Web Client, shared UI, and API client"
+run = "pnpm turbo run format --filter=web --filter=@repo/ui --filter=@repo/api-client"
+
+[tasks."workspace:check"]
+description = "Check the Web Client, shared UI, and API client"
+run = "pnpm turbo run check --filter=web --filter=@repo/ui --filter=@repo/api-client"
+
+[tasks."workspace:typecheck"]
+description = "Type-check the Web Client, shared UI, and API client"
+run = "pnpm turbo run typecheck --filter=web --filter=@repo/ui --filter=@repo/api-client"
+
+[tasks."workspace:test"]
+description = "Run Web Client, shared UI, and API client unit tests"
+run = "pnpm turbo run test:unit --filter=web --filter=@repo/ui --filter=@repo/api-client"
+
+[tasks."web:build"]
+description = "Build the Web Client"
+run = "pnpm turbo run build --filter=web"
+
+[tasks."web:format"]
+description = "Format the Web Client"
+run = "pnpm turbo run format --filter=web"
+
+[tasks."web:check"]
+description = "Check the Web Client"
+run = "pnpm turbo run check --filter=web"
+
+[tasks."web:typecheck"]
+description = "Type-check the Web Client"
+run = "pnpm turbo run typecheck --filter=web"
+
+[tasks."web:test"]
+description = "Run Web Client unit tests"
+run = "pnpm turbo run test:unit --filter=web"
+
+[tasks."ui:format"]
+description = "Format the shared UI"
+run = "pnpm turbo run format --filter=@repo/ui"
+
+[tasks."ui:check"]
+description = "Check the shared UI"
+run = "pnpm turbo run check --filter=@repo/ui"
+
+[tasks."ui:typecheck"]
+description = "Type-check the shared UI"
+run = "pnpm turbo run typecheck --filter=@repo/ui"
+
+[tasks."ui:test"]
+description = "Run shared UI unit tests"
+run = "pnpm turbo run test:unit --filter=@repo/ui"
+
+[tasks."api-client:format"]
+description = "Format the API client"
+run = "pnpm turbo run format --filter=@repo/api-client"
+
+[tasks."api-client:check"]
+description = "Check the API client"
+run = "pnpm turbo run check --filter=@repo/api-client"
+
+[tasks."api-client:typecheck"]
+description = "Type-check the API client"
+run = "pnpm turbo run typecheck --filter=@repo/api-client"
+
+[tasks."api-client:test"]
+description = "Run API client unit tests"
+run = "pnpm turbo run test:unit --filter=@repo/api-client"
+
 [tasks.test]
 description = "Run all unit tests"
 run = "pnpm test"
