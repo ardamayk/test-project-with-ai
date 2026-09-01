@@ -509,6 +509,64 @@ describe("tracks route", () => {
 				["import-1"],
 			),
 		);
+		expect(screen.queryByText("upload response lost")).toBeNull();
+	});
+
+	it("retries an unresolved server job whose create response was lost", async () => {
+		mocks.createManagedImportJob
+			.mockReset()
+			.mockRejectedValueOnce(new Error("job response lost"));
+		mocks.getManagedImportBatch
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 2,
+				files: [
+					{
+						jobId: "server-import-1",
+						state: "unresolved",
+						status: "uploading",
+						revision: 1,
+						validationProgress: 0,
+						selected: false,
+					},
+				],
+			})
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 3,
+				files: [
+					{
+						jobId: "server-import-1",
+						state: "accepted",
+						status: "awaiting_confirmation",
+						revision: 2,
+						validationProgress: 100,
+						selected: true,
+					},
+				],
+			});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		const file = new File(["flac bytes"], "strict-import.flac", {
+			type: "audio/flac",
+		});
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: { files: [file] },
+		});
+
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledWith(
+				"server-import-1",
+				"strict-import.flac",
+				file,
+				expect.any(Function),
+			),
+		);
+		expect(await screen.findByText("Accepted")).toBeDefined();
+		expect(screen.queryByText("job response lost")).toBeNull();
 	});
 
 	it("preserves an explicit deselection across confirmation refresh", async () => {

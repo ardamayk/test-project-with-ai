@@ -81,10 +81,18 @@ func (store *Store) CreateBatch(ctx context.Context) (Batch, error) {
 }
 
 func (store *Store) GetJob(ctx context.Context, jobID string) (importJob, error) {
+	return getImportJob(ctx, store.database, jobID)
+}
+
+type queryRower interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func getImportJob(ctx context.Context, queryer queryRower, jobID string) (importJob, error) {
 	var job importJob
 	var batchID, originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
 	var previewJSON, errorField, errorReason, outcome sql.NullString
-	err := store.database.QueryRowContext(ctx, `
+	err := queryer.QueryRowContext(ctx, `
 		SELECT id, status, revision, validation_progress, batch_id, original_filename, staged_file_path,
 			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected
 		FROM managed_import_jobs WHERE id = ?`, jobID,
@@ -208,8 +216,18 @@ func (store *Store) ReserveBatchUpload(ctx context.Context, jobID string, upload
 	return ErrBatchTooLarge
 }
 
-func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256, previewJSON string, uploadSize, batchLimit int64) (importJob, error) {
-	result, err := store.database.ExecContext(ctx, `
+func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256, previewJSON string, uploadSize, batchLimit int64) (_ importJob, returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return importJob{}, fmt.Errorf("begin Import Preview transition: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Import Preview transition: %w", rollbackErr))
+		}
+	}()
+	result, err := transaction.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
 			content_sha256 = ?, preview_json = ?, upload_size_bytes = ?, error_code = NULL,
@@ -227,7 +245,7 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 		return importJob{}, fmt.Errorf("mark Import Preview ready: %w", err)
 	}
 	if err := requireMutation(result); err != nil {
-		job, getErr := store.GetJob(ctx, jobID)
+		job, getErr := getImportJob(ctx, transaction, jobID)
 		if getErr != nil {
 			return importJob{}, getErr
 		}
@@ -236,14 +254,27 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 		}
 		return importJob{}, err
 	}
-	if _, err := store.database.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
 		return importJob{}, fmt.Errorf("revise Managed Import Batch preview: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return importJob{}, fmt.Errorf("commit Import Preview transition: %w", err)
 	}
 	return store.GetJob(ctx, jobID)
 }
 
-func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, errorCode, errorField, errorReason string) error {
-	result, err := store.database.ExecContext(ctx, `
+func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, errorCode, errorField, errorReason string) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin failed Managed Import transition: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback failed Managed Import transition: %w", rollbackErr))
+		}
+	}()
+	result, err := transaction.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, original_filename = COALESCE(NULLIF(?, ''), original_filename), error_code = ?,
 			error_field = ?, error_reason = ?, outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END,
@@ -256,8 +287,11 @@ func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, err
 	if err := requireMutation(result); err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
-	if _, err := store.database.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
 		return fmt.Errorf("revise rejected Managed Import Batch file: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit failed Managed Import transition: %w", err)
 	}
 	return nil
 }

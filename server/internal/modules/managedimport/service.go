@@ -331,7 +331,7 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			continue
 		}
 		if !job.Selected {
-			if err := service.finishUncommittedBatchFile(ctx, job, OUTCOME_NOT_ATTEMPTED, ""); err != nil {
+			if err := service.finishUncommittedBatchFile(ctx, job, OUTCOME_NOT_ATTEMPTED, "", ""); err != nil {
 				return err
 			}
 			continue
@@ -340,8 +340,8 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			if ctx.Err() != nil {
 				return errors.Join(err, ctx.Err())
 			}
-			_, reason := failureDetails(err)
-			if finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, reason); finishErr != nil {
+			errorCode, reason := failureDetails(err)
+			if finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, errorCode, reason); finishErr != nil {
 				return errors.Join(err, finishErr)
 			}
 		}
@@ -360,15 +360,15 @@ func (service *Service) completeBatch(ctx context.Context, batchID string) (Batc
 	return service.store.GetBatch(ctx, batchID)
 }
 
-func (service *Service) finishUncommittedBatchFile(ctx context.Context, job importJob, outcome ImportOutcome, reason string) error {
+func (service *Service) finishUncommittedBatchFile(ctx context.Context, job importJob, outcome ImportOutcome, errorCode, reason string) error {
 	if job.StagedFilePath != "" {
 		if err := service.storage.RemoveStaged(job.StagedFilePath); err != nil {
 			outcome = OUTCOME_FAILED
+			errorCode = "commit_failed"
 			reason = "staging cleanup failed"
 		}
 	}
-	errorCode := ""
-	if outcome == OUTCOME_FAILED {
+	if outcome == OUTCOME_FAILED && errorCode == "" {
 		errorCode = "commit_failed"
 	}
 	return service.store.MarkBatchFileOutcome(ctx, job.ID, outcome, errorCode, reason)

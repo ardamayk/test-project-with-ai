@@ -39,7 +39,14 @@ export function useManagedImportWorkflow({
 			state.entries.length > 0 &&
 			!isBusy &&
 			!isCompleted &&
-			state.entries.every((entry) => entry.state !== "unresolved"),
+			state.batch.files.every(
+				(file) =>
+					file.state !== "unresolved" ||
+					state.entries.some((entry) => entry.jobId === file.jobId),
+			) &&
+			state.entries.every(
+				(entry) => entry.state !== "unresolved" || Boolean(entry.jobId),
+			),
 	);
 	return {
 		importState: state.importState,
@@ -100,14 +107,18 @@ function createFileHandler(state: WorkflowState) {
 		try {
 			const createdBatch = await apiClient.createManagedImportBatch();
 			state.setBatch(createdBatch);
-			const previewBatch = await uploadImportBatch(
-				createdBatch.id,
-				initialEntries,
-				state.updateEntry,
-			);
+			const { batch: previewBatch, entries: uploadedEntries } =
+				await uploadImportBatch(
+					createdBatch.id,
+					initialEntries,
+					state.updateEntry,
+				);
 			state.setBatch(previewBatch);
 			state.setEntries((current) =>
-				mergeBatchFiles(current, previewBatch.files),
+				mergeBatchFiles(
+					copyJobAssignments(current, uploadedEntries),
+					previewBatch.files,
+				),
 			);
 		} catch (error) {
 			state.setErrorMessage(importErrorMessage(error));
@@ -127,15 +138,29 @@ function createConfirmHandler(
 		state.setImportState("confirming");
 		state.setErrorMessage("");
 		try {
-			const currentBatch = await apiClient.getManagedImportBatch(
-				state.batch.id,
-			);
-			state.setBatch(currentBatch);
-			const reconciledEntries = mergeBatchFiles(
+			let currentBatch = await apiClient.getManagedImportBatch(state.batch.id);
+			let reconciledEntries = attachServerJobs(
 				state.entries,
 				currentBatch.files,
 			);
+			if (hasRetryableUploads(reconciledEntries, currentBatch.files)) {
+				state.setEntries(reconciledEntries);
+				await retryUnresolvedUploads(
+					reconciledEntries,
+					currentBatch.files,
+					state.updateEntry,
+				);
+				currentBatch = await apiClient.getManagedImportBatch(state.batch.id);
+			}
+			state.setBatch(currentBatch);
+			reconciledEntries = mergeBatchFiles(
+				reconciledEntries,
+				currentBatch.files,
+			);
 			state.setEntries(reconciledEntries);
+			if (currentBatch.files.some((file) => file.state === "unresolved")) {
+				throw new Error("Some files are still unresolved. Retry confirmation.");
+			}
 			const report = await confirmImportBatch(currentBatch, reconciledEntries);
 			state.setBatch(report);
 			state.setEntries((current) => mergeBatchFiles(current, report.files));
@@ -164,12 +189,19 @@ async function uploadImportBatch(
 	batchId: string,
 	entries: ImportFileEntry[],
 	updateEntry: (key: string, patch: Partial<ImportFileEntry>) => void,
-): Promise<ManagedImportBatch> {
+): Promise<{ batch: ManagedImportBatch; entries: ImportFileEntry[] }> {
 	const preparedEntries = await createBatchJobs(batchId, entries, updateEntry);
 	await runWithConcurrency(preparedEntries, ({ entry, jobId }) =>
 		uploadFile(jobId, entry, updateEntry),
 	);
-	return apiClient.getManagedImportBatch(batchId);
+	let batch = await apiClient.getManagedImportBatch(batchId);
+	let reconciledEntries = attachCreatedJobs(entries, preparedEntries);
+	reconciledEntries = attachServerJobs(reconciledEntries, batch.files);
+	if (hasRetryableUploads(reconciledEntries, batch.files)) {
+		await retryUnresolvedUploads(reconciledEntries, batch.files, updateEntry);
+		batch = await apiClient.getManagedImportBatch(batchId);
+	}
+	return { batch, entries: reconciledEntries };
 }
 
 async function createBatchJobs(
@@ -275,6 +307,7 @@ function mergeBatchFiles(
 	return entries.map((entry) => {
 		const result = files.find((file) => file.jobId === entry.jobId);
 		if (!result) return entry;
+		const serverError = result.errorReason ?? result.errorCode;
 		return {
 			...entry,
 			state: result.state,
@@ -285,10 +318,87 @@ function mergeBatchFiles(
 			preview: result.preview ?? entry.preview,
 			progress: result.validationProgress,
 			errorMessage:
-				result.errorReason ?? result.errorCode ?? entry.errorMessage,
+				result.state === "accepted" || result.state === "completed"
+					? serverError
+					: (serverError ?? entry.errorMessage),
 			outcome: result.outcome,
 		};
 	});
+}
+
+function attachCreatedJobs(
+	entries: ImportFileEntry[],
+	preparedEntries: Array<{ entry: ImportFileEntry; jobId: string }>,
+): ImportFileEntry[] {
+	return entries.map((entry) => {
+		const prepared = preparedEntries.find(
+			(item) => item.entry.key === entry.key,
+		);
+		return prepared ? { ...entry, jobId: prepared.jobId } : entry;
+	});
+}
+
+function copyJobAssignments(
+	entries: ImportFileEntry[],
+	assignedEntries: ImportFileEntry[],
+): ImportFileEntry[] {
+	return entries.map((entry) => {
+		const assigned = assignedEntries.find((item) => item.key === entry.key);
+		return assigned?.jobId ? { ...entry, jobId: assigned.jobId } : entry;
+	});
+}
+
+function attachServerJobs(
+	entries: ImportFileEntry[],
+	files: ManagedImportBatchFile[],
+): ImportFileEntry[] {
+	const knownJobIds = new Set(entries.flatMap((entry) => entry.jobId ?? []));
+	const serverOnlyJobs = files.filter(
+		(file) => file.state === "unresolved" && !knownJobIds.has(file.jobId),
+	);
+	let nextServerJob = 0;
+	return entries.map((entry) => {
+		if (entry.jobId || nextServerJob >= serverOnlyJobs.length) return entry;
+		const file = serverOnlyJobs[nextServerJob];
+		nextServerJob += 1;
+		return file
+			? {
+					...entry,
+					jobId: file.jobId,
+					state: "unresolved",
+					errorMessage: undefined,
+				}
+			: entry;
+	});
+}
+
+function hasRetryableUploads(
+	entries: ImportFileEntry[],
+	files: ManagedImportBatchFile[],
+): boolean {
+	return entries.some(
+		(entry) =>
+			entry.jobId &&
+			files.some(
+				(file) => file.jobId === entry.jobId && file.state === "unresolved",
+			),
+	);
+}
+
+async function retryUnresolvedUploads(
+	entries: ImportFileEntry[],
+	files: ManagedImportBatchFile[],
+	updateEntry: (key: string, patch: Partial<ImportFileEntry>) => void,
+) {
+	const retryableEntries = entries.flatMap((entry) => {
+		const isUnresolved = files.some(
+			(file) => file.jobId === entry.jobId && file.state === "unresolved",
+		);
+		return entry.jobId && isUnresolved ? [{ entry, jobId: entry.jobId }] : [];
+	});
+	await runWithConcurrency(retryableEntries, ({ entry, jobId }) =>
+		uploadFile(jobId, entry, updateEntry),
+	);
 }
 
 function importErrorMessage(error: unknown): string {
