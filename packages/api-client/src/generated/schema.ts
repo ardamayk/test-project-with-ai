@@ -654,7 +654,7 @@ export interface components {
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
         };
-        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"];
+        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
         ManagedImportPreviewFileCommon: {
             originalFilename: string;
             title: string;
@@ -702,6 +702,34 @@ export interface components {
              * @enum {string}
              */
             format: "mp3";
+        };
+        ManagedImportOggPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "ogg";
+            /** @constant */
+            container: "ogg";
+            /** @constant */
+            codec: "vorbis";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "ogg";
+        };
+        ManagedImportOpusPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "opus";
+            /** @constant */
+            container: "ogg";
+            /** @constant */
+            codec: "opus";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "opus";
         };
         ManagedImportConfirmation: {
             revision: number;

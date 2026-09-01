@@ -1214,11 +1214,15 @@ components:
       oneOf:
         - $ref: "#/components/schemas/ManagedImportFlacPreviewFile"
         - $ref: "#/components/schemas/ManagedImportMp3PreviewFile"
+        - $ref: "#/components/schemas/ManagedImportOggPreviewFile"
+        - $ref: "#/components/schemas/ManagedImportOpusPreviewFile"
       discriminator:
         propertyName: format
         mapping:
           flac: "#/components/schemas/ManagedImportFlacPreviewFile"
           mp3: "#/components/schemas/ManagedImportMp3PreviewFile"
+          ogg: "#/components/schemas/ManagedImportOggPreviewFile"
+          opus: "#/components/schemas/ManagedImportOpusPreviewFile"
     ManagedImportPreviewFileCommon:
       type: object
       required:
@@ -1319,6 +1323,36 @@ components:
             codec:
               type: string
               const: mp3
+    ManagedImportOggPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec]
+          properties:
+            format:
+              type: string
+              const: ogg
+            container:
+              type: string
+              const: ogg
+            codec:
+              type: string
+              const: vorbis
+    ManagedImportOpusPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec]
+          properties:
+            format:
+              type: string
+              const: opus
+            container:
+              type: string
+              const: ogg
+            codec:
+              type: string
+              const: opus
     ManagedImportConfirmation:
       type: object
       required: [revision]

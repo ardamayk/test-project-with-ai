@@ -200,10 +200,12 @@ func inspectOpenMedia(ctx context.Context, file *os.File, reportProgress Inspect
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind after media signature: %w", err))
 	}
-	if string(signature[:]) == FLAC_SIGNATURE {
+	switch {
+	case string(signature[:]) == FLAC_SIGNATURE:
 		return inspectOpenFLAC(ctx, file, reportProgress)
-	}
-	if string(signature[:3]) == ID3_SIGNATURE || read >= 2 && signature[0] == MP3_SYNC_BYTE && signature[1]&MP3_SYNC_MASK == MP3_SYNC_MASK {
+	case string(signature[:len(OGG_SIGNATURE)]) == OGG_SIGNATURE:
+		return inspectOpenOGG(ctx, file, reportProgress)
+	case string(signature[:len(ID3_SIGNATURE)]) == ID3_SIGNATURE || read >= 2 && signature[0] == MP3_SYNC_BYTE && signature[1]&MP3_SYNC_MASK == MP3_SYNC_MASK:
 		return inspectOpenMP3(ctx, file, reportProgress)
 	}
 	return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("supported media signature is missing"))
@@ -296,7 +298,7 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 }
 
 func normalizeMediaMetadata(tags map[string][]string, replayGain ReplayGainMetadata) (NormalizedMediaMetadata, error) {
-	names, err := inspectFLACNames(tags)
+	names, err := inspectVorbisNames(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
@@ -377,7 +379,7 @@ type normalizedMediaNames struct {
 	Genres       []string
 }
 
-func inspectFLACNames(tags map[string][]string) (normalizedMediaNames, error) {
+func inspectVorbisNames(tags map[string][]string) (normalizedMediaNames, error) {
 	var names normalizedMediaNames
 	var err error
 	if names.Title, err = requiredSingleTag(tags, "TITLE"); err != nil {

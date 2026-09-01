@@ -553,6 +553,10 @@ func sourceExtension(format string) (string, error) {
 		return ".flac", nil
 	case "mp3":
 		return ".mp3", nil
+	case "ogg":
+		return ".ogg", nil
+	case "opus":
+		return ".opus", nil
 	default:
 		return "", &ValidationError{Code: "unsupported_format", Field: "format", Err: fmt.Errorf("validated Source Audio Format %q has no canonical extension", format)}
 	}
