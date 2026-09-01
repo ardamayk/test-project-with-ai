@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,104 +30,25 @@ const (
 // satisfies the Strict Import Profile.
 func buildStrictWAV(t *testing.T) []byte {
 	t.Helper()
-	blockAlign := WAV_IMPORT_CHANNELS * WAV_IMPORT_BIT_DEPTH / 8
-	fmtBody := make([]byte, 16)
-	binary.LittleEndian.PutUint16(fmtBody[0:2], 1)
-	binary.LittleEndian.PutUint16(fmtBody[2:4], WAV_IMPORT_CHANNELS)
-	binary.LittleEndian.PutUint32(fmtBody[4:8], WAV_IMPORT_SAMPLE_RATE_HZ)
-	binary.LittleEndian.PutUint32(fmtBody[8:12], WAV_IMPORT_SAMPLE_RATE_HZ*uint32(blockAlign))
-	binary.LittleEndian.PutUint16(fmtBody[12:14], uint16(blockAlign))
-	binary.LittleEndian.PutUint16(fmtBody[14:16], WAV_IMPORT_BIT_DEPTH)
-
-	pcm := make([]byte, WAV_IMPORT_PCM_FRAMES*blockAlign)
-	for i := range pcm {
-		pcm[i] = byte(i % 251)
+	frames := []testutil.WAVID3Frame{
+		testutil.WAVTextFrame("TIT2", "WAV Fixture"),
+		testutil.WAVTextFrame("TPE1", "WAV Artist"),
+		testutil.WAVTextFrame("TPE2", "WAV Album Artist"),
+		testutil.WAVTextFrame("TALB", "WAV Strict Import"),
+		testutil.WAVTextFrame("TRCK", "3/9"),
+		testutil.WAVTextFrame("TPOS", "1/1"),
+		testutil.WAVTextFrame("TCON", "Ambient"),
+		testutil.WAVTextFrame("TDRC", "2026"),
+		testutil.WAVAPICFrame(3, "image/png", "cover", testutil.WAVCoverPNG()),
 	}
-
-	tag := encodeWAVID3Tag(t, [][2]string{
-		{"TIT2", "WAV Fixture"},
-		{"TPE1", "WAV Artist"},
-		{"TPE2", "WAV Album Artist"},
-		{"TALB", "WAV Strict Import"},
-		{"TRCK", "3/9"},
-		{"TPOS", "1/1"},
-		{"TCON", "Ambient"},
-		{"TDRC", "2026"},
-	}, encodeWAVCoverPNG(t))
-
-	var body bytes.Buffer
-	appendWAVChunk := func(id string, chunk []byte) {
-		body.WriteString(id)
-		binary.Write(&body, binary.LittleEndian, uint32(len(chunk)))
-		body.Write(chunk)
-		if len(chunk)%2 == 1 {
-			body.WriteByte(0x00)
-		}
-	}
-	appendWAVChunk("fmt ", fmtBody)
-	appendWAVChunk("ID3 ", tag)
-	appendWAVChunk("data", pcm)
-
-	var output bytes.Buffer
-	output.WriteString("RIFF")
-	binary.Write(&output, binary.LittleEndian, uint32(4+body.Len()))
-	output.WriteString("WAVE")
-	output.Write(body.Bytes())
-	return output.Bytes()
-}
-
-func encodeWAVCoverPNG(t *testing.T) []byte {
-	t.Helper()
-	cover := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	cover.Set(0, 0, color.RGBA{R: 255, A: 255})
-	cover.Set(1, 1, color.RGBA{G: 255, A: 255})
-	var output bytes.Buffer
-	if err := png.Encode(&output, cover); err != nil {
-		t.Fatalf("encode WAV cover: %v", err)
-	}
-	return output.Bytes()
-}
-
-func encodeWAVID3Tag(t *testing.T, tags [][2]string, artwork []byte) []byte {
-	t.Helper()
-	writeFrame := func(buffer *bytes.Buffer, id string, frameBody []byte) {
-		buffer.WriteString(id)
-		size := len(frameBody)
-		buffer.Write([]byte{
-			byte(size >> 21 & 0x7f),
-			byte(size >> 14 & 0x7f),
-			byte(size >> 7 & 0x7f),
-			byte(size & 0x7f),
-		})
-		binary.Write(buffer, binary.BigEndian, uint16(0))
-		buffer.Write(frameBody)
-	}
-	var frameBytes bytes.Buffer
-	for _, pair := range tags {
-		writeFrame(&frameBytes, pair[0], append([]byte{0x03}, []byte(pair[1])...))
-	}
-	var pictureBody []byte
-	pictureBody = append(pictureBody, 0x00)
-	pictureBody = append(pictureBody, []byte("image/png")...)
-	pictureBody = append(pictureBody, 0x00)
-	pictureBody = append(pictureBody, byte(3))
-	pictureBody = append(pictureBody, []byte("cover")...)
-	pictureBody = append(pictureBody, 0x00)
-	pictureBody = append(pictureBody, artwork...)
-	writeFrame(&frameBytes, "APIC", pictureBody)
-
-	tagSize := frameBytes.Len()
-	var output bytes.Buffer
-	output.WriteString("ID3")
-	output.Write([]byte{0x04, 0x00, 0x00})
-	output.Write([]byte{
-		byte(tagSize >> 21 & 0x7f),
-		byte(tagSize >> 14 & 0x7f),
-		byte(tagSize >> 7 & 0x7f),
-		byte(tagSize & 0x7f),
+	return testutil.EncodeWAV(t, testutil.WAVFixture{
+		AudioFormat:  1,
+		ChannelCount: WAV_IMPORT_CHANNELS,
+		SampleRateHz: WAV_IMPORT_SAMPLE_RATE_HZ,
+		BitDepth:     WAV_IMPORT_BIT_DEPTH,
+		PCMFrames:    WAV_IMPORT_PCM_FRAMES,
+		ID3Frames:    frames,
 	})
-	output.Write(frameBytes.Bytes())
-	return output.Bytes()
 }
 
 func TestManagedImportCommitsStrictWAVThroughLibraryPlayback(t *testing.T) {
@@ -212,7 +130,7 @@ func TestManagedImportCommitsStrictWAVThroughLibraryPlayback(t *testing.T) {
 		t.Fatalf("WAV library tracks = %+v", tracks.Items)
 	}
 	track := tracks.Items[0]
-	if track.Container != "wav" || track.Codec != "pcm_s24le" || track.SampleRateHz != WAV_IMPORT_SAMPLE_RATE_HZ || track.BitDepth != WAV_IMPORT_BIT_DEPTH {
+	if track.Container != "wav" || track.Codec != "pcm_s24le" || track.DurationMs != 100 || track.SampleRateHz != WAV_IMPORT_SAMPLE_RATE_HZ || track.ChannelCount != WAV_IMPORT_CHANNELS || track.BitDepth != WAV_IMPORT_BIT_DEPTH || track.BitrateBps != 2_304_000 {
 		t.Fatalf("persisted WAV track = %+v", track)
 	}
 

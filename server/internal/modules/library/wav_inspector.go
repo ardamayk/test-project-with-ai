@@ -55,6 +55,13 @@ type wavFormatChunk struct {
 	subFormat      [16]byte
 }
 
+type wavChunks struct {
+	format  *wavFormatChunk
+	data    wavDataChunk
+	tags    map[string][]string
+	artwork *id3AttachedPicture
+}
+
 func inspectOpenWAV(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
 	fileHash, sizeBytes, err := hashAndRewind(ctx, file)
 	if err != nil {
@@ -86,19 +93,19 @@ func validateWAVHeader(file *os.File, sizeBytes int64) error {
 }
 
 func (input wavInspectionInput) inspect(ctx context.Context) (MediaInspection, error) {
-	format, data, tags, artwork, err := input.readChunks()
+	chunks, err := input.readChunks()
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	metadata, err := normalizeMediaMetadata(tags, ReplayGainMetadata{})
+	metadata, err := normalizeMediaMetadata(chunks.tags, ReplayGainMetadata{})
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	embeddedArtwork, err := inspectWAVArtwork(artwork)
+	embeddedArtwork, err := inspectWAVArtwork(chunks.artwork)
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	audio, err := input.decodePCM(ctx, format, data)
+	audio, err := input.decodePCM(ctx, chunks.format, chunks.data)
 	if err != nil {
 		return MediaInspection{}, err
 	}
@@ -107,9 +114,9 @@ func (input wavInspectionInput) inspect(ctx context.Context) (MediaInspection, e
 
 // readChunks walks every RIFF chunk once. Trailing bytes, overlapping chunk
 // bounds, or a missing fmt/data chunk reject the file before any decoding.
-func (input wavInspectionInput) readChunks() (*wavFormatChunk, wavDataChunk, map[string][]string, *id3AttachedPicture, error) {
+func (input wavInspectionInput) readChunks() (wavChunks, error) {
 	if _, err := input.file.Seek(RIFF_HEADER_SIZE_BYTES, io.SeekStart); err != nil {
-		return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("seek past WAV header: %w", err))
+		return wavChunks{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("seek past WAV header: %w", err))
 	}
 	var format *wavFormatChunk
 	var data wavDataChunk
@@ -120,37 +127,37 @@ func (input wavInspectionInput) readChunks() (*wavFormatChunk, wavDataChunk, map
 	for {
 		var header [RIFF_CHUNK_HEADER_SIZE_BYTES]byte
 		if _, err := io.ReadFull(input.file, header[:]); err != nil {
-			return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("read RIFF chunk header: %w", err))
+			return wavChunks{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("read RIFF chunk header: %w", err))
 		}
 		chunkID := string(header[:4])
 		chunkSize := int64(binary.LittleEndian.Uint32(header[4:]))
 		bodyOffset := offset + RIFF_CHUNK_HEADER_SIZE_BYTES
 		if chunkSize < 0 || bodyOffset+chunkSize > input.sizeBytes {
-			return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("RIFF chunk %q extends past the file", chunkID))
+			return wavChunks{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("RIFF chunk %q extends past the file", chunkID))
 		}
 		switch chunkID {
 		case "fmt ":
 			parsedFormat, err := readWAVFormatChunk(input.file, chunkSize)
 			if err != nil {
-				return nil, wavDataChunk{}, nil, nil, err
+				return wavChunks{}, err
 			}
 			if format != nil {
-				return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("multiple fmt chunks are ambiguous"))
+				return wavChunks{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("multiple fmt chunks are ambiguous"))
 			}
 			format = parsedFormat
 		case "data":
 			if hasData {
-				return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("multiple data chunks are ambiguous"))
+				return wavChunks{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("multiple data chunks are ambiguous"))
 			}
 			hasData = true
 			data = wavDataChunk{offset: bodyOffset, size: chunkSize}
 		case "ID3 ", "id3 ":
 			parsedTags, parsedArtwork, err := parseID3v2Chunk(input.file, chunkSize)
 			if err != nil {
-				return nil, wavDataChunk{}, nil, nil, err
+				return wavChunks{}, err
 			}
 			if tags != nil {
-				return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "metadata", errors.New("multiple ID3 chunks are ambiguous"))
+				return wavChunks{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "metadata", errors.New("multiple ID3 chunks are ambiguous"))
 			}
 			tags = parsedTags
 			artwork = parsedArtwork
@@ -158,7 +165,7 @@ func (input wavInspectionInput) readChunks() (*wavFormatChunk, wavDataChunk, map
 		nextOffset := bodyOffset + chunkSize
 		if chunkSize%2 == 1 {
 			if nextOffset >= input.sizeBytes {
-				return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("RIFF chunk %q is missing its padding byte", chunkID))
+				return wavChunks{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("RIFF chunk %q is missing its padding byte", chunkID))
 			}
 			nextOffset++
 		}
@@ -166,20 +173,20 @@ func (input wavInspectionInput) readChunks() (*wavFormatChunk, wavDataChunk, map
 			break
 		}
 		if _, err := input.file.Seek(nextOffset, io.SeekStart); err != nil {
-			return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("seek RIFF chunk: %w", err))
+			return wavChunks{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("seek RIFF chunk: %w", err))
 		}
 		offset = nextOffset
 	}
 	if format == nil {
-		return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("WAV fmt chunk is missing"))
+		return wavChunks{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("WAV fmt chunk is missing"))
 	}
 	if data.size <= 0 {
-		return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("WAV data chunk is missing or empty"))
+		return wavChunks{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("WAV data chunk is missing or empty"))
 	}
 	if tags == nil {
-		return nil, wavDataChunk{}, nil, nil, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "metadata", errors.New("WAV ID3 chunk is missing; identity metadata is required"))
+		return wavChunks{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "metadata", errors.New("WAV ID3 chunk is missing; identity metadata is required"))
 	}
-	return format, data, tags, artwork, nil
+	return wavChunks{format: format, data: data, tags: tags, artwork: artwork}, nil
 }
 
 func readWAVFormatChunk(file *os.File, chunkSize int64) (*wavFormatChunk, error) {

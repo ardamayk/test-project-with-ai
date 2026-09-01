@@ -5,14 +5,12 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"image"
-	"image/color"
-	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
 
 type wavFixture struct {
@@ -83,107 +81,25 @@ func apicID3Frame(pictureType int, mimeType, description string, data []byte) id
 }
 
 func encodeTestPNG() []byte {
-	result := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	result.Set(0, 0, color.RGBA{R: 255, A: 255})
-	result.Set(1, 1, color.RGBA{B: 255, A: 255})
-	var output bytes.Buffer
-	if err := png.Encode(&output, result); err != nil {
-		panic(err)
-	}
-	return output.Bytes()
+	return testutil.WAVCoverPNG()
 }
 
 func encodeWAV(t *testing.T, fixture wavFixture) []byte {
 	t.Helper()
-	format := fixture.format
-	blockAlign := int(format.ChannelCount) * int(format.BitDepth) / 8
-	byteRate := format.SampleRateHz * uint32(blockAlign)
-
-	fmtSize := 16
-	if format.AudioFormat == 0xfffe {
-		fmtSize = 40
+	frames := make([]testutil.WAVID3Frame, len(fixture.id3Frames))
+	for index, frame := range fixture.id3Frames {
+		frames[index] = testutil.WAVID3Frame{ID: frame.id, Body: frame.body}
 	}
-	fmtBody := make([]byte, fmtSize)
-	binary.LittleEndian.PutUint16(fmtBody[0:2], format.AudioFormat)
-	binary.LittleEndian.PutUint16(fmtBody[2:4], format.ChannelCount)
-	binary.LittleEndian.PutUint32(fmtBody[4:8], format.SampleRateHz)
-	binary.LittleEndian.PutUint32(fmtBody[8:12], byteRate)
-	binary.LittleEndian.PutUint16(fmtBody[12:14], uint16(blockAlign))
-	binary.LittleEndian.PutUint16(fmtBody[14:16], format.BitDepth)
-	if format.AudioFormat == 0xfffe {
-		binary.LittleEndian.PutUint16(fmtBody[16:18], 22)
-		binary.LittleEndian.PutUint16(fmtBody[18:20], format.BitDepth)
-		copy(fmtBody[24:40], []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71})
-	}
-
-	pcmSize := int64(fixture.pcmFrames) * int64(blockAlign)
-	pcm := make([]byte, pcmSize)
-	for i := range pcm {
-		pcm[i] = byte(i % 251)
-	}
-
-	var id3Body []byte
-	if !fixture.omitID3 {
-		id3Body = encodeID3v2Tag(t, fixture.id3Frames)
-	}
-
-	var body bytes.Buffer
-	writeRIFFChunk := func(id string, chunk []byte) {
-		body.WriteString(id)
-		binary.Write(&body, binary.LittleEndian, uint32(len(chunk)))
-		body.Write(chunk)
-		if len(chunk)%2 == 1 {
-			body.WriteByte(0x00)
-		}
-	}
-	writeRIFFChunk("fmt ", fmtBody)
-	if len(id3Body) > 0 {
-		writeRIFFChunk("ID3 ", id3Body)
-	}
-	writeRIFFChunk("data", pcm)
-
-	riffSize := uint32(4 + body.Len())
-	if fixture.riffSizeFix != nil {
-		riffSize = fixture.riffSizeFix(riffSize)
-	}
-
-	var output bytes.Buffer
-	output.WriteString("RIFF")
-	binary.Write(&output, binary.LittleEndian, riffSize)
-	output.WriteString("WAVE")
-	output.Write(body.Bytes())
-	return output.Bytes()
-}
-
-func encodeID3v2Tag(t *testing.T, frames []id3Frame) []byte {
-	t.Helper()
-	var frameBytes bytes.Buffer
-	for _, frame := range frames {
-		frameBytes.WriteString(frame.id)
-		size := len(frame.body)
-		frameBytes.Write([]byte{
-			byte(size >> 21 & 0x7f),
-			byte(size >> 14 & 0x7f),
-			byte(size >> 7 & 0x7f),
-			byte(size & 0x7f),
-		})
-		binary.Write(&frameBytes, binary.BigEndian, uint16(0))
-		frameBytes.Write(frame.body)
-	}
-	tagSize := frameBytes.Len()
-	var output bytes.Buffer
-	output.WriteString("ID3")
-	output.WriteByte(0x04)
-	output.WriteByte(0x00)
-	output.WriteByte(0x00)
-	output.Write([]byte{
-		byte(tagSize >> 21 & 0x7f),
-		byte(tagSize >> 14 & 0x7f),
-		byte(tagSize >> 7 & 0x7f),
-		byte(tagSize & 0x7f),
+	return testutil.EncodeWAV(t, testutil.WAVFixture{
+		AudioFormat:  fixture.format.AudioFormat,
+		ChannelCount: fixture.format.ChannelCount,
+		SampleRateHz: fixture.format.SampleRateHz,
+		BitDepth:     fixture.format.BitDepth,
+		PCMFrames:    fixture.pcmFrames,
+		ID3Frames:    frames,
+		OmitID3:      fixture.omitID3,
+		RIFFSizeFix:  fixture.riffSizeFix,
 	})
-	output.Write(frameBytes.Bytes())
-	return output.Bytes()
 }
 
 func writeWAVFixture(t *testing.T, fixture wavFixture) string {
