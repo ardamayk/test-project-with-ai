@@ -30,6 +30,7 @@ const (
 	OPUS_DECODE_SAMPLE_RATE_HZ   = 48000
 	OPUS_MAX_FRAME_SAMPLES       = 5760
 	MAX_PICTURE_COMMENT_BYTES    = (MAX_ARTWORK_SIZE_BYTES + 1024) * 2
+	MAX_OGG_HEADER_PACKET_BYTES  = MAX_PICTURE_COMMENT_BYTES + 64*1024
 )
 
 type oggPage struct {
@@ -59,9 +60,9 @@ func inspectOpenOGG(ctx context.Context, file *os.File, reportProgress Inspectio
 	if codec == "opus" {
 		headerPackets = 2
 	}
-	analysis, err := analyzeOGGStream(file, headerPackets)
+	analysis, err := analyzeOGGStream(ctx, file, headerPackets)
 	if err != nil {
-		return MediaInspection{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+		return MediaInspection{}, classifyOGGAnalysisError(err)
 	}
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind OGG stream: %w", err))
@@ -85,6 +86,13 @@ func classifyFileReadError(err error) error {
 		return inspectionError(INSPECTION_ERROR_VALIDATION_CANCELLED, "validation", err)
 	}
 	return inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
+}
+
+func classifyOGGAnalysisError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return inspectionError(INSPECTION_ERROR_VALIDATION_CANCELLED, "validation", err)
+	}
+	return inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 }
 
 func detectOGGCodec(file *os.File) (string, error) {
@@ -150,17 +158,18 @@ func readOGGPage(reader io.Reader) (oggPage, error) {
 	}, nil
 }
 
-func analyzeOGGStream(file *os.File, headerPackets int) (oggStreamAnalysis, error) {
+func analyzeOGGStream(ctx context.Context, file *os.File, headerPackets int) (oggStreamAnalysis, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return oggStreamAnalysis{}, fmt.Errorf("rewind OGG stream analysis: %w", err)
 	}
+	reader := contextReader{ctx: ctx, reader: file}
 	var analysis oggStreamAnalysis
 	var streamSerial, expectedSequence uint32
 	var partialPacketBytes int64
 	packetIndex := 0
 	hasPage, hasEOS := false, false
 	for {
-		page, err := readOGGPage(file)
+		page, err := readOGGPage(reader)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -177,6 +186,9 @@ func analyzeOGGStream(file *os.File, headerPackets int) (oggStreamAnalysis, erro
 		expectedSequence = page.sequence + 1
 		for _, size := range page.segmentSizes {
 			partialPacketBytes += int64(size)
+			if packetIndex < headerPackets && partialPacketBytes > MAX_OGG_HEADER_PACKET_BYTES {
+				return oggStreamAnalysis{}, errors.New("OGG header packet exceeds maximum size")
+			}
 			if size < OGG_MAX_SEGMENT_SIZE_BYTES {
 				if packetIndex >= headerPackets {
 					analysis.encodedAudioBytes += partialPacketBytes
