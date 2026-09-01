@@ -30,6 +30,26 @@ function runMiseDry(task) {
 	return parseDryRun(run("mise", ["run", task, "--", "--dry=json"]));
 }
 
+function runMiseTaskDryRun(task) {
+	const result = spawnSync("mise", ["run", "--dry-run", task], {
+		cwd: new URL("..", import.meta.url),
+		encoding: "utf8",
+		env: { ...process.env, NO_COLOR: "1" },
+	});
+
+	assert.equal(
+		result.status,
+		0,
+		`mise run --dry-run ${task} failed:\n${result.stderr}${result.stdout}`,
+	);
+
+	return `${result.stderr}${result.stdout}`;
+}
+
+function readMiseTasks() {
+	return JSON.parse(run("mise", ["tasks", "--json"]));
+}
+
 function runTurboDry(task, packageName = "web") {
 	return parseDryRun(
 		run("pnpm", [
@@ -92,6 +112,103 @@ test("targeted Mise tasks select one workspace package", () => {
 			);
 		}
 	}
+});
+
+test("Mise exposes the cross-language public task contract", () => {
+	const taskNames = new Set(readMiseTasks().map((task) => task.name));
+
+	for (const taskName of [
+		"dev",
+		"web:dev",
+		"desktop:dev",
+		"build",
+		"web:build",
+		"docs:build",
+		"server:build",
+		"desktop:build",
+		"format",
+		"server:format",
+		"desktop:format",
+		"check",
+		"server:check",
+		"desktop:check",
+		"test",
+		"server:test",
+		"desktop:test",
+		"ci:fast",
+		"ci:integration",
+		"ci:full",
+	]) {
+		assert.equal(taskNames.has(taskName), true, taskName);
+	}
+});
+
+test("aggregate Mise tasks select every language domain", () => {
+	for (const [aggregateTask, selectedTasks] of [
+		[
+			"build",
+			["web:build", "docs:build", "server:build", "desktop:build"],
+		],
+		["format", ["workspace:format", "server:format", "desktop:format"]],
+		["check", ["workspace:check", "server:check", "desktop:check"]],
+		["test", ["workspace:test", "server:test", "desktop:test"]],
+	]) {
+		const dryRun = runMiseTaskDryRun(aggregateTask);
+		for (const selectedTask of selectedTasks) {
+			assert.match(dryRun, new RegExp(`\\[${selectedTask}\\]`), aggregateTask);
+		}
+	}
+});
+
+test("CI policy tasks reuse public task compositions", () => {
+	const fastDryRun = runMiseTaskDryRun("ci:fast");
+	assert.match(fastDryRun, /\[check\]/);
+	assert.match(fastDryRun, /\[test\]/);
+
+	const integrationDryRun = runMiseTaskDryRun("ci:integration");
+	assert.match(integrationDryRun, /\[web:test:e2e\]/);
+	assert.match(integrationDryRun, /\[server:test:hls\]/);
+	assert.match(integrationDryRun, /\[desktop:test:mpv\]/);
+
+	const fullDryRun = runMiseTaskDryRun("ci:full");
+	assert.match(fullDryRun, /\[ci:fast\]/);
+	assert.match(fullDryRun, /\[ci:integration\]/);
+	assert.match(fullDryRun, /\[build\]/);
+});
+
+test("root pnpm compatibility commands delegate to Mise", async () => {
+	const packageJson = await import("../package.json", { with: { type: "json" } });
+
+	for (const scriptName of [
+		"build",
+		"dev",
+		"format",
+		"format:check",
+		"lint",
+		"typecheck",
+		"test",
+		"test:unit",
+		"test:core",
+		"test:desktop",
+		"test:e2e",
+		"test:e2e:hls",
+		"generate",
+		"check",
+		"start",
+	]) {
+		assert.match(packageJson.default.scripts[scriptName], /^mise run /, scriptName);
+	}
+});
+
+test("Desktop Client workspace scripts expose native Rust tools", async () => {
+	const packageJson = await import("../desktop/package.json", {
+		with: { type: "json" },
+	});
+
+	assert.match(packageJson.default.scripts.format, /^cargo fmt /);
+	assert.match(packageJson.default.scripts["format:check"], /^cargo fmt /);
+	assert.match(packageJson.default.scripts.lint, /^cargo clippy /);
+	assert.match(packageJson.default.scripts["test:unit"], /^cargo test /);
 });
 
 test("Turbo verification tasks have no implicit build or generation edges", () => {

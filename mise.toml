@@ -1,46 +1,88 @@
 [tools]
 go = "1.26.6"
 node = "24"
-pnpm = "latest"
+pnpm = "10.12.1"
 golangci-lint = "2.12.2"
 
 [tasks.dev]
-description = "Run Go API and Vite dev server in parallel"
+description = "Run the normal Music Server and Web Client development environment"
+depends = ["web:dev"]
+run = ":"
+
+[tasks."web:dev"]
+description = "Run the Music Server and Web Client in development mode"
 run = "./scripts/run-with-music-server.sh development pnpm --dir web dev"
 
+[tasks."desktop:dev"]
+description = "Run the Music Server and Desktop Client in development mode"
+run = "./scripts/run-with-music-server.sh development pnpm --dir desktop desktop:dev"
+
 [tasks.build]
-description = "Build web SPA and Go server binary"
+description = "Build the Web Client, Music Server, and Desktop Client"
+depends = ["desktop:build"]
+depends_post = ["server:build"]
+run = ":"
+
+[tasks."server:build"]
+description = "Build the Music Server binary with embedded Web Client assets"
+depends = ["web:build", "docs:build"]
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
-pnpm build
 chmod +x scripts/sync-static.sh
 ./scripts/sync-static.sh
-cd server && go build -o ../bin/server ./cmd/server
+cd server
+go build -o ../bin/server ./cmd/server
 """
 
 [tasks."desktop:build"]
-description = "Build the Music Server and release Desktop Client with pinned mpv"
-depends = ["build"]
-run = "pnpm --dir desktop build:sidecar"
-
-[tasks."desktop:dev"]
-description = "Run the Music Server and Tauri Desktop Client in development mode"
-run = "./scripts/run-with-music-server.sh development pnpm --dir desktop desktop:dev"
+description = "Build the release Desktop Client with pinned mpv"
+depends = ["web:build"]
+run = "pnpm --filter @repo/desktop build:sidecar"
 
 [tasks.start]
 description = "Run the built Music Server and release Desktop Client"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
-[[ -x bin/server ]] || { echo "Missing bin/server; run 'mise run desktop:build' first." >&2; exit 1; }
-[[ -x desktop/src-tauri/target/release/earthly-audio-desktop ]] || { echo "Missing Desktop Client; run 'mise run desktop:build' first." >&2; exit 1; }
+[[ -x bin/server ]] || { echo "Missing bin/server; run 'mise run build' first." >&2; exit 1; }
+[[ -x desktop/src-tauri/target/release/earthly-audio-desktop ]] || { echo "Missing Desktop Client; run 'mise run build' first." >&2; exit 1; }
 ./scripts/run-with-music-server.sh built pnpm --dir desktop start
 """
 
 [tasks.generate]
-description = "Regenerate OpenAPI clients"
-run = "pnpm generate"
+description = "Regenerate committed OpenAPI clients"
+run = "pnpm turbo run generate"
+
+[tasks.format]
+description = "Format the workspace, Music Server, and Desktop Client"
+depends = ["workspace:format", "server:format", "desktop:format"]
+run = ":"
+
+[tasks."format:check"]
+description = "Verify formatting across the workspace, Music Server, and Desktop Client"
+depends = ["workspace:format:check", "server:format:check", "desktop:format:check"]
+run = ":"
+
+[tasks.lint]
+description = "Lint the workspace, Music Server, and Desktop Client"
+depends = ["workspace:lint", "server:lint", "desktop:lint"]
+run = ":"
+
+[tasks.typecheck]
+description = "Type-check the TypeScript workspace"
+depends = ["workspace:typecheck"]
+run = ":"
+
+[tasks.check]
+description = "Run static checks across the workspace, Music Server, and Desktop Client"
+depends = ["workspace:check", "workspace:typecheck", "server:check", "desktop:check"]
+run = ":"
+
+[tasks.test]
+description = "Run workspace, Music Server, and Desktop Client unit tests"
+depends = ["workspace:test", "server:test", "desktop:test"]
+run = ":"
 
 [tasks."workspace:build"]
 description = "Build workspace production artifacts"
@@ -49,6 +91,14 @@ run = "pnpm turbo run build --filter=web"
 [tasks."workspace:format"]
 description = "Format the Web Client, shared UI, and API client"
 run = "pnpm turbo run format --filter=web --filter=@repo/ui --filter=@repo/api-client"
+
+[tasks."workspace:format:check"]
+description = "Verify formatting for the Web Client, shared UI, and API client"
+run = "pnpm turbo run format:check --filter=web --filter=@repo/ui --filter=@repo/api-client"
+
+[tasks."workspace:lint"]
+description = "Lint the Web Client, shared UI, and API client"
+run = "pnpm turbo run lint --filter=web --filter=@repo/ui --filter=@repo/api-client"
 
 [tasks."workspace:check"]
 description = "Check the Web Client, shared UI, and API client"
@@ -65,6 +115,10 @@ run = "pnpm turbo run test:unit --filter=web --filter=@repo/ui --filter=@repo/ap
 [tasks."web:build"]
 description = "Build the Web Client"
 run = "pnpm turbo run build --filter=web"
+
+[tasks."docs:build"]
+description = "Build the product documentation embedded by the Music Server"
+run = "pnpm turbo run build --filter=@repo/docs"
 
 [tasks."web:format"]
 description = "Format the Web Client"
@@ -114,10 +168,80 @@ run = "pnpm turbo run typecheck --filter=@repo/api-client"
 description = "Run API client unit tests"
 run = "pnpm turbo run test:unit --filter=@repo/api-client"
 
-[tasks.test]
-description = "Run all unit tests"
-run = "pnpm test"
+[tasks."server:format"]
+description = "Format the Music Server"
+run = "cd server && go fmt ./..."
 
-[tasks."test:e2e"]
-description = "Run Playwright e2e tests"
-run = "pnpm test:e2e"
+[tasks."server:format:check"]
+description = "Verify Music Server formatting"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+cd server
+unformattedFiles="$(gofmt -l .)"
+if [[ -n "$unformattedFiles" ]]; then
+  printf '%s\n' "$unformattedFiles" >&2
+  exit 1
+fi
+"""
+
+[tasks."server:lint"]
+description = "Lint the Music Server"
+run = "cd server && golangci-lint run"
+
+[tasks."server:check"]
+description = "Check Music Server formatting and lint"
+depends = ["server:format:check", "server:lint"]
+run = ":"
+
+[tasks."server:test"]
+description = "Run Music Server unit tests"
+run = "cd server && go test ./..."
+
+[tasks."desktop:format"]
+description = "Format the Desktop Client"
+run = "pnpm --filter @repo/desktop format"
+
+[tasks."desktop:format:check"]
+description = "Verify Desktop Client formatting"
+run = "pnpm --filter @repo/desktop format:check"
+
+[tasks."desktop:lint"]
+description = "Lint the Desktop Client with Clippy"
+run = "pnpm --filter @repo/desktop lint"
+
+[tasks."desktop:check"]
+description = "Check Desktop Client formatting and Clippy"
+depends = ["desktop:format:check", "desktop:lint"]
+run = ":"
+
+[tasks."desktop:test"]
+description = "Run Desktop Client unit tests"
+run = "pnpm --filter @repo/desktop test:unit"
+
+[tasks."web:test:e2e"]
+description = "Run Web Client Playwright tests"
+run = "pnpm turbo run test:e2e --filter=web"
+
+[tasks."server:test:hls"]
+description = "Run Music Server HLS browser integration tests"
+run = "cd server && RUN_HLS_BROWSER_INTEGRATION=1 go test ./internal/modules/radio -run TestBrowserHLSProxyIntegration -count=1 -v"
+
+[tasks."desktop:test:mpv"]
+description = "Run Desktop Client tests against pinned mpv"
+run = "pnpm --filter @repo/desktop test:mpv"
+
+[tasks."ci:fast"]
+description = "Run the local fast CI policy"
+depends = ["check", "test"]
+run = ":"
+
+[tasks."ci:integration"]
+description = "Run all browser, HLS, and pinned-mpv integration tests"
+depends = ["web:test:e2e", "server:test:hls", "desktop:test:mpv"]
+run = ":"
+
+[tasks."ci:full"]
+description = "Run full local CI policy and production builds"
+depends = ["ci:fast", "ci:integration", "build"]
+run = ":"
