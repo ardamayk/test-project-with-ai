@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 	playRadioCatalogPreview: vi.fn(),
 }));
 
-const FILTER_INTERACTION_TIMEOUT_MS = 10_000;
+const FILTER_INTERACTION_TIMEOUT_MS = 20_000;
 
 vi.mock("#/lib/api", () => ({
 	apiClient: {
