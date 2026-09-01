@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
 const WORKSPACE_PACKAGES = ["@repo/api-client", "@repo/ui", "web"];
@@ -157,6 +158,42 @@ test("aggregate Mise tasks select every language domain", () => {
 		for (const selectedTask of selectedTasks) {
 			assert.match(dryRun, new RegExp(`\\[${selectedTask}\\]`), aggregateTask);
 		}
+	}
+});
+
+test("targeted native Mise tasks select their domain commands", () => {
+	for (const [taskName, expectedCommands] of [
+		["server:build", ["web:build", "docs:build", "[server:build]"]],
+		["server:check", ["server:format:check", "server:lint"]],
+		["server:test", ["go test ./..."]],
+		["desktop:build", ["web:build", "build:sidecar:prepared"]],
+		["desktop:check", ["desktop:format:check", "desktop:lint"]],
+		["desktop:test", ["test:unit"]],
+		["web:dev", ["run-with-music-server.sh", "web dev"]],
+		["desktop:dev", ["run-with-music-server.sh", "desktop:dev"]],
+	]) {
+		const dryRun = runMiseTaskDryRun(taskName);
+		for (const expectedCommand of expectedCommands) {
+			assert.equal(dryRun.includes(expectedCommand), true, taskName);
+		}
+	}
+});
+
+test("aggregate Mise tasks propagate dependency failures", () => {
+	const probeUrl = new URL("../server/mise_failure_probe.go", import.meta.url);
+	writeFileSync(probeUrl, "package server\n\nfunc miseFailureProbe( ){ }\n");
+
+	try {
+		const result = spawnSync("mise", ["run", "format:check"], {
+			cwd: new URL("..", import.meta.url),
+			encoding: "utf8",
+			env: { ...process.env, NO_COLOR: "1" },
+		});
+
+		assert.notEqual(result.status, 0);
+		assert.match(`${result.stderr}${result.stdout}`, /server:format:check/);
+	} finally {
+		rmSync(probeUrl, { force: true });
 	}
 });
 

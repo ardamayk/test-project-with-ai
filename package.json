@@ -11,7 +11,7 @@
     "lint": "mise run lint",
     "typecheck": "mise run typecheck",
     "test": "mise run test",
-    "test:unit": "mise run test",
+    "test:unit": "mise run workspace:test",
     "test:core": "mise run workspace:test ::: server:test",
     "test:desktop": "mise run desktop:test",
     "test:e2e": "mise run web:test:e2e",

@@ -19,8 +19,7 @@ run = "./scripts/run-with-music-server.sh development pnpm --dir desktop desktop
 
 [tasks.build]
 description = "Build the Web Client, Music Server, and Desktop Client"
-depends = ["desktop:build"]
-depends_post = ["server:build"]
+depends = ["server:build", "desktop:build"]
 run = ":"
 
 [tasks."server:build"]
@@ -38,7 +37,7 @@ go build -o ../bin/server ./cmd/server
 [tasks."desktop:build"]
 description = "Build the release Desktop Client with pinned mpv"
 depends = ["web:build"]
-run = "pnpm --filter @repo/desktop build:sidecar"
+run = "pnpm --filter @repo/desktop build:sidecar:prepared"
 
 [tasks.start]
 description = "Run the built Music Server and release Desktop Client"
@@ -229,7 +228,7 @@ run = "cd server && RUN_HLS_BROWSER_INTEGRATION=1 go test ./internal/modules/rad
 
 [tasks."desktop:test:mpv"]
 description = "Run Desktop Client tests against pinned mpv"
-run = "pnpm --filter @repo/desktop test:mpv"
+run = "pnpm --filter @repo/desktop prepare:mpv && pnpm --filter @repo/desktop test:mpv"
 
 [tasks."ci:fast"]
 description = "Run the local fast CI policy"

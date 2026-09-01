@@ -5,13 +5,14 @@
   "scripts": {
     "build": "tauri build --no-bundle",
     "build:sidecar": "pnpm prepare:mpv && tauri build --no-bundle --config src-tauri/tauri.sidecar.conf.json",
+    "build:sidecar:prepared": "pnpm prepare:mpv && tauri build --no-bundle --config src-tauri/tauri.sidecar.conf.json --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'",
     "desktop:dev": "pnpm prepare:mpv && ./scripts/run-linux-webkit.sh tauri dev --config src-tauri/tauri.sidecar.conf.json",
     "format": "cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
     "lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets",
     "prepare:mpv": "./scripts/prepare-mpv-sidecar.sh",
     "start": "./scripts/run-linux-webkit.sh ./src-tauri/target/release/earthly-audio-desktop",
-    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test": "pnpm test:unit",
     "test:unit": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:mpv": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests -- --ignored --test-threads=1 --skip playback::tests::real_pinned_mpv_returns_from_exclusive_to_system_output",
     "test:mpv:hardware": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests::real_pinned_mpv_returns_from_exclusive_to_system_output -- --ignored --test-threads=1"
