@@ -40,6 +40,7 @@ export function ImportMusicDialog({
 					/>
 					<ImportFileList
 						entries={workflow.entries}
+						isBusy={workflow.isBusy}
 						onSelectionChange={workflow.handleSelectionChange}
 					/>
 					<ImportDialogFooter
@@ -130,9 +131,11 @@ function ImportActivity({
 
 function ImportFileList({
 	entries,
+	isBusy,
 	onSelectionChange,
 }: {
 	entries: ImportFileEntry[];
+	isBusy: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
 }) {
 	if (entries.length === 0) return null;
@@ -143,6 +146,7 @@ function ImportFileList({
 				<ImportFileRow
 					key={entry.key}
 					entry={entry}
+					isBusy={isBusy}
 					onSelectionChange={onSelectionChange}
 				/>
 			))}
@@ -152,9 +156,11 @@ function ImportFileList({
 
 function ImportFileRow({
 	entry,
+	isBusy,
 	onSelectionChange,
 }: {
 	entry: ImportFileEntry;
+	isBusy: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
 }) {
 	const filename = entry.preview?.file.originalFilename ?? entry.file.name;
@@ -166,7 +172,7 @@ function ImportFileRow({
 						type="checkbox"
 						aria-label={`Select ${filename}`}
 						checked={entry.selected}
-						disabled={entry.state !== "accepted"}
+						disabled={isBusy || entry.state !== "accepted"}
 						onChange={(event) =>
 							onSelectionChange(entry.key, event.target.checked)
 						}

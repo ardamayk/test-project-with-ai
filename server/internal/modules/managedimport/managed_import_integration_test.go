@@ -815,6 +815,29 @@ func TestManagedImportRecordsCancellationAtPreviewBoundary(t *testing.T) {
 	}
 }
 
+func TestManagedImportSerializesUploadsForTheSameJob(t *testing.T) {
+	inspector := &blockingInspector{
+		started: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	router := newManagedImportRouter(t, inspector)
+	jobID := createManagedImportJob(t, router)
+	_, firstResponse, firstDone := startManagedImportUpload(t, router, jobID)
+	waitForSignal(t, inspector.started, "first upload did not reach inspection")
+	_, secondResponse, secondDone := startManagedImportUpload(t, router, jobID)
+	select {
+	case <-inspector.started:
+		t.Fatal("second upload inspected the same job concurrently")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(inspector.release)
+	waitForSignal(t, firstDone, "first upload did not finish")
+	waitForSignal(t, secondDone, "second upload did not finish")
+	if firstResponse.Code != http.StatusOK || secondResponse.Code != http.StatusConflict {
+		t.Fatalf("serialized upload statuses = (%d, %d)", firstResponse.Code, secondResponse.Code)
+	}
+}
+
 func TestManagedImportDetectsFLACWithoutTrustingFilenameOrContentType(t *testing.T) {
 	router := newManagedImportRouter(t, library.NewMediaInspector())
 	jobID := createManagedImportJob(t, router)
@@ -852,6 +875,21 @@ type cancellingInspector struct {
 
 type completionCancellingInspector struct {
 	cancel context.CancelFunc
+}
+
+type blockingInspector struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (inspector *blockingInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
+	inspector.started <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return library.MediaInspection{}, ctx.Err()
+	case <-inspector.release:
+		return library.NewMediaInspector().Inspect(ctx, path, reportProgress)
+	}
 }
 
 func (inspector *completionCancellingInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {

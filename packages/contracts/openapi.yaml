@@ -1144,7 +1144,8 @@ components:
           description: >-
             Named server behaviors supported by this release. Queue event streaming
             is advertised as playback.queue-events.v1 and the first strict FLAC
-            Managed Import tracer bullet as managed-import.v1.
+            Managed Import tracer bullet as managed-import.v1. Multi-file Managed
+            Import Batches are advertised as managed-import-batches.v1.
     User:
       type: object
       required: [id, username]

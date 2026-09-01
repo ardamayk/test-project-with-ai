@@ -319,7 +319,11 @@ mod tests {
                 let health = serde_json::json!({
                     "status": "ok",
                     "version": "0.1.0-test",
-                    "capabilities": ["api.v1", "playback.queue-events.v1"],
+                    "capabilities": [
+                        "api.v1",
+                        "playback.queue-events.v1",
+                        "managed-import-batches.v1"
+                    ],
                 })
                 .to_string();
                 write!(

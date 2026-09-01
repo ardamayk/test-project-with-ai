@@ -19,10 +19,17 @@ type Service struct {
 	inspector           library.MediaInspector
 	commitMu            sync.Mutex
 	batchConfirmationMu sync.Mutex
+	uploadLocksMu       sync.Mutex
+	uploadLocks         map[string]*uploadLock
+}
+
+type uploadLock struct {
+	mutex sync.Mutex
+	users int
 }
 
 func NewService(store *Store, storage *Storage, inspector library.MediaInspector) *Service {
-	return &Service{store: store, storage: storage, inspector: inspector}
+	return &Service{store: store, storage: storage, inspector: inspector, uploadLocks: make(map[string]*uploadLock)}
 }
 
 func (service *Service) CreateJob(ctx context.Context, batchID string) (Job, error) {
@@ -46,6 +53,11 @@ func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
 }
 
 func (service *Service) Upload(ctx context.Context, jobID, originalFilename string, body io.Reader, contentLength int64) (Preview, error) {
+	unlock := service.lockUpload(jobID)
+	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return Preview{}, err
+	}
 	job, err := service.getUploadingJob(ctx, jobID)
 	if err != nil {
 		return Preview{}, err
@@ -73,6 +85,27 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, err)
 	}
 	return service.persistPreview(ctx, job, originalFilename, upload, inspection)
+}
+
+func (service *Service) lockUpload(jobID string) func() {
+	service.uploadLocksMu.Lock()
+	lock := service.uploadLocks[jobID]
+	if lock == nil {
+		lock = &uploadLock{}
+		service.uploadLocks[jobID] = lock
+	}
+	lock.users++
+	service.uploadLocksMu.Unlock()
+	lock.mutex.Lock()
+	return func() {
+		lock.mutex.Unlock()
+		service.uploadLocksMu.Lock()
+		lock.users--
+		if lock.users == 0 {
+			delete(service.uploadLocks, jobID)
+		}
+		service.uploadLocksMu.Unlock()
+	}
 }
 
 func (service *Service) reserveBatchUpload(ctx context.Context, job importJob, contentLength int64) error {
@@ -361,6 +394,11 @@ func (service *Service) completeBatch(ctx context.Context, batchID string) (Batc
 }
 
 func (service *Service) finishUncommittedBatchFile(ctx context.Context, job importJob, outcome ImportOutcome, errorCode, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
 	if job.StagedFilePath != "" {
 		if err := service.storage.RemoveStaged(job.StagedFilePath); err != nil {
 			outcome = OUTCOME_FAILED
@@ -371,7 +409,7 @@ func (service *Service) finishUncommittedBatchFile(ctx context.Context, job impo
 	if outcome == OUTCOME_FAILED && errorCode == "" {
 		errorCode = "commit_failed"
 	}
-	return service.store.MarkBatchFileOutcome(ctx, job.ID, outcome, errorCode, reason)
+	return service.store.MarkBatchFileOutcome(cleanupCtx, job.ID, outcome, errorCode, reason)
 }
 
 func (service *Service) preflightCommit(stagedBytes int64, inspection library.MediaInspection) error {

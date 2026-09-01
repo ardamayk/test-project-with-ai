@@ -10,7 +10,11 @@ use url::{Host, Url};
 
 const HEALTH_PATH: &str = "/api/v1/health";
 const QUEUE_EVENTS_PATH: &str = "/api/v1/playback/queue/events";
-const REQUIRED_SERVER_CAPABILITIES: &[&str] = &["api.v1", "playback.queue-events.v1"];
+const REQUIRED_SERVER_CAPABILITIES: &[&str] = &[
+    "api.v1",
+    "playback.queue-events.v1",
+    "managed-import-batches.v1",
+];
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const ALLOWED_REQUEST_HEADERS: &[&str] = &["accept", "authorization", "content-type", "range"];
 
@@ -596,7 +600,12 @@ mod tests {
 
     #[tokio::test]
     async fn valid_connection_reports_server_capabilities() {
-        let origin = serve_health(&["api.v1", "playback.queue-events.v1", "optional.future"]);
+        let origin = serve_health(&[
+            "api.v1",
+            "playback.queue-events.v1",
+            "managed-import-batches.v1",
+            "optional.future",
+        ]);
         let check = HttpBridge::new()
             .expect("create bridge")
             .test_server(&ServerOrigin::parse(&origin).expect("valid origin"))
@@ -606,7 +615,12 @@ mod tests {
         assert_eq!(check.version, "0.1.0-test");
         assert_eq!(
             check.capabilities,
-            ["api.v1", "playback.queue-events.v1", "optional.future"]
+            [
+                "api.v1",
+                "playback.queue-events.v1",
+                "managed-import-batches.v1",
+                "optional.future"
+            ]
         );
     }
 
@@ -670,6 +684,19 @@ mod tests {
 
         assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
         assert!(error.message.contains("playback.queue-events.v1"));
+    }
+
+    #[tokio::test]
+    async fn managed_import_batches_capability_is_required() {
+        let origin = serve_health(&["api.v1", "playback.queue-events.v1"]);
+        let error = HttpBridge::new()
+            .expect("create bridge")
+            .test_server(&ServerOrigin::parse(&origin).expect("valid origin"))
+            .await
+            .expect_err("Managed Import Batches capability should be required");
+
+        assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
+        assert!(error.message.contains("managed-import-batches.v1"));
     }
 
     #[test]

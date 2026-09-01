@@ -597,6 +597,40 @@ describe("tracks route", () => {
 		);
 	});
 
+	it("freezes file selection while confirmation is pending", async () => {
+		let finishConfirmation: (() => void) | undefined;
+		mocks.confirmManagedImportBatch.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishConfirmation = () =>
+						resolve({
+							id: "batch-1",
+							status: "completed",
+							revision: 4,
+							files: [],
+						});
+				}),
+		);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["flac bytes"], "strict-import.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+		const checkbox = await screen.findByRole("checkbox", {
+			name: "Select strict-import.flac",
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+		await vi.waitFor(() => expect(checkbox).toHaveProperty("disabled", true));
+		finishConfirmation?.();
+	});
+
 	it("uploads one desktop file at a time", async () => {
 		Object.defineProperty(window, "__TAURI_INTERNALS__", {
 			configurable: true,
