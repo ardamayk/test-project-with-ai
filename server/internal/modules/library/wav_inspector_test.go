@@ -183,6 +183,16 @@ func TestMediaInspectorReportsValidBitsForExtensiblePCMWAV(t *testing.T) {
 	}
 }
 
+func TestMediaInspectorRejectsValidBitsWiderThanExtensiblePCMContainer(t *testing.T) {
+	fixture := strictWAVFixture()
+	fixture.format.AudioFormat = 0xfffe
+	fixture.format.BitDepth = 32
+	fixture.format.ValidBits = 40
+
+	_, err := library.NewMediaInspector().Inspect(context.Background(), writeWAVFixture(t, fixture), nil)
+	assertInspectionError(t, err, library.INSPECTION_ERROR_AUDIO_DECODE, "audio")
+}
+
 func TestMediaInspectorPersistsUnsignedEightBitPCMFormat(t *testing.T) {
 	fixture := strictWAVFixture()
 	fixture.format.ChannelCount = 1
