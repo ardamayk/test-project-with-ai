@@ -136,6 +136,7 @@ test("Mise exposes the cross-language public task contract", () => {
 		"test",
 		"server:test",
 		"desktop:test",
+		"generate:check",
 		"ci:fast",
 		"ci:integration",
 		"ci:full",
@@ -212,8 +213,20 @@ test("CI policy tasks reuse public task compositions", () => {
 
 	const fullDryRun = runMiseTaskDryRun("ci:full");
 	assert.match(fullDryRun, /\[ci:fast\]/);
-	assert.match(fullDryRun, /\[ci:integration\]/);
-	assert.match(fullDryRun, /\[build\]/);
+	const fullTask = readMiseTasks().find((task) => task.name === "ci:full");
+	const fullRun = fullTask.run.join("\n");
+	const generateIndex = fullRun.indexOf("mise run generate:check");
+	const integrationIndex = fullRun.indexOf("mise run ci:integration");
+	const buildIndex = fullRun.indexOf("mise run build");
+	assert.notEqual(generateIndex, -1);
+	assert.equal(generateIndex < integrationIndex, true);
+	assert.equal(integrationIndex < buildIndex, true);
+
+	const generateCheck = readMiseTasks().find(
+		(task) => task.name === "generate:check",
+	);
+	assert.match(generateCheck.run.join("\n"), /mise run generate/);
+	assert.match(generateCheck.run.join("\n"), /git diff --exit-code/);
 });
 
 test("root pnpm compatibility commands delegate to Mise", async () => {
@@ -248,6 +261,7 @@ test("Desktop Client workspace scripts expose native Rust tools", async () => {
 	assert.match(packageJson.default.scripts.format, /^cargo fmt /);
 	assert.match(packageJson.default.scripts["format:check"], /^cargo fmt /);
 	assert.match(packageJson.default.scripts.lint, /^cargo clippy /);
+	assert.match(packageJson.default.scripts.lint, /-- -D warnings$/);
 	assert.match(packageJson.default.scripts["test:unit"], /^cargo test /);
 });
 

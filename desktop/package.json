@@ -10,7 +10,7 @@
     "desktop:dev": "pnpm prepare:mpv && ./scripts/run-linux-webkit.sh tauri dev --config src-tauri/tauri.sidecar.conf.json",
     "format": "cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
-    "lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets",
+    "lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "prepare:mpv": "./scripts/prepare-mpv-sidecar.sh",
     "start": "./scripts/run-linux-webkit.sh ./src-tauri/target/release/earthly-audio-desktop",
     "test": "pnpm test:unit",

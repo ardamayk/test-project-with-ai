@@ -53,6 +53,15 @@ set -euo pipefail
 description = "Regenerate committed OpenAPI clients"
 run = "pnpm turbo run generate"
 
+[tasks."generate:check"]
+description = "Verify committed OpenAPI clients are current"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+mise run generate
+git diff --exit-code -- packages/api-client/src/generated/schema.ts server/internal/api/gen/types.gen.go
+"""
+
 [tasks.format]
 description = "Format the workspace, Music Server, and Desktop Client"
 depends = ["workspace:format", "server:format", "desktop:format"]
@@ -85,31 +94,31 @@ run = ":"
 
 [tasks."workspace:build"]
 description = "Build workspace production artifacts"
-run = "pnpm turbo run build --filter=web"
+run = "bash scripts/run-workspace-task.sh build web"
 
 [tasks."workspace:format"]
 description = "Format the Web Client, shared UI, and API client"
-run = "pnpm turbo run format --filter=web --filter=@repo/ui --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh format web @repo/ui @repo/api-client"
 
 [tasks."workspace:format:check"]
 description = "Verify formatting for the Web Client, shared UI, and API client"
-run = "pnpm turbo run format:check --filter=web --filter=@repo/ui --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh format:check web @repo/ui @repo/api-client"
 
 [tasks."workspace:lint"]
 description = "Lint the Web Client, shared UI, and API client"
-run = "pnpm turbo run lint --filter=web --filter=@repo/ui --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh lint web @repo/ui @repo/api-client"
 
 [tasks."workspace:check"]
 description = "Check the Web Client, shared UI, and API client"
-run = "pnpm turbo run check --filter=web --filter=@repo/ui --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh check web @repo/ui @repo/api-client"
 
 [tasks."workspace:typecheck"]
 description = "Type-check the Web Client, shared UI, and API client"
-run = "pnpm turbo run typecheck --filter=web --filter=@repo/ui --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh typecheck web @repo/ui @repo/api-client"
 
 [tasks."workspace:test"]
 description = "Run Web Client, shared UI, and API client unit tests"
-run = "pnpm turbo run test:unit --filter=web --filter=@repo/ui --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh test:unit web @repo/ui @repo/api-client"
 
 [tasks."web:build"]
 description = "Build the Web Client"
@@ -122,51 +131,51 @@ run = "pnpm turbo run build --filter=@repo/docs"
 
 [tasks."web:format"]
 description = "Format the Web Client"
-run = "pnpm turbo run format --filter=web"
+run = "bash scripts/run-workspace-task.sh format web"
 
 [tasks."web:check"]
 description = "Check the Web Client"
-run = "pnpm turbo run check --filter=web"
+run = "bash scripts/run-workspace-task.sh check web"
 
 [tasks."web:typecheck"]
 description = "Type-check the Web Client"
-run = "pnpm turbo run typecheck --filter=web"
+run = "bash scripts/run-workspace-task.sh typecheck web"
 
 [tasks."web:test"]
 description = "Run Web Client unit tests"
-run = "pnpm turbo run test:unit --filter=web"
+run = "bash scripts/run-workspace-task.sh test:unit web"
 
 [tasks."ui:format"]
 description = "Format the shared UI"
-run = "pnpm turbo run format --filter=@repo/ui"
+run = "bash scripts/run-workspace-task.sh format @repo/ui"
 
 [tasks."ui:check"]
 description = "Check the shared UI"
-run = "pnpm turbo run check --filter=@repo/ui"
+run = "bash scripts/run-workspace-task.sh check @repo/ui"
 
 [tasks."ui:typecheck"]
 description = "Type-check the shared UI"
-run = "pnpm turbo run typecheck --filter=@repo/ui"
+run = "bash scripts/run-workspace-task.sh typecheck @repo/ui"
 
 [tasks."ui:test"]
 description = "Run shared UI unit tests"
-run = "pnpm turbo run test:unit --filter=@repo/ui"
+run = "bash scripts/run-workspace-task.sh test:unit @repo/ui"
 
 [tasks."api-client:format"]
 description = "Format the API client"
-run = "pnpm turbo run format --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh format @repo/api-client"
 
 [tasks."api-client:check"]
 description = "Check the API client"
-run = "pnpm turbo run check --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh check @repo/api-client"
 
 [tasks."api-client:typecheck"]
 description = "Type-check the API client"
-run = "pnpm turbo run typecheck --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh typecheck @repo/api-client"
 
 [tasks."api-client:test"]
 description = "Run API client unit tests"
-run = "pnpm turbo run test:unit --filter=@repo/api-client"
+run = "bash scripts/run-workspace-task.sh test:unit @repo/api-client"
 
 [tasks."server:format"]
 description = "Format the Music Server"
@@ -243,5 +252,11 @@ run = ":"
 
 [tasks."ci:full"]
 description = "Run full local CI policy and production builds"
-depends = ["ci:fast", "ci:integration", "build"]
-run = ":"
+depends = ["ci:fast"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+mise run generate:check
+mise run ci:integration
+mise run build
+"""
