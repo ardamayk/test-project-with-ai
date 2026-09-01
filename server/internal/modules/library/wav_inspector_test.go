@@ -26,6 +26,7 @@ type wavFormatSpec struct {
 	ChannelCount uint16
 	SampleRateHz uint32
 	BitDepth     uint16
+	ValidBits    uint16
 }
 
 type id3Frame struct {
@@ -95,6 +96,7 @@ func encodeWAV(t *testing.T, fixture wavFixture) []byte {
 		ChannelCount: fixture.format.ChannelCount,
 		SampleRateHz: fixture.format.SampleRateHz,
 		BitDepth:     fixture.format.BitDepth,
+		ValidBits:    fixture.format.ValidBits,
 		PCMFrames:    fixture.pcmFrames,
 		ID3Frames:    frames,
 		OmitID3:      fixture.omitID3,
@@ -162,6 +164,21 @@ func TestMediaInspectorInspectsExtensiblePCMWAV(t *testing.T) {
 		t.Fatalf("inspect extensible WAV fixture: %v", err)
 	}
 	if inspection.Audio.Codec != "pcm_s24le" || inspection.Audio.BitDepth != 24 {
+		t.Fatalf("extensible WAV audio = %+v", inspection.Audio)
+	}
+}
+
+func TestMediaInspectorReportsValidBitsForExtensiblePCMWAV(t *testing.T) {
+	fixture := strictWAVFixture()
+	fixture.format.AudioFormat = 0xfffe
+	fixture.format.BitDepth = 32
+	fixture.format.ValidBits = 24
+
+	inspection, err := library.NewMediaInspector().Inspect(context.Background(), writeWAVFixture(t, fixture), nil)
+	if err != nil {
+		t.Fatalf("inspect extensible WAV with reduced valid bits: %v", err)
+	}
+	if inspection.Audio.Codec != "pcm_s32le" || inspection.Audio.BitDepth != 24 {
 		t.Fatalf("extensible WAV audio = %+v", inspection.Audio)
 	}
 }

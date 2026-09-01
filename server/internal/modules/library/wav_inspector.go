@@ -253,8 +253,8 @@ func (format *wavFormatChunk) validate() error {
 	if format.bytesPerSecond != format.sampleRateHz*uint32(format.blockAlign) {
 		return inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("byte rate does not match sample rate and block align"))
 	}
-	if format.validBits != 0 && format.validBits != format.bitsPerSample {
-		return inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("valid bits %d does not match container bit depth %d", format.validBits, format.bitsPerSample))
+	if format.audioFormat == WAVE_FORMAT_EXTENSIBLE && (format.validBits == 0 || format.validBits > format.bitsPerSample) {
+		return inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("valid bits %d must be positive and no greater than container bit depth %d", format.validBits, format.bitsPerSample))
 	}
 	return nil
 }
@@ -317,6 +317,10 @@ func (input wavInspectionInput) decodePCM(ctx context.Context, format *wavFormat
 	if progressErr := reportDecodedProgress(input.reportProgress, uint64(frameCount), uint64(frameCount), data.size, data.size, true); progressErr != nil {
 		return TechnicalAudioProperties{}, inspectionProgressError(progressErr)
 	}
+	bitDepth := format.bitsPerSample
+	if format.validBits > 0 {
+		bitDepth = format.validBits
+	}
 	audio := TechnicalAudioProperties{
 		Format:       "wav",
 		Container:    "wav",
@@ -324,7 +328,7 @@ func (input wavInspectionInput) decodePCM(ctx context.Context, format *wavFormat
 		DurationMs:   durationMs,
 		SampleRateHz: int(format.sampleRateHz),
 		ChannelCount: int(format.channelCount),
-		BitDepth:     int(format.bitsPerSample),
+		BitDepth:     int(bitDepth),
 		BitrateKbps:  bitrateKbps,
 	}
 	return audio, nil

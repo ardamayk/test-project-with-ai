@@ -14,6 +14,7 @@ type WAVFixture struct {
 	ChannelCount uint16
 	SampleRateHz uint32
 	BitDepth     uint16
+	ValidBits    uint16
 	PCMFrames    int
 	ID3Frames    []WAVID3Frame
 	OmitID3      bool
@@ -93,7 +94,11 @@ func encodeWAVFormat(fixture WAVFixture) []byte {
 	binary.LittleEndian.PutUint16(format[14:16], fixture.BitDepth)
 	if fixture.AudioFormat == 0xfffe {
 		binary.LittleEndian.PutUint16(format[16:18], 22)
-		binary.LittleEndian.PutUint16(format[18:20], fixture.BitDepth)
+		validBits := fixture.ValidBits
+		if validBits == 0 {
+			validBits = fixture.BitDepth
+		}
+		binary.LittleEndian.PutUint16(format[18:20], validBits)
 		copy(format[24:40], []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71})
 	}
 	return format
