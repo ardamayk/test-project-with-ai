@@ -277,6 +277,10 @@ func buildM4AAudioProperties(stream m4aProbeStream) (TechnicalAudioProperties, e
 	if sampleRateErr != nil || sampleRate <= 0 || stream.Channels <= 0 {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("M4A stream has invalid technical properties"))
 	}
+	probeDurationSeconds, durationErr := strconv.ParseFloat(strings.TrimSpace(stream.Duration), 64)
+	if durationErr != nil || probeDurationSeconds <= 0 {
+		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("M4A stream has invalid probed duration"))
+	}
 	bitDepth := 0
 	if stream.CodecName == "alac" {
 		var bitDepthErr error
@@ -285,7 +289,7 @@ func buildM4AAudioProperties(stream m4aProbeStream) (TechnicalAudioProperties, e
 			return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("ALAC bit depth is missing"))
 		}
 	}
-	return TechnicalAudioProperties{Format: "m4a", Container: "m4a", Codec: stream.CodecName, SampleRateHz: sampleRate, ChannelCount: stream.Channels, BitDepth: bitDepth}, nil
+	return TechnicalAudioProperties{Format: "m4a", Container: "m4a", Codec: stream.CodecName, SampleRateHz: sampleRate, ChannelCount: stream.Channels, BitDepth: bitDepth, DurationMs: int(probeDurationSeconds * MILLISECONDS_PER_SECOND)}, nil
 }
 
 func decodeM4AToEOF(ctx context.Context, path string, streamIndex int, audio TechnicalAudioProperties, reportProgress InspectionProgressReporter) (int, error) {

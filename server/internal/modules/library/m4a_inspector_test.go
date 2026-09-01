@@ -48,3 +48,42 @@ func TestM4AProbeRequiresExactBrandToken(t *testing.T) {
 		t.Fatal("exact compatible M4A brand was rejected")
 	}
 }
+
+func TestBuildM4AAudioPropertiesSeedsProbeDurationForProgress(t *testing.T) {
+	audio, err := buildM4AAudioProperties(m4aProbeStream{
+		CodecName:  "aac",
+		SampleRate: "44100",
+		Channels:   2,
+		Duration:   "1.792000",
+	})
+	if err != nil {
+		t.Fatalf("build M4A audio properties: %v", err)
+	}
+	if audio.DurationMs != 1792 {
+		t.Fatalf("probe-seeded duration = %d, want 1792", audio.DurationMs)
+	}
+	decodedSamples := uint64(890) * uint64(audio.SampleRateHz) / MILLISECONDS_PER_SECOND
+	totalSamples := uint64(audio.DurationMs) * uint64(audio.SampleRateHz) / MILLISECONDS_PER_SECOND
+	var percentages []int
+	reporter := InspectionProgressReporter(func(progress InspectionProgress) error {
+		percentages = append(percentages, progress.Percent)
+		return nil
+	})
+	for range 5 {
+		if err := reportDecodedProgress(reporter, decodedSamples, totalSamples, 0, 0, false); err != nil {
+			t.Fatalf("report decode progress: %v", err)
+		}
+	}
+	if len(percentages) == 0 || percentages[0] == 0 {
+		t.Fatalf("mid-decode progress percentages = %v, want a non-zero start", percentages)
+	}
+}
+
+func TestBuildM4AAudioPropertiesRejectsMissingDuration(t *testing.T) {
+	if _, err := buildM4AAudioProperties(m4aProbeStream{CodecName: "aac", SampleRate: "44100", Channels: 2, Duration: ""}); err == nil {
+		t.Fatal("missing probed duration was accepted")
+	}
+	if _, err := buildM4AAudioProperties(m4aProbeStream{CodecName: "aac", SampleRate: "44100", Channels: 2, Duration: "0"}); err == nil {
+		t.Fatal("zero probed duration was accepted")
+	}
+}
