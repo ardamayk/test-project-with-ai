@@ -136,6 +136,7 @@ test("Mise exposes the cross-language public task contract", () => {
 		"test",
 		"server:test",
 		"desktop:test",
+		"generate",
 		"generate:check",
 		"ci:fast",
 		"ci:integration",
@@ -225,8 +226,15 @@ test("CI policy tasks reuse public task compositions", () => {
 	const generateCheck = readMiseTasks().find(
 		(task) => task.name === "generate:check",
 	);
-	assert.match(generateCheck.run.join("\n"), /mise run generate/);
-	assert.match(generateCheck.run.join("\n"), /git diff --exit-code/);
+	assert.match(
+		generateCheck.run.join("\n"),
+		/bash scripts\/check-openapi-generation\.sh/,
+	);
+	assert.doesNotMatch(generateCheck.run.join("\n"), /mise run generate/);
+	assert.doesNotMatch(generateCheck.run.join("\n"), /git diff/);
+
+	const generate = readMiseTasks().find((task) => task.name === "generate");
+	assert.match(generate.run.join("\n"), /bash scripts\/generate-openapi\.sh/);
 });
 
 test("root pnpm compatibility commands delegate to Mise", async () => {
@@ -246,6 +254,7 @@ test("root pnpm compatibility commands delegate to Mise", async () => {
 		"test:e2e",
 		"test:e2e:hls",
 		"generate",
+		"generate:check",
 		"check",
 		"start",
 	]) {
@@ -282,6 +291,37 @@ test("Turbo verification tasks have no implicit build or generation edges", () =
 			taskIds.some((taskId) => taskId.endsWith("#typecheck")),
 			false,
 		);
+	}
+});
+
+test("ordinary Turbo tasks never invoke OpenAPI generation", () => {
+	for (const taskName of [
+		"build",
+		"format:check",
+		"lint",
+		"check",
+		"typecheck",
+		"test:unit",
+		"test:e2e",
+		"test:integration",
+	]) {
+		const taskIds = runTurboDry(taskName).tasks.map((task) => task.taskId);
+		assert.equal(
+			taskIds.some((taskId) => taskId.endsWith("#generate")),
+			false,
+			taskName,
+		);
+	}
+
+	for (const taskName of [
+		"build",
+		"lint",
+		"typecheck",
+		"test",
+		"ci:integration",
+	]) {
+		const dryRun = runMiseTaskDryRun(taskName);
+		assert.doesNotMatch(dryRun, /\[generate\]|generate-openapi\.sh/, taskName);
 	}
 });
 

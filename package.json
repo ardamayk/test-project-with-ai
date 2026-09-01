@@ -16,8 +16,10 @@
     "test:desktop": "mise run desktop:test",
     "test:e2e": "mise run web:test:e2e",
     "test:e2e:hls": "mise run server:test:hls",
+    "test:openapi-generation": "node --test scripts/test-openapi-generation.mjs",
     "test:workspace-tasks": "node --test scripts/test-workspace-tasks.mjs",
     "generate": "mise run generate",
+    "generate:check": "mise run generate:check",
     "check": "mise run check",
     "start": "mise run start"
   },
