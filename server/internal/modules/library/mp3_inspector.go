@@ -216,7 +216,7 @@ func readID3Frames(file *os.File) ([]id3Frame, byte, int64, error) {
 		return nil, 0, 0, invalidID3Error(errors.New("ID3 tag size is invalid"))
 	}
 	payload := make([]byte, size)
-	if _, err := io.ReadFull(file, payload); err != nil {
+	if _, err = io.ReadFull(file, payload); err != nil {
 		return nil, 0, 0, invalidID3Error(fmt.Errorf("read ID3 payload: %w", err))
 	}
 	frames, err := parseID3Frames(payload, version)
@@ -452,6 +452,9 @@ func decodeID3Picture(payload []byte, version byte) (id3Picture, byte, error) {
 		}
 		mimeType = string(payload[offset : offset+mimeEnd])
 		offset += mimeEnd + 1
+	}
+	if offset >= len(payload) {
+		return id3Picture{}, 0, errors.New("embedded picture type is truncated")
 	}
 	pictureType := payload[offset]
 	offset++

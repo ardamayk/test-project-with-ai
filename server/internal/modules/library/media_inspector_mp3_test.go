@@ -139,6 +139,38 @@ func TestMediaInspectorRejectsInvalidMP3TagsArtworkCodecAndTruncation(t *testing
 	}
 }
 
+func TestMediaInspectorRejectsTruncatedMP3PictureType(t *testing.T) {
+	fixture := testutil.StrictMP3Fixture()
+	apicOffset := bytes.Index(fixture, []byte("APIC"))
+	if apicOffset < 0 {
+		t.Fatal("strict MP3 fixture has no APIC frame")
+	}
+	frameSize := decodeSyncSafeFixtureInt(fixture[apicOffset+4 : apicOffset+8])
+	frameEnd := apicOffset + 10 + frameSize
+	// Payload: encoding byte + "image/png" + NUL terminator, no picture-type byte after it.
+	truncatedFrame := append([]byte("APIC"), 0, 0, 0, 11, 0, 0, 3)
+	truncatedFrame = append(truncatedFrame, []byte("image/png")...)
+	truncatedFrame = append(truncatedFrame, 0)
+	truncated := append(append([]byte(nil), fixture[:apicOffset]...), truncatedFrame...)
+	truncated = append(truncated, fixture[frameEnd:]...)
+
+	tagSize := decodeSyncSafeFixtureInt(fixture[6:10]) - ((10 + frameSize) - len(truncatedFrame))
+	truncated[6] = byte(tagSize >> 21)
+	truncated[7] = byte(tagSize >> 14 & 0x7f)
+	truncated[8] = byte(tagSize >> 7 & 0x7f)
+	truncated[9] = byte(tagSize & 0x7f)
+
+	_, err := inspectMP3FixtureError(t, truncated)
+	var inspectionErr *library.InspectionError
+	if !errors.As(err, &inspectionErr) || inspectionErr.Code != library.INSPECTION_ERROR_INVALID_ARTWORK || inspectionErr.Field != "artwork" {
+		t.Fatalf("truncated picture type error = %T %+v", err, inspectionErr)
+	}
+}
+
+func decodeSyncSafeFixtureInt(data []byte) int {
+	return int(data[0])<<21 | int(data[1])<<14 | int(data[2])<<7 | int(data[3])
+}
+
 func inspectMP3Fixture(t *testing.T, fixture []byte) library.MediaInspection {
 	t.Helper()
 	inspection, err := inspectMP3FixtureError(t, fixture)
