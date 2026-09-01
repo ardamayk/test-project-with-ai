@@ -116,6 +116,12 @@ function buildQuery(params?: ListParams): string {
   return qs ? `?${qs}` : ''
 }
 
+function managedImportContentType(originalFilename: string): string {
+  return originalFilename.toLowerCase().endsWith('.wav')
+    ? 'audio/wav'
+    : 'audio/flac'
+}
+
 function buildRadioSearchQuery(params?: RadioSearchParams): string {
   if (!params) return ''
   const search = new URLSearchParams()
@@ -321,7 +327,7 @@ export function createApiClient(config: ApiClientConfig) {
       request<ManagedImportPreview>(`/api/v1/imports/${importId}/file`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'audio/flac',
+          'Content-Type': managedImportContentType(originalFilename),
           'X-Import-Filename': originalFilename,
         },
         body: file,

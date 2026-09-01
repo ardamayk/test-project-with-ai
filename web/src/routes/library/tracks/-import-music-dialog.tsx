@@ -137,8 +137,8 @@ function ImportDialogHeader({ isBusy }: { isBusy: boolean }) {
 					id="import-music-description"
 					className="mt-1 text-caption text-sm"
 				>
-					Upload one strict FLAC, review its metadata, then confirm the Managed
-					Track.
+					Upload one strict FLAC or WAV, review its metadata, then confirm the
+					Managed Track.
 				</DialogPrimitive.Description>
 			</div>
 			<DialogPrimitive.Close asChild>
@@ -161,12 +161,12 @@ function ImportFilePicker({
 	return (
 		<div className="grid gap-2">
 			<label htmlFor="managed-import-file" className="font-medium text-sm">
-				FLAC file
+				FLAC or WAV file
 			</label>
 			<input
 				id="managed-import-file"
 				type="file"
-				accept=".flac,audio/flac"
+				accept=".flac,.wav,audio/flac,audio/wav"
 				disabled={isBusy}
 				className="rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-secondary-foreground"
 				onChange={(event) => void onFile(event.target.files?.[0])}
@@ -185,7 +185,7 @@ function ImportActivity({
 	return (
 		<>
 			<p aria-live="polite" className="text-caption text-sm">
-				{importState === "uploading" ? "Uploading and validating FLAC…" : null}
+				{importState === "uploading" ? "Uploading and validating audio…" : null}
 				{importState === "confirming" ? "Committing Managed Track…" : null}
 			</p>
 			{errorMessage ? (

@@ -35,6 +35,7 @@ const (
 	JPEG_SIGNATURE                               = "\xff\xd8\xff"
 	PNG_SIGNATURE                                = "\x89PNG\r\n\x1a\n"
 	RIFF_SIGNATURE                               = "RIFF"
+	WAVE_SIGNATURE                               = "WAVE"
 	WEBP_SIGNATURE                               = "WEBP"
 	PNG_ANIMATION_CHUNK                          = "acTL"
 	WEBP_EXTENDED_CHUNK                          = "VP8X"
@@ -175,7 +176,7 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
-	inspection, inspectionErr := inspectOpenFLAC(ctx, file, reportProgress)
+	inspection, inspectionErr := inspectMedia(ctx, file, reportProgress)
 	closeErr := file.Close()
 	if closeErr != nil {
 		closeFailure := inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("close file: %w", closeErr))
@@ -190,7 +191,7 @@ func (defaultMediaInspector) Inspect(ctx context.Context, path string, reportPro
 	return inspection, nil
 }
 
-func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
+func inspectMedia(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
 	fileHash, sizeBytes, err := hashAndRewind(ctx, file)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -198,6 +199,42 @@ func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress Inspecti
 		}
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
 	}
+	format, err := detectMediaContainer(file, sizeBytes)
+	if err != nil {
+		return MediaInspection{}, err
+	}
+	switch format {
+	case "flac":
+		return inspectOpenFLAC(ctx, file, reportProgress, fileHash, sizeBytes)
+	case "wav":
+		return inspectOpenWAV(ctx, file, reportProgress, fileHash, sizeBytes)
+	default:
+		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("unsupported container %q", format))
+	}
+}
+
+func detectMediaContainer(file *os.File, sizeBytes int64) (string, error) {
+	if sizeBytes < RIFF_HEADER_SIZE_BYTES {
+		return "", inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("file is too small for a supported container"))
+	}
+	var signature [RIFF_HEADER_SIZE_BYTES]byte
+	if _, err := io.ReadFull(file, signature[:]); err != nil {
+		return "", inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("read container signature: %w", err))
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind after container signature: %w", err))
+	}
+	switch {
+	case string(signature[:4]) == FLAC_SIGNATURE:
+		return "flac", nil
+	case string(signature[:4]) == RIFF_SIGNATURE && string(signature[8:12]) == WAVE_SIGNATURE:
+		return "wav", nil
+	default:
+		return "", inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("file is not a supported FLAC or RIFF WAVE stream"))
+	}
+}
+
+func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter, fileHash string, sizeBytes int64) (MediaInspection, error) {
 	if signatureErr := validateFLACSignature(file); signatureErr != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", signatureErr)
 	}
@@ -272,8 +309,11 @@ func (reader contextReader) Read(buffer []byte) (int, error) {
 }
 
 func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, error) {
-	tags := collectVorbisTags(blocks)
-	names, err := inspectFLACNames(tags)
+	return inspectMetadata(collectVorbisTags(blocks))
+}
+
+func inspectMetadata(tags map[string][]string) (NormalizedMediaMetadata, error) {
+	names, err := inspectNames(tags)
 	if err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
@@ -338,7 +378,7 @@ type normalizedMediaNames struct {
 	Genres       []string
 }
 
-func inspectFLACNames(tags map[string][]string) (normalizedMediaNames, error) {
+func inspectNames(tags map[string][]string) (normalizedMediaNames, error) {
 	var names normalizedMediaNames
 	var err error
 	if names.Title, err = requiredSingleTag(tags, "TITLE"); err != nil {
@@ -525,28 +565,33 @@ func inspectFLACArtwork(blocks []*flacmeta.Block) (AlbumArtwork, error) {
 }
 
 func validateArtwork(picture *flacmeta.Picture) (AlbumArtwork, error) {
-	format, err := validateArtworkFormat(picture)
-	if err != nil {
-		return AlbumArtwork{}, err
-	}
-	config, err := decodeArtwork(picture.Data, format)
-	if err != nil {
-		return AlbumArtwork{}, err
-	}
-	hash := sha256.Sum256(picture.Data)
-	return AlbumArtwork{MIMEType: artworkMIMETypes[format], Width: config.Width, Height: config.Height, Data: append([]byte(nil), picture.Data...), SHA256: hex.EncodeToString(hash[:])}, nil
+	return validateEmbeddedArtwork(picture.Data, picture.MIME)
 }
 
-func validateArtworkFormat(picture *flacmeta.Picture) (artworkFormat, error) {
-	if len(picture.Data) == 0 || len(picture.Data) > MAX_ARTWORK_SIZE_BYTES {
+// validateEmbeddedArtwork applies the same strict artwork rules to any container that embeds one front cover.
+func validateEmbeddedArtwork(data []byte, declaredMIMEType string) (AlbumArtwork, error) {
+	format, err := validateArtworkFormat(data, declaredMIMEType)
+	if err != nil {
+		return AlbumArtwork{}, err
+	}
+	config, err := decodeArtwork(data, format)
+	if err != nil {
+		return AlbumArtwork{}, err
+	}
+	hash := sha256.Sum256(data)
+	return AlbumArtwork{MIMEType: artworkMIMETypes[format], Width: config.Width, Height: config.Height, Data: append([]byte(nil), data...), SHA256: hex.EncodeToString(hash[:])}, nil
+}
+
+func validateArtworkFormat(data []byte, declaredMIMEType string) (artworkFormat, error) {
+	if len(data) == 0 || len(data) > MAX_ARTWORK_SIZE_BYTES {
 		return "", inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("encoded artwork size is invalid"))
 	}
-	format := detectArtworkFormat(picture.Data)
+	format := detectArtworkFormat(data)
 	mimeType := artworkMIMETypes[format]
-	if mimeType == "" || picture.MIME != mimeType {
+	if mimeType == "" || declaredMIMEType != mimeType {
 		return "", inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("declared and detected image formats differ or are unsupported"))
 	}
-	if isAnimatedArtwork(format, picture.Data) {
+	if isAnimatedArtwork(format, data) {
 		return "", inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("animated artwork is not supported"))
 	}
 	return format, nil
@@ -741,7 +786,7 @@ func publicInspectionReason(code InspectionErrorCode, err error) string {
 	case INSPECTION_ERROR_FILE_READ:
 		return "file could not be read"
 	case INSPECTION_ERROR_UNSUPPORTED_FORMAT:
-		return "file is not a supported FLAC stream"
+		return "file is not a supported FLAC or WAV stream"
 	case INSPECTION_ERROR_INVALID_ARTWORK:
 		return "embedded artwork is invalid"
 	case INSPECTION_ERROR_AUDIO_DECODE:

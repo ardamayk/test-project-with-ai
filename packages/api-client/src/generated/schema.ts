@@ -668,11 +668,11 @@ export interface components {
             year?: number;
             durationMs: number;
             /** @enum {string} */
-            format: "flac";
+            format: "flac" | "wav";
             /** @enum {string} */
-            container: "flac";
+            container: "flac" | "wav";
             /** @enum {string} */
-            codec: "flac";
+            codec: "flac" | "pcm_u8" | "pcm_s16le" | "pcm_s24le" | "pcm_s32le";
             sampleRateHz: number;
             channelCount: number;
             bitDepth: number;
@@ -1440,6 +1440,7 @@ export interface operations {
             content: {
                 "application/octet-stream": string;
                 "audio/flac": string;
+                "audio/wav": string;
             };
         };
         responses: {

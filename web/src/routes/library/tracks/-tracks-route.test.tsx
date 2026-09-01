@@ -255,10 +255,14 @@ describe("tracks route", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
 		expect(screen.getByRole("dialog")).toBeTruthy();
 		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
+		const fileInput = screen.getByLabelText("FLAC or WAV file");
+		expect(fileInput.getAttribute("accept")).toBe(
+			".flac,.wav,audio/flac,audio/wav",
+		);
 		const file = new File(["flac bytes"], "strict-import.flac", {
 			type: "audio/flac",
 		});
-		fireEvent.change(screen.getByLabelText("FLAC file"), {
+		fireEvent.change(fileInput, {
 			target: { files: [file] },
 		});
 

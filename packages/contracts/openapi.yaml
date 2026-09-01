@@ -311,6 +311,10 @@ paths:
             schema:
               type: string
               format: binary
+          audio/wav:
+            schema:
+              type: string
+              format: binary
       responses:
         "200":
           description: Import Preview ready for confirmation
@@ -1271,13 +1275,13 @@ components:
           minimum: 1
         format:
           type: string
-          enum: [flac]
+          enum: [flac, wav]
         container:
           type: string
-          enum: [flac]
+          enum: [flac, wav]
         codec:
           type: string
-          enum: [flac]
+          enum: [flac, "pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le"]
         sampleRateHz:
           type: integer
           minimum: 1
