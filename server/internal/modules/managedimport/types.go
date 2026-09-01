@@ -215,7 +215,7 @@ func previewFromInspection(job importJob, inspection library.MediaInspection) Pr
 	}
 }
 
-func batchFileFromJob(job importJob) BatchFile {
+func batchFileFromJob(job importJob) (BatchFile, error) {
 	file := BatchFile{
 		JobID:              job.ID,
 		State:              BATCH_FILE_UNRESOLVED,
@@ -232,9 +232,10 @@ func batchFileFromJob(job importJob) BatchFile {
 	}
 	if job.PreviewJSON != "" {
 		var preview Preview
-		if json.Unmarshal([]byte(job.PreviewJSON), &preview) == nil {
-			file.Preview = &preview
+		if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
+			return BatchFile{}, fmt.Errorf("decode Import Preview for job %q: %w", job.ID, err)
 		}
+		file.Preview = &preview
 	}
 	switch {
 	case job.Outcome == OUTCOME_REJECTED:
@@ -246,5 +247,5 @@ func batchFileFromJob(job importJob) BatchFile {
 	case job.Status == STATUS_FAILED:
 		file.State = BATCH_FILE_REJECTED
 	}
-	return file
+	return file, nil
 }

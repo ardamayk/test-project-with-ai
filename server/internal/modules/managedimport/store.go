@@ -118,7 +118,11 @@ func (store *Store) GetBatch(ctx context.Context, batchID string) (Batch, error)
 	}
 	batch.Files = make([]BatchFile, 0, len(jobs))
 	for _, job := range jobs {
-		batch.Files = append(batch.Files, batchFileFromJob(job))
+		file, err := batchFileFromJob(job)
+		if err != nil {
+			return Batch{}, err
+		}
+		batch.Files = append(batch.Files, file)
 	}
 	return batch, nil
 }
@@ -235,6 +239,33 @@ func (store *Store) StartBatchConfirmation(ctx context.Context, batchID string, 
 		return fmt.Errorf("begin Managed Import Batch confirmation: %w", err)
 	}
 	defer transaction.Rollback()
+	if err := ensureBatchResolved(ctx, transaction, batchID); err != nil {
+		return err
+	}
+	if err := transitionBatchConfirmation(ctx, transaction, batchID, revision); err != nil {
+		return err
+	}
+	if err := updateBatchSelection(ctx, transaction, batchID, selectedIDs); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Managed Import Batch confirmation start: %w", err)
+	}
+	return nil
+}
+
+func ensureBatchResolved(ctx context.Context, transaction *sql.Tx, batchID string) error {
+	var unresolvedCount int
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_import_jobs WHERE batch_id = ? AND status = ?`, batchID, STATUS_UPLOADING).Scan(&unresolvedCount); err != nil {
+		return fmt.Errorf("count unresolved Managed Import Batch files: %w", err)
+	}
+	if unresolvedCount > 0 {
+		return fmt.Errorf("%w: Managed Import Batch has unresolved files", ErrInvalidState)
+	}
+	return nil
+}
+
+func transitionBatchConfirmation(ctx context.Context, transaction *sql.Tx, batchID string, revision int) error {
 	result, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET status = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ? AND revision = ?`,
 		BATCH_STATUS_CONFIRMING, batchID, BATCH_STATUS_UPLOADING, revision)
 	if err != nil {
@@ -258,6 +289,10 @@ func (store *Store) StartBatchConfirmation(ctx context.Context, batchID string, 
 		}
 		return ErrInvalidState
 	}
+	return nil
+}
+
+func updateBatchSelection(ctx context.Context, transaction *sql.Tx, batchID string, selectedIDs map[string]bool) error {
 	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_jobs SET selected = 0 WHERE batch_id = ?`, batchID); err != nil {
 		return fmt.Errorf("clear Managed Import Batch selection: %w", err)
 	}
@@ -269,9 +304,6 @@ func (store *Store) StartBatchConfirmation(ctx context.Context, batchID string, 
 		if err := requireMutation(result); err != nil {
 			return fmt.Errorf("%w: selected file %q is not accepted", ErrInvalidUpload, jobID)
 		}
-	}
-	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("commit Managed Import Batch confirmation start: %w", err)
 	}
 	return nil
 }

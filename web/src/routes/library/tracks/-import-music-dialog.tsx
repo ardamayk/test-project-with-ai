@@ -1,27 +1,11 @@
-import type {
-	ManagedImportBatch,
-	ManagedImportBatchFile,
-	ManagedImportPreview,
-} from "@repo/api-client";
 import { X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useState } from "react";
 import { Button } from "#/components/ui/button";
-import { apiClient } from "#/lib/api";
-
-type ImportState = "idle" | "uploading" | "confirming";
-
-type ImportFileEntry = {
-	key: string;
-	file: File;
-	jobId?: string;
-	progress: number;
-	state: "accepted" | "rejected" | "unresolved" | "completed";
-	selected: boolean;
-	preview?: ManagedImportPreview;
-	errorMessage?: string;
-	outcome?: ManagedImportBatchFile["outcome"];
-};
+import {
+	type ImportFileEntry,
+	type ImportState,
+	useManagedImportWorkflow,
+} from "./-managed-import-workflow";
 
 export function ImportMusicDialog({
 	isOpen,
@@ -69,188 +53,6 @@ export function ImportMusicDialog({
 			</DialogPrimitive.Portal>
 		</DialogPrimitive.Root>
 	);
-}
-
-function useManagedImportWorkflow({
-	onOpenChange,
-	onCommitted,
-}: {
-	onOpenChange: (isOpen: boolean) => void;
-	onCommitted: () => Promise<void>;
-}) {
-	const [importState, setImportState] = useState<ImportState>("idle");
-	const [batch, setBatch] = useState<ManagedImportBatch>();
-	const [entries, setEntries] = useState<ImportFileEntry[]>([]);
-	const [errorMessage, setErrorMessage] = useState("");
-	const isBusy = importState !== "idle";
-	const isCompleted = batch?.status === "completed";
-	const canConfirm = Boolean(
-		batch &&
-			entries.length > 0 &&
-			!isBusy &&
-			!isCompleted &&
-			entries.every((entry) => entry.state !== "unresolved"),
-	);
-
-	async function handleFiles(fileList: FileList | File[]) {
-		const files = Array.from(fileList);
-		if (files.length === 0) return;
-		setImportState("uploading");
-		setErrorMessage("");
-		const initialEntries = files.map(createImportFileEntry);
-		setEntries(initialEntries);
-		try {
-			const createdBatch = await apiClient.createManagedImportBatch();
-			setBatch(createdBatch);
-			const preparedEntries: Array<{
-				entry: ImportFileEntry;
-				jobId: string;
-			}> = [];
-			for (const entry of initialEntries) {
-				try {
-					const job = await apiClient.createManagedImportJob(createdBatch.id);
-					updateEntry(entry.key, { jobId: job.id });
-					preparedEntries.push({ entry, jobId: job.id });
-				} catch (error) {
-					updateEntry(entry.key, {
-						state: "rejected",
-						errorMessage: importErrorMessage(error),
-					});
-				}
-			}
-			await Promise.all(
-				preparedEntries.map(({ entry, jobId }) => uploadFile(jobId, entry)),
-			);
-			const previewBatch = await apiClient.getManagedImportBatch(
-				createdBatch.id,
-			);
-			setBatch(previewBatch);
-			setEntries((current) => mergeBatchFiles(current, previewBatch.files));
-		} catch (error) {
-			setErrorMessage(importErrorMessage(error));
-		} finally {
-			setImportState("idle");
-		}
-	}
-
-	async function uploadFile(jobId: string, entry: ImportFileEntry) {
-		try {
-			const preview = await apiClient.uploadManagedImportFile(
-				jobId,
-				entry.file.name,
-				entry.file,
-				(progress) => updateEntry(entry.key, { progress }),
-			);
-			updateEntry(entry.key, {
-				state: "accepted",
-				selected: true,
-				preview,
-				progress: 100,
-			});
-		} catch (error) {
-			updateEntry(entry.key, {
-				state: "rejected",
-				selected: false,
-				errorMessage: importErrorMessage(error),
-			});
-		}
-	}
-
-	function updateEntry(key: string, patch: Partial<ImportFileEntry>) {
-		setEntries((current) =>
-			current.map((entry) =>
-				entry.key === key ? { ...entry, ...patch } : entry,
-			),
-		);
-	}
-
-	function handleSelectionChange(key: string, selected: boolean) {
-		updateEntry(key, { selected });
-	}
-
-	async function handleConfirm() {
-		if (!batch || !canConfirm) return;
-		setImportState("confirming");
-		setErrorMessage("");
-		try {
-			const selectedFileIds = entries.flatMap((entry) =>
-				entry.selected && entry.jobId ? [entry.jobId] : [],
-			);
-			const report = await apiClient.confirmManagedImportBatch(
-				batch.id,
-				batch.revision,
-				selectedFileIds,
-			);
-			setBatch(report);
-			setEntries((current) => mergeBatchFiles(current, report.files));
-			if (
-				report.files.some(
-					(file) => file.outcome === "imported" || file.outcome === "replaced",
-				)
-			) {
-				await onCommitted();
-			}
-		} catch (error) {
-			setErrorMessage(importErrorMessage(error));
-		} finally {
-			setImportState("idle");
-		}
-	}
-
-	function resetDialog() {
-		setBatch(undefined);
-		setEntries([]);
-		setErrorMessage("");
-	}
-
-	function handleOpenChange(nextIsOpen: boolean) {
-		if (isBusy) return;
-		if (!nextIsOpen) resetDialog();
-		onOpenChange(nextIsOpen);
-	}
-
-	return {
-		importState,
-		entries,
-		errorMessage,
-		isBusy,
-		isCompleted,
-		canConfirm,
-		handleFiles,
-		handleConfirm,
-		handleSelectionChange,
-		handleOpenChange,
-	};
-}
-
-function createImportFileEntry(file: File, index: number): ImportFileEntry {
-	return {
-		key: `${index}:${file.name}:${file.size}`,
-		file,
-		progress: 0,
-		state: "unresolved",
-		selected: false,
-	};
-}
-
-function mergeBatchFiles(
-	entries: ImportFileEntry[],
-	files: ManagedImportBatchFile[],
-): ImportFileEntry[] {
-	return entries.map((entry) => {
-		const result = files.find((file) => file.jobId === entry.jobId);
-		if (!result) return entry;
-		return {
-			...entry,
-			state: result.state,
-			selected: result.selected,
-			preview: result.preview ?? entry.preview,
-			progress: result.validationProgress,
-			errorMessage:
-				result.errorReason ?? result.errorCode ?? entry.errorMessage,
-			outcome: result.outcome,
-		};
-	});
 }
 
 function ImportDialogHeader({ isBusy }: { isBusy: boolean }) {
@@ -465,9 +267,4 @@ function outcomeLabel(
 		replaced: "Replaced",
 		not_attempted: "Not attempted",
 	}[outcome];
-}
-
-function importErrorMessage(error: unknown): string {
-	if (error instanceof Error && error.message.trim()) return error.message;
-	return "Managed Import failed. Please try again.";
 }
