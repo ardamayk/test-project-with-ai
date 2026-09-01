@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
 const WORKSPACE_PACKAGES = ["@repo/api-client", "@repo/ui", "web"];
@@ -98,7 +98,7 @@ test("targeted Mise tasks select one workspace package", () => {
 		["api-client", "@repo/api-client"],
 	];
 
-	assert.deepEqual(taskPackages(runMiseDry("web:build"), "build"), ["web"]);
+	assert.match(runMiseTaskDryRun("web:build"), /\[workspace:build\]/);
 
 	for (const [taskPrefix, packageName] of packageTasks) {
 		for (const [taskSuffix, turboTask] of [
@@ -180,8 +180,11 @@ test("targeted native Mise tasks select their domain commands", () => {
 });
 
 test("aggregate Mise tasks propagate dependency failures", () => {
-	const probeUrl = new URL("../server/mise_failure_probe.go", import.meta.url);
-	writeFileSync(probeUrl, "package server\n\nfunc miseFailureProbe( ){ }\n");
+	const probeDirectory = mkdtempSync(
+		new URL("../server/.mise-failure-probe-", import.meta.url),
+	);
+	const probePath = `${probeDirectory}/probe.go`;
+	writeFileSync(probePath, "package server\n\nfunc miseFailureProbe( ){ }\n");
 
 	try {
 		const result = spawnSync("mise", ["run", "format:check"], {
@@ -193,7 +196,7 @@ test("aggregate Mise tasks propagate dependency failures", () => {
 		assert.notEqual(result.status, 0);
 		assert.match(`${result.stderr}${result.stdout}`, /server:format:check/);
 	} finally {
-		rmSync(probeUrl, { force: true });
+		rmSync(probeDirectory, { force: true, recursive: true });
 	}
 });
 

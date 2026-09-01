@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "scripts": {
     "build": "tauri build --no-bundle",
-    "build:sidecar": "pnpm prepare:mpv && tauri build --no-bundle --config src-tauri/tauri.sidecar.conf.json",
-    "build:sidecar:prepared": "pnpm prepare:mpv && tauri build --no-bundle --config src-tauri/tauri.sidecar.conf.json --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'",
+    "build:sidecar": "pnpm build:sidecar:base",
+    "build:sidecar:base": "pnpm prepare:mpv && tauri build --no-bundle --config src-tauri/tauri.sidecar.conf.json",
+    "build:sidecar:prepared": "pnpm build:sidecar:base --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'",
     "desktop:dev": "pnpm prepare:mpv && ./scripts/run-linux-webkit.sh tauri dev --config src-tauri/tauri.sidecar.conf.json",
     "format": "cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",

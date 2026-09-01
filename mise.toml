@@ -113,7 +113,8 @@ run = "pnpm turbo run test:unit --filter=web --filter=@repo/ui --filter=@repo/ap
 
 [tasks."web:build"]
 description = "Build the Web Client"
-run = "pnpm turbo run build --filter=web"
+depends = ["workspace:build"]
+run = ":"
 
 [tasks."docs:build"]
 description = "Build the product documentation embedded by the Music Server"
