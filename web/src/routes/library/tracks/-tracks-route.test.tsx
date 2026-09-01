@@ -208,6 +208,7 @@ describe("tracks route", () => {
 	});
 
 	afterEach(() => {
+		Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 		vi.useRealTimers();
 		cleanup();
 	});
@@ -462,5 +463,150 @@ describe("tracks route", () => {
 		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
 			"import-1",
 		]);
+	});
+
+	it("reconciles an accepted upload whose response was lost", async () => {
+		mocks.uploadManagedImportFile.mockRejectedValueOnce(
+			new Error("upload response lost"),
+		);
+		mocks.getManagedImportBatch
+			.mockRejectedValueOnce(new Error("preview refresh unavailable"))
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 3,
+				files: [
+					{
+						jobId: "import-1",
+						state: "accepted",
+						status: "awaiting_confirmation",
+						revision: 2,
+						validationProgress: 100,
+						selected: true,
+					},
+				],
+			});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["flac bytes"], "strict-import.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+		await screen.findByText("preview refresh unavailable");
+
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+
+		await vi.waitFor(() =>
+			expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+				"batch-1",
+				3,
+				["import-1"],
+			),
+		);
+	});
+
+	it("preserves an explicit deselection across confirmation refresh", async () => {
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["flac bytes"], "strict-import.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+		const checkbox = await screen.findByRole("checkbox", {
+			name: "Select strict-import.flac",
+		});
+		fireEvent.click(checkbox);
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+
+		await vi.waitFor(() =>
+			expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+				"batch-1",
+				3,
+				[],
+			),
+		);
+	});
+
+	it("uploads one desktop file at a time", async () => {
+		Object.defineProperty(window, "__TAURI_INTERNALS__", {
+			configurable: true,
+			value: {},
+		});
+		mocks.createManagedImportJob
+			.mockReset()
+			.mockResolvedValueOnce({
+				id: "import-1",
+				status: "uploading",
+				revision: 1,
+			})
+			.mockResolvedValueOnce({
+				id: "import-2",
+				status: "uploading",
+				revision: 1,
+			})
+			.mockResolvedValueOnce({
+				id: "import-3",
+				status: "uploading",
+				revision: 1,
+			});
+		const releases: Array<() => void> = [];
+		let activeUploads = 0;
+		let maximumActiveUploads = 0;
+		mocks.uploadManagedImportFile.mockImplementation(async (jobId) => {
+			activeUploads++;
+			maximumActiveUploads = Math.max(maximumActiveUploads, activeUploads);
+			await new Promise<void>((resolve) => releases.push(resolve));
+			activeUploads--;
+			return {
+				jobId,
+				status: "awaiting_confirmation",
+				revision: 2,
+				file: {
+					originalFilename: `${jobId}.flac`,
+					title: jobId,
+					artists: ["Test Artist"],
+					album: "Strict Import Tests",
+				},
+			};
+		});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["one"], "one.flac"),
+					new File(["two"], "two.flac"),
+					new File(["three"], "three.flac"),
+				],
+			},
+		});
+
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(1),
+		);
+		releases.shift()?.();
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(2),
+		);
+		releases.shift()?.();
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3),
+		);
+		releases.shift()?.();
+		await vi.waitFor(() => expect(activeUploads).toBe(0));
+		expect(maximumActiveUploads).toBe(1);
 	});
 });

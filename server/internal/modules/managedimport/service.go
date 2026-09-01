@@ -337,6 +337,9 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			continue
 		}
 		if _, err := service.confirmJob(ctx, job, job.Revision); err != nil {
+			if ctx.Err() != nil {
+				return errors.Join(err, ctx.Err())
+			}
 			_, reason := failureDetails(err)
 			if finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, reason); finishErr != nil {
 				return errors.Join(err, finishErr)
@@ -419,7 +422,9 @@ func (service *Service) markRejected(ctx context.Context, job importJob, origina
 		return nil
 	}
 	errorCode, reason := failureDetails(uploadErr)
-	return service.store.MarkFailed(ctx, job.ID, originalFilename, errorCode, "file", reason)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	return service.store.MarkFailed(cleanupCtx, job.ID, originalFilename, errorCode, "file", reason)
 }
 
 func failureDetails(err error) (string, string) {
@@ -434,6 +439,12 @@ func failureDetails(err error) (string, string) {
 		return "batch_upload_too_large", "batch exceeds the configured byte limit"
 	case errors.Is(err, ErrInvalidUpload):
 		return "invalid_upload", "upload is invalid"
+	case errors.Is(err, ErrInsufficientStorage):
+		return "insufficient_storage", "Managed Storage does not have enough capacity for this import and its safety reserve"
+	case errors.Is(err, ErrUnsafeStoragePath):
+		return "unsafe_storage_path", "Managed Storage path failed containment checks"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return string(library.INSPECTION_ERROR_VALIDATION_CANCELLED), "file validation was canceled"
 	default:
 		return "inspection_failed", "file validation failed"
 	}

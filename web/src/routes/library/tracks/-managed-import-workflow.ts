@@ -4,6 +4,7 @@ import type {
 	ManagedImportPreview,
 } from "@repo/api-client";
 import { useState } from "react";
+import { isDesktopClient } from "#/desktop/bridge";
 import { apiClient } from "#/lib/api";
 
 export type ImportState = "idle" | "uploading" | "confirming";
@@ -17,6 +18,7 @@ export type ImportFileEntry = {
 	progress: number;
 	state: "accepted" | "rejected" | "unresolved" | "completed";
 	selected: boolean;
+	hasSelectionOverride: boolean;
 	preview?: ManagedImportPreview;
 	errorMessage?: string;
 	outcome?: ManagedImportBatchFile["outcome"];
@@ -49,7 +51,7 @@ export function useManagedImportWorkflow({
 		handleFiles: createFileHandler(state),
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
 		handleSelectionChange: (key: string, selected: boolean) =>
-			state.updateEntry(key, { selected }),
+			state.updateEntry(key, { selected, hasSelectionOverride: true }),
 		handleOpenChange: createOpenHandler(state, isBusy, onOpenChange),
 	};
 }
@@ -129,7 +131,12 @@ function createConfirmHandler(
 				state.batch.id,
 			);
 			state.setBatch(currentBatch);
-			const report = await confirmImportBatch(currentBatch, state.entries);
+			const reconciledEntries = mergeBatchFiles(
+				state.entries,
+				currentBatch.files,
+			);
+			state.setEntries(reconciledEntries);
+			const report = await confirmImportBatch(currentBatch, reconciledEntries);
 			state.setBatch(report);
 			state.setEntries((current) => mergeBatchFiles(current, report.files));
 			if (hasLibraryMutation(report)) await onCommitted();
@@ -245,7 +252,8 @@ async function runWithConcurrency<T>(
 			if (item) await runItem(item);
 		}
 	}
-	const workerCount = Math.min(MAX_CONCURRENT_UPLOADS, items.length);
+	const concurrencyLimit = isDesktopClient() ? 1 : MAX_CONCURRENT_UPLOADS;
+	const workerCount = Math.min(concurrencyLimit, items.length);
 	await Promise.all(Array.from({ length: workerCount }, runWorker));
 }
 
@@ -256,6 +264,7 @@ function createImportFileEntry(file: File, index: number): ImportFileEntry {
 		progress: 0,
 		state: "unresolved",
 		selected: false,
+		hasSelectionOverride: false,
 	};
 }
 
@@ -269,7 +278,10 @@ function mergeBatchFiles(
 		return {
 			...entry,
 			state: result.state,
-			selected: result.selected,
+			selected:
+				result.state === "accepted" && entry.hasSelectionOverride
+					? entry.selected
+					: result.selected,
 			preview: result.preview ?? entry.preview,
 			progress: result.validationProgress,
 			errorMessage:

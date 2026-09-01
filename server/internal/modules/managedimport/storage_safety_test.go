@@ -40,6 +40,26 @@ func TestManagedImportRejectsUploadWhenStorageReserveWouldBeExhausted(t *testing
 	testutil.AssertErrorCode(t, response, http.StatusInsufficientStorage, "insufficient_storage")
 }
 
+func TestFailureDetailsPreservesStorageErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantCode   string
+		wantReason string
+	}{
+		{name: "insufficient storage", err: ErrInsufficientStorage, wantCode: "insufficient_storage", wantReason: "Managed Storage does not have enough capacity for this import and its safety reserve"},
+		{name: "unsafe storage path", err: ErrUnsafeStoragePath, wantCode: "unsafe_storage_path", wantReason: "Managed Storage path failed containment checks"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			code, reason := failureDetails(testCase.err)
+			if code != testCase.wantCode || reason != testCase.wantReason {
+				t.Fatalf("failure details = (%q, %q), want (%q, %q)", code, reason, testCase.wantCode, testCase.wantReason)
+			}
+		})
+	}
+}
+
 func TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit(t *testing.T) {
 	fixturePath := filepath.Join("..", "library", "testdata", "strict-import.flac")
 	fixture := readStorageSafetyFixture(t)

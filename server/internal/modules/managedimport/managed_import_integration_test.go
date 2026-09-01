@@ -475,6 +475,71 @@ func TestManagedImportBatchSerializesConcurrentConfirmation(t *testing.T) {
 	}
 }
 
+func TestManagedImportBatchPersistsCanceledUploadFailure(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storage := managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20})
+	service := managedimport.NewService(managedimport.NewStore(database), storage, library.NewMediaInspector())
+	batch, err := service.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create canceled upload batch: %v", err)
+	}
+	job, err := service.CreateJob(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("create canceled upload job: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err = service.Upload(ctx, job.ID, "canceled.flac", &cancelingReader{cancel: cancel}, -1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled upload error = %v", err)
+	}
+	persistedJob, err := service.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get canceled upload job: %v", err)
+	}
+	if persistedJob.Status != managedimport.STATUS_FAILED {
+		t.Fatalf("canceled upload job status = %q", persistedJob.Status)
+	}
+	if persistedJob.ErrorCode != "validation_cancelled" {
+		t.Fatalf("canceled upload error code = %q", persistedJob.ErrorCode)
+	}
+}
+
+func TestManagedImportBatchLeavesCanceledConfirmationResumable(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storage := managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20})
+	ctx, cancel := context.WithCancel(context.Background())
+	inspector := &cancelOnConfirmationInspector{delegate: library.NewMediaInspector(), cancel: cancel}
+	service := managedimport.NewService(managedimport.NewStore(database), storage, inspector)
+	batch, err := service.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create canceled confirmation batch: %v", err)
+	}
+	job, err := service.CreateJob(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("create canceled confirmation job: %v", err)
+	}
+	preview, err := service.Upload(context.Background(), job.ID, "resumable.flac", bytes.NewReader(readStrictFLACFixture(t)), int64(len(readStrictFLACFixture(t))))
+	if err != nil {
+		t.Fatalf("upload resumable confirmation job: %v", err)
+	}
+	batch, err = service.GetBatch(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("get resumable confirmation batch: %v", err)
+	}
+	_, err = service.ConfirmBatch(ctx, batch.ID, managedimport.BatchConfirmation{Revision: batch.Revision, SelectedFileIDs: []string{preview.JobID}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled confirmation error = %v", err)
+	}
+
+	completedBatch, err := service.ConfirmBatch(context.Background(), batch.ID, managedimport.BatchConfirmation{Revision: batch.Revision, SelectedFileIDs: []string{preview.JobID}})
+	if err != nil {
+		t.Fatalf("resume canceled confirmation: %v", err)
+	}
+	if completedBatch.Status != managedimport.BATCH_STATUS_COMPLETED || completedBatch.Files[0].Outcome != managedimport.OUTCOME_IMPORTED {
+		t.Fatalf("resumed canceled confirmation batch = %+v", completedBatch)
+	}
+}
+
 func TestManagedImportCommitsOGGFormatsWithoutChangingSourceBytes(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1475,6 +1540,29 @@ func confirmImportBatch(t *testing.T, router http.Handler, batch managedimport.B
 	}
 	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%s]}`, batch.Revision, strings.Join(selectedJSON, ",")))
 	return testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batch.ID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
+}
+
+type cancelingReader struct {
+	cancel context.CancelFunc
+}
+
+func (reader *cancelingReader) Read(_ []byte) (int, error) {
+	reader.cancel()
+	return 0, context.Canceled
+}
+
+type cancelOnConfirmationInspector struct {
+	delegate library.MediaInspector
+	cancel   context.CancelFunc
+	calls    int
+}
+
+func (inspector *cancelOnConfirmationInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
+	inspector.calls++
+	if inspector.calls == 2 {
+		inspector.cancel()
+	}
+	return inspector.delegate.Inspect(ctx, path, reportProgress)
 }
 
 func newManagedImportTestRouter(t *testing.T, managedStoragePath string) http.Handler {
