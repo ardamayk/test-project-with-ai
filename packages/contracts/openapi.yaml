@@ -1211,6 +1211,15 @@ components:
         file:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
     ManagedImportPreviewFile:
+      oneOf:
+        - $ref: "#/components/schemas/ManagedImportFlacPreviewFile"
+        - $ref: "#/components/schemas/ManagedImportMp3PreviewFile"
+      discriminator:
+        propertyName: format
+        mapping:
+          flac: "#/components/schemas/ManagedImportFlacPreviewFile"
+          mp3: "#/components/schemas/ManagedImportMp3PreviewFile"
+    ManagedImportPreviewFileCommon:
       type: object
       required:
         - originalFilename
@@ -1222,12 +1231,8 @@ components:
         - trackNo
         - discNo
         - durationMs
-        - format
-        - container
-        - codec
         - sampleRateHz
         - channelCount
-        - bitDepth
         - bitrateKbps
         - artworkMediaType
       properties:
@@ -1269,22 +1274,10 @@ components:
         durationMs:
           type: integer
           minimum: 1
-        format:
-          type: string
-          enum: [flac]
-        container:
-          type: string
-          enum: [flac]
-        codec:
-          type: string
-          enum: [flac]
         sampleRateHz:
           type: integer
           minimum: 1
         channelCount:
-          type: integer
-          minimum: 1
-        bitDepth:
           type: integer
           minimum: 1
         bitrateKbps:
@@ -1293,6 +1286,39 @@ components:
         artworkMediaType:
           type: string
           enum: [image/jpeg, image/png, image/webp]
+    ManagedImportFlacPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec, bitDepth]
+          properties:
+            format:
+              type: string
+              const: flac
+            container:
+              type: string
+              const: flac
+            codec:
+              type: string
+              const: flac
+            bitDepth:
+              type: integer
+              minimum: 1
+    ManagedImportMp3PreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec]
+          properties:
+            format:
+              type: string
+              const: mp3
+            container:
+              type: string
+              const: mp3
+            codec:
+              type: string
+              const: mp3
     ManagedImportConfirmation:
       type: object
       required: [revision]
