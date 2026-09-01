@@ -14,10 +14,11 @@ import (
 )
 
 type Service struct {
-	store     *Store
-	storage   *Storage
-	inspector library.MediaInspector
-	commitMu  sync.Mutex
+	store               *Store
+	storage             *Storage
+	inspector           library.MediaInspector
+	commitMu            sync.Mutex
+	batchConfirmationMu sync.Mutex
 }
 
 func NewService(store *Store, storage *Storage, inspector library.MediaInspector) *Service {
@@ -53,15 +54,36 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
 	}
+	err = service.reserveBatchUpload(ctx, job, contentLength)
+	if err != nil {
+		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
+	}
 	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
 		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
+	}
+	if job.BatchID != "" {
+		err = service.store.ReserveBatchUpload(ctx, job.ID, upload.Size, service.storage.batchLimit)
+		if err != nil {
+			return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, err)
+		}
 	}
 	inspection, err := service.validateStagedUpload(ctx, jobID, upload)
 	if err != nil {
 		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, err)
 	}
 	return service.persistPreview(ctx, job, originalFilename, upload, inspection)
+}
+
+func (service *Service) reserveBatchUpload(ctx context.Context, job importJob, contentLength int64) error {
+	if job.BatchID == "" {
+		return nil
+	}
+	reservationSize, err := service.storage.UploadReservationSize(contentLength)
+	if err != nil {
+		return err
+	}
+	return service.store.ReserveBatchUpload(ctx, job.ID, reservationSize, service.storage.batchLimit)
 }
 
 func (service *Service) getUploadingJob(ctx context.Context, jobID string) (importJob, error) {
@@ -213,6 +235,13 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if err != nil {
 		return Result{}, err
 	}
+	if job.BatchID != "" {
+		return Result{}, ErrInvalidState
+	}
+	return service.confirmJob(ctx, job, revision)
+}
+
+func (service *Service) confirmJob(ctx context.Context, job importJob, revision int) (Result, error) {
 	if job.Status == STATUS_COMMITTED {
 		return Result{JobID: job.ID, Status: job.Status, Revision: job.Revision, TrackID: job.TrackID}, nil
 	}
@@ -230,7 +259,7 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if err != nil {
 		return Result{}, validationError(err)
 	}
-	if err := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); err != nil {
+	if err := service.validateAlbumPositions(ctx, job.ID, inspection.Metadata); err != nil {
 		return Result{}, err
 	}
 	if inspection.FileSHA256 != job.ContentSHA256 {
@@ -248,6 +277,8 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 }
 
 func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confirmation BatchConfirmation) (Batch, error) {
+	service.batchConfirmationMu.Lock()
+	defer service.batchConfirmationMu.Unlock()
 	selectedIDs, err := selectedFileIDs(confirmation.SelectedFileIDs)
 	if err != nil {
 		return Batch{}, err
@@ -296,7 +327,7 @@ func (service *Service) startOrResumeBatch(ctx context.Context, batch Batch, rev
 
 func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) error {
 	for _, job := range jobs {
-		if job.Outcome == OUTCOME_REJECTED {
+		if job.Outcome != "" {
 			continue
 		}
 		if !job.Selected {
@@ -305,7 +336,7 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			}
 			continue
 		}
-		if _, err := service.Confirm(ctx, job.ID, job.Revision); err != nil {
+		if _, err := service.confirmJob(ctx, job, job.Revision); err != nil {
 			_, reason := failureDetails(err)
 			if finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, reason); finishErr != nil {
 				return errors.Join(err, finishErr)

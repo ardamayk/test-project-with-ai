@@ -399,4 +399,68 @@ describe("tracks route", () => {
 		expect(screen.getByText("Imported")).toBeTruthy();
 		expect(screen.getByRole("dialog")).toBeTruthy();
 	});
+
+	it("retains the created batch when the preview refresh fails", async () => {
+		mocks.getManagedImportBatch
+			.mockRejectedValueOnce(new Error("preview refresh unavailable"))
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 3,
+				files: [
+					{
+						jobId: "import-1",
+						state: "accepted",
+						status: "awaiting_confirmation",
+						revision: 2,
+						validationProgress: 100,
+						selected: true,
+					},
+				],
+			});
+		mocks.confirmManagedImportBatch.mockResolvedValueOnce({
+			id: "batch-1",
+			status: "completed",
+			revision: 5,
+			files: [
+				{
+					jobId: "import-1",
+					state: "completed",
+					status: "committed",
+					revision: 3,
+					validationProgress: 100,
+					selected: true,
+					outcome: "imported",
+					trackId: "imported-track",
+				},
+			],
+		});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		const fileInput = screen.getByLabelText("Audio files");
+		expect(fileInput.getAttribute("accept")).toBe(".flac,.mp3,.m4a,.ogg,.opus");
+		fireEvent.change(fileInput, {
+			target: {
+				files: [
+					new File(["flac bytes"], "strict-import.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+
+		await screen.findByText("preview refresh unavailable");
+		const confirmButton = screen.getByRole("button", {
+			name: "Confirm Import",
+		});
+		expect(confirmButton).not.toHaveProperty("disabled", true);
+		fireEvent.click(confirmButton);
+
+		await screen.findByText("Imported");
+		expect(mocks.getManagedImportBatch).toHaveBeenCalledTimes(2);
+		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
+			"import-1",
+		]);
+	});
 });

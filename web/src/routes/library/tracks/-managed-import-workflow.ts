@@ -96,7 +96,10 @@ function createFileHandler(state: WorkflowState) {
 		const initialEntries = files.map(createImportFileEntry);
 		state.setEntries(initialEntries);
 		try {
+			const createdBatch = await apiClient.createManagedImportBatch();
+			state.setBatch(createdBatch);
 			const previewBatch = await uploadImportBatch(
+				createdBatch.id,
 				initialEntries,
 				state.updateEntry,
 			);
@@ -122,7 +125,11 @@ function createConfirmHandler(
 		state.setImportState("confirming");
 		state.setErrorMessage("");
 		try {
-			const report = await confirmImportBatch(state.batch, state.entries);
+			const currentBatch = await apiClient.getManagedImportBatch(
+				state.batch.id,
+			);
+			state.setBatch(currentBatch);
+			const report = await confirmImportBatch(currentBatch, state.entries);
 			state.setBatch(report);
 			state.setEntries((current) => mergeBatchFiles(current, report.files));
 			if (hasLibraryMutation(report)) await onCommitted();
@@ -147,15 +154,15 @@ function createOpenHandler(
 }
 
 async function uploadImportBatch(
+	batchId: string,
 	entries: ImportFileEntry[],
 	updateEntry: (key: string, patch: Partial<ImportFileEntry>) => void,
 ): Promise<ManagedImportBatch> {
-	const batch = await apiClient.createManagedImportBatch();
-	const preparedEntries = await createBatchJobs(batch.id, entries, updateEntry);
+	const preparedEntries = await createBatchJobs(batchId, entries, updateEntry);
 	await runWithConcurrency(preparedEntries, ({ entry, jobId }) =>
 		uploadFile(jobId, entry, updateEntry),
 	);
-	return apiClient.getManagedImportBatch(batch.id);
+	return apiClient.getManagedImportBatch(batchId);
 }
 
 async function createBatchJobs(

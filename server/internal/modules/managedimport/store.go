@@ -184,6 +184,30 @@ func (store *Store) UpdateValidationProgress(ctx context.Context, jobID string, 
 	return nil
 }
 
+func (store *Store) ReserveBatchUpload(ctx context.Context, jobID string, uploadSize, batchLimit int64) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_jobs
+		SET upload_size_bytes = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ? AND batch_id IS NOT NULL AND ? + COALESCE((
+			SELECT SUM(sibling.upload_size_bytes) FROM managed_import_jobs AS sibling
+			WHERE sibling.batch_id = managed_import_jobs.batch_id AND sibling.id != managed_import_jobs.id
+		), 0) <= ?`, uploadSize, jobID, STATUS_UPLOADING, uploadSize, batchLimit)
+	if err != nil {
+		return fmt.Errorf("reserve Managed Import Batch upload bytes: %w", err)
+	}
+	if err := requireMutation(result); err == nil {
+		return nil
+	}
+	job, getErr := store.GetJob(ctx, jobID)
+	if getErr != nil {
+		return getErr
+	}
+	if job.Status != STATUS_UPLOADING || job.BatchID == "" {
+		return ErrInvalidState
+	}
+	return ErrBatchTooLarge
+}
+
 func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256, previewJSON string, uploadSize, batchLimit int64) (importJob, error) {
 	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
@@ -323,8 +347,8 @@ func (store *Store) MarkBatchFileOutcome(ctx context.Context, jobID string, outc
 	if outcome == OUTCOME_IMPORTED || outcome == OUTCOME_REPLACED {
 		status = STATUS_COMMITTED
 	}
-	result, err := store.database.ExecContext(ctx, `UPDATE managed_import_jobs SET status = ?, outcome = ?, error_code = NULLIF(?, ''), error_reason = NULLIF(?, ''), staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		status, outcome, errorCode, errorReason, jobID)
+	result, err := store.database.ExecContext(ctx, `UPDATE managed_import_jobs SET status = ?, outcome = ?, error_code = NULLIF(?, ''), error_reason = NULLIF(?, ''), staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ? AND outcome IS NULL`,
+		status, outcome, errorCode, errorReason, jobID, STATUS_AWAITING_CONFIRMATION)
 	if err != nil {
 		return fmt.Errorf("record Managed Import Batch file outcome: %w", err)
 	}

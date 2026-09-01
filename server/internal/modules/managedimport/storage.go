@@ -112,6 +112,17 @@ func (storage *Storage) StageUpload(source io.Reader, contentLength int64) (uplo
 	return storage.writeStagedUpload(root, source)
 }
 
+func (storage *Storage) UploadReservationSize(contentLength int64) (int64, error) {
+	if err := storage.validateUploadLength(contentLength); err != nil {
+		return 0, err
+	}
+	if contentLength >= 0 {
+		return contentLength, nil
+	}
+	streamLimit, _ := storage.streamLimit()
+	return streamLimit, nil
+}
+
 func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stagedUpload, error) {
 	relativePath := filepath.Join(".staging", ".import-"+uuid.NewString()+".upload")
 	file, err := root.OpenFile(relativePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

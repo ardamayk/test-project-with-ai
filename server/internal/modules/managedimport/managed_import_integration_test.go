@@ -297,6 +297,72 @@ func TestManagedImportBatchEnforcesCumulativeByteLimit(t *testing.T) {
 	}
 }
 
+func TestManagedImportBatchCountsRejectedUploadBytes(t *testing.T) {
+	fixture := readStrictFLACFixture(t)
+	rejectedBytes := []byte("not audio")
+	configuration := config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedImportFileLimitBytes:  int64(len(fixture) + 1),
+		ManagedImportBatchLimitBytes: int64(len(fixture) + len(rejectedBytes) - 1),
+	}
+	router := newConfiguredManagedImportRouter(t, configuration)
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	rejectedJobID := createBatchImportJob(t, router, batchID)
+	acceptedJobID := createBatchImportJob(t, router, batchID)
+
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+rejectedJobID+"/file", bytes.NewReader(rejectedBytes), map[string]string{
+		"Content-Type": "audio/wav", "X-Import-Filename": "rejected.wav",
+	})
+	testutil.AssertErrorCode(t, response, http.StatusUnprocessableEntity, "unsupported_format")
+	response = testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+acceptedJobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type": "audio/flac", "X-Import-Filename": "accepted.flac",
+	})
+	testutil.AssertErrorCode(t, response, http.StatusRequestEntityTooLarge, "batch_upload_too_large")
+}
+
+func TestManagedImportBatchReservesConcurrentUploadBytesAtomically(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	store := managedimport.NewStore(database)
+	ctx := context.Background()
+	batch, err := store.CreateBatch(ctx)
+	if err != nil {
+		t.Fatalf("create reservation test batch: %v", err)
+	}
+	jobIDs := make([]string, 2)
+	for index := range jobIDs {
+		job, createErr := store.CreateJob(ctx, batch.ID)
+		if createErr != nil {
+			t.Fatalf("create reservation test job: %v", createErr)
+		}
+		jobIDs[index] = job.ID
+	}
+
+	const reservationBytes int64 = 10
+	results := make(chan error, len(jobIDs))
+	start := make(chan struct{})
+	for _, jobID := range jobIDs {
+		go func() {
+			<-start
+			results <- store.ReserveBatchUpload(ctx, jobID, reservationBytes, reservationBytes)
+		}()
+	}
+	close(start)
+	var successCount, limitCount int
+	for range jobIDs {
+		switch result := <-results; {
+		case result == nil:
+			successCount++
+		case errors.Is(result, managedimport.ErrBatchTooLarge):
+			limitCount++
+		default:
+			t.Fatalf("reserve concurrent batch upload: %v", result)
+		}
+	}
+	if successCount != 1 || limitCount != 1 {
+		t.Fatalf("concurrent reservations: success = %d, limited = %d", successCount, limitCount)
+	}
+}
+
 func TestManagedImportBatchRejectsConfirmationWhileFileIsUnresolved(t *testing.T) {
 	router := newConfiguredManagedImportRouter(t, config.Config{ManagedStoragePath: t.TempDir()})
 	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
@@ -343,6 +409,69 @@ func TestManagedImportBatchResumesConfirmationAfterInterruption(t *testing.T) {
 	testutil.DecodeJSON(t, response, &batch)
 	if batch.Status != managedimport.BATCH_STATUS_COMPLETED || batch.Files[0].Outcome != managedimport.OUTCOME_IMPORTED {
 		t.Fatalf("resumed Import Batch = %+v", batch)
+	}
+}
+
+func TestManagedImportBatchRejectsDirectFileConfirmation(t *testing.T) {
+	router := newConfiguredManagedImportRouter(t, config.Config{ManagedStoragePath: t.TempDir()})
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	jobID := createBatchImportJob(t, router, batchID)
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t)), map[string]string{
+		"Content-Type": "audio/flac", "X-Import-Filename": "batch-owned.flac",
+	})
+	if uploadResponse.Code != http.StatusOK {
+		t.Fatalf("upload batch-owned file status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+	}
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{"Content-Type": "application/json"})
+	testutil.AssertErrorCode(t, response, http.StatusConflict, "import_state_conflict")
+
+	batch := getImportBatch(t, router, batchID)
+	response = confirmImportBatch(t, router, batch, []string{jobID})
+	if response.Code != http.StatusOK {
+		t.Fatalf("confirm batch after direct rejection status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestManagedImportBatchSerializesConcurrentConfirmation(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	jobID := createBatchImportJob(t, router, batchID)
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(readStrictFLACFixture(t)), map[string]string{
+		"Content-Type": "audio/flac", "X-Import-Filename": "concurrent.flac",
+	})
+	if uploadResponse.Code != http.StatusOK {
+		t.Fatalf("upload concurrently confirmed file status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+	}
+	batch := getImportBatch(t, router, batchID)
+
+	const confirmationCount = 8
+	results := make(chan *httptest.ResponseRecorder, confirmationCount)
+	start := make(chan struct{})
+	for range confirmationCount {
+		go func() {
+			<-start
+			results <- confirmImportBatch(t, router, batch, []string{jobID})
+		}()
+	}
+	close(start)
+	for range confirmationCount {
+		response := <-results
+		if response.Code != http.StatusOK {
+			t.Fatalf("concurrent batch confirmation status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	completedBatch := getImportBatch(t, router, batchID)
+	if completedBatch.Status != managedimport.BATCH_STATUS_COMPLETED || completedBatch.Files[0].Outcome != managedimport.OUTCOME_IMPORTED {
+		t.Fatalf("concurrently confirmed Import Batch = %+v", completedBatch)
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("concurrently confirmed Track count = %d, err = %v", trackCount, err)
 	}
 }
 
@@ -1313,6 +1442,39 @@ func createImportJob(t *testing.T, router http.Handler) string {
 	}
 	testutil.DecodeJSON(t, jobResponse, &job)
 	return job.ID
+}
+
+func createBatchImportJob(t *testing.T, router http.Handler, batchID string) string {
+	t.Helper()
+	body := strings.NewReader(fmt.Sprintf(`{"batchId":%q}`, batchID))
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", body, map[string]string{"Content-Type": "application/json"})
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create batch Import Job status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var job managedimport.Job
+	testutil.DecodeJSON(t, response, &job)
+	return job.ID
+}
+
+func getImportBatch(t *testing.T, router http.Handler, batchID string) managedimport.Batch {
+	t.Helper()
+	response := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/import-batches/"+batchID, nil, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("get Import Batch status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, response, &batch)
+	return batch
+}
+
+func confirmImportBatch(t *testing.T, router http.Handler, batch managedimport.Batch, selectedFileIDs []string) *httptest.ResponseRecorder {
+	t.Helper()
+	selectedJSON := make([]string, len(selectedFileIDs))
+	for index, jobID := range selectedFileIDs {
+		selectedJSON[index] = fmt.Sprintf("%q", jobID)
+	}
+	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%s]}`, batch.Revision, strings.Join(selectedJSON, ",")))
+	return testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batch.ID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
 }
 
 func newManagedImportTestRouter(t *testing.T, managedStoragePath string) http.Handler {
