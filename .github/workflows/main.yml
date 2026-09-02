@@ -1,7 +1,7 @@
 # Full trusted verification after every main update (issue #80).
 #
 # Public Mise tasks remain the execution contract. Domain jobs run in parallel,
-# publish trusted caches, keep 14-day diagnostics, and build separate Music
+# publish trusted caches, keep configured long-lived diagnostics, and build separate Music
 # Server and Desktop Client artifacts without coupling their runtime lifecycle.
 
 name: Main
@@ -182,6 +182,10 @@ jobs:
           PLAYWRIGHT_CACHE_HIT: ${{ steps.playwright_cache.outputs.cache-hit }}
         run: |
           duration=$(( $(date +%s) - ${START:-$(date +%s)} ))
+          retry_count=0
+          if [[ -f "$RUNNER_TEMP/main-workspace-logs/web-e2e.log" ]]; then
+            retry_count="$(awk '{ count += gsub(/\(retry #[0-9]+\)/, "&") } END { print count + 0 }' "$RUNNER_TEMP/main-workspace-logs/web-e2e.log")"
+          fi
           {
             echo "### Main — Workspace, Web E2E, and Web build"
             echo
@@ -191,14 +195,16 @@ jobs:
             echo "| Type check | ${TYPECHECK_OUTCOME:-not run} |"
             echo "| Unit tests (no retries) | ${UNIT_OUTCOME:-not run} |"
             echo "| Repository policy tests (no retries) | ${POLICY_OUTCOME:-not run} |"
-            echo "| Web E2E (one CI retry with tracing) | ${E2E_OUTCOME:-not run} |"
+            echo "| Web E2E | ${E2E_OUTCOME:-not run} |"
             echo "| Web Client production build | ${BUILD_OUTCOME:-not run} |"
             echo
             echo "Caches: pnpm=${PNPM_CACHE_HIT:-miss}, Turbo=${TURBO_CACHE_HIT:-miss}, Playwright=${PLAYWRIGHT_CACHE_HIT:-miss}"
             echo
+            echo "Playwright retry attempts consumed: ${retry_count} (maximum: 1 per test)."
+            echo
             echo "Coverage reason: full trusted main verification; no jobs skipped by change classification."
             echo
-            echo "Artifacts: \`main-web-client\`; failures: \`main-workspace-diagnostics\` (14 days)."
+            echo "Artifacts: \`main-web-client\`; failures: \`main-workspace-diagnostics\` (${ARTIFACT_RETENTION_DAYS} days)."
             echo
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -364,21 +370,29 @@ jobs:
           UNIT_OUTCOME: ${{ steps.unit.outcome }}
           HLS_OUTCOME: ${{ steps.hls.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
+          PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
+          TURBO_CACHE_HIT: ${{ steps.turbo_cache.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.go_cache.outputs.cache-hit }}
           GOLANGCI_CACHE_HIT: ${{ steps.golangci_cache.outputs.cache-hit }}
           PLAYWRIGHT_CACHE_HIT: ${{ steps.playwright_cache.outputs.cache-hit }}
         run: |
           duration=$(( $(date +%s) - ${START:-$(date +%s)} ))
+          retry_count=0
+          if [[ -f "$RUNNER_TEMP/main-server-logs/hls.log" ]]; then
+            retry_count="$(awk '{ count += gsub(/\(retry #[0-9]+\)/, "&") } END { print count + 0 }' "$RUNNER_TEMP/main-server-logs/hls.log")"
+          fi
           {
             echo "### Main — Music Server, HLS, docs, and server build"
             echo
-            echo "Checks: format=${FORMAT_OUTCOME:-not run}, lint=${LINT_OUTCOME:-not run}, unit=${UNIT_OUTCOME:-not run} (no retries), HLS=${HLS_OUTCOME:-not run} (one browser retry), build=${BUILD_OUTCOME:-not run}."
+            echo "Checks: format=${FORMAT_OUTCOME:-not run}, lint=${LINT_OUTCOME:-not run}, unit=${UNIT_OUTCOME:-not run} (no retries), HLS=${HLS_OUTCOME:-not run}, build=${BUILD_OUTCOME:-not run}."
             echo
-            echo "Caches: Go=${GO_CACHE_HIT:-miss}, golangci-lint=${GOLANGCI_CACHE_HIT:-miss}, Playwright=${PLAYWRIGHT_CACHE_HIT:-miss}."
+            echo "Caches: pnpm=${PNPM_CACHE_HIT:-miss}, Turbo=${TURBO_CACHE_HIT:-miss}, Go=${GO_CACHE_HIT:-miss}, golangci-lint=${GOLANGCI_CACHE_HIT:-miss}, Playwright=${PLAYWRIGHT_CACHE_HIT:-miss}."
+            echo
+            echo "Playwright retry attempts consumed: ${retry_count} (maximum: 1 per test)."
             echo
             echo "Coverage reason: full trusted main verification; no jobs skipped by change classification."
             echo
-            echo "Artifacts: \`main-music-server\`, \`main-product-docs\`; failures: \`main-music-server-diagnostics\` (14 days)."
+            echo "Artifacts: \`main-music-server\`, \`main-product-docs\`; failures: \`main-music-server-diagnostics\` (${ARTIFACT_RETENTION_DAYS} days)."
             echo
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -463,7 +477,7 @@ jobs:
             echo
             echo "No generation runs implicitly; only \`mise run generate:check\` verifies committed output."
             echo
-            echo "Failure artifact: \`main-generated-drift-diagnostics\` (14 days)."
+            echo "Failure artifact: \`main-generated-drift-diagnostics\` (${ARTIFACT_RETENTION_DAYS} days)."
             echo
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -668,6 +682,7 @@ jobs:
           MPV_TEST_OUTCOME: ${{ steps.mpv_test.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
+          TURBO_CACHE_HIT: ${{ steps.turbo_cache.outputs.cache-hit }}
           CARGO_CACHE_HIT: ${{ steps.cargo_cache.outputs.cache-hit }}
           MPV_CACHE_HIT: ${{ steps.mpv_cache.outputs.cache-hit }}
         run: |
@@ -677,11 +692,11 @@ jobs:
             echo
             echo "Checks: format=${FORMAT_OUTCOME:-not run}, lint=${LINT_OUTCOME:-not run}, unit=${UNIT_OUTCOME:-not run} (no retries), mpv build=${MPV_BUILD_OUTCOME:-cache hit}, real mpv=${MPV_TEST_OUTCOME:-not run}, build=${BUILD_OUTCOME:-not run}."
             echo
-            echo "Caches: pnpm=${PNPM_CACHE_HIT:-miss}, Cargo=${CARGO_CACHE_HIT:-miss}, verified mpv=${MPV_CACHE_HIT:-miss}."
+            echo "Caches: pnpm=${PNPM_CACHE_HIT:-miss}, Turbo=${TURBO_CACHE_HIT:-miss}, Cargo=${CARGO_CACHE_HIT:-miss}, verified mpv=${MPV_CACHE_HIT:-miss}."
             echo
             echo "Coverage reason: full trusted main verification; no jobs skipped by change classification."
             echo
-            echo "Artifacts: \`main-desktop-client\`; failures: \`main-desktop-client-diagnostics\` (14 days)."
+            echo "Artifacts: \`main-desktop-client\`; failures: \`main-desktop-client-diagnostics\` (${ARTIFACT_RETENTION_DAYS} days)."
             echo
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -727,6 +742,6 @@ jobs:
             echo "Run and artifact links: $RUN_URL"
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$result" != "success" ]]; then
-            echo "Main / Full Verification failed; see job summaries and 14-day diagnostics." >&2
+            echo "Main / Full Verification failed; see job summaries and ${ARTIFACT_RETENTION_DAYS}-day diagnostics." >&2
             exit 1
           fi

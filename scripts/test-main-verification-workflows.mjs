@@ -110,6 +110,29 @@ test("main builds separate production artifacts and retains diagnostics", () => 
 	}
 	assert.match(mainWorkflow, /ARTIFACT_RETENTION_DAYS: 14/);
 	assert.doesNotMatch(mainWorkflow, /retention-days: 14/);
+	assert.doesNotMatch(mainWorkflow, /14 days|14-day/);
+	assert.equal(
+		(mainWorkflow.match(/Playwright retry attempts consumed:/g) ?? []).length,
+		2,
+	);
+	for (const cacheName of [
+		"pnpm",
+		"Turbo",
+		"Go",
+		"golangci-lint",
+		"Playwright",
+	]) {
+		assert.match(
+			getJob(mainWorkflow, "music-server"),
+			new RegExp(`${cacheName}=\\$`),
+		);
+	}
+	for (const cacheName of ["pnpm", "Turbo", "Cargo", "verified mpv"]) {
+		assert.match(
+			getJob(mainWorkflow, "desktop"),
+			new RegExp(`${cacheName}=\\$`),
+		);
+	}
 	assert.match(
 		getJob(mainWorkflow, "full-verification"),
 		/Music Server and Desktop Client are separate artifacts/,
