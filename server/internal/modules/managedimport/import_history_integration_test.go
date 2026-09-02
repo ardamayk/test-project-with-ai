@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -153,6 +154,7 @@ func TestImportHistoryRetainsCanceledBatchFile(t *testing.T) {
 	if cancelResponse.Code != http.StatusNoContent {
 		t.Fatalf("cancel Import Batch file status = %d, body = %s", cancelResponse.Code, cancelResponse.Body.String())
 	}
+	time.Sleep(10 * time.Millisecond)
 	batchResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/import-batches/"+batch.ID, nil, nil)
 	testutil.DecodeJSON(t, batchResponse, &batch)
 	confirmation := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[]}`, batch.Revision))
@@ -167,6 +169,40 @@ func TestImportHistoryRetainsCanceledBatchFile(t *testing.T) {
 	}
 	if len(history.Items[0].Files) != 1 || history.Items[0].Files[0].FileID != fileID || history.Items[0].Files[0].ResultCode != "canceled" {
 		t.Fatalf("canceled Batch file result = %+v", history.Items[0].Files)
+	}
+	if !history.Items[0].Files[0].CompletedAt.Before(history.Items[0].CompletedAt) {
+		t.Fatalf("canceled file completion = %s, batch completion = %s", history.Items[0].Files[0].CompletedAt, history.Items[0].CompletedAt)
+	}
+}
+
+func TestImportHistoryPreservesTerminalFileOutcomesWhenBatchIsCanceled(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	module := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	batch := createHistoryTestBatch(t, router)
+	rejectedFileID := "00000000-0000-4000-8000-000000000030"
+	unresolvedFileID := "00000000-0000-4000-8000-000000000031"
+	rejectedJob := createHistoryTestJob(t, router, batch.ID, rejectedFileID)
+	createHistoryTestJob(t, router, batch.ID, unresolvedFileID)
+	uploadHistoryTestFile(t, router, rejectedJob.ID, "broken.flac", []byte("not audio"), http.StatusUnprocessableEntity)
+	cancelResponse := testutil.ServeRequest(t, router, http.MethodDelete, "/api/v1/import-batches/"+batch.ID, nil, nil)
+	if cancelResponse.Code != http.StatusNoContent {
+		t.Fatalf("cancel partially terminal Import Batch status = %d, body = %s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+
+	history := getImportHistory(t, router)
+	item := history.Items[0]
+	if item.ResultCode != "canceled" || item.Counts.Rejected != 1 || item.Counts.Canceled != 1 {
+		t.Fatalf("partially terminal canceled history = %+v", item)
+	}
+	if item.Files[0].FileID != rejectedFileID || item.Files[0].ResultCode == "canceled" {
+		t.Fatalf("rejected result rewritten by cancellation = %+v", item.Files[0])
+	}
+	if item.Files[1].FileID != unresolvedFileID || item.Files[1].ResultCode != "canceled" {
+		t.Fatalf("unresolved cancellation result = %+v", item.Files[1])
 	}
 }
 

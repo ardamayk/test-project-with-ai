@@ -38,10 +38,6 @@ export function TracksPage() {
 			apiClient.listTracks({ limit: 200, q: debouncedSearch || undefined }),
 		placeholderData: (previous) => previous,
 	});
-	const importHistory = useQuery({
-		queryKey: ["managed-import", "history"],
-		queryFn: () => apiClient.listImportHistory(),
-	});
 	const sourceTracks = tracks.data?.items ?? lastTracks;
 	const visibleTracks = useMemo(
 		() => filterTracksByText(sourceTracks, search),
@@ -124,12 +120,7 @@ export function TracksPage() {
 						numbering="list"
 					/>
 				)}
-				<ImportHistory
-					items={importHistory.data?.items ?? []}
-					isLoading={importHistory.isLoading}
-					isError={importHistory.isError}
-					onRetry={() => setIsImportOpen(true)}
-				/>
+				<ImportHistory onRetry={() => setIsImportOpen(true)} />
 			</CollectionPageContainer>
 			<ImportMusicDialog
 				isOpen={isImportOpen}

@@ -70,6 +70,15 @@ const (
 	COMMIT_PHASE_ROLLED_BACK        commitPhase = "rolled_back"
 )
 
+type HistoryResultCode string
+
+const (
+	HISTORY_RESULT_COMPLETED           HistoryResultCode = "completed"
+	HISTORY_RESULT_PARTIALLY_COMPLETED HistoryResultCode = "partially_completed"
+	HISTORY_RESULT_FAILED              HistoryResultCode = "failed"
+	HISTORY_RESULT_CANCELED            HistoryResultCode = "canceled"
+)
+
 var (
 	ErrNotFound            = errors.New("managed import job not found")
 	ErrInvalidState        = errors.New("managed import job is not awaiting this operation")
@@ -196,12 +205,12 @@ type HistoryList struct {
 }
 
 type HistoryItem struct {
-	ImportID    string        `json:"importId"`
-	StartedAt   time.Time     `json:"startedAt"`
-	CompletedAt time.Time     `json:"completedAt"`
-	ResultCode  string        `json:"resultCode"`
-	Counts      HistoryCounts `json:"counts"`
-	Files       []HistoryFile `json:"files"`
+	ImportID    string            `json:"importId"`
+	StartedAt   time.Time         `json:"startedAt"`
+	CompletedAt time.Time         `json:"completedAt"`
+	ResultCode  HistoryResultCode `json:"resultCode"`
+	Counts      HistoryCounts     `json:"counts"`
+	Files       []HistoryFile     `json:"files"`
 }
 
 type HistoryCounts struct {

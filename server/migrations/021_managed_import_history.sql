@@ -50,6 +50,7 @@ CREATE TABLE managed_import_canceled_files (
     job_id TEXT NOT NULL,
     safe_filename TEXT,
     started_at DATETIME NOT NULL,
+    completed_at DATETIME NOT NULL,
     content_sha256 TEXT CHECK (
         content_sha256 IS NULL OR (
             length(content_sha256) = 64 AND
