@@ -50,7 +50,7 @@ importers:
   packages/contracts:
     devDependencies:
       openapi-typescript:
-        specifier: ^7.8.0
+        specifier: 7.13.0
         version: 7.13.0(typescript@6.0.3)
 
   packages/docs:
