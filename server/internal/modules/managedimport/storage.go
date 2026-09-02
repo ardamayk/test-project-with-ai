@@ -362,6 +362,55 @@ func (storage *Storage) CleanupMigrationPlacement(placement placedFiles) error {
 	return errors.Join(rollbackErr, removeErr)
 }
 
+func (storage *Storage) CleanupRecordedMigrationCopy(copy migrationCopyRecord, removeArtwork bool) (returnErr error) {
+	placement, err := storage.recordedMigrationPlacement(copy)
+	if err != nil {
+		return err
+	}
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	audioErr := removeRootedFile(root, placement.audioRelative, "pending Library Migration audio")
+	if errors.Is(audioErr, os.ErrNotExist) {
+		audioErr = nil
+	}
+	var artworkErr error
+	if removeArtwork {
+		artworkErr = removeRootedFile(root, placement.artworkRelative, "pending Library Migration artwork")
+		if errors.Is(artworkErr, os.ErrNotExist) {
+			artworkErr = nil
+		}
+	}
+	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	return errors.Join(audioErr, artworkErr, directoryErr)
+}
+
+func (storage *Storage) recordedMigrationPlacement(copy migrationCopyRecord) (placedFiles, error) {
+	audioRelative, err := storage.relativePath(copy.PendingAudioPath)
+	if err != nil {
+		return placedFiles{}, err
+	}
+	artworkRelative, err := storage.relativePath(copy.PendingArtworkPath)
+	if err != nil {
+		return placedFiles{}, err
+	}
+	audioParts := strings.Split(filepath.Clean(audioRelative), string(filepath.Separator))
+	if len(audioParts) != 4 || audioParts[0] != ".migration" ||
+		!strings.HasSuffix(audioParts[1], "-"+copy.PendingAlbumArtistID) ||
+		!strings.HasSuffix(audioParts[2], "-"+copy.PendingAlbumID) ||
+		!strings.Contains(audioParts[3], "-"+copy.PendingTrackID+".") ||
+		filepath.Dir(audioRelative) != filepath.Dir(artworkRelative) ||
+		!strings.HasPrefix(filepath.Base(artworkRelative), "cover.") {
+		return placedFiles{}, fmt.Errorf("%w: recorded pending Library Migration path is not canonical", ErrUnsafeStoragePath)
+	}
+	return placedFiles{
+		AudioPath: copy.PendingAudioPath, ArtworkPath: copy.PendingArtworkPath,
+		audioRelative: audioRelative, artworkRelative: artworkRelative,
+	}, nil
+}
+
 func (storage *Storage) CleanupPlacement(placement placedFiles) error {
 	return storage.RemoveStaged(storage.absolutePath(placement.stagedRelative))
 }

@@ -14,6 +14,7 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	var queueEventsHasDeadline bool
 	var importUploadHasDeadline bool
 	var migrationPreviewHasDeadline bool
+	var migrationStageHasDeadline bool
 	var apiHasDeadline bool
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +49,11 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		if r.URL.Path == "/api/v1/library-migrations/stage" {
+			migrationStageHasDeadline = hasDeadline
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		apiHasDeadline = hasDeadline
 		w.WriteHeader(http.StatusOK)
 	})
@@ -79,6 +85,10 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	)
 	wrapped.ServeHTTP(
 		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, "/api/v1/library-migrations/stage", nil),
+	)
+	wrapped.ServeHTTP(
+		httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/api/v1/health", nil),
 	)
 
@@ -100,8 +110,28 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	if migrationPreviewHasDeadline {
 		t.Fatal("Library Migration preview should not inherit request timeout deadline")
 	}
+	if migrationStageHasDeadline {
+		t.Fatal("Library Migration stage should not inherit request timeout deadline")
+	}
 	if !apiHasDeadline {
 		t.Fatal("non-stream API route should keep request timeout deadline")
+	}
+}
+
+func TestCORSAllowsLibraryMigrationStageHeader(t *testing.T) {
+	handler := corsHandler([]string{"https://app.example"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodOptions, "/api/v1/library-migrations/stage", nil)
+	request.Header.Set("Origin", "https://app.example")
+	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	request.Header.Set("Access-Control-Request-Headers", "X-Migration-Stage")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("CORS preflight status = %d, want %d", response.Code, http.StatusOK)
 	}
 }
 

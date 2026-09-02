@@ -23,6 +23,9 @@ func (s *Store) DeleteTrack(ctx context.Context, trackID string, removeFile func
 			}
 			return DeleteResult{}, fmt.Errorf("lookup Track Album: %w", err)
 		}
+		if err := store.ensureTrackIsNotStaged(ctx, trackID); err != nil {
+			return DeleteResult{}, err
+		}
 		result, err := store.deleteTrack(ctx, trackID, removeFile)
 		if err != nil {
 			return DeleteResult{}, err
@@ -94,6 +97,9 @@ func (s *Store) deleteAlbum(ctx context.Context, albumID string, removeFile func
 	if err != nil {
 		return DeleteResult{}, fmt.Errorf("lookup album: %w", err)
 	}
+	if stagedErr := s.ensureAlbumIsNotStaged(ctx, albumID); stagedErr != nil {
+		return DeleteResult{}, stagedErr
+	}
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, file_path FROM tracks WHERE album_id = ?`, albumID,
@@ -133,6 +139,32 @@ func (s *Store) deleteAlbum(ctx context.Context, albumID string, removeFile func
 		return DeleteResult{}, err
 	}
 	return result, nil
+}
+
+func (s *Store) ensureTrackIsNotStaged(ctx context.Context, trackID string) error {
+	return s.ensureMigrationIsNotStaged(ctx, `SELECT EXISTS(
+		SELECT 1 FROM legacy_migration_copies WHERE source_track_id = ?
+	)`, trackID)
+}
+
+func (s *Store) ensureAlbumIsNotStaged(ctx context.Context, albumID string) error {
+	return s.ensureMigrationIsNotStaged(ctx, `SELECT EXISTS(
+		SELECT 1
+		FROM legacy_migration_copies
+		INNER JOIN tracks ON tracks.id = legacy_migration_copies.source_track_id
+		WHERE tracks.album_id = ?
+	)`, albumID)
+}
+
+func (s *Store) ensureMigrationIsNotStaged(ctx context.Context, query string, identity string) error {
+	var isStaged bool
+	if err := s.db.QueryRowContext(ctx, query, identity).Scan(&isStaged); err != nil {
+		return fmt.Errorf("inspect staged Library Migration copies: %w", err)
+	}
+	if isStaged {
+		return ErrMigrationStaged
+	}
+	return nil
 }
 
 func (s *Store) deleteTracksByIDs(ctx context.Context, trackIDs []string) error {

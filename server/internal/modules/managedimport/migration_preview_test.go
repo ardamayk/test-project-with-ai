@@ -32,6 +32,20 @@ type migrationInspector struct {
 	onInspect func(string)
 }
 
+type migrationContentInspector map[string]library.MediaInspection
+
+func (inspector migrationContentInspector) Inspect(_ context.Context, path string, _ library.InspectionProgressReporter) (library.MediaInspection, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return library.MediaInspection{}, err
+	}
+	inspection, ok := inspector[migrationTestSHA256(contents)]
+	if !ok {
+		return library.MediaInspection{}, errors.New("unexpected migration source contents")
+	}
+	return inspection, nil
+}
+
 var migrationPreviewHeaders = map[string]string{MIGRATION_PREVIEW_REQUEST_HEADER: "1"}
 
 const SECOND_MIGRATION_SHA256 = "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -124,6 +138,77 @@ func TestLibraryMigrationStageCopiesAndVerifiesOnlyAcceptedSources(t *testing.T)
 	}
 	if sourceSHA256 != pendingSHA256 || sourceSHA256 != acceptedInspection.FileSHA256 {
 		t.Fatalf("verified migration copy = (%q, %q, %q)", persistedPendingPath, sourceSHA256, pendingSHA256)
+	}
+}
+
+func TestLibraryMigrationStageReusesPendingAlbumIdentityForSiblingTracks(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	firstBytes := []byte("first sibling audio")
+	secondBytes := []byte("second sibling audio")
+	_, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", firstBytes, 1)
+	_, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", secondBytes, 2)
+	firstInspection := strictMigrationInspection()
+	firstInspection.FileSHA256 = migrationTestSHA256(firstBytes)
+	firstInspection.AlbumArtwork.SHA256 = migrationTestSHA256(firstInspection.AlbumArtwork.Data)
+	secondInspection := firstInspection
+	secondInspection.Metadata.Title = "Second Strict Legacy Track"
+	secondInspection.Metadata.TrackPosition.Number = 2
+	secondInspection.FileSHA256 = migrationTestSHA256(secondBytes)
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationContentInspector{
+		firstInspection.FileSHA256:  firstInspection,
+		secondInspection.FileSHA256: secondInspection,
+	}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/stage", nil, map[string]string{MIGRATION_STAGE_REQUEST_HEADER: "1"})
+	var stage MigrationStage
+	testutil.DecodeJSON(t, response, &stage)
+	if response.Code != http.StatusOK || stage.VerifiedCount != 2 {
+		t.Fatalf("sibling migration stage status = %d, stage = %+v", response.Code, stage)
+	}
+	var albumCount, albumArtistCount int
+	if err := database.QueryRow(`
+		SELECT COUNT(DISTINCT pending_album_id), COUNT(DISTINCT pending_album_artist_id)
+		FROM legacy_migration_copies
+		WHERE source_track_id IN (?, ?)`, firstTrackID, secondTrackID).Scan(&albumCount, &albumArtistCount); err != nil {
+		t.Fatalf("read sibling pending identities: %v", err)
+	}
+	if albumCount != 1 || albumArtistCount != 1 {
+		t.Fatalf("sibling pending identity counts = (%d Albums, %d Album Artists), want (1, 1)", albumCount, albumArtistCount)
+	}
+}
+
+func TestLibraryMigrationStageReturnsVerifiedCopyOnRetry(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourceBytes := []byte("retryable legacy audio")
+	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "retry.flac", sourceBytes, 1)
+	inspection := strictMigrationInspection()
+	inspection.FileSHA256 = migrationTestSHA256(sourceBytes)
+	inspection.AlbumArtwork.SHA256 = migrationTestSHA256(inspection.AlbumArtwork.Data)
+	result := migrationInspectionResult{inspection: inspection}
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{
+		results: map[string]migrationInspectionResult{sourcePath: result}, fallback: &result,
+	}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	firstResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/stage", nil, map[string]string{MIGRATION_STAGE_REQUEST_HEADER: "1"})
+	secondResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/stage", nil, map[string]string{MIGRATION_STAGE_REQUEST_HEADER: "1"})
+	var firstStage, secondStage MigrationStage
+	testutil.DecodeJSON(t, firstResponse, &firstStage)
+	testutil.DecodeJSON(t, secondResponse, &secondStage)
+	firstFile := findMigrationStageFile(t, firstStage, trackID)
+	secondFile := findMigrationStageFile(t, secondStage, trackID)
+	if firstResponse.Code != http.StatusOK || secondResponse.Code != http.StatusOK || secondStage.VerifiedCount != 1 || secondStage.FailedCount != 0 {
+		t.Fatalf("retry migration stages = (%+v, %+v)", firstStage, secondStage)
+	}
+	if secondFile.State != MIGRATION_STAGE_VERIFIED || secondFile.PendingTrackID != firstFile.PendingTrackID || secondFile.PendingSHA256 != firstFile.PendingSHA256 {
+		t.Fatalf("retried migration file = %+v, want existing %+v", secondFile, firstFile)
+	}
+	var copyCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM legacy_migration_copies WHERE source_track_id = ?`, trackID).Scan(&copyCount); err != nil || copyCount != 1 {
+		t.Fatalf("retried migration copy count = %d, error = %v", copyCount, err)
 	}
 }
 
@@ -251,6 +336,48 @@ func TestLibraryMigrationStageRecordsFailureBeforePendingPlacement(t *testing.T)
 		t.Fatalf("failed migration copy record = (%q, %q)", status, recoveryReason)
 	}
 	assertLegacySource(t, database, trackID, sourcePath)
+}
+
+func TestLibraryMigrationStageRetriesFailedCopy(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourceBytes := []byte("failed then retried Legacy source")
+	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "retry.flac", sourceBytes, 1)
+	inspection := strictMigrationInspection()
+	inspection.FileSHA256 = migrationTestSHA256(sourceBytes)
+	inspection.AlbumArtwork.SHA256 = migrationTestSHA256(inspection.AlbumArtwork.Data)
+	result := migrationInspectionResult{inspection: inspection}
+	managedStoragePath := t.TempDir()
+	migrationRoot := filepath.Join(managedStoragePath, ".migration")
+	if err := os.WriteFile(migrationRoot, []byte("blocks pending directory"), 0o600); err != nil {
+		t.Fatalf("block pending migration directory: %v", err)
+	}
+	module := newModule(database, config.Config{ManagedStoragePath: managedStoragePath}, migrationInspector{
+		results: map[string]migrationInspectionResult{sourcePath: result}, fallback: &result,
+	}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	failedResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/stage", nil, map[string]string{MIGRATION_STAGE_REQUEST_HEADER: "1"})
+	var failedStage MigrationStage
+	testutil.DecodeJSON(t, failedResponse, &failedStage)
+	if failedResponse.Code != http.StatusOK || failedStage.FailedCount != 1 {
+		t.Fatalf("failed migration stage status = %d, stage = %+v", failedResponse.Code, failedStage)
+	}
+	if err := os.Remove(migrationRoot); err != nil {
+		t.Fatalf("remove migration placement blocker: %v", err)
+	}
+
+	retryResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/stage", nil, map[string]string{MIGRATION_STAGE_REQUEST_HEADER: "1"})
+	var retryStage MigrationStage
+	testutil.DecodeJSON(t, retryResponse, &retryStage)
+	retryFile := findMigrationStageFile(t, retryStage, trackID)
+	if retryResponse.Code != http.StatusOK || retryStage.VerifiedCount != 1 || retryStage.FailedCount != 0 || retryFile.State != MIGRATION_STAGE_VERIFIED {
+		t.Fatalf("retried failed migration stage status = %d, stage = %+v", retryResponse.Code, retryStage)
+	}
+	var status string
+	if err := database.QueryRow(`SELECT status FROM legacy_migration_copies WHERE source_track_id = ?`, trackID).Scan(&status); err != nil || status != "verified" {
+		t.Fatalf("retried migration copy status = %q, error = %v", status, err)
+	}
 }
 
 func migrationTestSHA256(contents []byte) string {

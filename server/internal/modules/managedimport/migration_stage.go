@@ -24,6 +24,10 @@ func (service *Service) StageMigration(ctx context.Context) (MigrationStage, err
 	for _, candidate := range candidates {
 		candidatesByIndex[candidate.previewIndex] = candidate
 	}
+	identitiesByAlbum, err := service.existingMigrationAlbumIdentities(ctx, candidates)
+	if err != nil {
+		return MigrationStage{}, err
+	}
 	stage := MigrationStage{Files: make([]MigrationStageFile, 0, len(preview.Files))}
 	for index, previewFile := range preview.Files {
 		if previewFile.State == MIGRATION_FILE_REJECTED {
@@ -31,7 +35,7 @@ func (service *Service) StageMigration(ctx context.Context) (MigrationStage, err
 			stage.RejectedCount++
 			continue
 		}
-		file, stageErr := service.stageMigrationCandidate(ctx, candidatesByIndex[index])
+		file, stageErr := service.stageMigrationCandidate(ctx, candidatesByIndex[index], identitiesByAlbum)
 		if stageErr != nil {
 			if ctx.Err() != nil {
 				return MigrationStage{}, errors.Join(stageErr, ctx.Err())
@@ -46,7 +50,19 @@ func (service *Service) StageMigration(ctx context.Context) (MigrationStage, err
 	return stage, nil
 }
 
-func (service *Service) stageMigrationCandidate(ctx context.Context, candidate migrationCandidate) (MigrationStageFile, error) {
+func (service *Service) stageMigrationCandidate(ctx context.Context, candidate migrationCandidate, identitiesByAlbum map[string]commitIdentity) (MigrationStageFile, error) {
+	existingCopy, found, err := service.store.FindMigrationCopy(ctx, candidate.source.TrackID)
+	if err != nil {
+		return MigrationStageFile{}, err
+	}
+	if found && existingCopy.Status == "verified" {
+		return verifiedMigrationStageFile(candidate, existingCopy)
+	}
+	if found {
+		if retryErr := service.removeRetryableMigrationCopy(ctx, existingCopy); retryErr != nil {
+			return MigrationStageFile{}, retryErr
+		}
+	}
 	upload, inspection, err := service.copyAndVerifyMigrationCandidate(ctx, candidate)
 	if err != nil {
 		return MigrationStageFile{}, err
@@ -55,6 +71,7 @@ func (service *Service) stageMigrationCandidate(ctx context.Context, candidate m
 	if err != nil {
 		return MigrationStageFile{}, errors.Join(err, service.storage.RemoveStaged(upload.Path))
 	}
+	identity = reuseMigrationAlbumIdentity(identity, inspection.Metadata, identitiesByAlbum)
 	placement, err := service.placeAndStoreMigrationCopy(ctx, candidate, upload, inspection, identity)
 	if err != nil {
 		return MigrationStageFile{}, err
@@ -64,6 +81,59 @@ func (service *Service) stageMigrationCandidate(ctx context.Context, candidate m
 		State: MIGRATION_STAGE_VERIFIED, PendingTrackID: identity.TrackID, PendingPath: placement.AudioPath,
 		SourceSHA256: candidate.inspection.FileSHA256, PendingSHA256: inspection.FileSHA256,
 	}, nil
+}
+
+func (service *Service) existingMigrationAlbumIdentities(ctx context.Context, candidates []migrationCandidate) (map[string]commitIdentity, error) {
+	identities := make(map[string]commitIdentity)
+	for _, candidate := range candidates {
+		copy, found, err := service.store.FindMigrationCopy(ctx, candidate.source.TrackID)
+		if err != nil {
+			return nil, err
+		}
+		if found && copy.Status == "verified" && copy.SourceFilePath == candidate.source.FilePath && copy.SourceSHA256 == candidate.inspection.FileSHA256 {
+			identities[albumIdentityKey(candidate.inspection.Metadata)] = migrationCopyIdentity(copy)
+		}
+	}
+	return identities, nil
+}
+
+func (service *Service) removeRetryableMigrationCopy(ctx context.Context, copy migrationCopyRecord) error {
+	removeArtwork, err := service.store.IsMigrationArtworkExclusive(ctx, copy.SourceTrackID, copy.PendingArtworkPath)
+	if err != nil {
+		return err
+	}
+	if cleanupErr := service.storage.CleanupRecordedMigrationCopy(copy, removeArtwork); cleanupErr != nil {
+		return cleanupErr
+	}
+	return service.store.DeleteRetryableMigrationCopy(ctx, copy.SourceTrackID)
+}
+
+func verifiedMigrationStageFile(candidate migrationCandidate, copy migrationCopyRecord) (MigrationStageFile, error) {
+	if copy.SourceFilePath != candidate.source.FilePath || copy.SourceSHA256 != candidate.inspection.FileSHA256 {
+		return MigrationStageFile{}, migrationSourceChangedError()
+	}
+	return MigrationStageFile{
+		TrackID: candidate.source.TrackID, OriginalFilename: filepath.Base(candidate.source.FilePath),
+		State: MIGRATION_STAGE_VERIFIED, PendingTrackID: copy.PendingTrackID, PendingPath: copy.PendingAudioPath,
+		SourceSHA256: copy.SourceSHA256, PendingSHA256: copy.PendingSHA256,
+	}, nil
+}
+
+func reuseMigrationAlbumIdentity(identity commitIdentity, metadata library.NormalizedMediaMetadata, identities map[string]commitIdentity) commitIdentity {
+	albumKey := albumIdentityKey(metadata)
+	if existingIdentity, ok := identities[albumKey]; ok {
+		identity.AlbumArtistID = existingIdentity.AlbumArtistID
+		identity.AlbumID = existingIdentity.AlbumID
+		identity.ExistingArtworkPath = existingIdentity.ExistingArtworkPath
+		identity.ExistingArtworkSHA256 = existingIdentity.ExistingArtworkSHA256
+		return identity
+	}
+	identities[albumKey] = identity
+	return identity
+}
+
+func migrationCopyIdentity(copy migrationCopyRecord) commitIdentity {
+	return commitIdentity{AlbumArtistID: copy.PendingAlbumArtistID, AlbumID: copy.PendingAlbumID}
 }
 
 func (service *Service) copyAndVerifyMigrationCandidate(ctx context.Context, candidate migrationCandidate) (stagedUpload, library.MediaInspection, error) {

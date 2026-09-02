@@ -1,6 +1,6 @@
 -- +goose Up
 CREATE TABLE legacy_migration_copies (
-    source_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    source_track_id TEXT PRIMARY KEY REFERENCES tracks(id),
     pending_track_id TEXT NOT NULL UNIQUE,
     pending_album_id TEXT NOT NULL,
     pending_album_artist_id TEXT NOT NULL,

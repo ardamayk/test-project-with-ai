@@ -187,6 +187,8 @@ paths:
                 $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/library/albums/{albumId}/cover:
     get:
       tags: [library]
@@ -259,6 +261,8 @@ paths:
                 $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/library-migrations/preview:
     post:
       tags: [imports]
