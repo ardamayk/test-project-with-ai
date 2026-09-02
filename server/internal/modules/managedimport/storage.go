@@ -229,6 +229,38 @@ func (storage *Storage) RemoveStaged(path string) (returnErr error) {
 	return err
 }
 
+func (storage *Storage) RemoveAllStaged() (returnErr error) {
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	directory, err := root.Open(".staging")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open Managed Import staging directory: %w", err)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, closeManagedStorageFile(directory, "Managed Import staging directory"))
+	}()
+	entries, err := directory.ReadDir(-1)
+	if err != nil {
+		return fmt.Errorf("list Managed Import staging files: %w", err)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".import-") || !strings.HasSuffix(entry.Name(), ".upload") {
+			continue
+		}
+		relativePath := filepath.Join(".staging", entry.Name())
+		if err := removeRootedFile(root, relativePath, "Managed Import staging file"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			returnErr = errors.Join(returnErr, err)
+		}
+	}
+	return returnErr
+}
+
 func (storage *Storage) Place(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placement placedFiles, returnErr error) {
 	root, openErr := storage.openRoot()
 	if openErr != nil {

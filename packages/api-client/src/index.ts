@@ -235,6 +235,7 @@ export function createApiClient(config: ApiClientConfig) {
     originalFilename: string,
     file: Blob,
     onProgress?: ManagedImportUploadProgress,
+    signal?: AbortSignal,
   ): Promise<ManagedImportPreview> {
     if (config.transport || typeof XMLHttpRequest === 'undefined') {
       onProgress?.(0);
@@ -245,6 +246,7 @@ export function createApiClient(config: ApiClientConfig) {
           'X-Import-Filename': originalFilename,
         },
         body: file,
+        signal,
       }).then((preview) => {
         onProgress?.(100);
         return preview;
@@ -252,6 +254,9 @@ export function createApiClient(config: ApiClientConfig) {
     }
     return new Promise((resolve, reject) => {
       const upload = new XMLHttpRequest();
+      const removeAbortListener = () =>
+        signal?.removeEventListener('abort', handleSignalAbort);
+      const handleSignalAbort = () => upload.abort();
       upload.open('PUT', `${baseUrl}/api/v1/imports/${importId}/file`);
       upload.responseType = 'json';
       upload.setRequestHeader('Accept', 'application/json');
@@ -268,6 +273,7 @@ export function createApiClient(config: ApiClientConfig) {
         }
       });
       upload.addEventListener('load', () => {
+        removeAbortListener();
         if (upload.status >= 200 && upload.status < 300) {
           onProgress?.(100);
           resolve(upload.response as ManagedImportPreview);
@@ -280,9 +286,24 @@ export function createApiClient(config: ApiClientConfig) {
             : new Error(`HTTP ${upload.status}`),
         );
       });
-      upload.addEventListener('error', () =>
-        reject(new Error('Managed Import upload failed')),
-      );
+      upload.addEventListener('error', () => {
+        removeAbortListener();
+        reject(new Error('Managed Import upload failed'));
+      });
+      upload.addEventListener('abort', () => {
+        removeAbortListener();
+        reject(
+          new DOMException('Managed Import upload canceled', 'AbortError'),
+        );
+      });
+      signal?.addEventListener('abort', handleSignalAbort, { once: true });
+      if (signal?.aborted) {
+        removeAbortListener();
+        reject(
+          new DOMException('Managed Import upload canceled', 'AbortError'),
+        );
+        return;
+      }
       onProgress?.(0);
       upload.send(file);
     });
@@ -385,6 +406,10 @@ export function createApiClient(config: ApiClientConfig) {
       request<ManagedImportBatch>('/api/v1/import-batches', { method: 'POST' }),
     getManagedImportBatch: (batchId: string) =>
       request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}`),
+    cancelManagedImportBatch: (batchId: string) =>
+      request<void>(`/api/v1/import-batches/${batchId}`, {
+        method: 'DELETE',
+      }),
     confirmManagedImportBatch: (
       batchId: string,
       revision: number,
@@ -401,6 +426,8 @@ export function createApiClient(config: ApiClientConfig) {
       }),
     getManagedImportJob: (importId: string) =>
       request<ManagedImportJob>(`/api/v1/imports/${importId}`),
+    cancelManagedImport: (importId: string) =>
+      request<void>(`/api/v1/imports/${importId}`, { method: 'DELETE' }),
     uploadManagedImportFile,
     confirmManagedImport: (importId: string, revision: number) =>
       request<ManagedImportResult>(`/api/v1/imports/${importId}/confirm`, {

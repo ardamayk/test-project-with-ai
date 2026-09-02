@@ -55,6 +55,14 @@ func (handlers *Handlers) GetBatch(writer http.ResponseWriter, request *http.Req
 	respond.JSON(writer, http.StatusOK, batch)
 }
 
+func (handlers *Handlers) CancelBatch(writer http.ResponseWriter, request *http.Request) {
+	if err := handlers.service.CancelBatch(request.Context(), chi.URLParam(request, "batchId")); err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
 func (handlers *Handlers) ConfirmBatch(writer http.ResponseWriter, request *http.Request) {
 	var confirmation BatchConfirmation
 	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_BATCH_CONFIRMATION_BODY_BYTES))
@@ -78,6 +86,14 @@ func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	respond.JSON(writer, http.StatusOK, job)
+}
+
+func (handlers *Handlers) CancelJob(writer http.ResponseWriter, request *http.Request) {
+	if err := handlers.service.CancelJob(request.Context(), chi.URLParam(request, "importId")); err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {

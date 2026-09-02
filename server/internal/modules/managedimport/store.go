@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/google/uuid"
@@ -18,6 +19,11 @@ import (
 type Store struct {
 	database *sql.DB
 }
+
+const (
+	UNCOMMITTED_BATCH_PREDICATE          = `status != ?`
+	UNCOMMITTED_STANDALONE_JOB_PREDICATE = `batch_id IS NULL AND status != ?`
+)
 
 type commitData struct {
 	Job        importJob
@@ -151,6 +157,125 @@ func (store *Store) GetBatchStatus(ctx context.Context, batchID string) (BatchSt
 		return "", fmt.Errorf("get Managed Import Batch %q status: %w", batchID, err)
 	}
 	return status, nil
+}
+
+func (store *Store) DeleteBatch(ctx context.Context, batchID string) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Managed Import Batch cancellation: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Batch cancellation: %w", rollbackErr))
+		}
+	}()
+	if _, deleteJobsErr := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE batch_id = ?`, batchID); deleteJobsErr != nil {
+		return fmt.Errorf("delete canceled Managed Import Batch files: %w", deleteJobsErr)
+	}
+	result, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_batches WHERE id = ? AND status != ?`, batchID, BATCH_STATUS_COMPLETED)
+	if err != nil {
+		return fmt.Errorf("delete canceled Managed Import Batch: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Managed Import Batch cancellation: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) DeleteJob(ctx context.Context, jobID string) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Managed Import Job cancellation: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Job cancellation: %w", rollbackErr))
+		}
+	}()
+	var batchID sql.NullString
+	if err := transaction.QueryRowContext(ctx, `
+		SELECT jobs.batch_id
+		FROM managed_import_jobs jobs
+		LEFT JOIN managed_import_batches batches ON batches.id = jobs.batch_id
+		WHERE jobs.id = ?
+			AND jobs.status != ?
+			AND (jobs.batch_id IS NULL OR batches.status != ?)
+	`, jobID, STATUS_COMMITTED, BATCH_STATUS_COMPLETED).Scan(&batchID); errors.Is(err, sql.ErrNoRows) {
+		return ErrInvalidState
+	} else if err != nil {
+		return fmt.Errorf("resolve canceled Managed Import Job: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE id = ?`, jobID); err != nil {
+		return fmt.Errorf("delete canceled Managed Import Job: %w", err)
+	}
+	if batchID.Valid {
+		if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, batchID.String); err != nil {
+			return fmt.Errorf("revise canceled Managed Import Batch file: %w", err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Managed Import Job cancellation: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) ListUncommittedBatchIDs(ctx context.Context, updatedBefore *time.Time) ([]string, error) {
+	query := `SELECT id FROM managed_import_batches WHERE ` + UNCOMMITTED_BATCH_PREDICATE
+	arguments := []any{BATCH_STATUS_COMPLETED}
+	if updatedBefore != nil {
+		query += ` AND updated_at <= ?`
+		arguments = append(arguments, *updatedBefore)
+	}
+	return queryIDs(ctx, store.database, query, arguments...)
+}
+
+func (store *Store) ListUncommittedStandaloneJobIDs(ctx context.Context, updatedBefore *time.Time) ([]string, error) {
+	query := `SELECT id FROM managed_import_jobs WHERE ` + UNCOMMITTED_STANDALONE_JOB_PREDICATE
+	arguments := []any{STATUS_COMMITTED}
+	if updatedBefore != nil {
+		query += ` AND updated_at <= ?`
+		arguments = append(arguments, *updatedBefore)
+	}
+	return queryIDs(ctx, store.database, query, arguments...)
+}
+
+func (store *Store) IsBatchUncommittedBefore(ctx context.Context, batchID string, updatedBefore time.Time) (bool, error) {
+	var isEligible bool
+	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_import_batches WHERE id = ? AND `+UNCOMMITTED_BATCH_PREDICATE+` AND updated_at <= ?)`, batchID, BATCH_STATUS_COMPLETED, updatedBefore).Scan(&isEligible)
+	if err != nil {
+		return false, fmt.Errorf("check inactive Managed Import Batch %q: %w", batchID, err)
+	}
+	return isEligible, nil
+}
+
+func (store *Store) IsStandaloneJobUncommittedBefore(ctx context.Context, jobID string, updatedBefore time.Time) (bool, error) {
+	var isEligible bool
+	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_import_jobs WHERE id = ? AND `+UNCOMMITTED_STANDALONE_JOB_PREDICATE+` AND updated_at <= ?)`, jobID, STATUS_COMMITTED, updatedBefore).Scan(&isEligible)
+	if err != nil {
+		return false, fmt.Errorf("check inactive Managed Import Job %q: %w", jobID, err)
+	}
+	return isEligible, nil
+}
+
+func queryIDs(ctx context.Context, database *sql.DB, query string, arguments ...any) (ids []string, returnErr error) {
+	rows, err := database.QueryContext(ctx, query, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, rows.Close()) }()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (store *Store) ListBatchJobs(ctx context.Context, batchID string) (jobs []importJob, returnErr error) {
