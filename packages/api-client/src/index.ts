@@ -385,6 +385,7 @@ export function createApiClient(config: ApiClientConfig) {
     previewLibraryMigration: () =>
       request<LibraryMigrationPreview>('/api/v1/library-migrations/preview', {
         method: 'POST',
+        headers: { 'X-Migration-Preview': '1' },
       }),
     createManagedImportBatch: () =>
       request<ManagedImportBatch>('/api/v1/import-batches', { method: 'POST' }),

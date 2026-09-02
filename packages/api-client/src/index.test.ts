@@ -98,6 +98,8 @@ describe('createApiClient', () => {
       'http://music.test/api/v1/library-migrations/preview',
       expect.objectContaining({ method: 'POST' }),
     );
+    const request = transport.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get('X-Migration-Preview')).toBe('1');
   });
 
   it('creates and confirms a multi-file Managed Import Batch', async () => {

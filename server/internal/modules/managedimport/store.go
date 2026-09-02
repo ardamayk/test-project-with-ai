@@ -37,10 +37,11 @@ func NewStore(database *sql.DB) *Store {
 
 func (store *Store) ListLegacyMigrationSources(ctx context.Context) (sources []legacyMigrationSource, returnErr error) {
 	rows, err := store.database.QueryContext(ctx, `
-		SELECT track_id, file_path
+		SELECT track_sources.track_id, track_sources.file_path
 		FROM track_sources
-		WHERE source_kind = 'legacy'
-		ORDER BY track_id`)
+		INNER JOIN tracks ON tracks.id = track_sources.track_id
+		WHERE track_sources.source_kind = 'legacy' AND tracks.missing_at IS NULL
+		ORDER BY track_sources.track_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list legacy migration sources: %w", err)
 	}
@@ -60,6 +61,21 @@ func (store *Store) ListLegacyMigrationSources(ctx context.Context) (sources []l
 		return nil, fmt.Errorf("iterate legacy migration sources: %w", err)
 	}
 	return sources, nil
+}
+
+func (store *Store) FindManagedTrackByHash(ctx context.Context, contentSHA256 string) (string, error) {
+	var trackID string
+	err := store.database.QueryRowContext(ctx, `
+		SELECT track_id FROM track_sources
+		WHERE source_kind = 'managed' AND content_sha256 = ?`, contentSHA256,
+	).Scan(&trackID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("find Managed Track by content hash: %w", err)
+	}
+	return trackID, nil
 }
 
 func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string) (_ Job, returnErr error) {

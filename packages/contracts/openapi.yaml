@@ -264,6 +264,14 @@ paths:
       tags: [imports]
       operationId: previewLibraryMigration
       summary: Analyze every Legacy Track through the Strict Import Profile without changing library state
+      parameters:
+        - name: X-Migration-Preview
+          in: header
+          required: true
+          description: Non-simple application header required to prevent cross-origin form submissions
+          schema:
+            type: string
+            enum: ["1"]
       responses:
         "200":
           description: Stable accepted and rejected Library Migration preview
@@ -273,6 +281,8 @@ paths:
                 $ref: "#/components/schemas/LibraryMigrationPreview"
         "409":
           $ref: "#/components/responses/Conflict"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/import-batches:
     post:
       tags: [imports]
@@ -1052,6 +1062,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     BadRequest:
       description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Forbidden
       content:
         application/json:
           schema:

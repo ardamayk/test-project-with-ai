@@ -1223,6 +1223,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description Forbidden */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description Not found */
         NotFound: {
             headers: {
@@ -1602,7 +1611,10 @@ export interface operations {
     previewLibraryMigration: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Non-simple application header required to prevent cross-origin form submissions */
+                "X-Migration-Preview": "1";
+            };
             path?: never;
             cookie?: never;
         };
@@ -1617,6 +1629,7 @@ export interface operations {
                     "application/json": components["schemas"]["LibraryMigrationPreview"];
                 };
             };
+            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
         };
     };

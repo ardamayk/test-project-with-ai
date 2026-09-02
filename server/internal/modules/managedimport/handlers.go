@@ -13,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+const MIGRATION_PREVIEW_REQUEST_HEADER = "X-Migration-Preview"
+
 type Handlers struct {
 	service *Service
 }
@@ -81,6 +83,10 @@ func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Reque
 }
 
 func (handlers *Handlers) PreviewMigration(writer http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(MIGRATION_PREVIEW_REQUEST_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "migration_preview_forbidden", "Library Migration preview requires an explicit application request")
+		return
+	}
 	preview, err := handlers.service.PreviewMigration(request.Context())
 	if err != nil {
 		handleError(writer, request, err)
@@ -136,6 +142,8 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 		respond.Error(writer, http.StatusInsufficientStorage, "insufficient_storage", "Managed Storage does not have enough capacity for this import and its safety reserve")
 	case errors.Is(err, ErrUnsafeStoragePath):
 		respond.Error(writer, http.StatusConflict, "unsafe_storage_path", "Managed Storage path failed containment checks")
+	case errors.Is(err, ErrMigrationInProgress):
+		respond.Error(writer, http.StatusConflict, "migration_preview_in_progress", "A Library Migration preview is already in progress")
 	case errors.Is(err, ErrInvalidUpload):
 		respond.Error(writer, http.StatusBadRequest, "invalid_upload", err.Error())
 	default:

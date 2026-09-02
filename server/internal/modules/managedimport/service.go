@@ -18,6 +18,7 @@ type Service struct {
 	store               *Store
 	storage             *Storage
 	inspector           library.MediaInspector
+	migrationPreviewMu  sync.Mutex
 	commitMu            sync.Mutex
 	batchConfirmationMu sync.Mutex
 	uploadLocksMu       sync.Mutex

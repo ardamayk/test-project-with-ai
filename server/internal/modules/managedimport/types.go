@@ -60,6 +60,7 @@ var (
 	ErrInvalidUpload       = errors.New("managed import upload is invalid")
 	ErrInsufficientStorage = errors.New("managed storage capacity is insufficient")
 	ErrUnsafeStoragePath   = errors.New("managed storage path is unsafe")
+	ErrMigrationInProgress = errors.New("library migration preview is already in progress")
 )
 
 type Job struct {

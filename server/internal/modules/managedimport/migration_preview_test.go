@@ -24,10 +24,16 @@ type migrationInspectionResult struct {
 }
 
 type migrationInspector struct {
-	results map[string]migrationInspectionResult
+	results   map[string]migrationInspectionResult
+	onInspect func(string)
 }
 
+var migrationPreviewHeaders = map[string]string{MIGRATION_PREVIEW_REQUEST_HEADER: "1"}
+
 func (inspector migrationInspector) Inspect(_ context.Context, path string, _ library.InspectionProgressReporter) (library.MediaInspection, error) {
+	if inspector.onInspect != nil {
+		inspector.onInspect(path)
+	}
 	result, ok := inspector.results[path]
 	if !ok {
 		return library.MediaInspection{}, errors.New("unexpected migration source")
@@ -58,7 +64,7 @@ func TestLibraryMigrationPreviewReportsStableStrictResultsWithoutMutation(t *tes
 	importModule.RegisterRoutes(router)
 	playbackModule.RegisterRoutes(router)
 
-	firstResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	firstResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
 	if firstResponse.Code != http.StatusOK {
 		t.Fatalf("migration preview status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
 	}
@@ -75,7 +81,7 @@ func TestLibraryMigrationPreviewReportsStableStrictResultsWithoutMutation(t *tes
 		t.Fatalf("accepted migration file preview = %+v", acceptedFile.Preview)
 	}
 
-	secondResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	secondResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
 	var secondPreview MigrationPreview
 	testutil.DecodeJSON(t, secondResponse, &secondPreview)
 	if !reflect.DeepEqual(secondPreview, firstPreview) {
@@ -105,7 +111,7 @@ func TestLibraryMigrationPreviewRejectsAcceptedFilesWhenCapacityIsInsufficient(t
 	router := chi.NewRouter()
 	module.RegisterRoutes(router)
 
-	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
 	if response.Code != http.StatusOK {
 		t.Fatalf("migration preview status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -117,21 +123,24 @@ func TestLibraryMigrationPreviewRejectsAcceptedFilesWhenCapacityIsInsufficient(t
 	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_REJECTED, "insufficient_storage", "Managed Storage does not have enough capacity for this migration and its safety reserve")
 }
 
-func TestLibraryMigrationPreviewAppliesConfiguredFileLimitAfterStrictInspection(t *testing.T) {
+func TestLibraryMigrationPreviewAppliesConfiguredFileLimitBeforeStrictInspection(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	sourceBytes := []byte("legacy audio")
 	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "track.flac", sourceBytes, 1)
+	inspectionCount := 0
 	configuration := config.Config{
 		ManagedStoragePath:          t.TempDir(),
 		ManagedImportFileLimitBytes: int64(len(sourceBytes) - 1),
 	}
-	module := newModule(database, configuration, migrationInspector{results: map[string]migrationInspectionResult{
-		sourcePath: {inspection: strictMigrationInspection()},
-	}}, unlimitedStorageCapacity)
+	inspector := migrationInspector{
+		results:   map[string]migrationInspectionResult{sourcePath: {inspection: strictMigrationInspection()}},
+		onInspect: func(string) { inspectionCount++ },
+	}
+	module := newModule(database, configuration, inspector, unlimitedStorageCapacity)
 	router := chi.NewRouter()
 	module.RegisterRoutes(router)
 
-	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
 	if response.Code != http.StatusOK {
 		t.Fatalf("migration preview status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -141,6 +150,51 @@ func TestLibraryMigrationPreviewAppliesConfiguredFileLimitAfterStrictInspection(
 		t.Fatalf("file-limit migration preview = %+v", preview)
 	}
 	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_REJECTED, "upload_too_large", "file exceeds the configured per-file byte limit")
+	if inspectionCount != 0 {
+		t.Fatalf("oversized migration source inspection count = %d, want 0", inspectionCount)
+	}
+}
+
+func TestLibraryMigrationPreviewRequiresApplicationHeader(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	testutil.AssertErrorCode(t, response, http.StatusForbidden, "migration_preview_forbidden")
+}
+
+func TestLibraryMigrationPreviewRejectsConcurrentAnalysis(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourcePath, _ := seedLegacyMigrationTrack(t, database, "track.flac", []byte("legacy audio"), 1)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inspector := migrationInspector{
+		results: map[string]migrationInspectionResult{sourcePath: {inspection: strictMigrationInspection()}},
+		onInspect: func(string) {
+			close(started)
+			<-release
+		},
+	}
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: config.DEFAULT_MANAGED_IMPORT_FILE_LIMIT_BYTES, BatchBytes: config.DEFAULT_MANAGED_IMPORT_BATCH_LIMIT_BYTES}, unlimitedStorageCapacity)
+	service := NewService(NewStore(database), storage, inspector)
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := service.PreviewMigration(context.Background())
+		firstResult <- err
+	}()
+	<-started
+
+	_, err := service.PreviewMigration(context.Background())
+	close(release)
+	firstErr := <-firstResult
+	if !errors.Is(err, ErrMigrationInProgress) {
+		t.Fatalf("concurrent migration preview error = %v", err)
+	}
+	if firstErr != nil {
+		t.Fatalf("first migration preview: %v", firstErr)
+	}
 }
 
 func TestLibraryMigrationPreviewIgnoresUnrelatedAwaitingImportPreviews(t *testing.T) {
@@ -164,10 +218,183 @@ func TestLibraryMigrationPreviewIgnoresUnrelatedAwaitingImportPreviews(t *testin
 	router := chi.NewRouter()
 	module.RegisterRoutes(router)
 
-	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
 	var preview MigrationPreview
 	testutil.DecodeJSON(t, response, &preview)
 	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_ACCEPTED, "", "")
+}
+
+func TestLibraryMigrationPreviewExcludesMissingLegacyTracks(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	_, trackID := seedLegacyMigrationTrack(t, database, "missing.flac", []byte("legacy audio"), 1)
+	if _, err := database.Exec(`UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, trackID); err != nil {
+		t.Fatalf("mark legacy Track missing: %v", err)
+	}
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	if preview.AcceptedCount != 0 || preview.RejectedCount != 0 || len(preview.Files) != 0 {
+		t.Fatalf("missing Legacy Track preview = %+v", preview)
+	}
+}
+
+func TestLibraryMigrationPreviewRejectsExistingManagedHash(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "legacy.flac", []byte("legacy audio"), 1)
+	_, managedTrackID := seedLegacyMigrationTrack(t, database, "managed.flac", []byte("managed audio"), 2)
+	inspection := strictMigrationInspection()
+	if _, err := database.Exec(`UPDATE track_sources SET source_kind = 'managed', content_sha256 = ? WHERE track_id = ?`, inspection.FileSHA256, managedTrackID); err != nil {
+		t.Fatalf("seed existing Managed Track hash: %v", err)
+	}
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		sourcePath: {inspection: inspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_REJECTED, "exact_duplicate", "file bytes already belong to an existing Managed Track")
+}
+
+func TestLibraryMigrationPreviewRejectsSourceChangedDuringInspection(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "track.flac", []byte("legacy audio"), 1)
+	inspector := migrationInspector{
+		results: map[string]migrationInspectionResult{sourcePath: {inspection: strictMigrationInspection()}},
+		onInspect: func(path string) {
+			if err := os.WriteFile(path, []byte("changed and larger legacy audio"), 0o640); err != nil {
+				t.Fatalf("replace legacy source during inspection: %v", err)
+			}
+		},
+	}
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, inspector, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_REJECTED, "legacy_source_changed", "legacy source changed during migration analysis")
+}
+
+func TestLibraryMigrationPreviewValidatesAlbumRulesAcrossAcceptedFiles(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	firstPath, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", []byte("first legacy audio"), 1)
+	secondPath, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", []byte("second legacy audio"), 2)
+	firstInspection := strictMigrationInspection()
+	firstInspection.Metadata.HasDiscNumber = false
+	firstInspection.Metadata.TrackPosition.Total = 10
+	firstInspection.AlbumArtwork.SHA256 = "first-artwork"
+	secondInspection := strictMigrationInspection()
+	secondInspection.Metadata.HasDiscNumber = true
+	secondInspection.Metadata.DiscPosition = library.MediaPosition{Number: 2, Total: 2}
+	secondInspection.Metadata.TrackPosition = library.MediaPosition{Number: 2, Total: 11}
+	secondInspection.AlbumArtwork.SHA256 = "second-artwork"
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		firstPath:  {inspection: firstInspection},
+		secondPath: {inspection: secondInspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	firstFile := findMigrationFile(t, preview, firstTrackID)
+	secondFile := findMigrationFile(t, preview, secondTrackID)
+	assertMigrationFile(t, firstFile, firstTrackID, MIGRATION_FILE_REJECTED, "invalid_metadata", "DISCNUMBER is required for a known multi-disc Album")
+	if secondFile.State != MIGRATION_FILE_REJECTED || secondFile.ErrorCode == "" {
+		t.Fatalf("conflicting migration Album sibling = %+v", secondFile)
+	}
+}
+
+func TestLibraryMigrationPreviewRejectsConflictingArtworkAcrossAcceptedFiles(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	firstPath, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", []byte("first legacy audio"), 1)
+	secondPath, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", []byte("second legacy audio"), 2)
+	firstInspection := strictMigrationInspection()
+	firstInspection.AlbumArtwork.SHA256 = "first-artwork"
+	secondInspection := strictMigrationInspection()
+	secondInspection.Metadata.TrackPosition.Number = 2
+	secondInspection.AlbumArtwork.SHA256 = "second-artwork"
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		firstPath:  {inspection: firstInspection},
+		secondPath: {inspection: secondInspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	for _, trackID := range []string{firstTrackID, secondTrackID} {
+		file := findMigrationFile(t, preview, trackID)
+		assertMigrationFile(t, file, trackID, MIGRATION_FILE_REJECTED, "invalid_artwork", "embedded artwork differs from another Track in the Album")
+	}
+}
+
+func TestLibraryMigrationPreviewRejectsConflictingTotalsAcrossAcceptedFiles(t *testing.T) {
+	testCases := []struct {
+		name      string
+		reason    string
+		configure func(*library.MediaInspection, *library.MediaInspection)
+	}{
+		{name: "disc total", reason: "DISCNUMBER total conflicts with another Track in the Album", configure: func(first, second *library.MediaInspection) {
+			first.Metadata.DiscPosition.Total = 2
+			second.Metadata.DiscPosition.Total = 3
+		}},
+		{name: "track total", reason: "TRACKNUMBER total conflicts with another Track in the Album", configure: func(first, second *library.MediaInspection) {
+			first.Metadata.TrackPosition.Total = 10
+			second.Metadata.TrackPosition.Total = 11
+		}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			database := testutil.OpenMigratedDB(t)
+			firstPath, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", []byte("first legacy audio"), 1)
+			secondPath, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", []byte("second legacy audio"), 2)
+			firstInspection, secondInspection := strictMigrationInspection(), strictMigrationInspection()
+			firstInspection.Metadata.HasDiscNumber = true
+			secondInspection.Metadata.HasDiscNumber = true
+			secondInspection.Metadata.TrackPosition.Number = 2
+			testCase.configure(&firstInspection, &secondInspection)
+			module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+				firstPath: {inspection: firstInspection}, secondPath: {inspection: secondInspection},
+			}}, unlimitedStorageCapacity)
+			router := chi.NewRouter()
+			module.RegisterRoutes(router)
+			response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+			var preview MigrationPreview
+			testutil.DecodeJSON(t, response, &preview)
+			for _, trackID := range []string{firstTrackID, secondTrackID} {
+				file := findMigrationFile(t, preview, trackID)
+				assertMigrationFile(t, file, trackID, MIGRATION_FILE_REJECTED, "invalid_metadata", testCase.reason)
+			}
+		})
+	}
+}
+
+func TestLibraryMigrationPreviewPropagatesCanceledAlbumValidation(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourcePath, _ := seedLegacyMigrationTrack(t, database, "track.flac", []byte("legacy audio"), 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	inspector := migrationInspector{
+		results:   map[string]migrationInspectionResult{sourcePath: {inspection: strictMigrationInspection()}},
+		onInspect: func(string) { cancel() },
+	}
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: config.DEFAULT_MANAGED_IMPORT_FILE_LIMIT_BYTES, BatchBytes: config.DEFAULT_MANAGED_IMPORT_BATCH_LIMIT_BYTES}, unlimitedStorageCapacity)
+	service := NewService(NewStore(database), storage, inspector)
+
+	_, err := service.PreviewMigration(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled migration preview error = %v", err)
+	}
 }
 
 func seedLegacyMigrationTrack(t *testing.T, database *sql.DB, filename string, contents []byte, trackNumber int) (string, string) {
