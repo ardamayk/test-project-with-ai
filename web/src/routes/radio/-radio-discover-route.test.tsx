@@ -340,43 +340,51 @@ describe("radio discover route", () => {
 		FILTER_INTERACTION_TIMEOUT_MS,
 	);
 
-	it("filters country options inside the dropdown", async () => {
-		renderWithQuery(<RadioDiscoverPage />);
+	it(
+		"filters country options inside the dropdown",
+		async () => {
+			renderWithQuery(<RadioDiscoverPage />);
 
-		await screen.findByText("Radio Swiss Pop");
-		fireEvent.click(screen.getByRole("button", { name: "Filters" }));
-		const drawer = await screen.findByRole("dialog", {
-			name: "Radio catalog filters",
-		});
-		fireEvent.click(within(drawer).getByRole("button", { name: "Country" }));
-		expect(screen.getByRole("option", { name: /Afghanistan/ })).toBeTruthy();
+			await screen.findByText("Radio Swiss Pop");
+			fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+			const drawer = await screen.findByRole("dialog", {
+				name: "Radio catalog filters",
+			});
+			fireEvent.click(within(drawer).getByRole("button", { name: "Country" }));
+			expect(screen.getByRole("option", { name: /Afghanistan/ })).toBeTruthy();
 
-		fireEvent.change(screen.getByPlaceholderText("Search countries..."), {
-			target: { value: "switz" },
-		});
+			fireEvent.change(screen.getByPlaceholderText("Search countries..."), {
+				target: { value: "switz" },
+			});
 
-		expect(screen.getByRole("option", { name: /Switzerland/ })).toBeTruthy();
-		expect(screen.queryByRole("option", { name: /Afghanistan/ })).toBeNull();
-	});
+			expect(screen.getByRole("option", { name: /Switzerland/ })).toBeTruthy();
+			expect(screen.queryByRole("option", { name: /Afghanistan/ })).toBeNull();
+		},
+		FILTER_INTERACTION_TIMEOUT_MS,
+	);
 
-	it("filters genre options inside the dropdown", async () => {
-		renderWithQuery(<RadioDiscoverPage />);
+	it(
+		"filters genre options inside the dropdown",
+		async () => {
+			renderWithQuery(<RadioDiscoverPage />);
 
-		await screen.findByText("Radio Swiss Pop");
-		fireEvent.click(screen.getByRole("button", { name: "Filters" }));
-		const drawer = await screen.findByRole("dialog", {
-			name: "Radio catalog filters",
-		});
-		fireEvent.click(within(drawer).getByRole("button", { name: "Genre" }));
-		expect(screen.getByRole("option", { name: "rock" })).toBeTruthy();
+			await screen.findByText("Radio Swiss Pop");
+			fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+			const drawer = await screen.findByRole("dialog", {
+				name: "Radio catalog filters",
+			});
+			fireEvent.click(within(drawer).getByRole("button", { name: "Genre" }));
+			expect(screen.getByRole("option", { name: "rock" })).toBeTruthy();
 
-		fireEvent.change(screen.getByPlaceholderText("Search genres..."), {
-			target: { value: "jazz" },
-		});
+			fireEvent.change(screen.getByPlaceholderText("Search genres..."), {
+				target: { value: "jazz" },
+			});
 
-		expect(screen.getByRole("option", { name: "jazz" })).toBeTruthy();
-		expect(screen.queryByRole("option", { name: "rock" })).toBeNull();
-	});
+			expect(screen.getByRole("option", { name: "jazz" })).toBeTruthy();
+			expect(screen.queryByRole("option", { name: "rock" })).toBeNull();
+		},
+		FILTER_INTERACTION_TIMEOUT_MS,
+	);
 
 	it("renders a compact header without notification or user controls", async () => {
 		renderWithQuery(<RadioDiscoverPage />);

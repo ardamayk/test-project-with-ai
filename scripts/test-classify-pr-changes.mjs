@@ -230,6 +230,35 @@ const PATH_POLICY_FIXTURES = [
 		],
 		expected: { ...EMPTY_SELECTION, reasons: ["documentation"] },
 	},
+	...[
+		["docs application source", "packages/docs/src/main.tsx"],
+		["docs build configuration", "packages/docs/vite.config.ts"],
+		["docs package configuration", "packages/docs/package.json"],
+	].map(([name, path]) => ({
+		name,
+		changes: [{ type: "modify", path }],
+		expected: { ...ALL_SELECTION, reasons: ["unknown"] },
+	})),
+	...[
+		["browser playback engine", "web/src/playback/BrowserPlaybackEngine.ts"],
+		[
+			"browser playback engine test",
+			"web/src/playback/BrowserPlaybackEngine.test.ts",
+		],
+		["HLS browser test", "web/e2e/radio-hls-proxy.spec.ts"],
+		["HLS browser fixture", "web/e2e/fixtures/hls.html"],
+		["HLS browser configuration", "web/playwright.hls.config.ts"],
+	].map(([name, path]) => ({
+		name,
+		changes: [{ type: "modify", path }],
+		expected: {
+			...EMPTY_SELECTION,
+			web_e2e: true,
+			hls: true,
+			integration_required: true,
+			reasons: ["hls", "web"],
+		},
+	})),
 	{
 		name: "unknown path",
 		changes: [{ type: "add", path: "unowned/tool.config" }],

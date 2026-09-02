@@ -42,6 +42,14 @@ const CODE_GENERATION_PATHS = new Set([
 	"scripts/generate-openapi.sh",
 ]);
 
+const HLS_WEB_PATHS = new Set([
+	"web/e2e/fixtures/hls.html",
+	"web/e2e/radio-hls-proxy.spec.ts",
+	"web/playwright.hls.config.ts",
+	"web/src/playback/BrowserPlaybackEngine.test.ts",
+	"web/src/playback/BrowserPlaybackEngine.ts",
+]);
+
 function parseArguments(args) {
 	const options = { format: "json" };
 	for (let index = 0; index < args.length; index += 2) {
@@ -92,7 +100,7 @@ function readChangedPaths(baseRevision, headRevision) {
 function isDocumentation(path) {
 	return (
 		path.startsWith("docs/") ||
-		path.startsWith("packages/docs/") ||
+		path.startsWith("packages/docs/content/") ||
 		path.endsWith(".md") ||
 		path.endsWith(".mdx") ||
 		path === "LICENSE"
@@ -126,6 +134,11 @@ function applyPathPolicy(path, decision, reasons) {
 	} else if (isGlobal(path)) {
 		Object.assign(decision, CONSERVATIVE_VALIDATION_OVERRIDES);
 		reasons.add("global");
+	} else if (HLS_WEB_PATHS.has(path)) {
+		decision.web_e2e = true;
+		decision.hls = true;
+		reasons.add("hls");
+		reasons.add("web");
 	} else if (
 		path.startsWith("web/") ||
 		path.startsWith("packages/ui/") ||
