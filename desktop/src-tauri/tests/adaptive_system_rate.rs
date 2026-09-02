@@ -6,6 +6,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+// Prevent concurrent process spawning from inheriting another fixture's writable executable.
+static TEMPORARY_EXECUTABLE_LOCK: Mutex<()> = Mutex::new(());
+
 #[derive(Default)]
 struct RecordedPipeWireRate {
     forced_rate_hz: Mutex<Option<u32>>,
@@ -256,6 +259,9 @@ fn teardown_restores_automatic_rate_after_an_interrupted_session() {
 
 #[test]
 fn command_adapter_reads_only_pipewire_force_rate_metadata() {
+    let _temporary_executable_guard = TEMPORARY_EXECUTABLE_LOCK
+        .lock()
+        .expect("lock temporary executable fixture");
     let log_path = temporary_path("force-rate-query-arguments");
     let script = temporary_executable(
         "read-force-rate",
@@ -297,6 +303,9 @@ fn missing_pipewire_observer_is_not_silently_treated_as_automatic_rate() {
 
 #[test]
 fn command_adapter_sets_source_rate_and_resets_to_automatic() {
+    let _temporary_executable_guard = TEMPORARY_EXECUTABLE_LOCK
+        .lock()
+        .expect("lock temporary executable fixture");
     let log_path = temporary_path("force-rate-arguments");
     let script = temporary_executable(
         "write-force-rate",
