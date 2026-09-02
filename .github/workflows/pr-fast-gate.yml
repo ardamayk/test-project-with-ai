@@ -50,6 +50,9 @@ jobs:
       - name: Test pull-request change classifier
         run: mise run classifier:test
 
+      - name: Test clean-room verification policy
+        run: mise run clean-room:test
+
       - name: Classify pull-request changes
         id: classify
         run: |

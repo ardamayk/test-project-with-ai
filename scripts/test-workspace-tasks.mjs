@@ -143,7 +143,9 @@ test("Mise exposes the cross-language public task contract", () => {
 		"ci:classify",
 		"ci:integration",
 		"ci:full",
+		"ci:clean-room",
 		"classifier:test",
+		"clean-room:test",
 	]) {
 		assert.equal(taskNames.has(taskName), true, taskName);
 	}
@@ -162,6 +164,7 @@ test("aggregate Mise tasks select every language domain", () => {
 				"desktop:test",
 				"git-hooks:test",
 				"classifier:test",
+				"clean-room:test",
 			],
 		],
 	]) {
@@ -237,6 +240,14 @@ test("CI policy tasks reuse public task compositions", () => {
 	assert.equal(generateIndex < integrationIndex, true);
 	assert.equal(integrationIndex < buildIndex, true);
 
+	const cleanRoomTask = readMiseTasks().find(
+		(task) => task.name === "ci:clean-room",
+	);
+	assert.match(
+		cleanRoomTask.run.join("\n"),
+		/bash scripts\/run-clean-room-verification\.sh/,
+	);
+
 	const generateCheck = readMiseTasks().find(
 		(task) => task.name === "generate:check",
 	);
@@ -289,7 +300,7 @@ test("Docker dependency install disables lifecycle scripts", () => {
 	);
 	assert.match(dockerfile, /COPY .*pnpm-lock\.yaml/);
 	assert.match(dockerfile, /pnpm install --frozen-lockfile --ignore-scripts/);
-	assert.match(dockerfile, /pnpm install --ignore-scripts/);
+	assert.equal((dockerfile.match(/pnpm install/g) ?? []).length, 1);
 });
 
 test("Desktop Client workspace scripts expose native Rust tools", async () => {
