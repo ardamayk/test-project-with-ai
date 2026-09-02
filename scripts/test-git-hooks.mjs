@@ -31,7 +31,11 @@ function run(repositoryPath, command, args, options = {}) {
 			`${command} ${args.join(" ")} failed:\n${result.stderr}${result.stdout}`,
 		);
 	} else {
-		assert.equal(result.status, options.expectedStatus);
+		assert.equal(
+			result.status,
+			options.expectedStatus,
+			`${command} ${args.join(" ")} returned ${result.status}:\n${result.stderr}${result.stdout}`,
+		);
 	}
 
 	return result;
@@ -42,10 +46,7 @@ function writeExecutable(filePath, contents) {
 	chmodSync(filePath, 0o755);
 }
 
-function createRepository() {
-	const repositoryPath = mkdtempSync(path.join(tmpdir(), "git-hooks-test-"));
-	const binPath = path.join(repositoryPath, ".test-bin");
-	mkdirSync(binPath);
+function copyHookFiles(repositoryPath) {
 	mkdirSync(path.join(repositoryPath, "scripts"));
 	cpSync(
 		path.join(REPOSITORY_ROOT, ".husky"),
@@ -62,6 +63,10 @@ function createRepository() {
 		path.join(REPOSITORY_ROOT, "scripts", "run-graphify-hook.sh"),
 		path.join(repositoryPath, "scripts", "run-graphify-hook.sh"),
 	);
+	cpSync(
+		path.join(REPOSITORY_ROOT, "scripts", "check-staged-generation.sh"),
+		path.join(repositoryPath, "scripts", "check-staged-generation.sh"),
+	);
 	symlinkSync(
 		path.join(REPOSITORY_ROOT, "node_modules"),
 		path.join(repositoryPath, "node_modules"),
@@ -70,18 +75,21 @@ function createRepository() {
 		path.join(repositoryPath, "package.json"),
 		'{"private":true,"type":"module"}\n',
 	);
+}
 
-	const commandLogPath = path.join(repositoryPath, "commands.log");
+function createFakeCommands(binPath, commandLogPath) {
 	writeFileSync(commandLogPath, "");
 	writeExecutable(
 		path.join(binPath, "mise"),
-		`#!/bin/sh\nprintf 'mise %s\\n' "$*" >> "${commandLogPath}"\n[ "\${FAIL_FAST_GATE:-0}" != "1" ]\n`,
+		`#!/bin/sh\nprintf 'mise %s\\n' "$*" >> "${commandLogPath}"\nif [ "\${CHECK_GENERATION_FILES:-0}" = "1" ] && [ "$*" = "run generate:check" ]; then\n\tcmp packages/contracts/openapi.yaml packages/api-client/src/generated/schema.ts || exit $?\nfi\n[ "\${FAIL_FAST_GATE:-0}" != "1" ]\n`,
 	);
 	writeExecutable(
 		path.join(binPath, "graphify"),
 		`#!/bin/sh\nprintf 'graphify %s\\n' "$*" >> "${commandLogPath}"\n`,
 	);
+}
 
+function initializeGitRepository(repositoryPath) {
 	run(repositoryPath, "git", ["init", "--quiet", "--initial-branch=main"]);
 	run(repositoryPath, "git", ["config", "user.email", "hooks@example.test"]);
 	run(repositoryPath, "git", ["config", "user.name", "Hook Tests"]);
@@ -95,6 +103,16 @@ function createRepository() {
 		"-m",
 		"initial",
 	]);
+}
+
+function createRepository() {
+	const repositoryPath = mkdtempSync(path.join(tmpdir(), "git-hooks-test-"));
+	const binPath = path.join(repositoryPath, ".test-bin");
+	const commandLogPath = path.join(repositoryPath, "commands.log");
+	mkdirSync(binPath);
+	copyHookFiles(repositoryPath);
+	createFakeCommands(binPath, commandLogPath);
+	initializeGitRepository(repositoryPath);
 
 	return {
 		binPath,
@@ -111,6 +129,10 @@ function hookEnvironment(fixture, extra = {}) {
 		PATH: `${fixture.binPath}:${process.env.PATH}`,
 		...extra,
 	};
+}
+
+function countGraphifyUpdates(commands) {
+	return commands.match(/graphify update \./g)?.length ?? 0;
 }
 
 test("pre-commit formats staged files while preserving unstaged intent", () => {
@@ -263,6 +285,73 @@ test("pre-commit verifies generated output only for generation inputs", () => {
 			readFileSync(fixture.commandLogPath, "utf8"),
 			"mise run generate:check\n",
 		);
+
+		writeFileSync(fixture.commandLogPath, "");
+		mkdirSync(path.join(fixture.repositoryPath, "server"));
+		writeFileSync(
+			path.join(fixture.repositoryPath, "server", "go.mod"),
+			"module example.test/hooks\n",
+		);
+		run(fixture.repositoryPath, "git", ["add", "server/go.mod"]);
+		run(
+			fixture.repositoryPath,
+			"git",
+			["commit", "--quiet", "-m", "server dependency"],
+			{
+				env: hookEnvironment(fixture),
+			},
+		);
+		assert.equal(readFileSync(fixture.commandLogPath, "utf8"), "");
+	} finally {
+		fixture.remove();
+	}
+});
+
+test("pre-commit verifies generated drift from the staged snapshot", () => {
+	const fixture = createRepository();
+	try {
+		const contractPath = path.join(
+			fixture.repositoryPath,
+			"packages",
+			"contracts",
+			"openapi.yaml",
+		);
+		const generatedPath = path.join(
+			fixture.repositoryPath,
+			"packages",
+			"api-client",
+			"src",
+			"generated",
+			"schema.ts",
+		);
+		mkdirSync(path.dirname(contractPath), { recursive: true });
+		mkdirSync(path.dirname(generatedPath), { recursive: true });
+		writeFileSync(contractPath, "initial\n");
+		writeFileSync(generatedPath, "initial\n");
+		run(fixture.repositoryPath, "git", ["add", "packages"]);
+		run(fixture.repositoryPath, "git", [
+			"commit",
+			"--quiet",
+			"--no-verify",
+			"-m",
+			"generation files",
+		]);
+
+		writeFileSync(contractPath, "staged contract\n");
+		run(fixture.repositoryPath, "git", [
+			"add",
+			"packages/contracts/openapi.yaml",
+		]);
+		writeFileSync(contractPath, "initial\n");
+		run(
+			fixture.repositoryPath,
+			"git",
+			["commit", "--quiet", "-m", "stale generated output"],
+			{
+				env: hookEnvironment(fixture, { CHECK_GENERATION_FILES: "1" }),
+				expectedStatus: 1,
+			},
+		);
 	} finally {
 		fixture.remove();
 	}
@@ -340,13 +429,13 @@ test("Graphify remains optional after commits and branch checkouts", () => {
 		let commands = "";
 		for (let attempt = 0; attempt < 20; attempt += 1) {
 			commands = readFileSync(fixture.commandLogPath, "utf8");
-			if (commands.match(/graphify update \./g)?.length === 2) {
+			if (countGraphifyUpdates(commands) === 2) {
 				break;
 			}
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 		}
 		assert.match(commands, /graphify update \./);
-		assert.equal(commands.match(/graphify update \./g)?.length, 2);
+		assert.equal(countGraphifyUpdates(commands), 2);
 	} finally {
 		fixture.remove();
 	}

@@ -17,4 +17,6 @@ case "${1:-}" in
 		;;
 esac
 
-graphify update . >/dev/null 2>&1 &
+graphifyLog="$(git rev-parse --git-path graphify-hook.log)"
+echo "[graphify] Updating graph in background (log: $graphifyLog)"
+graphify update . >>"$graphifyLog" 2>&1 &

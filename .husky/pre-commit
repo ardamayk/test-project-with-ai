@@ -9,8 +9,6 @@ if ! git diff --cached --quiet -- \
 	packages/contracts/package.json \
 	scripts/generate-openapi.sh \
 	scripts/check-openapi-generation.sh \
-	server/go.mod \
-	server/go.sum \
-	pnpm-lock.yaml; then
-	mise run generate:check
+	scripts/check-staged-generation.sh; then
+	bash scripts/check-staged-generation.sh
 fi
