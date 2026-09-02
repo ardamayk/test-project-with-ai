@@ -84,12 +84,16 @@ run = ":"
 
 [tasks.test]
 description = "Run workspace, Music Server, Desktop Client, and Git hook tests"
-depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test"]
+depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test", "classifier:test"]
 run = ":"
 
 [tasks."git-hooks:test"]
 description = "Test repository-managed Git hook behavior"
 run = "node --test scripts/test-git-hooks.mjs"
+
+[tasks."classifier:test"]
+description = "Test pull-request change classification"
+run = "node --test scripts/test-classify-pr-changes.mjs"
 
 [tasks."workspace:build"]
 description = "Build workspace production artifacts"
@@ -243,6 +247,10 @@ run = "pnpm --filter @repo/desktop prepare:mpv && pnpm --filter @repo/desktop te
 description = "Run the local fast CI policy"
 depends = ["check", "test"]
 run = ":"
+
+[tasks."ci:classify"]
+description = "Classify validation required between two Git revisions"
+run = "node scripts/classify-pr-changes.mjs"
 
 [tasks."ci:integration"]
 description = "Run all browser, HLS, and pinned-mpv integration tests"

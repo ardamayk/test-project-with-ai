@@ -140,8 +140,10 @@ test("Mise exposes the cross-language public task contract", () => {
 		"generate",
 		"generate:check",
 		"ci:fast",
+		"ci:classify",
 		"ci:integration",
 		"ci:full",
+		"classifier:test",
 	]) {
 		assert.equal(taskNames.has(taskName), true, taskName);
 	}
@@ -154,7 +156,13 @@ test("aggregate Mise tasks select every language domain", () => {
 		["check", ["workspace:check", "server:check", "desktop:check"]],
 		[
 			"test",
-			["workspace:test", "server:test", "desktop:test", "git-hooks:test"],
+			[
+				"workspace:test",
+				"server:test",
+				"desktop:test",
+				"git-hooks:test",
+				"classifier:test",
+			],
 		],
 	]) {
 		const dryRun = runMiseTaskDryRun(aggregateTask);
@@ -204,6 +212,11 @@ test("aggregate Mise tasks propagate dependency failures", () => {
 });
 
 test("CI policy tasks reuse public task compositions", () => {
+	assert.match(
+		runMiseTaskDryRun("ci:classify"),
+		/node scripts\/classify-pr-changes\.mjs/,
+	);
+
 	const fastDryRun = runMiseTaskDryRun("ci:fast");
 	assert.match(fastDryRun, /\[check\]/);
 	assert.match(fastDryRun, /\[test\]/);

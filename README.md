@@ -73,6 +73,15 @@ mise run ci:integration   # Playwright, HLS, and pinned-mpv tests
 mise run ci:full          # fast + integration + production builds
 ```
 
+Classify pull-request validation from repository-owned path policy:
+
+```bash
+mise run ci:classify -- --base origin/main --head HEAD
+mise run ci:classify -- --base origin/main --head HEAD --format github
+```
+
+JSON is the default format. GitHub format emits stable `key=value` gate inputs.
+
 Targeted commands include `mise run web:test`, `mise run ui:test`, `mise run api-client:test`, `mise run server:test`, and `mise run desktop:test`. Root pnpm commands remain compatibility proxies; new development and CI automation should call Mise.
 
 ## Git hooks
