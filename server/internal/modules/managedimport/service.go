@@ -559,9 +559,6 @@ func (service *Service) validateStagedUpload(ctx context.Context, jobID string, 
 		}
 		return library.MediaInspection{}, err
 	}
-	if err := service.preflightCommit(upload.Size, inspection); err != nil {
-		return library.MediaInspection{}, err
-	}
 	return inspection, nil
 }
 
@@ -585,7 +582,7 @@ func (service *Service) persistPreview(ctx context.Context, job importJob, origi
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, fmt.Errorf("encode Import Preview: %w", err))
 	}
 	if classification == DUPLICATE_EXACT {
-		markErr := service.store.MarkExactDuplicate(ctx, job.ID, originalFilename, upload.SHA256, string(previewBytes), candidates[0].TrackID)
+		markErr := service.store.MarkExactDuplicate(ctx, job.ID, originalFilename, upload.Path, upload.SHA256, string(previewBytes), candidates[0].TrackID, upload.Size)
 		if markErr != nil {
 			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, markErr)
 		}
@@ -593,7 +590,13 @@ func (service *Service) persistPreview(ctx context.Context, job importJob, origi
 		if removeErr != nil {
 			return Preview{}, removeErr
 		}
+		if clearErr := service.store.ClearStagedFile(ctx, job.ID); clearErr != nil {
+			return Preview{}, clearErr
+		}
 		return preview, nil
+	}
+	if preflightErr := service.preflightCommit(upload.Size, inspection); preflightErr != nil {
+		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, preflightErr)
 	}
 	markedJob, err := service.store.MarkPreview(ctx, job.ID, originalFilename, upload.Path, upload.SHA256, string(previewBytes), upload.Size, service.storage.batchLimit)
 	if err != nil {
@@ -792,7 +795,7 @@ func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, d
 	}
 	albumKey := albumIdentityKey(inspection.Metadata)
 	if isPossibleDuplicate {
-		albumKey = separateAlbumIdentityKey(job.ID, inspection.Metadata)
+		albumKey = separateAlbumIdentityKey(job, inspection.Metadata)
 	}
 	return service.commit(ctx, job, inspection, albumKey)
 }
@@ -816,18 +819,27 @@ func validateDuplicateAction(isPossibleDuplicate bool, decision DuplicateAction)
 	return fmt.Errorf("%w: duplicate decision is not valid for this import", ErrInvalidUpload)
 }
 
-func separateAlbumIdentityKey(jobID string, metadata library.NormalizedMediaMetadata) string {
-	return albumIdentityKey(metadata) + "\x1fmanaged-import-edition:" + jobID
+func separateAlbumIdentityKey(job importJob, metadata library.NormalizedMediaMetadata) string {
+	editionID := job.ID
+	if job.BatchID != "" {
+		editionID = job.BatchID
+	}
+	return albumIdentityKey(metadata) + "\x1fmanaged-import-edition:" + editionID
 }
 
 func (service *Service) rejectExactDuplicate(ctx context.Context, job importJob) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	persistenceErr := service.store.MarkFailed(cleanupCtx, job.ID, job.OriginalFilename, ERROR_CODE_EXACT_DUPLICATE, "file", "file bytes match an existing Track")
-	if persistenceErr != nil {
-		return errors.Join(ErrExactDuplicate, persistenceErr)
+	if err := service.store.MarkConfirmationExactDuplicate(cleanupCtx, job.ID); err != nil {
+		return errors.Join(ErrExactDuplicate, err)
 	}
-	return errors.Join(ErrExactDuplicate, service.storage.RemoveStaged(job.StagedFilePath))
+	if err := service.storage.RemoveStaged(job.StagedFilePath); err != nil {
+		return errors.Join(ErrExactDuplicate, err)
+	}
+	if err := service.store.ClearStagedFile(cleanupCtx, job.ID); err != nil {
+		return errors.Join(ErrExactDuplicate, err)
+	}
+	return ErrExactDuplicate
 }
 
 func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confirmation BatchConfirmation) (Batch, error) {
@@ -851,6 +863,15 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 	if err != nil {
 		return Batch{}, err
 	}
+	if batch.Status == BATCH_STATUS_UPLOADING {
+		isRefreshed, refreshErr := service.refreshLateDuplicatePreviews(ctx, jobs, selectedIDs)
+		if refreshErr != nil {
+			return Batch{}, refreshErr
+		}
+		if isRefreshed {
+			return Batch{}, ErrRevisionConflict
+		}
+	}
 	decisionsByJob, decisionErr := validateDuplicateDecisions(jobs, selectedIDs, confirmation.DuplicateDecisions)
 	if decisionErr != nil {
 		return Batch{}, decisionErr
@@ -867,6 +888,56 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 		return Batch{}, err
 	}
 	return service.completeBatch(ctx, batchID)
+}
+
+func (service *Service) refreshLateDuplicatePreviews(ctx context.Context, jobs []importJob, selectedIDs map[string]bool) (bool, error) {
+	isRefreshed := false
+	for _, job := range jobs {
+		if !selectedIDs[job.ID] || job.Status != STATUS_AWAITING_CONFIRMATION {
+			continue
+		}
+		refreshed, err := service.refreshLateDuplicatePreview(ctx, job)
+		if err != nil {
+			return false, err
+		}
+		isRefreshed = isRefreshed || refreshed
+	}
+	return isRefreshed, nil
+}
+
+func (service *Service) refreshLateDuplicatePreview(ctx context.Context, job importJob) (bool, error) {
+	classification, err := storedDuplicateClassification(job)
+	if err != nil || classification != DUPLICATE_NONE {
+		return false, err
+	}
+	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
+	if err != nil {
+		return false, validationError(err)
+	}
+	classification, candidates, err := service.store.ClassifyDuplicate(ctx, inspection)
+	if err != nil || classification != DUPLICATE_POSSIBLE {
+		return false, err
+	}
+	previewJSON, err := refreshedDuplicatePreviewJSON(job, candidates)
+	if err != nil {
+		return false, err
+	}
+	return true, service.store.RefreshDuplicatePreview(ctx, job.ID, previewJSON)
+}
+
+func refreshedDuplicatePreviewJSON(job importJob, candidates []DuplicateCandidate) (string, error) {
+	var preview Preview
+	if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
+		return "", fmt.Errorf("decode late duplicate preview for job %q: %w", job.ID, err)
+	}
+	preview.Revision++
+	preview.DuplicateClassification = DUPLICATE_POSSIBLE
+	preview.DuplicateCandidates = candidates
+	previewJSON, err := json.Marshal(preview)
+	if err != nil {
+		return "", fmt.Errorf("encode late duplicate preview for job %q: %w", job.ID, err)
+	}
+	return string(previewJSON), nil
 }
 
 func validateDuplicateDecisions(jobs []importJob, selectedIDs map[string]bool, decisions []DuplicateDecision) (map[string]DuplicateAction, error) {

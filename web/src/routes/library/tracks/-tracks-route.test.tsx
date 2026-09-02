@@ -678,7 +678,7 @@ describe("tracks route", () => {
 		expect(screen.getByRole("dialog")).toBeTruthy();
 	});
 
-	it("shows Exact Duplicate link without offering an import decision", async () => {
+	it("shows Exact Duplicate details without navigating away", async () => {
 		mocks.uploadManagedImportFile.mockResolvedValueOnce({
 			jobId: "import-1",
 			status: "failed",
@@ -721,12 +721,10 @@ describe("tracks route", () => {
 			target: { files: [new File(["same"], "duplicate.flac")] },
 		});
 
-		const link = await screen.findByRole("link", {
-			name: "View existing Track",
-		});
-		expect(link.getAttribute("href")).toBe(
-			"/api/v1/library/tracks/existing-track",
-		);
+		const disclosure = await screen.findByText("View existing Track");
+		expect(disclosure.closest("a")).toBeNull();
+		fireEvent.click(disclosure);
+		expect(disclosure.closest("details")?.open).toBe(true);
 		expect(screen.queryByRole("radio")).toBeNull();
 	});
 

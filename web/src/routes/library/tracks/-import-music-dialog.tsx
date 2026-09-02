@@ -324,12 +324,19 @@ function ExactDuplicateReview({
 			<p className="mt-1 text-caption">
 				File bytes already belong to {candidate.title}.
 			</p>
-			<a
-				className="mt-2 inline-block text-primary underline"
-				href={`/api/v1/library/tracks/${candidate.trackId}`}
-			>
-				View existing Track
-			</a>
+			<details className="mt-2">
+				<summary className="cursor-pointer text-primary underline">
+					View existing Track
+				</summary>
+				<dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-caption">
+					<dt>Artist</dt>
+					<dd>{candidate.artists.join(", ")}</dd>
+					<dt>Album</dt>
+					<dd>{candidate.album}</dd>
+					<dt>Position</dt>
+					<dd>{`${candidate.discNo}.${candidate.trackNo}`}</dd>
+				</dl>
+			</details>
 		</div>
 	);
 }

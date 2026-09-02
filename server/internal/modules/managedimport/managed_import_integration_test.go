@@ -321,26 +321,108 @@ func TestManagedImportBatchImportsPossibleDuplicateAsSeparateEdition(t *testing.
 	importOneFLAC(t, router, readStrictFLACFixture(t), "existing.flac")
 	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
 	jobID := createBatchImportJob(t, router, batchID)
+	secondJobID := createBatchImportJob(t, router, batchID)
 	fixture := replaceFixtureTag(t, readStrictFLACFixture(t),
 		"TITLE=  Inspection   Fixture  ", "TITLE=Inspection       Fixture")
-	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
-		"Content-Type": "audio/flac", "X-Import-Filename": "candidate.flac",
-	})
-	if response.Code != http.StatusOK {
-		t.Fatalf("Possible Duplicate upload status = %d, body = %s", response.Code, response.Body.String())
+	secondExisting := secondTrackFixture(readStrictFLACFixture(t))
+	importOneFLAC(t, router, secondExisting, "second-existing.flac")
+	secondFixture := replaceFixtureTag(t, secondExisting, "encoder=Lavf63.1.101", "encoder=Lavf63.1.102")
+	for _, upload := range []struct {
+		jobID, filename string
+		fixture         []byte
+	}{
+		{jobID, "candidate.flac", fixture},
+		{secondJobID, "second-candidate.flac", secondFixture},
+	} {
+		response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+upload.jobID+"/file", bytes.NewReader(upload.fixture), map[string]string{
+			"Content-Type": "audio/flac", "X-Import-Filename": upload.filename,
+		})
+		if response.Code != http.StatusOK {
+			t.Fatalf("Possible Duplicate upload status = %d, body = %s", response.Code, response.Body.String())
+		}
 	}
 	batch := getImportBatch(t, router, batchID)
-	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q],"duplicateDecisions":[{"jobId":%q,"action":"import_separately"}]}`, batch.Revision, jobID, jobID))
-	response = testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
+	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q,%q],"duplicateDecisions":[{"jobId":%q,"action":"import_separately"},{"jobId":%q,"action":"import_separately"}]}`, batch.Revision, jobID, secondJobID, jobID, secondJobID))
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("separate-edition confirmation status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var trackCount, albumCount int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 2 {
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 4 {
 		t.Fatalf("separate-edition Track count = %d, err = %v", trackCount, err)
 	}
 	if err := database.QueryRow(`SELECT COUNT(*) FROM albums`).Scan(&albumCount); err != nil || albumCount != 2 {
 		t.Fatalf("separate-edition Album count = %d, err = %v", albumCount, err)
+	}
+}
+
+func TestManagedImportBatchKeepsLatePossibleDuplicateReviewable(t *testing.T) {
+	router := newManagedImportTestRouter(t, t.TempDir())
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	jobID := createBatchImportJob(t, router, batchID)
+	firstFixture := replaceFixtureTag(t, readStrictFLACFixture(t), "TITLE=  Inspection   Fixture  ", "TITLE=Inspection       Fixture")
+	secondFixture := replaceFixtureTag(t, firstFixture, "encoder=Lavf63.1.101", "encoder=Lavf63.1.102")
+	uploadFLACToJob(t, router, jobID, firstFixture, "first.flac")
+	importOneFLAC(t, router, secondFixture, "second.flac")
+	batch := getImportBatch(t, router, batchID)
+	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q]}`, batch.Revision, jobID))
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
+	testutil.AssertErrorCode(t, response, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
+	batch = getImportBatch(t, router, batchID)
+	if batch.Status != managedimport.BATCH_STATUS_UPLOADING || len(batch.Files) != 1 || batch.Files[0].Preview == nil || batch.Files[0].Preview.DuplicateClassification != managedimport.DUPLICATE_POSSIBLE {
+		t.Fatalf("late duplicate batch = %+v", batch)
+	}
+}
+
+func TestManagedImportIgnoresExactHashFromMissingTrack(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	router := newManagedImportTestRouterWithDatabase(t, database, t.TempDir())
+	trackID := importOneFLAC(t, router, readStrictFLACFixture(t), "existing.flac")
+	if _, err := database.Exec(`UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, trackID); err != nil {
+		t.Fatalf("mark Track missing: %v", err)
+	}
+	response := uploadFixtureThroughRouter(t, router, readStrictFLACFixture(t))
+	var preview managedimport.Preview
+	testutil.DecodeJSON(t, response, &preview)
+	if preview.DuplicateClassification != managedimport.DUPLICATE_NONE {
+		t.Fatalf("missing Track duplicate classification = %q", preview.DuplicateClassification)
+	}
+}
+
+func TestManagedImportRetainsStagingPathWhenExactCleanupFails(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storagePath := t.TempDir()
+	router := newManagedImportTestRouterWithDatabase(t, database, storagePath)
+	fixture := readStrictFLACFixture(t)
+	importOneFLAC(t, router, fixture, "existing.flac")
+	inspector := &blockingCompletedInspector{completedPath: make(chan string), release: make(chan struct{})}
+	service := managedimport.NewService(managedimport.NewStore(database), managedimport.NewStorage(storagePath, managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20}), inspector)
+	job, err := service.CreateJob(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("create duplicate job: %v", err)
+	}
+	uploadDone := make(chan error, 1)
+	go func() {
+		_, uploadErr := service.Upload(context.Background(), job.ID, "duplicate.flac", bytes.NewReader(fixture), int64(len(fixture)))
+		uploadDone <- uploadErr
+	}()
+	stagedPath := <-inspector.completedPath
+	if err := os.Remove(stagedPath); err != nil {
+		t.Fatalf("replace staged file: %v", err)
+	}
+	if err := os.Mkdir(stagedPath, 0o750); err != nil {
+		t.Fatalf("create staged directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stagedPath, "retained"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("make staged directory non-empty: %v", err)
+	}
+	close(inspector.release)
+	if uploadErr := <-uploadDone; uploadErr == nil {
+		t.Fatal("Exact Duplicate cleanup unexpectedly succeeded")
+	}
+	var retainedPath sql.NullString
+	if err := database.QueryRow(`SELECT staged_file_path FROM managed_import_jobs WHERE id = ?`, job.ID).Scan(&retainedPath); err != nil || !retainedPath.Valid {
+		t.Fatalf("retained staging path = %+v, err = %v", retainedPath, err)
 	}
 }
 
@@ -1491,6 +1573,25 @@ type blockingConfirmationInspector struct {
 	release chan struct{}
 }
 
+type blockingCompletedInspector struct {
+	completedPath chan string
+	release       chan struct{}
+}
+
+func (inspector *blockingCompletedInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
+	inspection, err := library.NewMediaInspector().Inspect(ctx, path, reportProgress)
+	if err != nil {
+		return library.MediaInspection{}, err
+	}
+	inspector.completedPath <- path
+	select {
+	case <-ctx.Done():
+		return library.MediaInspection{}, ctx.Err()
+	case <-inspector.release:
+		return inspection, nil
+	}
+}
+
 func (inspector *blockingConfirmationInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
 	inspector.mutex.Lock()
 	inspector.calls++
@@ -2122,6 +2223,19 @@ func uploadFLACForPreview(t *testing.T, router http.Handler, fixture []byte, fil
 	}
 	testutil.DecodeJSON(t, uploadResponse, &preview)
 	return jobID, preview.Revision
+}
+
+func uploadFLACToJob(t *testing.T, router http.Handler, jobID string, fixture []byte, filename string) managedimport.Preview {
+	t.Helper()
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type": "audio/flac", "X-Import-Filename": filename,
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("upload %q status = %d, body = %s", filename, response.Code, response.Body.String())
+	}
+	var preview managedimport.Preview
+	testutil.DecodeJSON(t, response, &preview)
+	return preview
 }
 
 func moveAlbumToLegacyPath(t *testing.T, database *sql.DB, root, trackID string) {

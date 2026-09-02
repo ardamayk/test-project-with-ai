@@ -610,7 +610,7 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 	return store.GetJob(ctx, jobID)
 }
 
-func (store *Store) MarkExactDuplicate(ctx context.Context, jobID, originalFilename, contentSHA256, previewJSON, trackID string) (returnErr error) {
+func (store *Store) MarkExactDuplicate(ctx context.Context, jobID, originalFilename, stagedPath, contentSHA256, previewJSON, trackID string, uploadSize int64) (returnErr error) {
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin Exact Duplicate transition: %w", err)
@@ -627,10 +627,10 @@ func (store *Store) MarkExactDuplicate(ctx context.Context, jobID, originalFilen
 			track_id = ?, preview_json = ?, error_code = ?, error_field = 'file',
 			error_reason = 'file bytes match an existing Track',
 			outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END, selected = 0,
-			staged_file_path = NULL, upload_size_bytes = 0, validation_progress = 100,
+			staged_file_path = ?, upload_size_bytes = ?, validation_progress = 100,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ?`, STATUS_FAILED, originalFilename, contentSHA256,
-		trackID, previewJSON, ERROR_CODE_EXACT_DUPLICATE, OUTCOME_REJECTED, jobID, STATUS_UPLOADING)
+		trackID, previewJSON, ERROR_CODE_EXACT_DUPLICATE, OUTCOME_REJECTED, stagedPath, uploadSize, jobID, STATUS_UPLOADING)
 	if err != nil {
 		return fmt.Errorf("mark Exact Duplicate: %w", err)
 	}
@@ -643,11 +643,79 @@ func (store *Store) MarkExactDuplicate(ctx context.Context, jobID, originalFilen
 		jobID, BATCH_STATUS_UPLOADING); err != nil {
 		return fmt.Errorf("revise Exact Duplicate Batch file: %w", err)
 	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Exact Duplicate transition: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) ClearStagedFile(ctx context.Context, jobID string) error {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Managed Import staging cleanup: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs SET staged_file_path = NULL, upload_size_bytes = 0,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND staged_file_path IS NOT NULL`, jobID)
+	if err != nil {
+		return fmt.Errorf("clear Managed Import staging path: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("clear Managed Import staging path: %w", err)
+	}
 	if err := archiveStandaloneHistory(ctx, transaction, jobID, HISTORY_RESULT_FAILED); err != nil {
 		return err
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("commit Exact Duplicate transition: %w", err)
+		return fmt.Errorf("commit Managed Import staging cleanup: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) MarkConfirmationExactDuplicate(ctx context.Context, jobID string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_jobs
+		SET status = ?, error_code = ?, error_field = 'file',
+			error_reason = 'file bytes match an existing Track',
+			outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END, selected = 0,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ?`, STATUS_FAILED, ERROR_CODE_EXACT_DUPLICATE,
+		OUTCOME_REJECTED, jobID, STATUS_AWAITING_CONFIRMATION)
+	if err != nil {
+		return fmt.Errorf("mark confirmation Exact Duplicate: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("mark confirmation Exact Duplicate: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) RefreshDuplicatePreview(ctx context.Context, jobID, previewJSON string) error {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin duplicate preview refresh: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs SET preview_json = ?, revision = revision + 1, selected = 0,
+			updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+		previewJSON, jobID, STATUS_AWAITING_CONFIRMATION)
+	if err != nil {
+		return fmt.Errorf("refresh duplicate preview: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("refresh duplicate preview: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?) AND status = ?`,
+		jobID, BATCH_STATUS_UPLOADING); err != nil {
+		return fmt.Errorf("revise refreshed duplicate batch: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit duplicate preview refresh: %w", err)
 	}
 	return nil
 }
@@ -1147,7 +1215,7 @@ func (store *Store) FindExactDuplicateTrackID(ctx context.Context, contentSHA256
 		SELECT tracks.id
 		FROM track_sources
 		JOIN tracks ON tracks.id = track_sources.track_id
-		WHERE track_sources.content_sha256 = ?`, contentSHA256,
+		WHERE track_sources.content_sha256 = ? AND tracks.missing_at IS NULL`, contentSHA256,
 	).Scan(&trackID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
