@@ -219,6 +219,40 @@ func TestLibraryMigrationStageRequiresApplicationHeader(t *testing.T) {
 	testutil.AssertErrorCode(t, response, http.StatusForbidden, "migration_stage_forbidden")
 }
 
+func TestLibraryMigrationStageRecordsFailureBeforePendingPlacement(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourceBytes := []byte("accepted Legacy source")
+	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "source.flac", sourceBytes, 1)
+	inspection := strictMigrationInspection()
+	inspection.FileSHA256 = migrationTestSHA256(sourceBytes)
+	inspection.AlbumArtwork.SHA256 = migrationTestSHA256(inspection.AlbumArtwork.Data)
+	result := migrationInspectionResult{inspection: inspection}
+	managedStoragePath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(managedStoragePath, ".migration"), []byte("blocks pending directory"), 0o600); err != nil {
+		t.Fatalf("block pending migration directory: %v", err)
+	}
+	module := newModule(database, config.Config{ManagedStoragePath: managedStoragePath}, migrationInspector{
+		results: map[string]migrationInspectionResult{sourcePath: result}, fallback: &result,
+	}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/stage", nil, map[string]string{MIGRATION_STAGE_REQUEST_HEADER: "1"})
+	var stage MigrationStage
+	testutil.DecodeJSON(t, response, &stage)
+	if response.Code != http.StatusOK || stage.FailedCount != 1 || len(stage.Files) != 1 {
+		t.Fatalf("placement-failure migration stage status = %d, stage = %+v", response.Code, stage)
+	}
+	var status, recoveryReason string
+	if err := database.QueryRow(`SELECT status, recovery_reason FROM legacy_migration_copies WHERE source_track_id = ?`, trackID).Scan(&status, &recoveryReason); err != nil {
+		t.Fatalf("read failed migration copy record: %v", err)
+	}
+	if status != "failed" || recoveryReason == "" {
+		t.Fatalf("failed migration copy record = (%q, %q)", status, recoveryReason)
+	}
+	assertLegacySource(t, database, trackID, sourcePath)
+}
+
 func migrationTestSHA256(contents []byte) string {
 	hash := sha256.Sum256(contents)
 	return hex.EncodeToString(hash[:])

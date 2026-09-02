@@ -17,7 +17,8 @@ CREATE TABLE legacy_migration_copies (
         length(artwork_sha256) = 64 AND artwork_sha256 NOT GLOB '*[^0-9a-f]*'
     ),
     inspection_json TEXT NOT NULL CHECK (json_valid(inspection_json)),
-    status TEXT NOT NULL CHECK (status = 'verified'),
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'verified', 'failed')),
+    recovery_reason TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (source_sha256 = pending_sha256)

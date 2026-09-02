@@ -52,6 +52,27 @@ func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
 	if err == nil {
 		t.Fatal("mismatched migration hashes were accepted")
 	}
+	_, err = sqlDB.Exec(`
+		INSERT INTO legacy_migration_copies (
+			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, inspection_json, status
+		) VALUES (
+			'track-1', 'pending-track', 'pending-album', 'pending-artist', '/music/track.flac',
+			'/managed/.migration/track.flac', '/managed/.migration/cover.png',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'2000000000000000000000000000000000000000000000000000000000000000',
+			'{}', 'prepared'
+		)`)
+	if err != nil {
+		t.Fatalf("store prepared Legacy Migration copy: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE legacy_migration_copies SET status = 'failed', recovery_reason = 'placement failed' WHERE source_track_id = 'track-1'`); err != nil {
+		t.Fatalf("record failed Legacy Migration copy: %v", err)
+	}
+	assertTextValue(t, sqlDB, `SELECT recovery_reason FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "placement failed")
+	assertExecFails(t, sqlDB, `UPDATE legacy_migration_copies SET status = 'unknown' WHERE source_track_id = 'track-1'`, "CHECK constraint failed")
 
 	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
 		t.Fatalf("roll back Legacy Migration copy migration: %v", err)

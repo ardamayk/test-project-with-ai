@@ -98,21 +98,43 @@ func (store *Store) FindManagedTrackByHash(ctx context.Context, contentSHA256 st
 	return trackID, nil
 }
 
-func (store *Store) StoreVerifiedMigrationCopy(ctx context.Context, copy verifiedMigrationCopy) error {
+func (store *Store) CreatePreparedMigrationCopy(ctx context.Context, copy verifiedMigrationCopy) error {
 	_, err := store.database.ExecContext(ctx, `
 		INSERT INTO legacy_migration_copies (
 			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
 			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
 			pending_sha256, artwork_sha256, inspection_json, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified')`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared')`,
 		copy.Source.TrackID, copy.Identity.TrackID, copy.Identity.AlbumID, copy.Identity.AlbumArtistID,
 		copy.Source.FilePath, copy.Placement.AudioPath, copy.Placement.ArtworkPath, copy.SourceSHA256,
 		copy.PendingSHA256, copy.ArtworkSHA256, copy.InspectionJSON,
 	)
 	if err != nil {
-		return fmt.Errorf("store verified Library Migration copy: %w", err)
+		return fmt.Errorf("prepare Library Migration copy record: %w", err)
 	}
 	return nil
+}
+
+func (store *Store) MarkMigrationCopyVerified(ctx context.Context, sourceTrackID string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE legacy_migration_copies
+		SET status = 'verified', recovery_reason = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE source_track_id = ? AND status = 'prepared'`, sourceTrackID)
+	if err != nil {
+		return fmt.Errorf("mark Library Migration copy verified: %w", err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) MarkMigrationCopyFailed(ctx context.Context, sourceTrackID, recoveryReason string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE legacy_migration_copies
+		SET status = 'failed', recovery_reason = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE source_track_id = ? AND status = 'prepared'`, recoveryReason, sourceTrackID)
+	if err != nil {
+		return fmt.Errorf("record failed Library Migration copy: %w", err)
+	}
+	return requireMutation(result)
 }
 
 func (store *Store) FindAlbumArtworkHash(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {

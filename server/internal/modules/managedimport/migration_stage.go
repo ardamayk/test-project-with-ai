@@ -93,28 +93,42 @@ func (service *Service) copyAndVerifyMigrationCandidate(ctx context.Context, can
 }
 
 func (service *Service) placeAndStoreMigrationCopy(ctx context.Context, candidate migrationCandidate, upload stagedUpload, inspection library.MediaInspection, identity commitIdentity) (placedFiles, error) {
-	placement, err := service.storage.PlaceMigration(upload.Path, inspection, identity)
+	plannedPlacement, err := service.storage.planMigrationPlacement(upload.Path, inspection, identity)
 	if err != nil {
 		return placedFiles{}, errors.Join(err, service.storage.RemoveStaged(upload.Path))
 	}
-	verificationErr := service.storage.VerifyMigrationPlacement(placement, identity, inspection.FileSHA256, inspection.AlbumArtwork.SHA256)
-	if verificationErr != nil {
-		return placedFiles{}, errors.Join(verificationErr, service.storage.CleanupMigrationPlacement(placement))
-	}
 	inspectionJSON, err := migrationInspectionJSON(inspection)
 	if err != nil {
-		return placedFiles{}, errors.Join(err, service.storage.CleanupMigrationPlacement(placement))
+		return placedFiles{}, errors.Join(err, service.storage.RemoveStaged(upload.Path))
 	}
 	copy := verifiedMigrationCopy{
-		Source: candidate.source, Identity: identity, Placement: placement,
+		Source: candidate.source, Identity: identity, Placement: plannedPlacement,
 		SourceSHA256: candidate.inspection.FileSHA256, PendingSHA256: inspection.FileSHA256,
 		ArtworkSHA256: inspection.AlbumArtwork.SHA256, InspectionJSON: inspectionJSON,
 	}
-	storeErr := service.store.StoreVerifiedMigrationCopy(ctx, copy)
-	if storeErr != nil {
-		return placedFiles{}, errors.Join(storeErr, service.storage.CleanupMigrationPlacement(placement))
+	prepareErr := service.store.CreatePreparedMigrationCopy(ctx, copy)
+	if prepareErr != nil {
+		return placedFiles{}, errors.Join(prepareErr, service.storage.RemoveStaged(upload.Path))
+	}
+	placement, err := service.storage.PlaceMigration(plannedPlacement, inspection)
+	if err != nil {
+		return placedFiles{}, service.failPreparedMigrationCopy(ctx, candidate.source.TrackID, err, service.storage.RemoveStaged(upload.Path))
+	}
+	verificationErr := service.storage.VerifyMigrationPlacement(placement, identity, inspection.FileSHA256, inspection.AlbumArtwork.SHA256)
+	if verificationErr != nil {
+		return placedFiles{}, service.failPreparedMigrationCopy(ctx, candidate.source.TrackID, verificationErr, service.storage.CleanupMigrationPlacement(placement))
+	}
+	if err := service.store.MarkMigrationCopyVerified(ctx, candidate.source.TrackID); err != nil {
+		return placedFiles{}, service.failPreparedMigrationCopy(ctx, candidate.source.TrackID, err, service.storage.CleanupMigrationPlacement(placement))
 	}
 	return placement, nil
+}
+
+func (service *Service) failPreparedMigrationCopy(ctx context.Context, sourceTrackID string, operationErr, cleanupErr error) error {
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	recordErr := service.store.MarkMigrationCopyFailed(recoveryCtx, sourceTrackID, operationErr.Error())
+	return errors.Join(operationErr, cleanupErr, recordErr)
 }
 
 func verifyMigrationInspection(source, pending library.MediaInspection, pendingSHA256 string) error {
