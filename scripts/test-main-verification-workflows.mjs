@@ -211,8 +211,21 @@ test("nightly follows trusted cache, summary, and artifact policy", () => {
 
 	assert.match(nightlyWorkflow, /ARTIFACT_RETENTION_DAYS: 14/);
 	assert.match(nightlyWorkflow, /Duration:/);
-	assert.match(nightlyWorkflow, /cache status/i);
-	assert.match(nightlyWorkflow, /retry count/i);
+	assert.match(mainWorkflow, /workflow_call:\n\s+outputs:/);
+	assert.match(mainWorkflow, /cache_status:/);
+	assert.match(mainWorkflow, /retry_count:/);
+	assert.match(
+		nightlyWorkflow,
+		/needs\.full-production-verification\.outputs\.cache_status/,
+	);
+	assert.match(
+		nightlyWorkflow,
+		/needs\.full-production-verification\.outputs\.retry_count/,
+	);
+	assert.match(nightlyWorkflow, /gh api/);
+	assert.match(nightlyWorkflow, /archive_download_url/);
+	assert.match(nightlyWorkflow, /if ! artifact_links=/);
+	assert.match(nightlyWorkflow, /Artifact lookup failed for nightly run/);
 	assert.match(nightlyWorkflow, /Run and artifact links:/);
 	for (const action of nightlyWorkflow.matchAll(/uses: [^@\n]+@([^\s]+)/g)) {
 		assert.match(action[1], /^[a-f0-9]{40}$/);

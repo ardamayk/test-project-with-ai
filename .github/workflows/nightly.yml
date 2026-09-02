@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 defaults:
@@ -95,11 +96,21 @@ jobs:
           STARTED_AT: ${{ needs.record-start.outputs.started-at }}
           FULL_RESULT: ${{ needs.full-production-verification.result }}
           CONTAINER_RESULT: ${{ needs.container.result }}
+          CACHE_STATUS: ${{ needs.full-production-verification.outputs.cache_status }}
+          RETRY_COUNT: ${{ needs.full-production-verification.outputs.retry_count }}
+          GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           duration=$(( $(date +%s) - ${STARTED_AT:-$(date +%s)} ))
           result=success
           [[ "$FULL_RESULT" == "success" && "$CONTAINER_RESULT" == "success" ]] || result=failure
+          if ! artifact_links="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+            --paginate --jq '.artifacts[] | "- [\(.name)](\(.archive_download_url))"')"; then
+            echo "Artifact lookup failed for nightly run ${GITHUB_RUN_ID}; summary will omit download links." >&2
+            artifact_links="- Artifact lookup unavailable; use run link below."
+          elif [[ -z "$artifact_links" ]]; then
+            artifact_links="- No artifacts published."
+          fi
           {
             echo "# Nightly / Full Verification"
             echo
@@ -110,11 +121,12 @@ jobs:
             echo "| Workspace, Music Server, Desktop Client, browser, HLS, real mpv, and production builds | $FULL_RESULT |"
             echo "| Container production artifact | $CONTAINER_RESULT |"
             echo
-            echo "Cache status: trusted hit/miss details are exposed by the full production verification job summaries."
+            echo "Cache status: ${CACHE_STATUS:-unavailable}"
             echo
-            echo "Retry count: Web E2E and HLS counts are exposed by their job summaries; all unit, real mpv, and container tasks use zero retries."
+            echo "Retry count: ${RETRY_COUNT:-0}"
             echo
-            echo "Artifacts: Web Client, product docs, Music Server, Desktop Client, and `nightly-container`; diagnostics retained ${ARTIFACT_RETENTION_DAYS} days."
+            echo "Artifacts and diagnostics (${ARTIFACT_RETENTION_DAYS}-day retention):"
+            echo "$artifact_links"
             echo
             echo "Duration: ${duration}s"
             echo

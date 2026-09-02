@@ -10,6 +10,13 @@ on:
   push:
     branches: [main]
   workflow_call:
+    outputs:
+      cache_status:
+        description: Cache hit and miss status for every full-verification job
+        value: ${{ jobs.full-verification.outputs.cache_status }}
+      retry_count:
+        description: Total Playwright retry attempts consumed
+        value: ${{ jobs.full-verification.outputs.retry_count }}
 
 concurrency:
   group: main-verification-${{ github.sha }}
@@ -35,6 +42,8 @@ jobs:
     timeout-minutes: 45
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      cache_status: ${{ steps.summary.outputs.cache_status }}
+      retry_count: ${{ steps.summary.outputs.retry_count }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -211,6 +220,8 @@ jobs:
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "duration=${duration}s" >> "$GITHUB_OUTPUT"
+          echo "cache_status=Workspace: pnpm=${PNPM_CACHE_HIT:-miss}, Turbo=${TURBO_CACHE_HIT:-miss}, Playwright=${PLAYWRIGHT_CACHE_HIT:-miss}" >> "$GITHUB_OUTPUT"
+          echo "retry_count=${retry_count}" >> "$GITHUB_OUTPUT"
 
   music-server:
     name: Music Server, HLS, docs, and server build
@@ -218,6 +229,8 @@ jobs:
     timeout-minutes: 45
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      cache_status: ${{ steps.summary.outputs.cache_status }}
+      retry_count: ${{ steps.summary.outputs.retry_count }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -399,6 +412,8 @@ jobs:
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "duration=${duration}s" >> "$GITHUB_OUTPUT"
+          echo "cache_status=Music Server: pnpm=${PNPM_CACHE_HIT:-miss}, Turbo=${TURBO_CACHE_HIT:-miss}, Go=${GO_CACHE_HIT:-miss}, golangci-lint=${GOLANGCI_CACHE_HIT:-miss}, Playwright=${PLAYWRIGHT_CACHE_HIT:-miss}" >> "$GITHUB_OUTPUT"
+          echo "retry_count=${retry_count}" >> "$GITHUB_OUTPUT"
 
   generated-drift:
     name: Generated client drift
@@ -406,6 +421,8 @@ jobs:
     timeout-minutes: 15
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      cache_status: ${{ steps.summary.outputs.cache_status }}
+      retry_count: ${{ steps.summary.outputs.retry_count }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -484,6 +501,8 @@ jobs:
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "duration=${duration}s" >> "$GITHUB_OUTPUT"
+          echo "cache_status=Generated drift: pnpm=${PNPM_CACHE_HIT:-miss}, Go=${GO_CACHE_HIT:-miss}" >> "$GITHUB_OUTPUT"
+          echo "retry_count=0" >> "$GITHUB_OUTPUT"
 
   desktop:
     name: Desktop Client, real mpv, and Desktop build
@@ -491,6 +510,8 @@ jobs:
     timeout-minutes: 60
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      cache_status: ${{ steps.summary.outputs.cache_status }}
+      retry_count: ${{ steps.summary.outputs.retry_count }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -718,6 +739,8 @@ jobs:
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "duration=${duration}s" >> "$GITHUB_OUTPUT"
+          echo "cache_status=Desktop Client: pnpm=${PNPM_CACHE_HIT:-miss}, Turbo=${TURBO_CACHE_HIT:-miss}, Cargo=${CARGO_CACHE_HIT:-miss}, verified mpv=${MPV_CACHE_HIT:-miss}" >> "$GITHUB_OUTPUT"
+          echo "retry_count=0" >> "$GITHUB_OUTPUT"
 
   full-verification:
     name: Main / Full Verification
@@ -725,8 +748,12 @@ jobs:
     timeout-minutes: 5
     needs: [workspace, music-server, generated-drift, desktop]
     if: always()
+    outputs:
+      cache_status: ${{ steps.summary.outputs.cache_status }}
+      retry_count: ${{ steps.summary.outputs.retry_count }}
     steps:
       - name: Publish full verification summary
+        id: summary
         env:
           WORKSPACE_RESULT: ${{ needs.workspace.result }}
           WORKSPACE_DURATION: ${{ needs.workspace.outputs.duration }}
@@ -736,12 +763,20 @@ jobs:
           DRIFT_DURATION: ${{ needs.generated-drift.outputs.duration }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
           DESKTOP_DURATION: ${{ needs.desktop.outputs.duration }}
+          WORKSPACE_CACHE_STATUS: ${{ needs.workspace.outputs.cache_status }}
+          SERVER_CACHE_STATUS: ${{ needs.music-server.outputs.cache_status }}
+          DRIFT_CACHE_STATUS: ${{ needs.generated-drift.outputs.cache_status }}
+          DESKTOP_CACHE_STATUS: ${{ needs.desktop.outputs.cache_status }}
+          WORKSPACE_RETRY_COUNT: ${{ needs.workspace.outputs.retry_count }}
+          SERVER_RETRY_COUNT: ${{ needs.music-server.outputs.retry_count }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           result=success
           for status in "$WORKSPACE_RESULT" "$SERVER_RESULT" "$DRIFT_RESULT" "$DESKTOP_RESULT"; do
             [[ "$status" == "success" ]] || result=failure
           done
+          retry_count=$(( ${WORKSPACE_RETRY_COUNT:-0} + ${SERVER_RETRY_COUNT:-0} ))
+          cache_status="${WORKSPACE_CACHE_STATUS}; ${SERVER_CACHE_STATUS}; ${DRIFT_CACHE_STATUS}; ${DESKTOP_CACHE_STATUS}"
           {
             echo "# Main / Full Verification"
             echo
@@ -756,8 +791,14 @@ jobs:
             echo
             echo "Music Server and Desktop Client are separate artifacts and have no coupled runtime lifecycle."
             echo
+            echo "Cache status: $cache_status"
+            echo
+            echo "Retry count: $retry_count"
+            echo
             echo "Run and artifact links: $RUN_URL"
           } >> "$GITHUB_STEP_SUMMARY"
+          echo "cache_status=$cache_status" >> "$GITHUB_OUTPUT"
+          echo "retry_count=$retry_count" >> "$GITHUB_OUTPUT"
           if [[ "$result" != "success" ]]; then
             echo "Main / Full Verification failed; see job summaries and ${ARTIFACT_RETENTION_DAYS}-day diagnostics." >&2
             exit 1
