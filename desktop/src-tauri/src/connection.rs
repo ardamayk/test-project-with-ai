@@ -80,7 +80,7 @@ impl ServerOrigin {
         self.url.as_str().trim_end_matches('/')
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url, ConnectionError> {
+    pub(crate) fn endpoint(&self, path: &str) -> Result<Url, ConnectionError> {
         self.url.join(path).map_err(|_| {
             ConnectionError::new(
                 ConnectionErrorCode::InvalidOrigin,
@@ -315,6 +315,50 @@ impl HttpBridge {
                 "Music Server request failed. Check that the server is still running.",
             )
         })?;
+        self.collect_response(response).await
+    }
+
+    pub async fn send_import(
+        &self,
+        origin: &ServerOrigin,
+        path: &str,
+        filename: &str,
+        content_type: &str,
+        content_length: u64,
+        body: reqwest::Body,
+    ) -> Result<HttpResponse, ConnectionError> {
+        let encoded_filename =
+            url::form_urlencoded::byte_serialize(filename.as_bytes()).collect::<String>();
+        let response = self
+            .streaming_client
+            .put(origin.endpoint(path)?)
+            .header("accept", "application/json")
+            .header("content-type", content_type)
+            .header("content-length", content_length)
+            .header("x-import-filename", encoded_filename)
+            .header("x-import-filename-encoding", "url")
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| {
+                ConnectionError::new(
+                    ConnectionErrorCode::Unreachable,
+                    "Managed Import upload could not reach the Music Server.",
+                )
+            })?;
+        if response.status().is_redirection() {
+            return Err(ConnectionError::new(
+                ConnectionErrorCode::InvalidResponse,
+                "Managed Import redirects are disabled to preserve the configured exact origin.",
+            ));
+        }
+        self.collect_response(response).await
+    }
+
+    async fn collect_response(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<HttpResponse, ConnectionError> {
         if response
             .content_length()
             .is_some_and(|size| size > self.max_response_bytes as u64)
@@ -346,7 +390,6 @@ impl HttpBridge {
             }
             body.extend_from_slice(&chunk);
         }
-
         Ok(HttpResponse {
             status,
             headers,
@@ -543,12 +586,14 @@ impl ConnectionStore {
 mod tests {
     use super::{ConnectionErrorCode, ConnectionStore, HttpBridge, HttpRequest, ServerOrigin};
     use std::collections::BTreeMap;
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::PathBuf;
     use std::sync::mpsc::{self, Sender};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio_util::io::ReaderStream;
 
     fn serve_health(capabilities: &[&str]) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
@@ -779,6 +824,72 @@ mod tests {
                 .expect("UTF-8 body")
                 .contains("api.v1")
         );
+    }
+
+    #[tokio::test]
+    async fn import_bridge_streams_to_configured_import_endpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let (request_sender, request_receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("set timeout");
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 2048];
+            while !request
+                .windows(b"audio bytes".len())
+                .any(|part| part == b"audio bytes")
+            {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+            }
+            request_sender.send(request).expect("capture request");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )
+            .expect("write response");
+        });
+        let fixture = temporary_store_path().with_extension("flac");
+        fs::write(&fixture, b"audio bytes").expect("write fixture");
+        let file = tokio::fs::File::open(&fixture).await.expect("open fixture");
+        let origin = ServerOrigin::parse(&format!("http://{address}")).expect("origin");
+
+        let response = HttpBridge::new()
+            .expect("create bridge")
+            .send_import(
+                &origin,
+                "/api/v1/imports/job-1/file",
+                "Beyoncé.flac",
+                "audio/flac",
+                11,
+                reqwest::Body::wrap_stream(ReaderStream::new(file)),
+            )
+            .await
+            .expect("upload succeeds");
+
+        let request_bytes = request_receiver.recv().expect("request");
+        let request = String::from_utf8_lossy(&request_bytes);
+        assert!(request.starts_with("PUT /api/v1/imports/job-1/file HTTP/1.1"));
+        assert!(!request.to_ascii_lowercase().contains("transfer-encoding"));
+        assert!(request.to_ascii_lowercase().contains("content-length: 11"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-import-filename: beyonc%c3%a9.flac")
+        );
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-import-filename-encoding: url")
+        );
+        assert_eq!(response.status, 200);
+        fs::remove_file(fixture).expect("remove fixture");
     }
 
     #[tokio::test]

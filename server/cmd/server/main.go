@@ -122,7 +122,7 @@ func corsHandler(allowedOrigins []string) func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})

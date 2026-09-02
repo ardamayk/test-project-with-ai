@@ -1,5 +1,6 @@
 pub mod adaptive_system_rate;
 mod connection;
+mod desktop_import;
 mod exclusive_output;
 mod media_proxy;
 pub mod output_device;
@@ -20,6 +21,10 @@ use adaptive_system_rate::{
 use connection::{
     ConnectionCheck, ConnectionError, ConnectionErrorCode, ConnectionStore, HttpBridge,
     HttpRequest, HttpResponse, ServerOrigin,
+};
+use desktop_import::{
+    DesktopImportError, ImportSelection, ImportSelectionStore, ImportUploadProgress,
+    SUPPORTED_EXTENSIONS, upload_selection,
 };
 use media_proxy::MediaProxy;
 use output_device::{
@@ -45,6 +50,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{Emitter, Manager, State, WindowEvent};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use telemetry::CommandPipeWireObserver;
 
 const CONNECTION_FILE_NAME: &str = "server-connection.json";
@@ -79,6 +85,7 @@ struct AppState {
     origin: Arc<RwLock<Option<ServerOrigin>>>,
     media_proxy: MediaProxy,
     queue_events: QueueEventService,
+    import_selections: ImportSelectionStore,
 }
 
 #[derive(Clone, Serialize)]
@@ -139,6 +146,114 @@ async fn desktop_http_request(
             )
         })?;
     state.bridge.send(&origin, request).await
+}
+
+#[tauri::command]
+async fn desktop_select_import_files(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<ImportSelection>, DesktopImportError> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("Audio", SUPPORTED_EXTENSIONS)
+        .pick_files(move |paths| {
+            if sender.send(paths).is_err() {
+                eprintln!("Desktop import file picker receiver closed");
+            }
+        });
+    let paths = receiver
+        .await
+        .map_err(|_| desktop_import_state_error())?
+        .unwrap_or_default();
+    let paths = import_dialog_paths(paths)?;
+    state.import_selections.register_paths(paths)
+}
+
+#[tauri::command]
+async fn desktop_select_import_folder(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<ImportSelection>, DesktopImportError> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |path| {
+        if sender.send(path).is_err() {
+            eprintln!("Desktop import folder picker receiver closed");
+        }
+    });
+    let paths = receiver
+        .await
+        .map_err(|_| desktop_import_state_error())?
+        .into_iter()
+        .collect::<Vec<_>>();
+    let paths = import_dialog_paths(paths)?;
+    state.import_selections.register_paths(paths)
+}
+
+fn import_dialog_paths(
+    paths: Vec<FilePath>,
+) -> Result<Vec<std::path::PathBuf>, DesktopImportError> {
+    paths
+        .into_iter()
+        .map(|path| {
+            path.into_path().map_err(|_| DesktopImportError {
+                code: "invalid_selection",
+                message: "Native picker returned a file path that cannot be read.".to_owned(),
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn desktop_upload_import_file(
+    state: State<'_, AppState>,
+    selection_id: String,
+    upload_id: String,
+    job_id: String,
+    on_progress: tauri::ipc::Channel<ImportUploadProgress>,
+) -> Result<HttpResponse, DesktopImportError> {
+    let origin = state
+        .origin
+        .read()
+        .map_err(|_| desktop_import_state_error())?
+        .clone()
+        .ok_or_else(|| DesktopImportError {
+            code: "invalid_origin",
+            message: "Configure a Music Server before uploading music.".to_owned(),
+        })?;
+    upload_selection(
+        &state.import_selections,
+        &state.bridge,
+        &origin,
+        &selection_id,
+        &upload_id,
+        &job_id,
+        on_progress,
+    )
+    .await
+}
+
+#[tauri::command]
+fn desktop_cancel_import_upload(
+    state: State<'_, AppState>,
+    upload_id: String,
+) -> Result<(), DesktopImportError> {
+    state.import_selections.cancel(&upload_id)
+}
+
+#[tauri::command]
+fn desktop_release_import_selections(
+    state: State<'_, AppState>,
+    selection_ids: Vec<String>,
+) -> Result<(), DesktopImportError> {
+    state.import_selections.release(&selection_ids)
+}
+
+fn desktop_import_state_error() -> DesktopImportError {
+    DesktopImportError {
+        code: "state_unavailable",
+        message: "Desktop import state is unavailable.".to_owned(),
+    }
 }
 
 #[tauri::command]
@@ -776,6 +891,7 @@ fn protocol_error_status(code: ConnectionErrorCode) -> u16 {
 
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .on_window_event(handle_main_window_close)
         .register_asynchronous_uri_scheme_protocol(COVER_PROTOCOL, |context, request, responder| {
             let state = context.app_handle().state::<AppState>();
@@ -889,6 +1005,7 @@ pub fn run() -> tauri::Result<()> {
                 origin,
                 media_proxy,
                 queue_events,
+                import_selections: ImportSelectionStore::default(),
             });
             Ok(())
         })
@@ -897,6 +1014,11 @@ pub fn run() -> tauri::Result<()> {
             test_server_connection,
             save_server_connection,
             desktop_http_request,
+            desktop_select_import_files,
+            desktop_select_import_folder,
+            desktop_upload_import_file,
+            desktop_cancel_import_upload,
+            desktop_release_import_selections,
             get_media_proxy_url,
             desktop_reconnect_queue_events,
             get_desktop_playback_state,

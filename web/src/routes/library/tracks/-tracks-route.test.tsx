@@ -23,6 +23,11 @@ const mocks = vi.hoisted(() => ({
 	createManagedImportJob: vi.fn(),
 	uploadManagedImportFile: vi.fn(),
 	confirmManagedImport: vi.fn(),
+	isDesktopClient: vi.fn(),
+	selectDesktopImportFiles: vi.fn(),
+	selectDesktopImportFolder: vi.fn(),
+	desktopUploadImportFile: vi.fn(),
+	releaseDesktopImportSelections: vi.fn(),
 }));
 
 const libraryTracks = [
@@ -62,6 +67,14 @@ vi.mock("#/lib/api", () => ({
 		uploadManagedImportFile: mocks.uploadManagedImportFile,
 		confirmManagedImport: mocks.confirmManagedImport,
 	},
+}));
+
+vi.mock("#/desktop/bridge", () => ({
+	isDesktopClient: mocks.isDesktopClient,
+	selectDesktopImportFiles: mocks.selectDesktopImportFiles,
+	selectDesktopImportFolder: mocks.selectDesktopImportFolder,
+	desktopUploadImportFile: mocks.desktopUploadImportFile,
+	releaseDesktopImportSelections: mocks.releaseDesktopImportSelections,
 }));
 
 vi.mock("#/components/track-list", () => ({
@@ -252,6 +265,13 @@ describe("tracks route", () => {
 		mocks.cancelManagedImportBatch.mockReset();
 		mocks.uploadManagedImportFile.mockReset();
 		mocks.confirmManagedImport.mockReset();
+		mocks.isDesktopClient.mockReset().mockReturnValue(false);
+		mocks.selectDesktopImportFiles.mockReset();
+		mocks.selectDesktopImportFolder.mockReset();
+		mocks.desktopUploadImportFile.mockReset();
+		mocks.releaseDesktopImportSelections
+			.mockReset()
+			.mockResolvedValue(undefined);
 		mocks.listTracks.mockResolvedValue({
 			items: libraryTracks,
 		});
@@ -528,6 +548,151 @@ describe("tracks route", () => {
 		);
 	});
 
+	it("uses native desktop selection and opaque streaming upload in shared dialog", async () => {
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFolder.mockResolvedValue([
+			{ id: "opaque-selection", name: "track.flac", size: 42 },
+		]);
+		mocks.desktopUploadImportFile.mockResolvedValue(
+			new Response(JSON.stringify(createImportPreview("import-1")), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		await openImportMusicDialog();
+		expect(screen.queryByLabelText("Audio folder")).toBeNull();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Select audio folder" }),
+		);
+
+		await vi.waitFor(() =>
+			expect(mocks.desktopUploadImportFile).toHaveBeenCalledWith(
+				"opaque-selection",
+				"import-1",
+				expect.any(Function),
+				expect.any(AbortSignal),
+			),
+		);
+		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalled();
+		expect(await screen.findByText("import-1")).toBeTruthy();
+		expect(
+			screen.getByRole("button", { name: "Select audio folder" }),
+		).toHaveProperty("disabled", true);
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+		await vi.waitFor(() =>
+			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
+				"opaque-selection",
+			]),
+		);
+	});
+
+	it("releases native selections when canceling an uncommitted import", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(true);
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "opaque-selection", name: "track.flac", size: 42 },
+		]);
+		mocks.desktopUploadImportFile.mockResolvedValue(
+			new Response(JSON.stringify(createImportPreview("import-1")), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		await openImportMusicDialog();
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+		await screen.findByText("import-1");
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await vi.waitFor(() =>
+			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
+				"opaque-selection",
+			]),
+		);
+		expect(mocks.cancelManagedImportBatch).toHaveBeenCalledWith("batch-1");
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		confirmClose.mockRestore();
+	});
+
+	it("locks the dialog while native recursive selection is pending", async () => {
+		mocks.isDesktopClient.mockReturnValue(true);
+		let finishSelection: (files: never[]) => void = () => undefined;
+		mocks.selectDesktopImportFolder.mockReturnValue(
+			new Promise((resolve) => {
+				finishSelection = resolve;
+			}),
+		);
+
+		await openImportMusicDialog();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Select audio folder" }),
+		);
+
+		await vi.waitFor(() =>
+			expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
+				"disabled",
+				true,
+			),
+		);
+		finishSelection([]);
+		await vi.waitFor(() =>
+			expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
+				"disabled",
+				false,
+			),
+		);
+		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
+	});
+
+	it("allows canceling after native selection advances to upload", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(true);
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "opaque-selection", name: "track.flac", size: 42 },
+		]);
+		let uploadSignal: AbortSignal | undefined;
+		mocks.desktopUploadImportFile.mockImplementation(
+			(_selectionId, _jobId, _onProgress, signal: AbortSignal) => {
+				uploadSignal = signal;
+				return new Promise((_resolve, reject) => {
+					signal.addEventListener("abort", () =>
+						reject(new DOMException("canceled", "AbortError")),
+					);
+				});
+			},
+		);
+
+		await openImportMusicDialog();
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+		await vi.waitFor(() => expect(uploadSignal).toBeInstanceOf(AbortSignal));
+		expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
+			"disabled",
+			false,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await vi.waitFor(() => expect(uploadSignal?.aborted).toBe(true));
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		confirmClose.mockRestore();
+	});
+
+	it("shows structured native picker errors in the shared dialog", async () => {
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockRejectedValue({
+			code: "selection_unavailable",
+			message: "Selected import file could not be read.",
+		});
+
+		await openImportMusicDialog();
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+
+		expect(
+			await screen.findByText("Selected import file could not be read."),
+		).toBeTruthy();
+		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
+	});
+
 	it("limits recursive folder uploads to three concurrent files", async () => {
 		mockClientFileJobs();
 		const uploads = mockDeferredUploads();
@@ -575,6 +740,9 @@ describe("tracks route", () => {
 		);
 		expectUploadAttempts("import-1", 2);
 		expectUploadAttempts("import-2", 1);
+		expect(mocks.uploadManagedImportFile.mock.calls[2]?.[4]).toBeInstanceOf(
+			AbortSignal,
+		);
 	});
 
 	it("imports a selected file and reports a rejected sibling independently", async () => {
@@ -1128,7 +1296,7 @@ describe("tracks route", () => {
 				"strict-import.flac",
 				file,
 				expect.any(Function),
-				undefined,
+				expect.any(AbortSignal),
 			),
 		);
 		expect(await screen.findByText("Accepted")).toBeDefined();
@@ -1188,14 +1356,14 @@ describe("tracks route", () => {
 			"second.flac",
 			secondFile,
 			expect.any(Function),
-			undefined,
+			expect.any(AbortSignal),
 		);
 		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalledWith(
 			"server-import-2",
 			"first.flac",
 			firstFile,
 			expect.any(Function),
-			undefined,
+			expect.any(AbortSignal),
 		);
 	});
 
@@ -1324,10 +1492,12 @@ describe("tracks route", () => {
 	});
 
 	it("uploads one desktop file at a time", async () => {
-		Object.defineProperty(window, "__TAURI_INTERNALS__", {
-			configurable: true,
-			value: {},
-		});
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "selection-1", name: "one.flac", size: 3 },
+			{ id: "selection-2", name: "two.flac", size: 3 },
+			{ id: "selection-3", name: "three.flac", size: 5 },
+		]);
 		mocks.createManagedImportJob
 			.mockReset()
 			.mockResolvedValueOnce({
@@ -1348,46 +1518,33 @@ describe("tracks route", () => {
 		const releases: Array<() => void> = [];
 		let activeUploads = 0;
 		let maximumActiveUploads = 0;
-		mocks.uploadManagedImportFile.mockImplementation(async (jobId) => {
-			activeUploads++;
-			maximumActiveUploads = Math.max(maximumActiveUploads, activeUploads);
-			await new Promise<void>((resolve) => releases.push(resolve));
-			activeUploads--;
-			return {
-				jobId,
-				status: "awaiting_confirmation",
-				revision: 2,
-				file: {
-					originalFilename: `${jobId}.flac`,
-					title: jobId,
-					artists: ["Test Artist"],
-					album: "Strict Import Tests",
-				},
-			};
-		});
+		mocks.desktopUploadImportFile.mockImplementation(
+			async (_selectionId, jobId) => {
+				activeUploads++;
+				maximumActiveUploads = Math.max(maximumActiveUploads, activeUploads);
+				await new Promise<void>((resolve) => releases.push(resolve));
+				activeUploads--;
+				return new Response(JSON.stringify(createImportPreview(jobId)), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			},
+		);
 		renderWithQuery(<TracksPage />);
 		await screen.findByText("Anti-Hero");
 		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
-		fireEvent.change(screen.getByLabelText("Audio files"), {
-			target: {
-				files: [
-					new File(["one"], "one.flac"),
-					new File(["two"], "two.flac"),
-					new File(["three"], "three.flac"),
-				],
-			},
-		});
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
 
 		await vi.waitFor(() =>
-			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(1),
+			expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(1),
 		);
 		releases.shift()?.();
 		await vi.waitFor(() =>
-			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(2),
+			expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(2),
 		);
 		releases.shift()?.();
 		await vi.waitFor(() =>
-			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3),
+			expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(3),
 		);
 		releases.shift()?.();
 		await vi.waitFor(() => expect(activeUploads).toBe(0));
