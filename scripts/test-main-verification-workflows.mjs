@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+const mainWorkflow = readFileSync(
+	new URL("../.github/workflows/main.yml", import.meta.url),
+	"utf8",
+);
 const fastWorkflow = readFileSync(
 	new URL("../.github/workflows/pr-fast-gate.yml", import.meta.url),
 	"utf8",
@@ -23,89 +27,98 @@ function getJob(workflow, jobName) {
 	return workflow.slice(jobStart, nextJob === -1 ? undefined : nextJob);
 }
 
-function assertMainTrigger(workflow) {
-	assert.match(workflow, /push:\n\s+branches: \[main\]/);
-	assert.match(
-		workflow,
-		/cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/,
-	);
-}
+test("main verification is isolated from pull-request workflows and never cancelled", () => {
+	assert.match(mainWorkflow, /name: Main/);
+	assert.match(mainWorkflow, /push:\n\s+branches: \[main\]/);
+	assert.match(mainWorkflow, /cancel-in-progress: false/);
+	assert.doesNotMatch(mainWorkflow, /pull_request:/);
+	assert.doesNotMatch(fastWorkflow, /push:/);
+	assert.doesNotMatch(integrationWorkflow, /push:/);
+	assert.doesNotMatch(mainWorkflow, /runs-on: (?!ubuntu-24\.04)/);
+});
 
-test("main updates run uncancelled full fast and integration verification", () => {
-	assertMainTrigger(fastWorkflow);
-	assertMainTrigger(integrationWorkflow);
-
-	for (const workflow of [fastWorkflow, integrationWorkflow]) {
-		assert.doesNotMatch(workflow, /runs-on: (?!ubuntu-24\.04)/);
+test("main verification runs every public static, unit, and integration task", () => {
+	for (const task of [
+		"workspace:check",
+		"workspace:typecheck",
+		"workspace:test",
+		"git-hooks:test",
+		"classifier:test",
+		"main-workflows:test",
+		"web:test:e2e",
+		"server:format:check",
+		"server:lint",
+		"server:test",
+		"server:test:hls",
+		"desktop:format:check",
+		"desktop:lint",
+		"desktop:test",
+		"desktop:test:mpv",
+		"generate:check",
+	]) {
+		assert.match(mainWorkflow, new RegExp(`mise run ${task}`));
 	}
 
 	for (const jobName of [
 		"workspace",
 		"music-server",
-		"desktop",
 		"generated-drift",
+		"desktop",
 	]) {
-		assert.match(getJob(fastWorkflow, jobName), /github\.event_name == 'push'/);
-	}
-
-	for (const jobName of ["web-e2e", "hls", "desktop-unit", "real-mpv"]) {
-		assert.match(
-			getJob(integrationWorkflow, jobName),
-			/github\.event_name == 'push'/,
-		);
+		assert.match(getJob(mainWorkflow, jobName), /GITHUB_STEP_SUMMARY/);
 	}
 });
 
-test("trusted main verification restores and publishes every agreed cache", () => {
-	for (const cacheName of ["pnpm", "Turbo", "Go", "golangci-lint", "Cargo"]) {
+test("trusted main restores and publishes every agreed cache", () => {
+	for (const cacheName of [
+		"pnpm",
+		"Turbo",
+		"Go",
+		"golangci-lint",
+		"Cargo",
+		"Playwright browser",
+		"verified pinned mpv",
+	]) {
 		assert.match(
-			fastWorkflow,
+			mainWorkflow,
 			new RegExp(`Restore ${cacheName}[^\\n]* cache`, "i"),
 		);
 		assert.match(
-			fastWorkflow,
+			mainWorkflow,
 			new RegExp(`Publish ${cacheName}[^\\n]* cache`, "i"),
 		);
 	}
 
-	for (const cacheName of ["Playwright browser", "verified pinned mpv"]) {
-		assert.match(
-			integrationWorkflow,
-			new RegExp(`Restore ${cacheName}[^\\n]* cache`, "i"),
-		);
-		assert.match(
-			integrationWorkflow,
-			new RegExp(`Publish ${cacheName}[^\\n]* cache`, "i"),
-		);
+	for (const saveStep of mainWorkflow.matchAll(
+		/- name: Publish [^\n]+ cache[\s\S]*?uses: actions\/cache\/save@[^\n]+/g,
+	)) {
+		assert.match(saveStep[0], /!cancelled\(\)/);
 	}
 });
 
-test("main verification builds and retains separate production artifacts", () => {
-	const webJob = getJob(integrationWorkflow, "web-e2e");
-	const serverJob = getJob(integrationWorkflow, "hls");
-	const desktopJob = getJob(integrationWorkflow, "real-mpv");
-
-	assert.match(webJob, /mise run web:build/);
-	assert.match(webJob, /name: main-web-client/);
-	assert.match(serverJob, /mise run server:build/);
-	assert.match(serverJob, /name: main-music-server/);
-	assert.match(serverJob, /name: main-product-docs/);
-	assert.match(desktopJob, /mise run desktop:build/);
-	assert.match(desktopJob, /name: main-desktop-client/);
-
-	for (const job of [webJob, serverJob, desktopJob]) {
-		assert.match(job, /retention-days: 14/);
-		assert.match(job, /GITHUB_STEP_SUMMARY/);
-		assert.match(job, /if: failure\(\)/);
+test("main builds separate production artifacts and retains diagnostics", () => {
+	for (const task of ["web:build", "server:build", "desktop:build"]) {
+		assert.match(mainWorkflow, new RegExp(`mise run ${task}`));
 	}
-});
-
-test("main verification consumes committed generated clients", () => {
+	for (const artifact of [
+		"main-web-client",
+		"main-music-server",
+		"main-product-docs",
+		"main-desktop-client",
+	]) {
+		assert.match(mainWorkflow, new RegExp(`name: ${artifact}`));
+	}
+	assert.match(mainWorkflow, /ARTIFACT_RETENTION_DAYS: 14/);
+	assert.doesNotMatch(mainWorkflow, /retention-days: 14/);
 	assert.match(
-		getJob(fastWorkflow, "generated-drift"),
-		/mise run generate:check/,
+		getJob(mainWorkflow, "full-verification"),
+		/Music Server and Desktop Client are separate artifacts/,
 	);
-	for (const workflow of [fastWorkflow, integrationWorkflow]) {
-		assert.doesNotMatch(workflow, /(?:mise run|pnpm) generate(?:\s|$)/);
+});
+
+test("main consumes committed generated clients and pins external actions", () => {
+	assert.doesNotMatch(mainWorkflow, /(?:mise run|pnpm) generate(?:\s|$)/);
+	for (const action of mainWorkflow.matchAll(/uses: [^@\n]+@([^\s]+)/g)) {
+		assert.match(action[1], /^[a-f0-9]{40}$/);
 	}
 });
