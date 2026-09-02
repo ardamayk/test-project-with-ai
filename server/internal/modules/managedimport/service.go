@@ -141,6 +141,8 @@ func (service *Service) CancelJob(ctx context.Context, jobID string) error {
 }
 
 func (service *Service) cancelJob(ctx context.Context, jobID string, updatedBefore *time.Time) error {
+	service.batchConfirmationMu.Lock()
+	defer service.batchConfirmationMu.Unlock()
 	job, err := service.store.GetJob(ctx, jobID)
 	if err != nil {
 		return err
@@ -564,6 +566,8 @@ func (service *Service) validateExistingAlbumTotals(ctx context.Context, metadat
 }
 
 func (service *Service) Confirm(ctx context.Context, jobID string, revision int) (Result, error) {
+	service.batchConfirmationMu.Lock()
+	defer service.batchConfirmationMu.Unlock()
 	job, err := service.store.GetJob(ctx, jobID)
 	if err != nil {
 		return Result{}, err

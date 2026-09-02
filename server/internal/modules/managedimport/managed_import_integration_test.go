@@ -1256,6 +1256,53 @@ func TestInactiveCleanupCancelsStalledUploadAfterFifteenMinutes(t *testing.T) {
 	}
 }
 
+func TestManagedImportCancellationWaitsForSuccessfulConfirmation(t *testing.T) {
+	inspector := &blockingConfirmationInspector{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	database := testutil.OpenMigratedDB(t)
+	service := managedimport.NewService(
+		managedimport.NewStore(database),
+		managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20}),
+		inspector,
+	)
+	job, err := service.CreateJob(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("create confirm-race job: %v", err)
+	}
+	fixture := readStrictFLACFixture(t)
+	preview, err := service.Upload(context.Background(), job.ID, "confirm-race.flac", bytes.NewReader(fixture), int64(len(fixture)))
+	if err != nil {
+		t.Fatalf("upload confirm-race job: %v", err)
+	}
+	confirmationDone := make(chan error, 1)
+	go func() {
+		_, confirmErr := service.Confirm(context.Background(), job.ID, preview.Revision)
+		confirmationDone <- confirmErr
+	}()
+	waitForSignal(t, inspector.started, "confirmation did not reach inspection")
+	cancellationDone := make(chan error, 1)
+	go func() { cancellationDone <- service.CancelJob(context.Background(), job.ID) }()
+	select {
+	case cancelErr := <-cancellationDone:
+		t.Fatalf("cancellation finished during confirmation: %v", cancelErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(inspector.release)
+	if confirmErr := <-confirmationDone; confirmErr != nil {
+		t.Fatalf("confirm during cancellation race: %v", confirmErr)
+	}
+	if cancelErr := <-cancellationDone; !errors.Is(cancelErr, managedimport.ErrInvalidState) {
+		t.Fatalf("cancel committed Managed Import error = %v", cancelErr)
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("confirmed Track count = %d, err = %v", trackCount, err)
+	}
+}
+
 func TestManagedImportDetectsFLACWithoutTrustingFilenameOrContentType(t *testing.T) {
 	router := newManagedImportRouter(t, library.NewMediaInspector())
 	jobID := createManagedImportJob(t, router)
@@ -1298,6 +1345,29 @@ type completionCancellingInspector struct {
 type blockingInspector struct {
 	started chan struct{}
 	release chan struct{}
+}
+
+type blockingConfirmationInspector struct {
+	mutex   sync.Mutex
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (inspector *blockingConfirmationInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
+	inspector.mutex.Lock()
+	inspector.calls++
+	call := inspector.calls
+	inspector.mutex.Unlock()
+	if call > 1 {
+		inspector.started <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return library.MediaInspection{}, ctx.Err()
+		case <-inspector.release:
+		}
+	}
+	return library.NewMediaInspector().Inspect(ctx, path, reportProgress)
 }
 
 func (inspector *blockingInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
