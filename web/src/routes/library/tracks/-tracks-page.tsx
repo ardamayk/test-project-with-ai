@@ -27,10 +27,37 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export function TracksPage() {
+	const tracks = useTrackSearch();
+	const managedImport = useManagedImport();
+
+	return (
+		<PageShell
+			testId="tracks-page-shell"
+			contentTestId="tracks-page-content"
+			header={
+				<TracksHeader
+					search={tracks.search}
+					onSearchChange={tracks.setSearch}
+					onImport={managedImport.open}
+				/>
+			}
+		>
+			<CollectionPageContainer className="space-y-6">
+				<TrackResults {...tracks} />
+				<ImportHistory onRetry={managedImport.open} />
+			</CollectionPageContainer>
+			<ImportMusicDialog
+				isOpen={managedImport.isOpen}
+				onOpenChange={managedImport.handleOpenChange}
+				onCommitted={managedImport.refresh}
+			/>
+		</PageShell>
+	);
+}
+
+function useTrackSearch() {
 	const [search, setSearch] = useState("");
 	const [lastTracks, setLastTracks] = useState<Track[]>([]);
-	const [isImportOpen, setIsImportOpen] = useState(false);
-	const queryClient = useQueryClient();
 	const debouncedSearch = useDebouncedValue(search.trim(), 250);
 	const tracks = useQuery({
 		queryKey: ["library", "tracks", debouncedSearch],
@@ -49,8 +76,77 @@ export function TracksPage() {
 			setLastTracks(tracks.data.items);
 		}
 	}, [tracks.data?.items]);
+	return { search, setSearch, tracks, sourceTracks, visibleTracks };
+}
 
-	async function refreshImports() {
+function TracksHeader({
+	search,
+	onSearchChange,
+	onImport,
+}: {
+	search: string;
+	onSearchChange: (search: string) => void;
+	onImport: () => void;
+}) {
+	return (
+		<PageHeader
+			title="Tracks"
+			description="All tracks in your library"
+			innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
+			actions={
+				<>
+					<div className="relative w-full sm:max-w-md">
+						<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-caption" />
+						<Input
+							className="h-11 rounded-xl bg-[var(--player)] pl-10 text-sm"
+							placeholder="Search tracks…"
+							value={search}
+							onChange={(event) => onSearchChange(event.target.value)}
+						/>
+					</div>
+					<Button
+						type="button"
+						aria-label="Import Music"
+						size="icon"
+						className="size-10 rounded-xl"
+						onClick={onImport}
+					>
+						<Plus className="size-5" />
+					</Button>
+				</>
+			}
+		/>
+	);
+}
+
+function TrackResults({
+	tracks,
+	sourceTracks,
+	visibleTracks,
+}: ReturnType<typeof useTrackSearch>) {
+	if (tracks.isLoading && sourceTracks.length === 0)
+		return <p className="text-foreground text-sm">Loading tracks…</p>;
+	if (tracks.isError && sourceTracks.length === 0)
+		return <p className="text-destructive text-sm">Failed to load tracks</p>;
+	if (visibleTracks.length === 0)
+		return (
+			<p className="text-foreground text-sm">No tracks match this search.</p>
+		);
+	return (
+		<TrackList
+			tracks={visibleTracks}
+			showFavorite
+			showMeta
+			compact
+			numbering="list"
+		/>
+	);
+}
+
+function useManagedImport() {
+	const [isOpen, setIsOpen] = useState(false);
+	const queryClient = useQueryClient();
+	async function refresh() {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["library", "tracks"] }),
 			queryClient.invalidateQueries({
@@ -58,75 +154,12 @@ export function TracksPage() {
 			}),
 		]);
 	}
-
-	function handleImportOpenChange(isOpen: boolean) {
-		setIsImportOpen(isOpen);
-		if (!isOpen) {
+	function handleOpenChange(nextIsOpen: boolean) {
+		setIsOpen(nextIsOpen);
+		if (!nextIsOpen)
 			void queryClient.invalidateQueries({
 				queryKey: ["managed-import", "history"],
 			});
-		}
 	}
-
-	return (
-		<PageShell
-			testId="tracks-page-shell"
-			contentTestId="tracks-page-content"
-			header={
-				<PageHeader
-					title="Tracks"
-					description="All tracks in your library"
-					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
-					actions={
-						<>
-							<div className="relative w-full sm:max-w-md">
-								<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-caption" />
-								<Input
-									className="h-11 rounded-xl bg-[var(--player)] pl-10 text-sm"
-									placeholder="Search tracks…"
-									value={search}
-									onChange={(e) => setSearch(e.target.value)}
-								/>
-							</div>
-							<Button
-								type="button"
-								aria-label="Import Music"
-								size="icon"
-								className="size-10 rounded-xl"
-								onClick={() => setIsImportOpen(true)}
-							>
-								<Plus className="size-5" />
-							</Button>
-						</>
-					}
-				/>
-			}
-		>
-			<CollectionPageContainer className="space-y-6">
-				{tracks.isLoading && sourceTracks.length === 0 ? (
-					<p className="text-foreground text-sm">Loading tracks…</p>
-				) : tracks.isError && sourceTracks.length === 0 ? (
-					<p className="text-destructive text-sm">Failed to load tracks</p>
-				) : visibleTracks.length === 0 ? (
-					<p className="text-foreground text-sm">
-						No tracks match this search.
-					</p>
-				) : (
-					<TrackList
-						tracks={visibleTracks}
-						showFavorite
-						showMeta
-						compact
-						numbering="list"
-					/>
-				)}
-				<ImportHistory onRetry={() => setIsImportOpen(true)} />
-			</CollectionPageContainer>
-			<ImportMusicDialog
-				isOpen={isImportOpen}
-				onOpenChange={handleImportOpenChange}
-				onCommitted={refreshImports}
-			/>
-		</PageShell>
-	);
+	return { isOpen, open: () => setIsOpen(true), handleOpenChange, refresh };
 }
