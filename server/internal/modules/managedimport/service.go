@@ -80,7 +80,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	body = service.batchUploadReader(ctx, job, body, contentLength)
 	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
-		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
+		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, "", err)
 	}
 	if job.BatchID != "" {
 		err = service.store.ReserveBatchUpload(ctx, job.ID, upload.Size, service.storage.batchLimit)
@@ -90,9 +90,24 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	}
 	inspection, err := service.validateStagedUpload(ctx, jobID, upload)
 	if err != nil {
-		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, err)
+		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 	}
 	return service.persistPreview(ctx, job, originalFilename, upload, inspection)
+}
+
+func (service *Service) handleUploadFailure(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {
+	if isRetryableUploadInterruption(job, ctx, uploadErr) {
+		return service.markUploadInterrupted(ctx, job, originalFilename, stagedPath, uploadErr)
+	}
+	if stagedPath == "" {
+		return errors.Join(uploadErr, service.markRejected(ctx, job, originalFilename, uploadErr))
+	}
+	return service.failUpload(ctx, job, originalFilename, stagedPath, uploadErr)
+}
+
+func isRetryableUploadInterruption(job importJob, ctx context.Context, err error) bool {
+	return job.BatchID != "" &&
+		(errors.Is(err, ErrUploadInterrupted) || ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 }
 
 type batchReservationReader struct {
@@ -545,6 +560,17 @@ func (service *Service) failUpload(ctx context.Context, job importJob, originalF
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
 	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, job.ID, originalFilename, errorCode, errorField, reason))
+}
+
+func (service *Service) markUploadInterrupted(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	var cleanupErr error
+	if stagedPath != "" {
+		cleanupErr = service.storage.RemoveStaged(stagedPath)
+	}
+	transitionErr := service.store.MarkUploadInterrupted(cleanupCtx, job.ID, originalFilename)
+	return errors.Join(ErrUploadInterrupted, uploadErr, cleanupErr, transitionErr)
 }
 
 func (service *Service) markRejected(ctx context.Context, job importJob, originalFilename string, uploadErr error) error {
