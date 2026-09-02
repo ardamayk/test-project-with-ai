@@ -97,6 +97,25 @@ func TestCleanupRestartRemovesOrphanStaging(t *testing.T) {
 	}
 }
 
+func TestCleanupInactiveExpiresFailedStandaloneJob(t *testing.T) {
+	store := NewStore(testutil.OpenMigratedDB(t))
+	job, err := store.CreateJob(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("create failed standalone job: %v", err)
+	}
+	if err := store.MarkFailed(context.Background(), job.ID, "failed.flac", "invalid_upload", "file", "upload failed"); err != nil {
+		t.Fatalf("mark standalone job failed: %v", err)
+	}
+	service := NewService(store, newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity), nil)
+
+	if err := service.CleanupInactive(context.Background(), time.Now().Add(IMPORT_INACTIVITY_TIMEOUT+time.Second)); err != nil {
+		t.Fatalf("cleanup failed standalone job: %v", err)
+	}
+	if _, err := store.GetJob(context.Background(), job.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get expired failed standalone job error = %v", err)
+	}
+}
+
 func createCleanupBatch(t *testing.T, store *Store, storage *Storage) (Batch, stagedUpload) {
 	t.Helper()
 	batch, err := store.CreateBatch(context.Background())

@@ -20,6 +20,11 @@ type Store struct {
 	database *sql.DB
 }
 
+const (
+	UNCOMMITTED_BATCH_PREDICATE          = `status != ?`
+	UNCOMMITTED_STANDALONE_JOB_PREDICATE = `batch_id IS NULL AND status != ?`
+)
+
 type commitData struct {
 	Job        importJob
 	Identity   commitIdentity
@@ -181,16 +186,39 @@ func (store *Store) DeleteBatch(ctx context.Context, batchID string) (returnErr 
 	return nil
 }
 
-func (store *Store) DeleteJob(ctx context.Context, jobID string) error {
-	result, err := store.database.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE id = ? AND batch_id IS NULL AND status != ?`, jobID, STATUS_COMMITTED)
+func (store *Store) DeleteJob(ctx context.Context, jobID string) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin Managed Import Job cancellation: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Job cancellation: %w", rollbackErr))
+		}
+	}()
+	var batchID sql.NullString
+	if err := transaction.QueryRowContext(ctx, `SELECT batch_id FROM managed_import_jobs WHERE id = ? AND status != ?`, jobID, STATUS_COMMITTED).Scan(&batchID); errors.Is(err, sql.ErrNoRows) {
+		return ErrInvalidState
+	} else if err != nil {
+		return fmt.Errorf("resolve canceled Managed Import Job: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE id = ?`, jobID); err != nil {
 		return fmt.Errorf("delete canceled Managed Import Job: %w", err)
 	}
-	return requireMutation(result)
+	if batchID.Valid {
+		if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, batchID.String); err != nil {
+			return fmt.Errorf("revise canceled Managed Import Batch file: %w", err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Managed Import Job cancellation: %w", err)
+	}
+	return nil
 }
 
 func (store *Store) ListUncommittedBatchIDs(ctx context.Context, updatedBefore *time.Time) ([]string, error) {
-	query := `SELECT id FROM managed_import_batches WHERE status != ?`
+	query := `SELECT id FROM managed_import_batches WHERE ` + UNCOMMITTED_BATCH_PREDICATE
 	arguments := []any{BATCH_STATUS_COMPLETED}
 	if updatedBefore != nil {
 		query += ` AND updated_at <= ?`
@@ -200,8 +228,8 @@ func (store *Store) ListUncommittedBatchIDs(ctx context.Context, updatedBefore *
 }
 
 func (store *Store) ListUncommittedStandaloneJobIDs(ctx context.Context, updatedBefore *time.Time) ([]string, error) {
-	query := `SELECT id FROM managed_import_jobs WHERE batch_id IS NULL AND status IN (?, ?)`
-	arguments := []any{STATUS_UPLOADING, STATUS_AWAITING_CONFIRMATION}
+	query := `SELECT id FROM managed_import_jobs WHERE ` + UNCOMMITTED_STANDALONE_JOB_PREDICATE
+	arguments := []any{STATUS_COMMITTED}
 	if updatedBefore != nil {
 		query += ` AND updated_at <= ?`
 		arguments = append(arguments, *updatedBefore)
@@ -211,7 +239,7 @@ func (store *Store) ListUncommittedStandaloneJobIDs(ctx context.Context, updated
 
 func (store *Store) IsBatchUncommittedBefore(ctx context.Context, batchID string, updatedBefore time.Time) (bool, error) {
 	var isEligible bool
-	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_import_batches WHERE id = ? AND status != ? AND updated_at <= ?)`, batchID, BATCH_STATUS_COMPLETED, updatedBefore).Scan(&isEligible)
+	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_import_batches WHERE id = ? AND `+UNCOMMITTED_BATCH_PREDICATE+` AND updated_at <= ?)`, batchID, BATCH_STATUS_COMPLETED, updatedBefore).Scan(&isEligible)
 	if err != nil {
 		return false, fmt.Errorf("check inactive Managed Import Batch %q: %w", batchID, err)
 	}
@@ -220,7 +248,7 @@ func (store *Store) IsBatchUncommittedBefore(ctx context.Context, batchID string
 
 func (store *Store) IsStandaloneJobUncommittedBefore(ctx context.Context, jobID string, updatedBefore time.Time) (bool, error) {
 	var isEligible bool
-	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_import_jobs WHERE id = ? AND batch_id IS NULL AND status IN (?, ?) AND updated_at <= ?)`, jobID, STATUS_UPLOADING, STATUS_AWAITING_CONFIRMATION, updatedBefore).Scan(&isEligible)
+	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_import_jobs WHERE id = ? AND `+UNCOMMITTED_STANDALONE_JOB_PREDICATE+` AND updated_at <= ?)`, jobID, STATUS_COMMITTED, updatedBefore).Scan(&isEligible)
 	if err != nil {
 		return false, fmt.Errorf("check inactive Managed Import Job %q: %w", jobID, err)
 	}
