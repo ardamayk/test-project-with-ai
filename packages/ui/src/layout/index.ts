@@ -1,11 +1,11 @@
-export { AlbumArt } from './AlbumArt'
-export { AppShell } from './AppShell'
-export { AppBrand } from './AppBrand'
-export { LayoutProvider, useLayout } from './LayoutProvider'
-export { Panel, Slot } from './Slot'
-export { SidebarNav } from './SidebarNav'
-export { PlayerBar } from './PlayerBar'
-export { PlaybackSignal } from './PlaybackSignal'
-export { QueuePanel } from './QueuePanel'
-export { MiniPlayer } from './MiniPlayer'
-export { WidgetDock, WidgetDndProvider } from './WidgetDock'
+export { AlbumArt } from "./AlbumArt";
+export { AppBrand } from "./AppBrand";
+export { AppShell } from "./AppShell";
+export { LayoutProvider, useLayout } from "./LayoutProvider";
+export { MiniPlayer } from "./MiniPlayer";
+export { PlaybackSignal } from "./PlaybackSignal";
+export { PlayerBar } from "./PlayerBar";
+export { QueuePanel } from "./QueuePanel";
+export { SidebarNav } from "./SidebarNav";
+export { Panel, Slot } from "./Slot";
+export { WidgetDndProvider, WidgetDock } from "./WidgetDock";

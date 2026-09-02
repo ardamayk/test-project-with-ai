@@ -1,0 +1,3 @@
+# Pull requests use conservative dual CI gates with a staged cutover
+
+Every pull request reports stable Fast Gate and Integration Gate results, with a repository-owned classifier choosing a deliberately conservative integration set and global or unknown changes selecting all applicable tests. Fast and integration work starts in parallel, superseded pull-request runs are cancelled, and conditional jobs report through stable aggregators so required checks never disappear. The new gates run in shadow mode for ten representative pull requests before an atomic ruleset cutover, followed by a 30-run review before narrower classification or a new CI engine is considered.

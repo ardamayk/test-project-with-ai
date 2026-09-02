@@ -40,6 +40,26 @@ func TestManagedImportRejectsUploadWhenStorageReserveWouldBeExhausted(t *testing
 	testutil.AssertErrorCode(t, response, http.StatusInsufficientStorage, "insufficient_storage")
 }
 
+func TestFailureDetailsPreservesStorageErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantCode   string
+		wantReason string
+	}{
+		{name: "insufficient storage", err: ErrInsufficientStorage, wantCode: "insufficient_storage", wantReason: "Managed Storage does not have enough capacity for this import and its safety reserve"},
+		{name: "unsafe storage path", err: ErrUnsafeStoragePath, wantCode: "unsafe_storage_path", wantReason: "Managed Storage path failed containment checks"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			code, reason := failureDetails(testCase.err)
+			if code != testCase.wantCode || reason != testCase.wantReason {
+				t.Fatalf("failure details = (%q, %q), want (%q, %q)", code, reason, testCase.wantCode, testCase.wantReason)
+			}
+		})
+	}
+}
+
 func TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit(t *testing.T) {
 	fixturePath := filepath.Join("..", "library", "testdata", "strict-import.flac")
 	fixture := readStorageSafetyFixture(t)
@@ -78,6 +98,43 @@ func TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit(t *testing.T
 
 	testutil.AssertErrorCode(t, response, http.StatusInsufficientStorage, "insufficient_storage")
 	assertNoCanonicalAudio(t, managedStoragePath)
+}
+
+func TestManagedImportBatchPreservesConfirmationFailureCode(t *testing.T) {
+	fixture := readStorageSafetyFixture(t)
+	const reserveBytes int64 = 1024
+	availableBytes := int64(1 << 40)
+	router := newStorageSafetyRouter(t, config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedStorageReserveBytes:   reserveBytes,
+		ManagedImportFileLimitBytes:  int64(len(fixture) * 2),
+		ManagedImportBatchLimitBytes: int64(len(fixture) * 2),
+	}, func(string) (int64, error) {
+		return availableBytes, nil
+	})
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	jobResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports", strings.NewReader(fmt.Sprintf(`{"batchId":%q,"clientFileId":"00000000-0000-4000-8000-000000000001"}`, batchID)), map[string]string{"Content-Type": "application/json"})
+	var job Job
+	testutil.DecodeJSON(t, jobResponse, &job)
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+job.ID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type": "audio/flac", "X-Import-Filename": "strict-import.flac",
+	})
+	if uploadResponse.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+	}
+	batchResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/import-batches/"+batchID, nil, nil)
+	var batch Batch
+	testutil.DecodeJSON(t, batchResponse, &batch)
+	availableBytes = reserveBytes
+
+	confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q]}`, batch.Revision, job.ID)), map[string]string{"Content-Type": "application/json"})
+	if confirmResponse.Code != http.StatusOK {
+		t.Fatalf("confirm status = %d, body = %s", confirmResponse.Code, confirmResponse.Body.String())
+	}
+	testutil.DecodeJSON(t, confirmResponse, &batch)
+	if len(batch.Files) != 1 || batch.Files[0].ErrorCode != "insufficient_storage" {
+		t.Fatalf("confirmation failure = %+v", batch.Files)
+	}
 }
 
 func TestManagedImportRejectsStagingSymlinkEscape(t *testing.T) {

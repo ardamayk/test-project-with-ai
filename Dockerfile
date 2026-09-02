@@ -1,14 +1,21 @@
-FROM golang:1.23-alpine AS builder
+FROM node:24.13.1-alpine AS frontend-builder
 WORKDIR /src
-RUN apk add --no-cache git
-COPY go.work package.json pnpm-workspace.yaml turbo.json ./
+RUN apk add --no-cache bash
+COPY go.work package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY server ./server
 COPY packages ./packages
 COPY web ./web
 COPY scripts ./scripts
 RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
-RUN pnpm install --frozen-lockfile || pnpm install
-RUN pnpm generate && pnpm build && chmod +x scripts/sync-static.sh && ./scripts/sync-static.sh
+RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm turbo run build --filter=web --filter=@repo/docs \
+    && chmod +x scripts/sync-static.sh && ./scripts/sync-static.sh
+
+FROM golang:1.26.6-alpine AS builder
+WORKDIR /src
+RUN apk add --no-cache git
+COPY go.work ./
+COPY --from=frontend-builder /src/server ./server
 WORKDIR /src/server
 RUN go mod download && CGO_ENABLED=0 go build -o /server ./cmd/server
 

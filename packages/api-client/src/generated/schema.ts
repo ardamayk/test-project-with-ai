@@ -194,6 +194,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import-batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create one multi-file Managed Import Batch */
+        post: operations["createManagedImportBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import-batches/{batchId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get per-file preview, progress, selection, and outcomes */
+        get: operations["getManagedImportBatch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import-batches/{batchId}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit selected accepted files independently and return all outcomes */
+        post: operations["confirmManagedImportBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/imports": {
         parameters: {
             query?: never;
@@ -585,7 +636,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. */
+            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1. */
             capabilities: string[];
         };
         User: {
@@ -645,6 +696,52 @@ export interface components {
              * @description Created Track when status is committed.
              */
             trackId?: string;
+        };
+        ManagedImportJobCreate: {
+            /**
+             * Format: uuid
+             * @description Import Batch that owns this per-file job.
+             */
+            batchId: string;
+            /**
+             * Format: uuid
+             * @description Client-generated identifier used to correlate a Batch file when the create response is lost.
+             */
+            clientFileId: string;
+        };
+        ManagedImportBatch: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "uploading" | "confirming" | "completed";
+            revision: number;
+            files: components["schemas"]["ManagedImportBatchFile"][];
+        };
+        ManagedImportBatchFile: {
+            /** Format: uuid */
+            jobId: string;
+            /** Format: uuid */
+            clientFileId?: string;
+            /** @enum {string} */
+            state: "accepted" | "rejected" | "unresolved" | "completed";
+            /** @enum {string} */
+            status: "uploading" | "awaiting_confirmation" | "committed" | "failed";
+            revision: number;
+            validationProgress: number;
+            originalFilename?: string;
+            selected: boolean;
+            preview?: components["schemas"]["ManagedImportPreview"];
+            errorCode?: string;
+            errorField?: string;
+            errorReason?: string;
+            /** @enum {string} */
+            outcome?: "imported" | "rejected" | "failed" | "replaced" | "not_attempted";
+            /** Format: uuid */
+            trackId?: string;
+        };
+        ManagedImportBatchConfirmation: {
+            revision: number;
+            selectedFileIds: string[];
         };
         ManagedImportPreview: {
             /** Format: uuid */
@@ -1132,6 +1229,7 @@ export interface components {
         albumId: string;
         trackId: string;
         importId: string;
+        batchId: string;
         queueItemId: string;
         playlistId: string;
         stationId: string;
@@ -1464,7 +1562,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
-    createManagedImportJob: {
+    createManagedImportBatch: {
         parameters: {
             query?: never;
             header?: never;
@@ -1472,6 +1570,82 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Managed Import Batch created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportBatch"];
+                };
+            };
+        };
+    };
+    getManagedImportBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current Managed Import Batch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportBatch"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    confirmManagedImportBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagedImportBatchConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Terminal per-file Import Batch report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportBatch"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    createManagedImportJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ManagedImportJobCreate"];
+            };
+        };
         responses: {
             /** @description Managed Import Job created */
             201: {

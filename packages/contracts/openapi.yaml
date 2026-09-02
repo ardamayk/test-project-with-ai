@@ -259,11 +259,71 @@ paths:
                 $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/import-batches:
+    post:
+      tags: [imports]
+      operationId: createManagedImportBatch
+      summary: Create one multi-file Managed Import Batch
+      responses:
+        "201":
+          description: Managed Import Batch created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportBatch"
+  /api/v1/import-batches/{batchId}:
+    get:
+      tags: [imports]
+      operationId: getManagedImportBatch
+      summary: Get per-file preview, progress, selection, and outcomes
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+      responses:
+        "200":
+          description: Current Managed Import Batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportBatch"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/import-batches/{batchId}/confirm:
+    post:
+      tags: [imports]
+      operationId: confirmManagedImportBatch
+      summary: Commit selected accepted files independently and return all outcomes
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagedImportBatchConfirmation"
+      responses:
+        "200":
+          description: Terminal per-file Import Batch report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportBatch"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/imports:
     post:
       tags: [imports]
       operationId: createManagedImportJob
       summary: Create one server-owned Managed Import Job
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagedImportJobCreate"
       responses:
         "201":
           description: Managed Import Job created
@@ -1043,6 +1103,13 @@ components:
       schema:
         type: string
         format: uuid
+    batchId:
+      name: batchId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     queueItemId:
       name: itemId
       in: path
@@ -1081,7 +1148,8 @@ components:
           description: >-
             Named server behaviors supported by this release. Queue event streaming
             is advertised as playback.queue-events.v1 and the first strict FLAC
-            Managed Import tracer bullet as managed-import.v1.
+            Managed Import tracer bullet as managed-import.v1. Multi-file Managed
+            Import Batches are advertised as managed-import-batches.v1.
     User:
       type: object
       required: [id, username]
@@ -1199,6 +1267,89 @@ components:
           type: string
           format: uuid
           description: Created Track when status is committed.
+    ManagedImportJobCreate:
+      type: object
+      required: [batchId, clientFileId]
+      properties:
+        batchId:
+          type: string
+          format: uuid
+          description: Import Batch that owns this per-file job.
+        clientFileId:
+          type: string
+          format: uuid
+          description: Client-generated identifier used to correlate a Batch file when the create response is lost.
+    ManagedImportBatch:
+      type: object
+      required: [id, status, revision, files]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [uploading, confirming, completed]
+        revision:
+          type: integer
+          minimum: 1
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportBatchFile"
+    ManagedImportBatchFile:
+      type: object
+      required: [jobId, state, status, revision, validationProgress, selected]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        clientFileId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [accepted, rejected, unresolved, completed]
+        status:
+          type: string
+          enum: [uploading, awaiting_confirmation, committed, failed]
+        revision:
+          type: integer
+          minimum: 1
+        validationProgress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        originalFilename:
+          type: string
+        selected:
+          type: boolean
+        preview:
+          $ref: "#/components/schemas/ManagedImportPreview"
+        errorCode:
+          type: string
+        errorField:
+          type: string
+        errorReason:
+          type: string
+        outcome:
+          type: string
+          enum: [imported, rejected, failed, replaced, not_attempted]
+        trackId:
+          type: string
+          format: uuid
+    ManagedImportBatchConfirmation:
+      type: object
+      required: [revision, selectedFileIds]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        selectedFileIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
     ManagedImportPreview:
       type: object
       required: [jobId, status, revision, file]

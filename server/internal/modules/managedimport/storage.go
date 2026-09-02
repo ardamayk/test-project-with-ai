@@ -112,6 +112,16 @@ func (storage *Storage) StageUpload(source io.Reader, contentLength int64) (uplo
 	return storage.writeStagedUpload(root, source)
 }
 
+func (storage *Storage) UploadReservationSize(contentLength int64) (int64, error) {
+	if err := storage.validateUploadLength(contentLength); err != nil {
+		return 0, err
+	}
+	if contentLength >= 0 {
+		return contentLength, nil
+	}
+	return 0, nil
+}
+
 func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stagedUpload, error) {
 	relativePath := filepath.Join(".staging", ".import-"+uuid.NewString()+".upload")
 	file, err := root.OpenFile(relativePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -208,7 +218,11 @@ func (storage *Storage) RemoveStaged(path string) (returnErr error) {
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
-	return removeRootedFile(root, relativePath, "Managed Import staging file")
+	err = removeRootedFile(root, relativePath, "Managed Import staging file")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func (storage *Storage) Place(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placement placedFiles, returnErr error) {

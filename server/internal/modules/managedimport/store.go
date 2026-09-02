@@ -30,37 +30,150 @@ func NewStore(database *sql.DB) *Store {
 	return &Store{database: database}
 }
 
-func (store *Store) CreateJob(ctx context.Context) (Job, error) {
+func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string) (_ Job, returnErr error) {
 	job := Job{ID: uuid.NewString(), Status: STATUS_UPLOADING, Revision: 1}
-	_, err := store.database.ExecContext(ctx, `
-		INSERT INTO managed_import_jobs (id, status, revision)
-		VALUES (?, ?, ?)`, job.ID, job.Status, job.Revision)
+	if batchID == "" {
+		_, err := store.database.ExecContext(ctx, `
+			INSERT INTO managed_import_jobs (id, status, revision, client_file_id)
+			VALUES (?, ?, ?, NULLIF(?, ''))`, job.ID, job.Status, job.Revision, clientFileID)
+		if err != nil {
+			return Job{}, fmt.Errorf("create Managed Import Job: %w", err)
+		}
+		return job, nil
+	}
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, fmt.Errorf("begin Managed Import Batch file creation: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Batch file creation: %w", rollbackErr))
+		}
+	}()
+	result, err := transaction.ExecContext(ctx, `
+		INSERT INTO managed_import_jobs (id, status, revision, batch_id, batch_position, client_file_id)
+		SELECT ?, ?, ?, id, (SELECT COALESCE(MAX(batch_position), 0) + 1 FROM managed_import_jobs WHERE batch_id = ?), NULLIF(?, '')
+		FROM managed_import_batches WHERE id = ? AND status = ?`,
+		job.ID, job.Status, job.Revision, batchID, clientFileID, batchID, BATCH_STATUS_UPLOADING)
 	if err != nil {
 		return Job{}, fmt.Errorf("create Managed Import Job: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return Job{}, ErrInvalidState
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, batchID); err != nil {
+		return Job{}, fmt.Errorf("revise Managed Import Batch: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return Job{}, fmt.Errorf("commit Managed Import Batch file creation: %w", err)
 	}
 	return job, nil
 }
 
+func (store *Store) CreateBatch(ctx context.Context) (Batch, error) {
+	batch := Batch{ID: uuid.NewString(), Status: BATCH_STATUS_UPLOADING, Revision: 1, Files: []BatchFile{}}
+	_, err := store.database.ExecContext(ctx, `INSERT INTO managed_import_batches (id, status, revision) VALUES (?, ?, ?)`, batch.ID, batch.Status, batch.Revision)
+	if err != nil {
+		return Batch{}, fmt.Errorf("create Managed Import Batch: %w", err)
+	}
+	return batch, nil
+}
+
 func (store *Store) GetJob(ctx context.Context, jobID string) (importJob, error) {
+	return getImportJob(ctx, store.database, jobID)
+}
+
+type queryRower interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func getImportJob(ctx context.Context, queryer queryRower, jobID string) (importJob, error) {
 	var job importJob
-	var originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
-	err := store.database.QueryRowContext(ctx, `
-		SELECT id, status, revision, validation_progress, original_filename, staged_file_path,
-			content_sha256, error_code, track_id
+	var batchID, clientFileID, originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
+	var previewJSON, errorField, errorReason, outcome sql.NullString
+	err := queryer.QueryRowContext(ctx, `
+		SELECT id, status, revision, validation_progress, batch_id, client_file_id, original_filename, staged_file_path,
+			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
 	if err != nil {
 		return importJob{}, fmt.Errorf("get Managed Import Job %q: %w", jobID, err)
 	}
+	job.BatchID = batchID.String
+	job.ClientFileID = clientFileID.String
 	job.OriginalFilename = originalFilename.String
 	job.StagedFilePath = stagedFilePath.String
 	job.ContentSHA256 = contentSHA256.String
 	job.ErrorCode = errorCode.String
 	job.TrackID = trackID.String
+	job.PreviewJSON = previewJSON.String
+	job.ErrorField = errorField.String
+	job.ErrorReason = errorReason.String
+	job.Outcome = ImportOutcome(outcome.String)
 	return job, nil
+}
+
+func (store *Store) GetBatch(ctx context.Context, batchID string) (Batch, error) {
+	var batch Batch
+	err := store.database.QueryRowContext(ctx, `SELECT id, status, revision FROM managed_import_batches WHERE id = ?`, batchID).Scan(&batch.ID, &batch.Status, &batch.Revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Batch{}, ErrNotFound
+	}
+	if err != nil {
+		return Batch{}, fmt.Errorf("get Managed Import Batch %q: %w", batchID, err)
+	}
+	jobs, err := store.ListBatchJobs(ctx, batchID)
+	if err != nil {
+		return Batch{}, err
+	}
+	batch.Files = make([]BatchFile, 0, len(jobs))
+	for _, job := range jobs {
+		file, err := batchFileFromJob(job)
+		if err != nil {
+			return Batch{}, err
+		}
+		batch.Files = append(batch.Files, file)
+	}
+	return batch, nil
+}
+
+func (store *Store) GetBatchStatus(ctx context.Context, batchID string) (BatchStatus, error) {
+	var status BatchStatus
+	err := store.database.QueryRowContext(ctx, `SELECT status FROM managed_import_batches WHERE id = ?`, batchID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get Managed Import Batch %q status: %w", batchID, err)
+	}
+	return status, nil
+}
+
+func (store *Store) ListBatchJobs(ctx context.Context, batchID string) (jobs []importJob, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `SELECT id FROM managed_import_jobs WHERE batch_id = ? ORDER BY batch_position`, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("list Managed Import Batch files: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, rows.Close()) }()
+	for rows.Next() {
+		var jobID string
+		if err := rows.Scan(&jobID); err != nil {
+			return nil, fmt.Errorf("scan Managed Import Batch file: %w", err)
+		}
+		job, err := store.GetJob(ctx, jobID)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Managed Import Batch files: %w", err)
+	}
+	return jobs, nil
 }
 
 func (store *Store) UpdateValidationProgress(ctx context.Context, jobID string, progress int) error {
@@ -92,35 +205,213 @@ func (store *Store) UpdateValidationProgress(ctx context.Context, jobID string, 
 	return nil
 }
 
-func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256 string) (importJob, error) {
+func (store *Store) ReserveBatchUpload(ctx context.Context, jobID string, uploadSize, batchLimit int64) error {
 	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
+		SET upload_size_bytes = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ? AND batch_id IS NOT NULL AND ? + COALESCE((
+			SELECT SUM(sibling.upload_size_bytes) FROM managed_import_jobs AS sibling
+			WHERE sibling.batch_id = managed_import_jobs.batch_id AND sibling.id != managed_import_jobs.id
+		), 0) <= ?`, uploadSize, jobID, STATUS_UPLOADING, uploadSize, batchLimit)
+	if err != nil {
+		return fmt.Errorf("reserve Managed Import Batch upload bytes: %w", err)
+	}
+	if err := requireMutation(result); err == nil {
+		return nil
+	}
+	job, getErr := store.GetJob(ctx, jobID)
+	if getErr != nil {
+		return getErr
+	}
+	if job.Status != STATUS_UPLOADING || job.BatchID == "" {
+		return ErrInvalidState
+	}
+	return ErrBatchTooLarge
+}
+
+func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256, previewJSON string, uploadSize, batchLimit int64) (_ importJob, returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return importJob{}, fmt.Errorf("begin Import Preview transition: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Import Preview transition: %w", rollbackErr))
+		}
+	}()
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
-			content_sha256 = ?, error_code = NULL, validation_progress = 100, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND status = ?`,
-		STATUS_AWAITING_CONFIRMATION, originalFilename, stagedFilePath, contentSHA256, jobID, STATUS_UPLOADING,
+			content_sha256 = ?, preview_json = ?, upload_size_bytes = ?, error_code = NULL,
+			validation_progress = 100, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ? AND (
+			batch_id IS NULL OR ? + COALESCE((
+				SELECT SUM(sibling.upload_size_bytes) FROM managed_import_jobs AS sibling
+				WHERE sibling.batch_id = managed_import_jobs.batch_id AND sibling.id != managed_import_jobs.id
+			), 0) <= ?
+		)`,
+		STATUS_AWAITING_CONFIRMATION, originalFilename, stagedFilePath, contentSHA256, previewJSON, uploadSize,
+		jobID, STATUS_UPLOADING, uploadSize, batchLimit,
 	)
 	if err != nil {
 		return importJob{}, fmt.Errorf("mark Import Preview ready: %w", err)
 	}
 	if err := requireMutation(result); err != nil {
+		job, getErr := getImportJob(ctx, transaction, jobID)
+		if getErr != nil {
+			return importJob{}, getErr
+		}
+		if job.Status == STATUS_UPLOADING && job.BatchID != "" {
+			return importJob{}, ErrBatchTooLarge
+		}
 		return importJob{}, err
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
+		return importJob{}, fmt.Errorf("revise Managed Import Batch preview: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return importJob{}, fmt.Errorf("commit Import Preview transition: %w", err)
 	}
 	return store.GetJob(ctx, jobID)
 }
 
-func (store *Store) MarkFailed(ctx context.Context, jobID, errorCode string) error {
-	result, err := store.database.ExecContext(ctx, `
+func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, errorCode, errorField, errorReason string) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin failed Managed Import transition: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback failed Managed Import transition: %w", rollbackErr))
+		}
+	}()
+	result, err := transaction.ExecContext(ctx, `
 		UPDATE managed_import_jobs
-		SET status = ?, error_code = ?, staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND status = ?`, STATUS_FAILED, errorCode, jobID, STATUS_UPLOADING)
+		SET status = ?, original_filename = COALESCE(NULLIF(?, ''), original_filename), error_code = ?,
+			error_field = ?, error_reason = ?, outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END,
+			selected = 0, staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status IN (?, ?)`, STATUS_FAILED, originalFilename, errorCode, errorField, errorReason,
+		OUTCOME_REJECTED, jobID, STATUS_UPLOADING, STATUS_AWAITING_CONFIRMATION)
 	if err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
 	if err := requireMutation(result); err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
+		return fmt.Errorf("revise rejected Managed Import Batch file: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit failed Managed Import transition: %w", err)
+	}
 	return nil
+}
+
+func (store *Store) StartBatchConfirmation(ctx context.Context, batchID string, revision int, selectedIDs map[string]bool) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Managed Import Batch confirmation: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Batch confirmation: %w", rollbackErr))
+		}
+	}()
+	if err := ensureBatchResolved(ctx, transaction, batchID); err != nil {
+		return err
+	}
+	if err := transitionBatchConfirmation(ctx, transaction, batchID, revision); err != nil {
+		return err
+	}
+	if err := updateBatchSelection(ctx, transaction, batchID, selectedIDs); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Managed Import Batch confirmation start: %w", err)
+	}
+	return nil
+}
+
+func ensureBatchResolved(ctx context.Context, transaction *sql.Tx, batchID string) error {
+	var unresolvedCount int
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_import_jobs WHERE batch_id = ? AND status = ?`, batchID, STATUS_UPLOADING).Scan(&unresolvedCount); err != nil {
+		return fmt.Errorf("count unresolved Managed Import Batch files: %w", err)
+	}
+	if unresolvedCount > 0 {
+		return fmt.Errorf("%w: Managed Import Batch has unresolved files", ErrInvalidState)
+	}
+	return nil
+}
+
+func transitionBatchConfirmation(ctx context.Context, transaction *sql.Tx, batchID string, revision int) error {
+	result, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET status = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ? AND revision = ?`,
+		BATCH_STATUS_CONFIRMING, batchID, BATCH_STATUS_UPLOADING, revision)
+	if err != nil {
+		return fmt.Errorf("start Managed Import Batch confirmation: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		var currentStatus BatchStatus
+		var currentRevision int
+		getErr := transaction.QueryRowContext(ctx, `SELECT status, revision FROM managed_import_batches WHERE id = ?`, batchID).Scan(&currentStatus, &currentRevision)
+		if errors.Is(getErr, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if getErr != nil {
+			return fmt.Errorf("inspect Managed Import Batch confirmation conflict: %w", getErr)
+		}
+		if currentRevision != revision {
+			return ErrRevisionConflict
+		}
+		if currentStatus != BATCH_STATUS_UPLOADING {
+			return ErrInvalidState
+		}
+		return ErrInvalidState
+	}
+	return nil
+}
+
+func updateBatchSelection(ctx context.Context, transaction *sql.Tx, batchID string, selectedIDs map[string]bool) error {
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_jobs SET selected = 0 WHERE batch_id = ?`, batchID); err != nil {
+		return fmt.Errorf("clear Managed Import Batch selection: %w", err)
+	}
+	for jobID := range selectedIDs {
+		result, err := transaction.ExecContext(ctx, `UPDATE managed_import_jobs SET selected = 1 WHERE id = ? AND batch_id = ? AND status = ?`, jobID, batchID, STATUS_AWAITING_CONFIRMATION)
+		if err != nil {
+			return fmt.Errorf("select Managed Import Batch file: %w", err)
+		}
+		if err := requireMutation(result); err != nil {
+			return fmt.Errorf("%w: selected file %q is not accepted", ErrInvalidUpload, jobID)
+		}
+	}
+	return nil
+}
+
+func (store *Store) MarkBatchFileOutcome(ctx context.Context, jobID string, outcome ImportOutcome, errorCode, errorReason string) error {
+	status := STATUS_FAILED
+	if outcome == OUTCOME_IMPORTED || outcome == OUTCOME_REPLACED {
+		status = STATUS_COMMITTED
+	}
+	result, err := store.database.ExecContext(ctx, `UPDATE managed_import_jobs SET status = ?, outcome = ?, error_code = NULLIF(?, ''), error_reason = NULLIF(?, ''), staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ? AND outcome IS NULL`,
+		status, outcome, errorCode, errorReason, jobID, STATUS_AWAITING_CONFIRMATION)
+	if err != nil {
+		return fmt.Errorf("record Managed Import Batch file outcome: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("record Managed Import Batch file outcome: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) CompleteBatch(ctx context.Context, batchID string) error {
+	result, err := store.database.ExecContext(ctx, `UPDATE managed_import_batches SET status = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+		BATCH_STATUS_COMPLETED, batchID, BATCH_STATUS_CONFIRMING)
+	if err != nil {
+		return fmt.Errorf("complete Managed Import Batch: %w", err)
+	}
+	return requireMutation(result)
 }
 
 func (store *Store) AlbumRequiresDiscNumber(ctx context.Context, metadata library.NormalizedMediaMetadata) (bool, error) {
@@ -477,9 +768,9 @@ func markCommitted(ctx context.Context, transaction *sql.Tx, job importJob, trac
 	result, err := transaction.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, track_id = ?, staged_file_path = NULL,
-			updated_at = CURRENT_TIMESTAMP
+			outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ? AND revision = ?`,
-		STATUS_COMMITTED, trackID, job.ID, STATUS_AWAITING_CONFIRMATION, job.Revision,
+		STATUS_COMMITTED, trackID, OUTCOME_IMPORTED, job.ID, STATUS_AWAITING_CONFIRMATION, job.Revision,
 	)
 	if err != nil {
 		return Result{}, fmt.Errorf("mark Managed Import committed: %w", err)
