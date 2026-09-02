@@ -48,10 +48,40 @@ func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {
 
 func TestManagedImportHistoryMigrationAppliesAndRollsBack(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, COMMIT_JOURNAL_VERSION)
-	if err := goose.UpTo(sqlDB, migrationsDir(t), IMPORT_HISTORY_VERSION); err != nil {
-		t.Fatalf("apply Import History migration: %v", err)
-	}
+	insertLegacyLibrary(t, sqlDB)
 	_, err := sqlDB.Exec(`
+		INSERT INTO managed_import_jobs (
+			id, status, revision, original_filename, content_sha256, track_id,
+			created_at, updated_at
+		) VALUES (
+			'standalone-import', 'committed', 1, 'standalone.flac',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'track-1', '2026-01-01 00:00:00', '2026-01-01 00:01:00'
+		);
+		INSERT INTO managed_import_batches (id, status, revision, created_at, updated_at)
+		VALUES ('batch-import', 'completed', 2, '2026-01-02 00:00:00', '2026-01-02 00:01:00');
+		INSERT INTO managed_import_jobs (
+			id, status, revision, original_filename, error_code, batch_id, outcome,
+			selected, batch_position, created_at, updated_at, client_file_id
+		) VALUES (
+			'batch-job', 'failed', 1, 'broken.flac', 'invalid_upload', 'batch-import',
+			'rejected', 0, 1, '2026-01-02 00:00:00', '2026-01-02 00:00:30',
+			'00000000-0000-4000-8000-000000000001'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("store terminal Managed Import fixtures: %v", err)
+	}
+	if migrationErr := goose.UpTo(sqlDB, migrationsDir(t), IMPORT_HISTORY_VERSION); migrationErr != nil {
+		t.Fatalf("apply Import History migration: %v", migrationErr)
+	}
+	assertRowCount(t, sqlDB, "managed_import_history", 2)
+	assertRowCount(t, sqlDB, "managed_import_history_files", 2)
+	assertTextValue(t, sqlDB, `SELECT result_code FROM managed_import_history WHERE import_id = 'standalone-import'`, "completed")
+	assertTextValue(t, sqlDB, `SELECT created_track_id FROM managed_import_history_files WHERE import_id = 'standalone-import'`, "track-1")
+	assertTextValue(t, sqlDB, `SELECT result_code FROM managed_import_history_files WHERE import_id = 'batch-import'`, "invalid_upload")
+
+	_, err = sqlDB.Exec(`
 		INSERT INTO managed_import_history (
 			import_id, started_at, completed_at, result_code, total_count, imported_count,
 			rejected_count, failed_count, replaced_count, not_attempted_count, canceled_count
@@ -64,8 +94,8 @@ func TestManagedImportHistoryMigrationAppliesAndRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store Import History fixture: %v", err)
 	}
-	assertRowCount(t, sqlDB, "managed_import_history", 1)
-	assertRowCount(t, sqlDB, "managed_import_history_files", 1)
+	assertRowCount(t, sqlDB, "managed_import_history", 3)
+	assertRowCount(t, sqlDB, "managed_import_history_files", 3)
 	assertExecFails(t, sqlDB, `UPDATE managed_import_history SET total_count = 2 WHERE import_id = 'import-1'`, "CHECK constraint failed")
 
 	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {

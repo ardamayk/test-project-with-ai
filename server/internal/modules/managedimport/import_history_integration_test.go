@@ -3,6 +3,7 @@ package managedimport_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -203,6 +204,60 @@ func TestImportHistoryPreservesTerminalFileOutcomesWhenBatchIsCanceled(t *testin
 	}
 	if item.Files[1].FileID != unresolvedFileID || item.Files[1].ResultCode != "canceled" {
 		t.Fatalf("unresolved cancellation result = %+v", item.Files[1])
+	}
+}
+
+func TestCanceledBatchClientFileIDCannotBeReused(t *testing.T) {
+	store := managedimport.NewStore(testutil.OpenMigratedDB(t))
+	batch, err := store.CreateBatch(t.Context())
+	if err != nil {
+		t.Fatalf("create Import Batch: %v", err)
+	}
+	clientFileID := "00000000-0000-4000-8000-000000000040"
+	job, err := store.CreateJob(t.Context(), batch.ID, clientFileID)
+	if err != nil {
+		t.Fatalf("create Import Job: %v", err)
+	}
+	if err := store.DeleteJob(t.Context(), job.ID); err != nil {
+		t.Fatalf("cancel Import Job: %v", err)
+	}
+	if _, err := store.CreateJob(t.Context(), batch.ID, clientFileID); !errors.Is(err, managedimport.ErrInvalidState) {
+		t.Fatalf("reuse canceled clientFileId error = %v", err)
+	}
+}
+
+func TestPrunedFailedStandaloneHistoryIsNotRecreatedOnDeletion(t *testing.T) {
+	store := managedimport.NewStore(testutil.OpenMigratedDB(t))
+	failedJob, err := store.CreateJob(t.Context(), "", "")
+	if err != nil {
+		t.Fatalf("create failed standalone Import Job: %v", err)
+	}
+	if markErr := store.MarkFailed(t.Context(), failedJob.ID, "failed.flac", "invalid_upload", "file", "upload failed"); markErr != nil {
+		t.Fatalf("fail standalone Import Job: %v", markErr)
+	}
+	for range managedimport.IMPORT_HISTORY_LIMIT {
+		batch, createErr := store.CreateBatch(t.Context())
+		if createErr != nil {
+			t.Fatalf("create newer Import Batch: %v", createErr)
+		}
+		if deleteErr := store.DeleteBatch(t.Context(), batch.ID); deleteErr != nil {
+			t.Fatalf("cancel newer Import Batch: %v", deleteErr)
+		}
+	}
+	if cleanupErr := store.DeleteJob(t.Context(), failedJob.ID); cleanupErr != nil {
+		t.Fatalf("delete pruned failed Import Job: %v", cleanupErr)
+	}
+	history, err := store.ListHistory(t.Context())
+	if err != nil {
+		t.Fatalf("list Import History: %v", err)
+	}
+	if len(history.Items) != managedimport.IMPORT_HISTORY_LIMIT {
+		t.Fatalf("Import History count after failed cleanup = %d", len(history.Items))
+	}
+	for _, item := range history.Items {
+		if item.ImportID == failedJob.ID {
+			t.Fatalf("pruned failed Import History %q was recreated", failedJob.ID)
+		}
 	}
 }
 

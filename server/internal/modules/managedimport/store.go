@@ -20,6 +20,10 @@ type Store struct {
 	database *sql.DB
 }
 
+type historyQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 const (
 	UNCOMMITTED_BATCH_PREDICATE          = `status != ?`
 	UNCOMMITTED_STANDALONE_JOB_PREDICATE = `batch_id IS NULL AND status != ?`
@@ -123,9 +127,18 @@ func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string)
 	}()
 	result, err := transaction.ExecContext(ctx, `
 		INSERT INTO managed_import_jobs (id, status, revision, batch_id, batch_position, client_file_id)
-		SELECT ?, ?, ?, id, (SELECT COALESCE(MAX(batch_position), 0) + 1 FROM managed_import_jobs WHERE batch_id = ?), NULLIF(?, '')
-		FROM managed_import_batches WHERE id = ? AND status = ?`,
-		job.ID, job.Status, job.Revision, batchID, clientFileID, batchID, BATCH_STATUS_UPLOADING)
+		SELECT ?, ?, ?, id, (
+			SELECT COALESCE(MAX(position), 0) + 1 FROM (
+				SELECT batch_position AS position FROM managed_import_jobs WHERE batch_id = ?
+				UNION ALL
+				SELECT position FROM managed_import_canceled_files WHERE batch_id = ?
+			)
+		), NULLIF(?, '')
+		FROM managed_import_batches
+		WHERE id = ? AND status = ? AND NOT EXISTS (
+			SELECT 1 FROM managed_import_canceled_files WHERE batch_id = ? AND file_id = NULLIF(?, '')
+		)`, job.ID, job.Status, job.Revision, batchID, batchID, clientFileID, batchID,
+		BATCH_STATUS_UPLOADING, batchID, clientFileID)
 	if err != nil {
 		return Job{}, fmt.Errorf("create Managed Import Job: %w", err)
 	}
@@ -223,13 +236,34 @@ func (store *Store) GetBatchStatus(ctx context.Context, batchID string) (BatchSt
 	return status, nil
 }
 
-func (store *Store) ListHistory(ctx context.Context) (HistoryList, error) {
-	items, err := store.listHistoryItems(ctx)
+func (store *Store) ListHistory(ctx context.Context) (_ HistoryList, returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return HistoryList{}, fmt.Errorf("begin Import History snapshot: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Import History snapshot: %w", rollbackErr))
+		}
+	}()
+	history, err := readHistorySnapshot(ctx, transaction)
+	if err != nil {
+		return HistoryList{}, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return HistoryList{}, fmt.Errorf("commit Import History snapshot: %w", err)
+	}
+	return history, nil
+}
+
+func readHistorySnapshot(ctx context.Context, queryer historyQueryer) (HistoryList, error) {
+	items, err := listHistoryItems(ctx, queryer)
 	if err != nil {
 		return HistoryList{}, err
 	}
 	for index := range items {
-		items[index].Files, err = store.listHistoryFiles(ctx, items[index].ImportID)
+		items[index].Files, err = listHistoryFiles(ctx, queryer, items[index].ImportID)
 		if err != nil {
 			return HistoryList{}, err
 		}
@@ -237,8 +271,8 @@ func (store *Store) ListHistory(ctx context.Context) (HistoryList, error) {
 	return HistoryList{Items: items}, nil
 }
 
-func (store *Store) listHistoryItems(ctx context.Context) (_ []HistoryItem, returnErr error) {
-	rows, err := store.database.QueryContext(ctx, `
+func listHistoryItems(ctx context.Context, queryer historyQueryer) (_ []HistoryItem, returnErr error) {
+	rows, err := queryer.QueryContext(ctx, `
 		SELECT import_id, started_at, completed_at, result_code, total_count, imported_count,
 			rejected_count, failed_count, replaced_count, not_attempted_count, canceled_count
 		FROM managed_import_history
@@ -277,8 +311,8 @@ func scanHistoryItem(scanner historyFileScanner) (HistoryItem, error) {
 	return item, nil
 }
 
-func (store *Store) listHistoryFiles(ctx context.Context, importID string) (_ []HistoryFile, returnErr error) {
-	rows, err := store.database.QueryContext(ctx, `
+func listHistoryFiles(ctx context.Context, queryer historyQueryer, importID string) (_ []HistoryFile, returnErr error) {
+	rows, err := queryer.QueryContext(ctx, `
 		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256,
 			result_code, created_track_id, replaced_track_id
 		FROM managed_import_history_files WHERE import_id = ? ORDER BY position`, importID)
@@ -352,19 +386,20 @@ func (store *Store) DeleteJob(ctx context.Context, jobID string) (returnErr erro
 		}
 	}()
 	var batchID sql.NullString
+	var status ImportStatus
 	if err := transaction.QueryRowContext(ctx, `
-		SELECT jobs.batch_id
+		SELECT jobs.batch_id, jobs.status
 		FROM managed_import_jobs jobs
 		LEFT JOIN managed_import_batches batches ON batches.id = jobs.batch_id
 		WHERE jobs.id = ?
 			AND jobs.status != ?
 			AND (jobs.batch_id IS NULL OR batches.status != ?)
-	`, jobID, STATUS_COMMITTED, BATCH_STATUS_COMPLETED).Scan(&batchID); errors.Is(err, sql.ErrNoRows) {
+	`, jobID, STATUS_COMMITTED, BATCH_STATUS_COMPLETED).Scan(&batchID, &status); errors.Is(err, sql.ErrNoRows) {
 		return ErrInvalidState
 	} else if err != nil {
 		return fmt.Errorf("resolve canceled Managed Import Job: %w", err)
 	}
-	if !batchID.Valid {
+	if !batchID.Valid && status != STATUS_FAILED {
 		if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_jobs SET updated_at = ? WHERE id = ?`, time.Now().UTC(), jobID); err != nil {
 			return fmt.Errorf("timestamp canceled standalone Managed Import Job: %w", err)
 		}
