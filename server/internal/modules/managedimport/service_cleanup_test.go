@@ -97,6 +97,69 @@ func TestCleanupRestartRemovesOrphanStaging(t *testing.T) {
 	}
 }
 
+func TestCleanupRestartReconcilesRecordsWhenStagingCleanupPartiallyFails(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	store := NewStore(database)
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	batch, _ := createCleanupBatch(t, store, storage)
+	blockedPath := filepath.Join(storage.root, ".staging", ".import-blocked.upload")
+	if err := os.Mkdir(blockedPath, 0o750); err != nil {
+		t.Fatalf("create blocked staging entry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blockedPath, "child"), []byte("blocked"), 0o600); err != nil {
+		t.Fatalf("populate blocked staging entry: %v", err)
+	}
+	service := NewService(store, storage, nil)
+
+	err := service.CleanupRestart(context.Background())
+	if err == nil {
+		t.Fatal("restart cleanup unexpectedly succeeded")
+	}
+	if _, err := store.GetBatch(context.Background(), batch.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get reconciled Import Batch error = %v", err)
+	}
+}
+
+func TestCancelJobRejectsCompletedBatchFile(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	store := NewStore(database)
+	batch, err := store.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create completed batch: %v", err)
+	}
+	job, err := store.CreateJob(context.Background(), batch.ID, "00000000-0000-4000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("create completed batch job: %v", err)
+	}
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	upload, err := storage.StageUpload(bytes.NewReader([]byte("audio")), 5)
+	if err != nil {
+		t.Fatalf("stage completed batch job: %v", err)
+	}
+	if _, updateErr := database.Exec(`UPDATE managed_import_jobs SET status = ?, staged_file_path = ? WHERE id = ?`, STATUS_FAILED, upload.Path, job.ID); updateErr != nil {
+		t.Fatalf("fail completed batch job: %v", updateErr)
+	}
+	if _, updateErr := database.Exec(`UPDATE managed_import_batches SET status = ? WHERE id = ?`, BATCH_STATUS_COMPLETED, batch.ID); updateErr != nil {
+		t.Fatalf("complete batch: %v", updateErr)
+	}
+	service := NewService(store, storage, nil)
+
+	err = service.CancelJob(context.Background(), job.ID)
+	if !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("cancel completed batch job error = %v", err)
+	}
+	storedBatch, err := store.GetBatch(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("get completed batch: %v", err)
+	}
+	if len(storedBatch.Files) != 1 || storedBatch.Files[0].JobID != job.ID {
+		t.Fatalf("completed batch files = %+v", storedBatch.Files)
+	}
+	if _, err := os.Stat(upload.Path); err != nil {
+		t.Fatalf("completed batch staging was removed: %v", err)
+	}
+}
+
 func TestCleanupInactiveExpiresFailedStandaloneJob(t *testing.T) {
 	store := NewStore(testutil.OpenMigratedDB(t))
 	job, err := store.CreateJob(context.Background(), "", "")

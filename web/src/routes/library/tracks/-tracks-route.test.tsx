@@ -473,6 +473,7 @@ describe("tracks route", () => {
 			"track.FLAC",
 			track,
 			expect.any(Function),
+			expect.any(AbortSignal),
 		);
 	});
 
@@ -746,6 +747,13 @@ describe("tracks route", () => {
 		await vi.waitFor(() =>
 			expect(mocks.uploadManagedImportFile).toHaveBeenCalledOnce(),
 		);
+		expect(screen.getByLabelText("Audio files")).toHaveProperty(
+			"disabled",
+			true,
+		);
+		expect(
+			screen.getByRole("button", { name: "Close Import Music" }),
+		).toHaveProperty("disabled", false);
 
 		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 

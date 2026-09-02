@@ -141,11 +141,20 @@ func (service *Service) CancelJob(ctx context.Context, jobID string) error {
 }
 
 func (service *Service) cancelJob(ctx context.Context, jobID string, updatedBefore *time.Time) error {
-	service.batchConfirmationMu.Lock()
-	defer service.batchConfirmationMu.Unlock()
+	managedImportBatchConfirmationMu.Lock()
+	defer managedImportBatchConfirmationMu.Unlock()
 	job, err := service.store.GetJob(ctx, jobID)
 	if err != nil {
 		return err
+	}
+	if job.BatchID != "" {
+		batchStatus, statusErr := service.store.GetBatchStatus(ctx, job.BatchID)
+		if statusErr != nil {
+			return statusErr
+		}
+		if batchStatus == BATCH_STATUS_COMPLETED {
+			return ErrInvalidState
+		}
 	}
 	isEligible, quiesceErr := service.quiesceUploads(ctx, []importJob{job}, updatedBefore)
 	defer service.clearCancelingJobs([]importJob{job})
@@ -272,10 +281,12 @@ func (service *Service) CleanupInactive(ctx context.Context, now time.Time) erro
 }
 
 func (service *Service) CleanupRestart(ctx context.Context) error {
-	if err := service.storage.RemoveAllStaged(); err != nil {
-		return fmt.Errorf("remove Managed Import restart staging: %w", err)
+	stagingErr := service.storage.RemoveAllStaged()
+	reconcileErr := service.cleanupUncommitted(ctx, nil)
+	if stagingErr != nil {
+		stagingErr = fmt.Errorf("remove Managed Import restart staging: %w", stagingErr)
 	}
-	return service.cleanupUncommitted(ctx, nil)
+	return errors.Join(stagingErr, reconcileErr)
 }
 
 func (service *Service) cleanupUncommitted(ctx context.Context, updatedBefore *time.Time) error {
@@ -566,8 +577,8 @@ func (service *Service) validateExistingAlbumTotals(ctx context.Context, metadat
 }
 
 func (service *Service) Confirm(ctx context.Context, jobID string, revision int) (Result, error) {
-	service.batchConfirmationMu.Lock()
-	defer service.batchConfirmationMu.Unlock()
+	managedImportBatchConfirmationMu.Lock()
+	defer managedImportBatchConfirmationMu.Unlock()
 	job, err := service.store.GetJob(ctx, jobID)
 	if err != nil {
 		return Result{}, err

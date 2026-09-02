@@ -198,7 +198,14 @@ func (store *Store) DeleteJob(ctx context.Context, jobID string) (returnErr erro
 		}
 	}()
 	var batchID sql.NullString
-	if err := transaction.QueryRowContext(ctx, `SELECT batch_id FROM managed_import_jobs WHERE id = ? AND status != ?`, jobID, STATUS_COMMITTED).Scan(&batchID); errors.Is(err, sql.ErrNoRows) {
+	if err := transaction.QueryRowContext(ctx, `
+		SELECT jobs.batch_id
+		FROM managed_import_jobs jobs
+		LEFT JOIN managed_import_batches batches ON batches.id = jobs.batch_id
+		WHERE jobs.id = ?
+			AND jobs.status != ?
+			AND (jobs.batch_id IS NULL OR batches.status != ?)
+	`, jobID, STATUS_COMMITTED, BATCH_STATUS_COMPLETED).Scan(&batchID); errors.Is(err, sql.ErrNoRows) {
 		return ErrInvalidState
 	} else if err != nil {
 		return fmt.Errorf("resolve canceled Managed Import Job: %w", err)

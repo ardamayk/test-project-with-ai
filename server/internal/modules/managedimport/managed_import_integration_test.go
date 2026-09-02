@@ -736,12 +736,12 @@ func TestManagedImportInterruptedUploadPreservesSiblingStaging(t *testing.T) {
 		t.Fatalf("create sibling upload job: %v", err)
 	}
 	fixture := readStrictFLACFixture(t)
-	if _, err := service.Upload(context.Background(), sibling.ID, "sibling.flac", bytes.NewReader(fixture), int64(len(fixture))); err != nil {
-		t.Fatalf("upload sibling batch file: %v", err)
+	if _, uploadErr := service.Upload(context.Background(), sibling.ID, "sibling.flac", bytes.NewReader(fixture), int64(len(fixture))); uploadErr != nil {
+		t.Fatalf("upload sibling batch file: %v", uploadErr)
 	}
 	var siblingStagedPath string
-	if err := database.QueryRow(`SELECT staged_file_path FROM managed_import_jobs WHERE id = ?`, sibling.ID).Scan(&siblingStagedPath); err != nil {
-		t.Fatalf("read sibling staging path: %v", err)
+	if queryErr := database.QueryRow(`SELECT staged_file_path FROM managed_import_jobs WHERE id = ?`, sibling.ID).Scan(&siblingStagedPath); queryErr != nil {
+		t.Fatalf("read sibling staging path: %v", queryErr)
 	}
 	interrupted, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
 	if err != nil {
@@ -1192,7 +1192,7 @@ func TestManagedImportBatchCancellationCleansPreviewCompletedDuringCancellation(
 	waitForSignal(t, cancelDone, "batch cancellation did not stop active upload")
 	waitForSignal(t, uploadDone, "canceled upload did not finish")
 	close(inspector.release)
-	if uploadResponse.Code != http.StatusUnprocessableEntity || cancelResponse.Code != http.StatusNoContent {
+	if uploadResponse.Code != http.StatusRequestTimeout || cancelResponse.Code != http.StatusNoContent {
 		t.Fatalf("upload/cancel statuses = (%d, %d)", uploadResponse.Code, cancelResponse.Code)
 	}
 	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))

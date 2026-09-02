@@ -72,7 +72,7 @@ export function useManagedImportWorkflow({
 		errorMessage: state.errorMessage,
 		isBusy,
 		isCloseLocked,
-		isSelectionLocked: isCloseLocked,
+		isSelectionLocked: isBusy || state.batch?.status === "confirming",
 		isCompleted,
 		canConfirm,
 		handleFiles: createFileHandler(state),
