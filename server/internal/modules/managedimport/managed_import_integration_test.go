@@ -170,7 +170,7 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 		t.Fatalf("idempotent result = %+v", idempotentResult)
 	}
 	wrongRevisionResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":1}`), map[string]string{"Content-Type": "application/json"})
-	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, "import_revision_conflict")
+	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	assertNormalizedAlbum(t, router, committedTrack.AlbumID, result.TrackID)
 	runLibraryScan(t, router)
 	if len(listTracks(t, router).Items) != 1 {
@@ -269,6 +269,7 @@ func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *
 
 	committedCount := 0
 	duplicateCount := 0
+	duplicateJobID := ""
 	for range 2 {
 		result := <-results
 		switch result.response.Code {
@@ -276,6 +277,7 @@ func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *
 			committedCount++
 		case http.StatusConflict:
 			duplicateCount++
+			duplicateJobID = result.jobID
 			testutil.AssertErrorCode(t, result.response, http.StatusConflict, managedimport.ERROR_CODE_EXACT_DUPLICATE)
 		default:
 			t.Fatalf("exact-byte confirmation for job %q status = %d, body = %s", result.jobID, result.response.Code, result.response.Body.String())
@@ -284,6 +286,8 @@ func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *
 	if committedCount != 1 || duplicateCount != 1 {
 		t.Fatalf("exact-byte confirmation results = %d committed, %d duplicate", committedCount, duplicateCount)
 	}
+	wrongRevisionResponse := serveImportConfirmation(firstRouter, duplicateJobID, 1)
+	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	var trackCount int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
 		t.Fatalf("exact-byte Track count = %d, err = %v", trackCount, err)
@@ -394,7 +398,8 @@ func TestManagedImportBatchReportsExactByteLoserAsRejectedDuplicate(t *testing.T
 		}
 	}
 
-	response := confirmImportBatch(t, router, getImportBatch(t, router, batchID), jobIDs)
+	previewBatch := getImportBatch(t, router, batchID)
+	response := confirmImportBatch(t, router, previewBatch, jobIDs)
 	if response.Code != http.StatusOK {
 		t.Fatalf("confirm exact-byte Batch status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -409,6 +414,13 @@ func TestManagedImportBatchReportsExactByteLoserAsRejectedDuplicate(t *testing.T
 	if batch.Files[1].Outcome != managedimport.OUTCOME_REJECTED || batch.Files[1].ErrorCode != managedimport.ERROR_CODE_EXACT_DUPLICATE {
 		t.Fatalf("second exact-byte result = %+v", batch.Files[1])
 	}
+	repeatedResponse := confirmImportBatch(t, router, previewBatch, jobIDs)
+	if repeatedResponse.Code != http.StatusOK {
+		t.Fatalf("repeat exact-byte Batch status = %d, body = %s", repeatedResponse.Code, repeatedResponse.Body.String())
+	}
+	previewBatch.Revision--
+	staleResponse := confirmImportBatch(t, router, previewBatch, jobIDs)
+	testutil.AssertErrorCode(t, staleResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	var trackCount int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
 		t.Fatalf("exact-byte Batch Track count = %d, err = %v", trackCount, err)

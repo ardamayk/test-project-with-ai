@@ -300,7 +300,10 @@ func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, err
 	if err := requireMutation(result); err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
-	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
+	if _, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_batches
+		SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?) AND status = ?`, jobID, BATCH_STATUS_UPLOADING); err != nil {
 		return fmt.Errorf("revise rejected Managed Import Batch file: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {

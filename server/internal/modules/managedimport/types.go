@@ -21,6 +21,7 @@ const (
 	BITS_PER_KILOBIT                               = 1000
 	VALIDATION_CLEANUP_TIMEOUT                     = 5 * time.Second
 	ERROR_CODE_EXACT_DUPLICATE                     = "exact_duplicate"
+	ERROR_CODE_REVISION_CONFLICT                   = "import_revision_conflict"
 )
 
 type BatchStatus string

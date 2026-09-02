@@ -325,6 +325,9 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 		return Result{JobID: job.ID, Status: job.Status, Revision: job.Revision, TrackID: job.TrackID}, nil
 	}
 	if job.Status == STATUS_FAILED && job.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
+		if revision != job.Revision {
+			return Result{}, ErrRevisionConflict
+		}
 		return Result{}, ErrExactDuplicate
 	}
 	if job.Status != STATUS_AWAITING_CONFIRMATION {
@@ -391,6 +394,9 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 		return Batch{}, err
 	}
 	if batch.Status == BATCH_STATUS_COMPLETED {
+		if confirmation.Revision != batch.Revision-2 {
+			return Batch{}, ErrRevisionConflict
+		}
 		return batch, nil
 	}
 	err = service.startOrResumeBatch(ctx, batch, confirmation.Revision, selectedIDs)
@@ -420,6 +426,9 @@ func selectedFileIDs(fileIDs []string) (map[string]bool, error) {
 
 func (service *Service) startOrResumeBatch(ctx context.Context, batch Batch, revision int, selectedIDs map[string]bool) error {
 	if batch.Status == BATCH_STATUS_CONFIRMING {
+		if revision != batch.Revision-1 {
+			return ErrRevisionConflict
+		}
 		return nil
 	}
 	if batch.Status != BATCH_STATUS_UPLOADING {
@@ -440,24 +449,32 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			continue
 		}
 		if _, err := service.confirmJob(ctx, job, job.Revision); err != nil {
-			if errors.Is(err, ErrExactDuplicate) {
-				persistedJob, getErr := service.store.GetJob(ctx, job.ID)
-				if getErr != nil {
-					return errors.Join(err, getErr)
-				}
-				if persistedJob.Outcome == OUTCOME_REJECTED && persistedJob.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
-					continue
-				}
-				return err
-			}
-			if ctx.Err() != nil {
-				return errors.Join(err, ctx.Err())
-			}
-			errorCode, reason := failureDetails(err)
-			if finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, errorCode, reason); finishErr != nil {
-				return errors.Join(err, finishErr)
+			if handleErr := service.handleBatchConfirmationError(ctx, job, err); handleErr != nil {
+				return handleErr
 			}
 		}
+	}
+	return nil
+}
+
+func (service *Service) handleBatchConfirmationError(ctx context.Context, job importJob, confirmationErr error) error {
+	if errors.Is(confirmationErr, ErrExactDuplicate) {
+		persistedJob, err := service.store.GetJob(ctx, job.ID)
+		if err != nil {
+			return errors.Join(confirmationErr, err)
+		}
+		if persistedJob.Outcome == OUTCOME_REJECTED && persistedJob.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
+			return nil
+		}
+		return confirmationErr
+	}
+	if ctx.Err() != nil {
+		return errors.Join(confirmationErr, ctx.Err())
+	}
+	errorCode, reason := failureDetails(confirmationErr)
+	finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, errorCode, reason)
+	if finishErr != nil {
+		return errors.Join(confirmationErr, finishErr)
 	}
 	return nil
 }
