@@ -3,6 +3,7 @@ package managedimport
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -64,5 +65,72 @@ func TestFinishUncommittedBatchFileRetainsPathWhenCleanupFails(t *testing.T) {
 	}
 	if storedJob.StagedFilePath != unsafePath || storedJob.Outcome != "" {
 		t.Fatalf("job after failed cleanup = %+v", storedJob)
+	}
+}
+
+func TestRejectExactDuplicateRetainsStagingUntilFailureIsPersisted(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	store := NewStore(database)
+	job, err := store.CreateJob(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	upload, err := storage.StageUpload(bytes.NewReader([]byte("audio")), 5)
+	if err != nil {
+		t.Fatalf("stage upload: %v", err)
+	}
+	if _, err = database.Exec(`
+		UPDATE managed_import_jobs
+		SET status = ?, original_filename = 'duplicate.flac', staged_file_path = ?, content_sha256 = ?
+		WHERE id = ?`, STATUS_AWAITING_CONFIRMATION, upload.Path, strings.Repeat("0", 64), job.ID); err != nil {
+		t.Fatalf("prepare duplicate job: %v", err)
+	}
+	if _, err = database.Exec(`
+		CREATE TRIGGER reject_exact_duplicate_transition
+		BEFORE UPDATE ON managed_import_jobs
+		WHEN NEW.status = 'failed' AND NEW.error_code = 'exact_duplicate'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced duplicate persistence failure');
+		END`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+	service := NewService(store, storage, nil)
+	duplicateJob, err := store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get duplicate job: %v", err)
+	}
+
+	err = service.rejectExactDuplicate(context.Background(), duplicateJob)
+	if !errors.Is(err, ErrExactDuplicate) {
+		t.Fatalf("reject exact duplicate error = %v", err)
+	}
+	if _, err = os.Stat(upload.Path); err != nil {
+		t.Fatalf("staged duplicate removed before failure was persisted: %v", err)
+	}
+	storedJob, err := store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get unpersisted duplicate job: %v", err)
+	}
+	if storedJob.Status != STATUS_AWAITING_CONFIRMATION || storedJob.StagedFilePath != upload.Path {
+		t.Fatalf("job after persistence failure = %+v", storedJob)
+	}
+
+	if _, err = database.Exec(`DROP TRIGGER reject_exact_duplicate_transition`); err != nil {
+		t.Fatalf("drop failure trigger: %v", err)
+	}
+	err = service.rejectExactDuplicate(context.Background(), storedJob)
+	if !errors.Is(err, ErrExactDuplicate) {
+		t.Fatalf("retry exact duplicate error = %v", err)
+	}
+	if _, err = os.Stat(upload.Path); !os.IsNotExist(err) {
+		t.Fatalf("staged duplicate still exists after persisted rejection: %v", err)
+	}
+	storedJob, err = store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get rejected duplicate job: %v", err)
+	}
+	if storedJob.Status != STATUS_FAILED || storedJob.ErrorCode != ERROR_CODE_EXACT_DUPLICATE || storedJob.StagedFilePath != "" {
+		t.Fatalf("persisted duplicate job = %+v", storedJob)
 	}
 }

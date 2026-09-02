@@ -375,11 +375,11 @@ func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob) (
 func (service *Service) rejectExactDuplicate(ctx context.Context, job importJob) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	cleanupErr := service.storage.RemoveStaged(job.StagedFilePath)
-	if cleanupErr == nil {
-		cleanupErr = service.store.MarkFailed(cleanupCtx, job.ID, job.OriginalFilename, ERROR_CODE_EXACT_DUPLICATE, "file", "file bytes match an existing Track")
+	persistenceErr := service.store.MarkFailed(cleanupCtx, job.ID, job.OriginalFilename, ERROR_CODE_EXACT_DUPLICATE, "file", "file bytes match an existing Track")
+	if persistenceErr != nil {
+		return errors.Join(ErrExactDuplicate, persistenceErr)
 	}
-	return errors.Join(ErrExactDuplicate, cleanupErr)
+	return errors.Join(ErrExactDuplicate, service.storage.RemoveStaged(job.StagedFilePath))
 }
 
 func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confirmation BatchConfirmation) (Batch, error) {
