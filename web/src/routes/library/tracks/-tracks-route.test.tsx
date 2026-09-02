@@ -645,6 +645,38 @@ describe("tracks route", () => {
 		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
 	});
 
+	it("allows canceling after native selection advances to upload", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(true);
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "opaque-selection", name: "track.flac", size: 42 },
+		]);
+		let uploadSignal: AbortSignal | undefined;
+		mocks.desktopUploadImportFile.mockImplementation(
+			(_selectionId, _jobId, _onProgress, signal: AbortSignal) => {
+				uploadSignal = signal;
+				return new Promise((_resolve, reject) => {
+					signal.addEventListener("abort", () =>
+						reject(new DOMException("canceled", "AbortError")),
+					);
+				});
+			},
+		);
+
+		await openImportMusicDialog();
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+		await vi.waitFor(() => expect(uploadSignal).toBeInstanceOf(AbortSignal));
+		expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
+			"disabled",
+			false,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await vi.waitFor(() => expect(uploadSignal?.aborted).toBe(true));
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		confirmClose.mockRestore();
+	});
+
 	it("shows structured native picker errors in the shared dialog", async () => {
 		mocks.isDesktopClient.mockReturnValue(true);
 		mocks.selectDesktopImportFiles.mockRejectedValue({

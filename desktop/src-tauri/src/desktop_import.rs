@@ -333,7 +333,7 @@ fn collect_audio_files(
     if metadata.is_dir() {
         let directory = open_verified_directory(path)?;
         collect_directory_files(&directory, path, is_hidden, files)?;
-    } else if is_supported_audio(path) {
+    } else if is_supported_regular_audio(path, metadata.is_file()) {
         if path.file_name().and_then(|value| value.to_str()).is_none() {
             eprintln!("Desktop import skipped a selected path with a non-Unicode filename");
             return Ok(());
@@ -371,7 +371,7 @@ fn collect_directory_files(
                 .open_dir_nofollow(&name)
                 .map_err(|_| selection_error())?;
             collect_directory_files(&child, &child_path, false, files)?;
-        } else if is_supported_audio(&child_path) {
+        } else if is_supported_regular_audio(&child_path, file_type.is_file()) {
             let mut options = cap_std::fs::OpenOptions::new();
             options.read(true).follow(FollowSymlinks::No);
             let file = directory
@@ -509,6 +509,10 @@ fn is_supported_audio(path: &Path) -> bool {
         .is_some_and(|value| SUPPORTED_EXTENSIONS.contains(&value.to_ascii_lowercase().as_str()))
 }
 
+fn is_supported_regular_audio(path: &Path, is_file: bool) -> bool {
+    is_file && is_supported_audio(path)
+}
+
 fn content_type(filename: &str) -> &'static str {
     match Path::new(filename)
         .extension()
@@ -557,8 +561,8 @@ fn canceled_error() -> DesktopImportError {
 mod tests {
     use super::{
         ImportSelectionStore, ImportUploadProgress, ProgressThrottle, cancellable_preparation,
-        collect_directory_files, content_type, import_upload_path, open_verified_directory,
-        upload_selection,
+        collect_directory_files, content_type, import_upload_path, is_supported_regular_audio,
+        open_verified_directory, upload_selection,
     };
     use crate::connection::{HttpBridge, ServerOrigin};
     use std::fs;
@@ -731,6 +735,24 @@ mod tests {
         assert_eq!(store.selection_count(), 0);
 
         fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn special_file_with_audio_extension_is_not_an_import_candidate() {
+        let fifo = temporary_fixture_path("mp3");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("create FIFO");
+        assert!(status.success());
+        let file_type = fs::symlink_metadata(&fifo)
+            .expect("FIFO metadata")
+            .file_type();
+
+        assert!(!is_supported_regular_audio(&fifo, file_type.is_file()));
+
+        fs::remove_file(fifo).expect("remove FIFO");
     }
 
     #[cfg(unix)]

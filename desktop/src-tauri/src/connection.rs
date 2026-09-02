@@ -320,13 +320,16 @@ impl HttpBridge {
         content_length: u64,
         body: reqwest::Body,
     ) -> Result<HttpResponse, ConnectionError> {
+        let encoded_filename =
+            url::form_urlencoded::byte_serialize(filename.as_bytes()).collect::<String>();
         let response = self
             .streaming_client
             .put(origin.endpoint(path)?)
             .header("accept", "application/json")
             .header("content-type", content_type)
             .header("content-length", content_length)
-            .header("x-import-filename", filename)
+            .header("x-import-filename", encoded_filename)
+            .header("x-import-filename-encoding", "url")
             .body(body)
             .send()
             .await
@@ -836,7 +839,7 @@ mod tests {
             .send_import(
                 &origin,
                 "/api/v1/imports/job-1/file",
-                "track.flac",
+                "Beyoncé.flac",
                 "audio/flac",
                 11,
                 reqwest::Body::wrap_stream(ReaderStream::new(file)),
@@ -852,7 +855,12 @@ mod tests {
         assert!(
             request
                 .to_ascii_lowercase()
-                .contains("x-import-filename: track.flac")
+                .contains("x-import-filename: beyonc%c3%a9.flac")
+        );
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-import-filename-encoding: url")
         );
         assert_eq!(response.status, 200);
         fs::remove_file(fixture).expect("remove fixture");

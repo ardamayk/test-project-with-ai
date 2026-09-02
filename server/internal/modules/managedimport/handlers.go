@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/ardam/navidrome-replacement/server/internal/api/respond"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -14,6 +15,9 @@ import (
 )
 
 const MIGRATION_PREVIEW_REQUEST_HEADER = "X-Migration-Preview"
+const IMPORT_FILENAME_HEADER = "X-Import-Filename"
+const IMPORT_FILENAME_ENCODING_HEADER = "X-Import-Filename-Encoding"
+const URL_FILENAME_ENCODING = "url"
 
 type Handlers struct {
 	service *Service
@@ -121,10 +125,15 @@ func (handlers *Handlers) CancelJob(writer http.ResponseWriter, request *http.Re
 }
 
 func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
+	filename, err := importFilename(request)
+	if err != nil {
+		respond.Error(writer, http.StatusBadRequest, "invalid_import_filename", "Managed Import filename encoding is invalid")
+		return
+	}
 	preview, err := handlers.service.Upload(
 		request.Context(),
 		chi.URLParam(request, "importId"),
-		request.Header.Get("X-Import-Filename"),
+		filename,
 		request.Body,
 		request.ContentLength,
 	)
@@ -133,6 +142,18 @@ func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.R
 		return
 	}
 	respond.JSON(writer, http.StatusOK, preview)
+}
+
+func importFilename(request *http.Request) (string, error) {
+	filename := request.Header.Get(IMPORT_FILENAME_HEADER)
+	if request.Header.Get(IMPORT_FILENAME_ENCODING_HEADER) != URL_FILENAME_ENCODING {
+		return filename, nil
+	}
+	decoded, err := url.QueryUnescape(filename)
+	if err != nil {
+		return "", fmt.Errorf("decode import filename: %w", err)
+	}
+	return decoded, nil
 }
 
 func (handlers *Handlers) Confirm(writer http.ResponseWriter, request *http.Request) {

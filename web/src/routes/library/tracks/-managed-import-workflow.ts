@@ -186,6 +186,7 @@ function createDesktopSelectionHandler(state: WorkflowState) {
 			const files = await (isDirectory
 				? selectDesktopImportFolder()
 				: selectDesktopImportFiles());
+			state.isDesktopSelectionPending.current = false;
 			await handleFiles(files);
 		} catch (error) {
 			state.setErrorMessage(importErrorMessage(error));
