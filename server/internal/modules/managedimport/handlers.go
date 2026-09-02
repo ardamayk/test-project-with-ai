@@ -80,6 +80,15 @@ func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Reque
 	respond.JSON(writer, http.StatusOK, job)
 }
 
+func (handlers *Handlers) PreviewMigration(writer http.ResponseWriter, request *http.Request) {
+	preview, err := handlers.service.PreviewMigration(request.Context())
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, preview)
+}
+
 func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
 	preview, err := handlers.service.Upload(
 		request.Context(),

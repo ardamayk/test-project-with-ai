@@ -135,6 +135,29 @@ type PreviewFile struct {
 	ArtworkMediaType string   `json:"artworkMediaType"`
 }
 
+type MigrationFileState string
+
+const (
+	MIGRATION_FILE_ACCEPTED MigrationFileState = "accepted"
+	MIGRATION_FILE_REJECTED MigrationFileState = "rejected"
+)
+
+type MigrationPreview struct {
+	AcceptedCount int                    `json:"acceptedCount"`
+	RejectedCount int                    `json:"rejectedCount"`
+	Files         []MigrationPreviewFile `json:"files"`
+}
+
+type MigrationPreviewFile struct {
+	TrackID          string             `json:"trackId"`
+	OriginalFilename string             `json:"originalFilename"`
+	State            MigrationFileState `json:"state"`
+	Preview          *PreviewFile       `json:"preview,omitempty"`
+	ErrorCode        string             `json:"errorCode,omitempty"`
+	ErrorField       string             `json:"errorField,omitempty"`
+	ErrorReason      string             `json:"errorReason,omitempty"`
+}
+
 type Confirmation struct {
 	Revision int `json:"revision"`
 }
@@ -187,34 +210,38 @@ func validationError(err error) error {
 }
 
 func previewFromInspection(job importJob, inspection library.MediaInspection) Preview {
-	metadata := inspection.Metadata
-	audio := inspection.Audio
 	return Preview{
 		JobID:    job.ID,
 		Status:   job.Status,
 		Revision: job.Revision,
-		File: PreviewFile{
-			OriginalFilename: job.OriginalFilename,
-			Title:            metadata.Title,
-			Artists:          metadata.Artists,
-			AlbumArtists:     metadata.AlbumArtists,
-			Album:            metadata.Album,
-			Genres:           metadata.Genres,
-			TrackNo:          metadata.TrackPosition.Number,
-			TrackTotal:       metadata.TrackPosition.Total,
-			DiscNo:           metadata.DiscPosition.Number,
-			DiscTotal:        metadata.DiscPosition.Total,
-			Year:             metadata.Year,
-			DurationMs:       audio.DurationMs,
-			Format:           audio.Format,
-			Container:        audio.Container,
-			Codec:            audio.Codec,
-			SampleRateHz:     audio.SampleRateHz,
-			ChannelCount:     audio.ChannelCount,
-			BitDepth:         audio.BitDepth,
-			BitrateKbps:      audio.BitrateKbps,
-			ArtworkMediaType: inspection.AlbumArtwork.MIMEType,
-		},
+		File:     previewFileFromInspection(job.OriginalFilename, inspection),
+	}
+}
+
+func previewFileFromInspection(originalFilename string, inspection library.MediaInspection) PreviewFile {
+	metadata := inspection.Metadata
+	audio := inspection.Audio
+	return PreviewFile{
+		OriginalFilename: originalFilename,
+		Title:            metadata.Title,
+		Artists:          metadata.Artists,
+		AlbumArtists:     metadata.AlbumArtists,
+		Album:            metadata.Album,
+		Genres:           metadata.Genres,
+		TrackNo:          metadata.TrackPosition.Number,
+		TrackTotal:       metadata.TrackPosition.Total,
+		DiscNo:           metadata.DiscPosition.Number,
+		DiscTotal:        metadata.DiscPosition.Total,
+		Year:             metadata.Year,
+		DurationMs:       audio.DurationMs,
+		Format:           audio.Format,
+		Container:        audio.Container,
+		Codec:            audio.Codec,
+		SampleRateHz:     audio.SampleRateHz,
+		ChannelCount:     audio.ChannelCount,
+		BitDepth:         audio.BitDepth,
+		BitrateKbps:      audio.BitrateKbps,
+		ArtworkMediaType: inspection.AlbumArtwork.MIMEType,
 	}
 }
 

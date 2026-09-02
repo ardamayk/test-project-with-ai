@@ -40,6 +40,7 @@ func (module *Module) Name() string {
 }
 
 func (module *Module) RegisterRoutes(router chi.Router) {
+	router.Post("/api/v1/library-migrations/preview", module.handlers.PreviewMigration)
 	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
 	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)
 	router.Post("/api/v1/import-batches/{batchId}/confirm", module.handlers.ConfirmBatch)

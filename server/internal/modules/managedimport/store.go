@@ -26,8 +26,40 @@ type commitData struct {
 	Inspection library.MediaInspection
 }
 
+type legacyMigrationSource struct {
+	TrackID  string
+	FilePath string
+}
+
 func NewStore(database *sql.DB) *Store {
 	return &Store{database: database}
+}
+
+func (store *Store) ListLegacyMigrationSources(ctx context.Context) (sources []legacyMigrationSource, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT track_id, file_path
+		FROM track_sources
+		WHERE source_kind = 'legacy'
+		ORDER BY track_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list legacy migration sources: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close legacy migration sources: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var source legacyMigrationSource
+		if err := rows.Scan(&source.TrackID, &source.FilePath); err != nil {
+			return nil, fmt.Errorf("read legacy migration source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate legacy migration sources: %w", err)
+	}
+	return sources, nil
 }
 
 func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string) (_ Job, returnErr error) {
