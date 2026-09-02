@@ -32,6 +32,7 @@ defaults:
     shell: bash
 
 env:
+  MPV_CACHE_SCHEMA: v2
   # Official signed v0.41.0 tag, commit 41f6a645068483470267271e1d09966ca3b9f413.
   # Must stay identical to the digest used by the required `lint-test` job in
   # ci.yml; the verified pinned-mpv cache key incorporates it.
@@ -474,7 +475,9 @@ jobs:
 
       - name: Record start time
         id: timer
-        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/integration-gate-logs"
 
       - name: Set up Mise toolchain
         uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
@@ -551,7 +554,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/earthly-audio-mpv
-          key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
+          key: mpv-${{ env.MPV_CACHE_SCHEMA }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
 
       - name: Build pinned mpv from verified source
         id: mpv_build
@@ -573,6 +576,11 @@ jobs:
             2>&1 | tee -a "$RUNNER_TEMP/integration-gate-logs/mpv-meson-setup.log"
           install -d -m 0755 "${MPV_BINARY_DIRECTORY}"
           install -m 0755 "${MPV_SOURCE_DIRECTORY}/build/mpv" "${MPV_BINARY_DIRECTORY}/mpv"
+          (cd "${MPV_BINARY_DIRECTORY}" && sha256sum mpv > mpv.sha256)
+
+      - name: Verify pinned mpv cache integrity
+        if: ${{ !cancelled() && (steps.mpv_cache.outputs.cache-hit == 'true' || steps.mpv_build.outcome == 'success') }}
+        run: (cd "$RUNNER_TEMP/earthly-audio-mpv" && sha256sum --check mpv.sha256)
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile

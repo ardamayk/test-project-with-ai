@@ -96,6 +96,28 @@ test("trusted main restores and publishes every agreed cache", () => {
 	}
 });
 
+test("pinned mpv cache paths remain runnable and tamper-evident", () => {
+	const integrationMpvJob = getJob(integrationWorkflow, "real-mpv");
+	const mainDesktopJob = getJob(mainWorkflow, "desktop");
+
+	assert.match(
+		integrationMpvJob,
+		/Record start time[\s\S]*mkdir -p "\$RUNNER_TEMP\/integration-gate-logs"/,
+	);
+	assert.match(mainWorkflow, /MPV_CACHE_SCHEMA: v2/);
+	assert.match(mainDesktopJob, /binary_sha256=.*sha256sum/);
+	assert.match(
+		mainDesktopJob,
+		/echo "binary_sha256=\$\{binary_sha256\}" >> "\$GITHUB_OUTPUT"/,
+	);
+	assert.match(mainDesktopJob, /name: Verify restored pinned mpv/);
+	assert.match(
+		mainDesktopJob,
+		/name: Verify pinned mpv before cache publication/,
+	);
+	assert.match(mainDesktopJob, /steps\.mpv_cache_verify\.outcome == 'success'/);
+});
+
 test("main builds separate production artifacts and retains diagnostics", () => {
 	for (const task of ["web:build", "server:build", "desktop:build"]) {
 		assert.match(mainWorkflow, new RegExp(`mise run ${task}`));

@@ -23,6 +23,7 @@ defaults:
 
 env:
   ARTIFACT_RETENTION_DAYS: 14
+  MPV_CACHE_SCHEMA: v2
   MPV_SOURCE_SHA256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
   MPV_BUILD_FLAGS: "--buildtype=release --auto-features=disabled -Dbuild-date=false -Dgl=disabled -Dlibmpv=false"
 
@@ -577,7 +578,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/earthly-audio-mpv
-          key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
+          key: mpv-${{ env.MPV_CACHE_SCHEMA }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
 
       - name: Build pinned mpv from verified source
         id: mpv_build
@@ -598,6 +599,14 @@ jobs:
             2>&1 | tee -a "$RUNNER_TEMP/main-desktop-logs/mpv-build.log"
           install -d -m 0755 "${binary_directory}"
           install -m 0755 "${source_directory}/build/mpv" "${binary_directory}/mpv"
+          binary_sha256="$(sha256sum "${binary_directory}/mpv" | cut -d ' ' -f 1)"
+          echo "binary_sha256=${binary_sha256}" >> "$GITHUB_OUTPUT"
+          (cd "${binary_directory}" && sha256sum mpv > mpv.sha256)
+
+      - name: Verify restored pinned mpv
+        id: mpv_restore_verify
+        if: ${{ !cancelled() && steps.mpv_cache.outputs.cache-hit == 'true' }}
+        run: (cd "$RUNNER_TEMP/earthly-audio-mpv" && sha256sum --check mpv.sha256)
 
       - name: Install JS dependencies
         if: ${{ !cancelled() }}
@@ -632,6 +641,13 @@ jobs:
           EARTHLY_AUDIO_MPV_PATH: ${{ runner.temp }}/earthly-audio-mpv/mpv
         run: mise run desktop:build 2>&1 | tee "$RUNNER_TEMP/main-desktop-logs/desktop-build.log"
 
+      - name: Verify pinned mpv before cache publication
+        id: mpv_cache_verify
+        if: ${{ !cancelled() && steps.mpv_cache.outputs.cache-hit != 'true' && steps.mpv_build.outcome == 'success' }}
+        env:
+          EXPECTED_MPV_SHA256: ${{ steps.mpv_build.outputs.binary_sha256 }}
+        run: echo "${EXPECTED_MPV_SHA256}  $RUNNER_TEMP/earthly-audio-mpv/mpv" | sha256sum --check
+
       - name: Publish Cargo cache
         if: ${{ !cancelled() && steps.cargo_cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
@@ -645,12 +661,12 @@ jobs:
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.version }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
 
       - name: Publish verified pinned mpv cache
-        if: ${{ !cancelled() && steps.mpv_cache.outputs.cache-hit != 'true' && steps.mpv_build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.mpv_cache.outputs.cache-hit != 'true' && steps.mpv_build.outcome == 'success' && steps.mpv_cache_verify.outcome == 'success' }}
         continue-on-error: true
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/earthly-audio-mpv
-          key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
+          key: mpv-${{ env.MPV_CACHE_SCHEMA }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
 
       - name: Upload Desktop Client production artifact
         if: ${{ always() && steps.build.outcome == 'success' }}
