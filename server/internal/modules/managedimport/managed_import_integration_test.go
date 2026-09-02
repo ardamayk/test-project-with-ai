@@ -169,6 +169,8 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if idempotentResult.TrackID != result.TrackID || len(listTracks(t, router).Items) != 1 {
 		t.Fatalf("idempotent result = %+v", idempotentResult)
 	}
+	wrongRevisionResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":1}`), map[string]string{"Content-Type": "application/json"})
+	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, "import_revision_conflict")
 	assertNormalizedAlbum(t, router, committedTrack.AlbumID, result.TrackID)
 	runLibraryScan(t, router)
 	if len(listTracks(t, router).Items) != 1 {
@@ -202,12 +204,7 @@ func TestManagedImportSerializesConcurrentConfirmationOfOnePreview(t *testing.T)
 		go func() {
 			defer waitGroup.Done()
 			<-start
-			body := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision))
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", body)
-			request.Header.Set("Content-Type", "application/json")
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, request)
-			responses <- response
+			responses <- serveImportConfirmation(router, jobID, revision)
 		}()
 	}
 	close(start)
@@ -237,12 +234,15 @@ func TestManagedImportSerializesConcurrentConfirmationOfOnePreview(t *testing.T)
 func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	configuration := config.Config{ManagedStoragePath: t.TempDir()}
-	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
-	router := chi.NewRouter()
-	importModule.RegisterRoutes(router)
+	firstModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	firstRouter := chi.NewRouter()
+	firstModule.RegisterRoutes(firstRouter)
+	secondModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	secondRouter := chi.NewRouter()
+	secondModule.RegisterRoutes(secondRouter)
 	fixture := readStrictFLACFixture(t)
-	firstJobID, firstRevision := uploadFLACForPreview(t, router, fixture, "first.flac")
-	secondJobID, secondRevision := uploadFLACForPreview(t, router, fixture, "second.flac")
+	firstJobID, firstRevision := uploadFLACForPreview(t, firstRouter, fixture, "first.flac")
+	secondJobID, secondRevision := uploadFLACForPreview(t, secondRouter, fixture, "second.flac")
 
 	type confirmationResult struct {
 		response *httptest.ResponseRecorder
@@ -253,18 +253,15 @@ func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *
 	for _, confirmation := range []struct {
 		jobID    string
 		revision int
+		router   http.Handler
 	}{
-		{jobID: firstJobID, revision: firstRevision},
-		{jobID: secondJobID, revision: secondRevision},
+		{jobID: firstJobID, revision: firstRevision, router: firstRouter},
+		{jobID: secondJobID, revision: secondRevision, router: secondRouter},
 	} {
 		confirmation := confirmation
 		go func() {
 			<-start
-			body := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, confirmation.revision))
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+confirmation.jobID+"/confirm", body)
-			request.Header.Set("Content-Type", "application/json")
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, request)
+			response := serveImportConfirmation(confirmation.router, confirmation.jobID, confirmation.revision)
 			results <- confirmationResult{response: response, jobID: confirmation.jobID}
 		}()
 	}
@@ -279,7 +276,7 @@ func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *
 			committedCount++
 		case http.StatusConflict:
 			duplicateCount++
-			testutil.AssertErrorCode(t, result.response, http.StatusConflict, "exact_duplicate")
+			testutil.AssertErrorCode(t, result.response, http.StatusConflict, managedimport.ERROR_CODE_EXACT_DUPLICATE)
 		default:
 			t.Fatalf("exact-byte confirmation for job %q status = %d, body = %s", result.jobID, result.response.Code, result.response.Body.String())
 		}
@@ -367,7 +364,7 @@ func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 	if !reflect.DeepEqual(outcomes, wantOutcomes) {
 		t.Fatalf("Import Batch outcomes = %v, want %v", outcomes, wantOutcomes)
 	}
-	if batch.Files[1].ErrorCode != "exact_duplicate" {
+	if batch.Files[1].ErrorCode != managedimport.ERROR_CODE_EXACT_DUPLICATE {
 		t.Fatalf("exact-byte Batch failure code = %q", batch.Files[1].ErrorCode)
 	}
 	if tracks := listTracks(t, router); len(tracks.Items) != 1 || tracks.Items[0].ID != batch.Files[0].TrackID {
@@ -409,7 +406,7 @@ func TestManagedImportBatchReportsExactByteLoserAsRejectedDuplicate(t *testing.T
 	if batch.Files[0].Outcome != managedimport.OUTCOME_IMPORTED {
 		t.Fatalf("first exact-byte outcome = %q", batch.Files[0].Outcome)
 	}
-	if batch.Files[1].Outcome != managedimport.OUTCOME_REJECTED || batch.Files[1].ErrorCode != "exact_duplicate" {
+	if batch.Files[1].Outcome != managedimport.OUTCOME_REJECTED || batch.Files[1].ErrorCode != managedimport.ERROR_CODE_EXACT_DUPLICATE {
 		t.Fatalf("second exact-byte result = %+v", batch.Files[1])
 	}
 	var trackCount int
@@ -1884,6 +1881,15 @@ type albumArtworkResponse struct {
 	Height        int    `json:"height"`
 	SizeBytes     int    `json:"sizeBytes"`
 	SourceTrackID string `json:"sourceTrackId"`
+}
+
+func serveImportConfirmation(router http.Handler, jobID string, revision int) *httptest.ResponseRecorder {
+	body := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
 }
 
 func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID, sourceTrackID string) {

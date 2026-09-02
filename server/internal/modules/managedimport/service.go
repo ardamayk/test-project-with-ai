@@ -15,14 +15,15 @@ import (
 )
 
 type Service struct {
-	store               *Store
-	storage             *Storage
-	inspector           library.MediaInspector
-	commitMu            sync.Mutex
-	batchConfirmationMu sync.Mutex
-	uploadLocksMu       sync.Mutex
-	uploadLocks         map[string]*uploadLock
+	store         *Store
+	storage       *Storage
+	inspector     library.MediaInspector
+	uploadLocksMu sync.Mutex
+	uploadLocks   map[string]*uploadLock
 }
+
+var managedImportCommitMu sync.Mutex
+var managedImportBatchConfirmationMu sync.Mutex
 
 type uploadLock struct {
 	mutex sync.Mutex
@@ -311,13 +312,16 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 }
 
 func (service *Service) confirmJob(ctx context.Context, job importJob, revision int) (Result, error) {
-	service.commitMu.Lock()
-	defer service.commitMu.Unlock()
+	managedImportCommitMu.Lock()
+	defer managedImportCommitMu.Unlock()
 	job, err := service.store.GetJob(ctx, job.ID)
 	if err != nil {
 		return Result{}, err
 	}
 	if job.Status == STATUS_COMMITTED {
+		if revision != job.Revision-1 {
+			return Result{}, ErrRevisionConflict
+		}
 		return Result{JobID: job.ID, Status: job.Status, Revision: job.Revision, TrackID: job.TrackID}, nil
 	}
 	if job.Status == STATUS_FAILED && job.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
@@ -329,6 +333,10 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
+	return service.confirmAwaitingJob(ctx, job)
+}
+
+func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob) (Result, error) {
 	stagedBytes, err := service.storage.StagedFileSize(job.StagedFilePath)
 	if err != nil {
 		return Result{}, err
@@ -372,8 +380,8 @@ func (service *Service) rejectExactDuplicate(ctx context.Context, job importJob)
 }
 
 func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confirmation BatchConfirmation) (Batch, error) {
-	service.batchConfirmationMu.Lock()
-	defer service.batchConfirmationMu.Unlock()
+	managedImportBatchConfirmationMu.Lock()
+	defer managedImportBatchConfirmationMu.Unlock()
 	selectedIDs, err := selectedFileIDs(confirmation.SelectedFileIDs)
 	if err != nil {
 		return Batch{}, err
