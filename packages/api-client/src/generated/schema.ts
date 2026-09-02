@@ -751,7 +751,7 @@ export interface components {
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
         };
-        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
+        ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportWavPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
         ManagedImportPreviewFileCommon: {
             originalFilename: string;
             title: string;
@@ -785,6 +785,22 @@ export interface components {
              * @enum {string}
              */
             format: "flac";
+        };
+        ManagedImportWavPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
+            /** @constant */
+            format: "wav";
+            /** @constant */
+            container: "wav";
+            /** @enum {string} */
+            codec: "pcm_u8" | "pcm_s16le" | "pcm_s24le" | "pcm_s32le";
+            /** @enum {integer} */
+            bitDepth: 8 | 16 | 24 | 32;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            format: "wav";
         };
         ManagedImportM4aPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
             /** @constant */
@@ -1681,6 +1697,7 @@ export interface operations {
             content: {
                 "application/octet-stream": string;
                 "audio/flac": string;
+                "audio/wav": string;
             };
         };
         responses: {

@@ -231,6 +231,30 @@ describe('createApiClient', () => {
     });
   });
 
+  it('uploads WAV Managed Imports with the audio/wav content type', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      Response.json({
+        jobId: 'import-1',
+        status: 'awaiting_confirmation',
+        revision: 2,
+      }),
+    );
+    const client = createApiClient({
+      baseUrl: 'http://music.test',
+      transport,
+    });
+
+    await client.uploadManagedImportFile(
+      'import-1',
+      'recording.wav',
+      new Blob(['wav bytes'], { type: 'audio/wav' }),
+    );
+
+    const uploadHeaders = new Headers(transport.mock.calls[0]?.[1]?.headers);
+    expect(uploadHeaders.get('Content-Type')).toBe('audio/wav');
+    expect(uploadHeaders.get('X-Import-Filename')).toBe('recording.wav');
+  });
+
   it('preserves structured Managed Import validation fields', async () => {
     const transport = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json(

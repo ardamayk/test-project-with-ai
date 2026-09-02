@@ -96,7 +96,7 @@ function ImportFilePicker({
 				id="managed-import-files"
 				type="file"
 				multiple
-				accept=".flac,.mp3,.m4a,.ogg,.opus"
+				accept=".flac,.mp3,.m4a,.ogg,.opus,.wav"
 				disabled={isBusy}
 				className="rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-secondary-foreground"
 				onChange={(event) =>

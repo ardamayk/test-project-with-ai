@@ -565,6 +565,8 @@ func sourceExtension(format string) (string, error) {
 	switch format {
 	case "flac":
 		return ".flac", nil
+	case "wav":
+		return ".wav", nil
 	case "m4a":
 		return ".m4a", nil
 	case "mp3":

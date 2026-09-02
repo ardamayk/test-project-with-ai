@@ -331,6 +331,10 @@ describe("tracks route", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
 		expect(screen.getByRole("dialog")).toBeTruthy();
 		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
+		const fileInput = screen.getByLabelText("Audio files");
+		expect(fileInput.getAttribute("accept")).toBe(
+			".flac,.mp3,.m4a,.ogg,.opus,.wav",
+		);
 		const acceptedFile = new File(["flac bytes"], "strict-import.flac", {
 			type: "audio/flac",
 		});
@@ -360,7 +364,7 @@ describe("tracks route", () => {
 				};
 			})
 			.mockRejectedValueOnce(new Error("TITLE is required"));
-		fireEvent.change(screen.getByLabelText("Audio files"), {
+		fireEvent.change(fileInput, {
 			target: { files: [acceptedFile, rejectedFile] },
 		});
 
@@ -444,7 +448,9 @@ describe("tracks route", () => {
 		await screen.findByText("Anti-Hero");
 		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
 		const fileInput = screen.getByLabelText("Audio files");
-		expect(fileInput.getAttribute("accept")).toBe(".flac,.mp3,.m4a,.ogg,.opus");
+		expect(fileInput.getAttribute("accept")).toBe(
+			".flac,.mp3,.m4a,.ogg,.opus,.wav",
+		);
 		fireEvent.change(fileInput, {
 			target: {
 				files: [

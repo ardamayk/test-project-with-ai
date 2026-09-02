@@ -371,6 +371,10 @@ paths:
             schema:
               type: string
               format: binary
+          audio/wav:
+            schema:
+              type: string
+              format: binary
       responses:
         "200":
           description: Import Preview ready for confirmation
@@ -1364,6 +1368,7 @@ components:
     ManagedImportPreviewFile:
       oneOf:
         - $ref: "#/components/schemas/ManagedImportFlacPreviewFile"
+        - $ref: "#/components/schemas/ManagedImportWavPreviewFile"
         - $ref: "#/components/schemas/ManagedImportM4aPreviewFile"
         - $ref: "#/components/schemas/ManagedImportMp3PreviewFile"
         - $ref: "#/components/schemas/ManagedImportOggPreviewFile"
@@ -1372,6 +1377,7 @@ components:
         propertyName: format
         mapping:
           flac: "#/components/schemas/ManagedImportFlacPreviewFile"
+          wav: "#/components/schemas/ManagedImportWavPreviewFile"
           m4a: "#/components/schemas/ManagedImportM4aPreviewFile"
           mp3: "#/components/schemas/ManagedImportMp3PreviewFile"
           ogg: "#/components/schemas/ManagedImportOggPreviewFile"
@@ -1461,6 +1467,24 @@ components:
             bitDepth:
               type: integer
               minimum: 1
+    ManagedImportWavPreviewFile:
+      allOf:
+        - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
+        - type: object
+          required: [format, container, codec, bitDepth]
+          properties:
+            format:
+              type: string
+              const: wav
+            container:
+              type: string
+              const: wav
+            codec:
+              type: string
+              enum: ["pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le"]
+            bitDepth:
+              type: integer
+              enum: [8, 16, 24, 32]
     ManagedImportM4aPreviewFile:
       allOf:
         - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"

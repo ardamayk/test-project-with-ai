@@ -35,6 +35,7 @@ const (
 	JPEG_SIGNATURE                               = "\xff\xd8\xff"
 	PNG_SIGNATURE                                = "\x89PNG\r\n\x1a\n"
 	RIFF_SIGNATURE                               = "RIFF"
+	WAVE_SIGNATURE                               = "WAVE"
 	WEBP_SIGNATURE                               = "WEBP"
 	PNG_ANIMATION_CHUNK                          = "acTL"
 	WEBP_EXTENDED_CHUNK                          = "VP8X"
@@ -218,7 +219,7 @@ func hasM4ASignature(file *os.File) (bool, error) {
 }
 
 func inspectOpenMedia(ctx context.Context, file *os.File, reportProgress InspectionProgressReporter) (MediaInspection, error) {
-	var signature [FLAC_SIGNATURE_SIZE_BYTES]byte
+	var signature [RIFF_HEADER_SIZE_BYTES]byte
 	read, err := io.ReadFull(file, signature[:])
 	if err != nil {
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", fmt.Errorf("read media signature: %w", err))
@@ -227,12 +228,14 @@ func inspectOpenMedia(ctx context.Context, file *os.File, reportProgress Inspect
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind after media signature: %w", err))
 	}
 	switch {
-	case string(signature[:]) == FLAC_SIGNATURE:
+	case string(signature[:FLAC_SIGNATURE_SIZE_BYTES]) == FLAC_SIGNATURE:
 		return inspectOpenFLAC(ctx, file, reportProgress)
 	case string(signature[:len(OGG_SIGNATURE)]) == OGG_SIGNATURE:
 		return inspectOpenOGG(ctx, file, reportProgress)
 	case string(signature[:len(ID3_SIGNATURE)]) == ID3_SIGNATURE || read >= 2 && signature[0] == MP3_SYNC_BYTE && signature[1]&MP3_SYNC_MASK == MP3_SYNC_MASK:
 		return inspectOpenMP3(ctx, file, reportProgress)
+	case string(signature[:len(RIFF_SIGNATURE)]) == RIFF_SIGNATURE && string(signature[8:RIFF_HEADER_SIZE_BYTES]) == WAVE_SIGNATURE:
+		return inspectOpenWAV(ctx, file, reportProgress)
 	}
 	return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", errors.New("supported media signature is missing"))
 }

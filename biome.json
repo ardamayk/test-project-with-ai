@@ -9,13 +9,13 @@
     "ignoreUnknown": true,
     "includes": [
       "**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,json,jsonc}",
-      "!**/dist/**",
-      "!**/.output/**",
-      "!**/src/generated/**",
+      "!**/dist",
+      "!**/.output",
+      "!**/src/generated",
       "!**/src/routeTree.gen.ts",
-      "!desktop/src-tauri/binaries/**",
-      "!graphify-out/**",
-      "!server/internal/staticassets/**"
+      "!desktop/src-tauri/binaries",
+      "!graphify-out",
+      "!server/internal/staticassets"
     ]
   },
   "formatter": {
