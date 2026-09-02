@@ -15,14 +15,15 @@ import (
 )
 
 type Service struct {
-	store               *Store
-	storage             *Storage
-	inspector           library.MediaInspector
-	commitMu            sync.Mutex
-	batchConfirmationMu sync.Mutex
-	uploadLocksMu       sync.Mutex
-	uploadLocks         map[string]*uploadLock
+	store         *Store
+	storage       *Storage
+	inspector     library.MediaInspector
+	uploadLocksMu sync.Mutex
+	uploadLocks   map[string]*uploadLock
 }
+
+var managedImportCommitMu sync.Mutex
+var managedImportBatchConfirmationMu sync.Mutex
 
 type uploadLock struct {
 	mutex sync.Mutex
@@ -311,8 +312,23 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 }
 
 func (service *Service) confirmJob(ctx context.Context, job importJob, revision int) (Result, error) {
+	managedImportCommitMu.Lock()
+	defer managedImportCommitMu.Unlock()
+	job, err := service.store.GetJob(ctx, job.ID)
+	if err != nil {
+		return Result{}, err
+	}
 	if job.Status == STATUS_COMMITTED {
+		if revision != job.Revision-1 {
+			return Result{}, ErrRevisionConflict
+		}
 		return Result{JobID: job.ID, Status: job.Status, Revision: job.Revision, TrackID: job.TrackID}, nil
+	}
+	if job.Status == STATUS_FAILED && job.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
+		if revision != job.Revision {
+			return Result{}, ErrRevisionConflict
+		}
+		return Result{}, ErrExactDuplicate
 	}
 	if job.Status != STATUS_AWAITING_CONFIRMATION {
 		return Result{}, ErrInvalidState
@@ -320,6 +336,10 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
+	return service.confirmAwaitingJob(ctx, job)
+}
+
+func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob) (Result, error) {
 	stagedBytes, err := service.storage.StagedFileSize(job.StagedFilePath)
 	if err != nil {
 		return Result{}, err
@@ -328,8 +348,8 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if err != nil {
 		return Result{}, validationError(err)
 	}
-	if err := service.validateAlbumPositions(ctx, job.ID, inspection.Metadata); err != nil {
-		return Result{}, err
+	if positionErr := service.validateAlbumPositions(ctx, job.ID, inspection.Metadata); positionErr != nil {
+		return Result{}, positionErr
 	}
 	if inspection.FileSHA256 != job.ContentSHA256 {
 		return Result{}, &ValidationError{
@@ -339,15 +359,32 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 			Err:    errors.New("staged file hash changed after Import Preview"),
 		}
 	}
-	if err := service.preflightCommit(stagedBytes, inspection); err != nil {
+	existingTrackID, err := service.store.FindExactDuplicateTrackID(ctx, inspection.FileSHA256)
+	if err != nil {
 		return Result{}, err
+	}
+	if existingTrackID != "" {
+		return Result{}, service.rejectExactDuplicate(ctx, job)
+	}
+	if preflightErr := service.preflightCommit(stagedBytes, inspection); preflightErr != nil {
+		return Result{}, preflightErr
 	}
 	return service.commit(ctx, job, inspection)
 }
 
+func (service *Service) rejectExactDuplicate(ctx context.Context, job importJob) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	persistenceErr := service.store.MarkFailed(cleanupCtx, job.ID, job.OriginalFilename, ERROR_CODE_EXACT_DUPLICATE, "file", "file bytes match an existing Track")
+	if persistenceErr != nil {
+		return errors.Join(ErrExactDuplicate, persistenceErr)
+	}
+	return errors.Join(ErrExactDuplicate, service.storage.RemoveStaged(job.StagedFilePath))
+}
+
 func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confirmation BatchConfirmation) (Batch, error) {
-	service.batchConfirmationMu.Lock()
-	defer service.batchConfirmationMu.Unlock()
+	managedImportBatchConfirmationMu.Lock()
+	defer managedImportBatchConfirmationMu.Unlock()
 	selectedIDs, err := selectedFileIDs(confirmation.SelectedFileIDs)
 	if err != nil {
 		return Batch{}, err
@@ -357,6 +394,9 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 		return Batch{}, err
 	}
 	if batch.Status == BATCH_STATUS_COMPLETED {
+		if confirmation.Revision != batch.Revision-2 {
+			return Batch{}, ErrRevisionConflict
+		}
 		return batch, nil
 	}
 	err = service.startOrResumeBatch(ctx, batch, confirmation.Revision, selectedIDs)
@@ -386,6 +426,9 @@ func selectedFileIDs(fileIDs []string) (map[string]bool, error) {
 
 func (service *Service) startOrResumeBatch(ctx context.Context, batch Batch, revision int, selectedIDs map[string]bool) error {
 	if batch.Status == BATCH_STATUS_CONFIRMING {
+		if revision != batch.Revision-1 {
+			return ErrRevisionConflict
+		}
 		return nil
 	}
 	if batch.Status != BATCH_STATUS_UPLOADING {
@@ -406,14 +449,32 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			continue
 		}
 		if _, err := service.confirmJob(ctx, job, job.Revision); err != nil {
-			if ctx.Err() != nil {
-				return errors.Join(err, ctx.Err())
-			}
-			errorCode, reason := failureDetails(err)
-			if finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, errorCode, reason); finishErr != nil {
-				return errors.Join(err, finishErr)
+			if handleErr := service.handleBatchConfirmationError(ctx, job, err); handleErr != nil {
+				return handleErr
 			}
 		}
+	}
+	return nil
+}
+
+func (service *Service) handleBatchConfirmationError(ctx context.Context, job importJob, confirmationErr error) error {
+	if errors.Is(confirmationErr, ErrExactDuplicate) {
+		persistedJob, err := service.store.GetJob(ctx, job.ID)
+		if err != nil {
+			return errors.Join(confirmationErr, err)
+		}
+		if persistedJob.Outcome == OUTCOME_REJECTED && persistedJob.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
+			return nil
+		}
+		return confirmationErr
+	}
+	if ctx.Err() != nil {
+		return errors.Join(confirmationErr, ctx.Err())
+	}
+	errorCode, reason := failureDetails(confirmationErr)
+	finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, errorCode, reason)
+	if finishErr != nil {
+		return errors.Join(confirmationErr, finishErr)
 	}
 	return nil
 }
@@ -454,9 +515,6 @@ func (service *Service) preflightCommit(stagedBytes int64, inspection library.Me
 }
 
 func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
-	// Filesystem artwork ownership and its database commit form one serialized unit.
-	service.commitMu.Lock()
-	defer service.commitMu.Unlock()
 	identity, err := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
 	if err != nil {
 		return Result{}, err

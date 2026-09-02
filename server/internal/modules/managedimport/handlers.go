@@ -116,7 +116,9 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	case errors.Is(err, ErrNotFound):
 		respond.Error(writer, http.StatusNotFound, "import_not_found", "Managed Import Job not found")
 	case errors.Is(err, ErrRevisionConflict):
-		respond.Error(writer, http.StatusConflict, "import_revision_conflict", "Import Preview changed since the supplied revision")
+		respond.Error(writer, http.StatusConflict, ERROR_CODE_REVISION_CONFLICT, "Import Preview changed since the supplied revision")
+	case errors.Is(err, ErrExactDuplicate):
+		respond.Error(writer, http.StatusConflict, ERROR_CODE_EXACT_DUPLICATE, "File bytes match an existing Track")
 	case errors.Is(err, ErrBatchTooLarge):
 		respond.Error(writer, http.StatusRequestEntityTooLarge, "batch_upload_too_large", "Managed Import batch exceeds the configured byte limit")
 	case errors.Is(err, ErrInvalidState):

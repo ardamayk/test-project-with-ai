@@ -300,7 +300,10 @@ func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, err
 	if err := requireMutation(result); err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
 	}
-	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
+	if _, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_batches
+		SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?) AND status = ?`, jobID, BATCH_STATUS_UPLOADING); err != nil {
 		return fmt.Errorf("revise rejected Managed Import Batch file: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
@@ -492,6 +495,23 @@ func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata lib
 		return "TOTALTRACKS", nil
 	}
 	return "", nil
+}
+
+func (store *Store) FindExactDuplicateTrackID(ctx context.Context, contentSHA256 string) (string, error) {
+	var trackID string
+	err := store.database.QueryRowContext(ctx, `
+		SELECT tracks.id
+		FROM track_sources
+		JOIN tracks ON tracks.id = track_sources.track_id
+		WHERE track_sources.content_sha256 = ?`, contentSHA256,
+	).Scan(&trackID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect exact Managed Import duplicate: %w", err)
+	}
+	return trackID, nil
 }
 
 func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) (commitIdentity, error) {
