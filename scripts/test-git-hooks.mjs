@@ -67,6 +67,10 @@ function copyHookFiles(repositoryPath) {
 		path.join(REPOSITORY_ROOT, "scripts", "check-staged-generation.sh"),
 		path.join(repositoryPath, "scripts", "check-staged-generation.sh"),
 	);
+	cpSync(
+		path.join(REPOSITORY_ROOT, "scripts", "check-staged-rust-format.sh"),
+		path.join(repositoryPath, "scripts", "check-staged-rust-format.sh"),
+	);
 	symlinkSync(
 		path.join(REPOSITORY_ROOT, "node_modules"),
 		path.join(repositoryPath, "node_modules"),
@@ -80,8 +84,12 @@ function copyHookFiles(repositoryPath) {
 function createFakeCommands(binPath, commandLogPath) {
 	writeFileSync(commandLogPath, "");
 	writeExecutable(
+		path.join(path.dirname(binPath), "scripts", "check-openapi-generation.sh"),
+		`#!/bin/sh\nprintf 'generate:check\\n' >> "${commandLogPath}"\nif [ "\${CHECK_GENERATION_FILES:-0}" = "1" ]; then\n\tcmp packages/contracts/openapi.yaml packages/api-client/src/generated/schema.ts\nfi\n`,
+	);
+	writeExecutable(
 		path.join(binPath, "mise"),
-		`#!/bin/sh\nprintf 'mise %s\\n' "$*" >> "${commandLogPath}"\nif [ "\${CHECK_GENERATION_FILES:-0}" = "1" ] && [ "$*" = "run generate:check" ]; then\n\tcmp packages/contracts/openapi.yaml packages/api-client/src/generated/schema.ts || exit $?\nfi\n[ "\${FAIL_FAST_GATE:-0}" != "1" ]\n`,
+		`#!/bin/sh\nprintf 'mise %s\\n' "$*" >> "${commandLogPath}"\n[ "\${MISE_FAIL_UNTRUSTED:-0}" != "1" ] || exit 1\nif [ "\${CHECK_GENERATION_FILES:-0}" = "1" ] && [ "$*" = "run generate:check" ]; then\n\tcmp packages/contracts/openapi.yaml packages/api-client/src/generated/schema.ts || exit $?\nfi\n[ "\${FAIL_FAST_GATE:-0}" != "1" ]\n`,
 	);
 	writeExecutable(
 		path.join(binPath, "graphify"),
@@ -242,6 +250,54 @@ test("pre-commit rejects staged Rust source that cargo fmt would change", () => 
 	}
 });
 
+test("pre-commit checks staged Rust without reading unstaged sibling edits", () => {
+	const fixture = createRepository();
+	try {
+		const rustRoot = path.join(fixture.repositoryPath, "desktop", "src-tauri");
+		mkdirSync(path.join(rustRoot, "src"), { recursive: true });
+		writeFileSync(
+			path.join(rustRoot, "Cargo.toml"),
+			'[package]\nname = "hook-fixture"\nversion = "0.1.0"\nedition = "2021"\n',
+		);
+		writeFileSync(
+			path.join(rustRoot, "src", "lib.rs"),
+			"mod other;\n\npub fn value() -> i32 {\n    1\n}\n",
+		);
+		writeFileSync(
+			path.join(rustRoot, "src", "other.rs"),
+			"pub fn other() -> i32 {\n    2\n}\n",
+		);
+		run(fixture.repositoryPath, "git", ["add", "desktop/src-tauri"]);
+		run(fixture.repositoryPath, "git", [
+			"commit",
+			"--quiet",
+			"--no-verify",
+			"-m",
+			"rust crate",
+		]);
+
+		writeFileSync(
+			path.join(rustRoot, "src", "lib.rs"),
+			"mod other;\n\npub fn value() -> i32 {\n    3\n}\n",
+		);
+		run(fixture.repositoryPath, "git", ["add", "desktop/src-tauri/src/lib.rs"]);
+		writeFileSync(
+			path.join(rustRoot, "src", "other.rs"),
+			"pub fn other()->i32{2}\n",
+		);
+		run(
+			fixture.repositoryPath,
+			"git",
+			["commit", "--quiet", "-m", "staged rust only"],
+			{
+				env: hookEnvironment(fixture),
+			},
+		);
+	} finally {
+		fixture.remove();
+	}
+});
+
 test("pre-commit verifies generated output only for generation inputs", () => {
 	const fixture = createRepository();
 	try {
@@ -283,7 +339,7 @@ test("pre-commit verifies generated output only for generation inputs", () => {
 		);
 		assert.equal(
 			readFileSync(fixture.commandLogPath, "utf8"),
-			"mise run generate:check\n",
+			"generate:check\n",
 		);
 
 		writeFileSync(fixture.commandLogPath, "");
@@ -302,6 +358,38 @@ test("pre-commit verifies generated output only for generation inputs", () => {
 			},
 		);
 		assert.equal(readFileSync(fixture.commandLogPath, "utf8"), "");
+	} finally {
+		fixture.remove();
+	}
+});
+
+test("staged generation check does not load temporary Mise configuration", () => {
+	const fixture = createRepository();
+	try {
+		mkdirSync(path.join(fixture.repositoryPath, "packages", "contracts"), {
+			recursive: true,
+		});
+		writeFileSync(
+			path.join(
+				fixture.repositoryPath,
+				"packages",
+				"contracts",
+				"openapi.yaml",
+			),
+			"openapi: 3.1.0\n",
+		);
+		run(fixture.repositoryPath, "git", [
+			"add",
+			"packages/contracts/openapi.yaml",
+		]);
+		run(
+			fixture.repositoryPath,
+			"git",
+			["commit", "--quiet", "-m", "trusted generation"],
+			{
+				env: hookEnvironment(fixture, { MISE_FAIL_UNTRUSTED: "1" }),
+			},
+		);
 	} finally {
 		fixture.remove();
 	}

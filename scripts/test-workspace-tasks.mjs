@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
 const WORKSPACE_PACKAGES = ["@repo/api-client", "@repo/ui", "web"];
@@ -267,6 +267,16 @@ test("root pnpm compatibility commands delegate to Mise", async () => {
 			scriptName,
 		);
 	}
+});
+
+test("Docker dependency install disables lifecycle scripts", () => {
+	const dockerfile = readFileSync(
+		new URL("../Dockerfile", import.meta.url),
+		"utf8",
+	);
+	assert.match(dockerfile, /COPY .*pnpm-lock\.yaml/);
+	assert.match(dockerfile, /pnpm install --frozen-lockfile --ignore-scripts/);
+	assert.match(dockerfile, /pnpm install --ignore-scripts/);
 });
 
 test("Desktop Client workspace scripts expose native Rust tools", async () => {

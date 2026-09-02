@@ -7,8 +7,4 @@ trap 'rm -rf -- "$STAGED_ROOT"' EXIT
 
 git -C "$REPOSITORY_ROOT" checkout-index --all --prefix="$STAGED_ROOT/"
 
-(
-	cd "$STAGED_ROOT"
-	OPENAPI_TYPESCRIPT_BIN="$REPOSITORY_ROOT/packages/contracts/node_modules/.bin/openapi-typescript" \
-		bash scripts/check-openapi-generation.sh
-)
+cargo fmt --manifest-path "$STAGED_ROOT/desktop/src-tauri/Cargo.toml" -- --check
