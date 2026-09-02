@@ -566,20 +566,42 @@ func (service *Service) validateStagedUpload(ctx context.Context, jobID string, 
 }
 
 func (service *Service) persistPreview(ctx context.Context, job importJob, originalFilename string, upload stagedUpload, inspection library.MediaInspection) (Preview, error) {
+	classification, candidates, err := service.store.ClassifyDuplicate(ctx, inspection)
+	if err != nil {
+		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
+	}
 	previewJob := job
 	previewJob.Status = STATUS_AWAITING_CONFIRMATION
+	if classification == DUPLICATE_EXACT {
+		previewJob.Status = STATUS_FAILED
+	}
 	previewJob.Revision++
 	previewJob.OriginalFilename = originalFilename
 	preview := previewFromInspection(previewJob, inspection)
+	preview.DuplicateClassification = classification
+	preview.DuplicateCandidates = candidates
 	previewBytes, err := json.Marshal(preview)
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, fmt.Errorf("encode Import Preview: %w", err))
+	}
+	if classification == DUPLICATE_EXACT {
+		markErr := service.store.MarkExactDuplicate(ctx, job.ID, originalFilename, upload.SHA256, string(previewBytes), candidates[0].TrackID)
+		if markErr != nil {
+			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, markErr)
+		}
+		removeErr := service.storage.RemoveStaged(upload.Path)
+		if removeErr != nil {
+			return Preview{}, removeErr
+		}
+		return preview, nil
 	}
 	markedJob, err := service.store.MarkPreview(ctx, job.ID, originalFilename, upload.Path, upload.SHA256, string(previewBytes), upload.Size, service.storage.batchLimit)
 	if err != nil {
 		return service.recoverPreviewFailure(ctx, job, originalFilename, upload.Path, err, inspection)
 	}
-	return previewFromInspection(markedJob, inspection), nil
+	preview.Status = markedJob.Status
+	preview.Revision = markedJob.Revision
+	return preview, nil
 }
 
 func (service *Service) recoverPreviewFailure(ctx context.Context, originalJob importJob, originalFilename, stagedPath string, transitionErr error, inspection library.MediaInspection) (Preview, error) {
@@ -590,7 +612,11 @@ func (service *Service) recoverPreviewFailure(ctx context.Context, originalJob i
 	defer cancel()
 	job, getErr := service.store.GetJob(recoveryCtx, originalJob.ID)
 	if getErr == nil && job.Status == STATUS_AWAITING_CONFIRMATION {
-		return previewFromInspection(job, inspection), nil
+		var preview Preview
+		if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
+			return Preview{}, fmt.Errorf("decode recovered Import Preview: %w", err)
+		}
+		return preview, nil
 	}
 	if ctx.Err() != nil {
 		transitionErr = validationCancellationError(ctx)
@@ -669,6 +695,10 @@ func (service *Service) validateExistingAlbumTotals(ctx context.Context, metadat
 }
 
 func (service *Service) Confirm(ctx context.Context, jobID string, revision int) (Result, error) {
+	return service.ConfirmWithDecision(ctx, jobID, revision, "")
+}
+
+func (service *Service) ConfirmWithDecision(ctx context.Context, jobID string, revision int, decision DuplicateAction) (Result, error) {
 	managedImportBatchConfirmationMu.Lock()
 	defer managedImportBatchConfirmationMu.Unlock()
 	job, err := service.store.GetJob(ctx, jobID)
@@ -678,10 +708,10 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 	if job.BatchID != "" {
 		return Result{}, ErrInvalidState
 	}
-	return service.confirmJob(ctx, job, revision)
+	return service.confirmJob(ctx, job, revision, decision)
 }
 
-func (service *Service) confirmJob(ctx context.Context, job importJob, revision int) (Result, error) {
+func (service *Service) confirmJob(ctx context.Context, job importJob, revision int, decision DuplicateAction) (Result, error) {
 	managedImportCommitMu.Lock()
 	defer managedImportCommitMu.Unlock()
 	job, err := service.store.GetJob(ctx, job.ID)
@@ -719,10 +749,10 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
-	return service.confirmAwaitingJob(ctx, job)
+	return service.confirmAwaitingJob(ctx, job, decision)
 }
 
-func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob) (Result, error) {
+func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, decision DuplicateAction) (Result, error) {
 	stagedBytes, err := service.storage.StagedFileSize(job.StagedFilePath)
 	if err != nil {
 		return Result{}, err
@@ -742,17 +772,52 @@ func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob) (
 			Err:    errors.New("staged file hash changed after Import Preview"),
 		}
 	}
-	existingTrackID, err := service.store.FindExactDuplicateTrackID(ctx, inspection.FileSHA256)
+	classification, _, err := service.store.ClassifyDuplicate(ctx, inspection)
 	if err != nil {
 		return Result{}, err
 	}
-	if existingTrackID != "" {
+	if classification == DUPLICATE_EXACT {
 		return Result{}, service.rejectExactDuplicate(ctx, job)
+	}
+	storedClassification, err := storedDuplicateClassification(job)
+	if err != nil {
+		return Result{}, err
+	}
+	isPossibleDuplicate := storedClassification == DUPLICATE_POSSIBLE || classification == DUPLICATE_POSSIBLE
+	if err := validateDuplicateAction(isPossibleDuplicate, decision); err != nil {
+		return Result{}, err
 	}
 	if preflightErr := service.preflightCommit(stagedBytes, inspection); preflightErr != nil {
 		return Result{}, preflightErr
 	}
-	return service.commit(ctx, job, inspection)
+	albumKey := albumIdentityKey(inspection.Metadata)
+	if isPossibleDuplicate {
+		albumKey = separateAlbumIdentityKey(job.ID, inspection.Metadata)
+	}
+	return service.commit(ctx, job, inspection, albumKey)
+}
+
+func validateDuplicateAction(isPossibleDuplicate bool, decision DuplicateAction) error {
+	if !isPossibleDuplicate && decision == "" {
+		return nil
+	}
+	if isPossibleDuplicate && decision == DUPLICATE_ACTION_IMPORT_SEPARATELY {
+		return nil
+	}
+	if isPossibleDuplicate && decision == "" {
+		return fmt.Errorf("%w: every Possible Duplicate requires an explicit decision", ErrInvalidUpload)
+	}
+	if decision == DUPLICATE_ACTION_REPLACE_EXISTING {
+		return fmt.Errorf("%w: Track Replacement is not available in this import operation", ErrInvalidUpload)
+	}
+	if decision == DUPLICATE_ACTION_DO_NOT_IMPORT {
+		return fmt.Errorf("%w: use cancellation to decline a standalone import", ErrInvalidUpload)
+	}
+	return fmt.Errorf("%w: duplicate decision is not valid for this import", ErrInvalidUpload)
+}
+
+func separateAlbumIdentityKey(jobID string, metadata library.NormalizedMediaMetadata) string {
+	return albumIdentityKey(metadata) + "\x1fmanaged-import-edition:" + jobID
 }
 
 func (service *Service) rejectExactDuplicate(ctx context.Context, job importJob) error {
@@ -782,18 +847,79 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 		}
 		return batch, nil
 	}
-	err = service.startOrResumeBatch(ctx, batch, confirmation.Revision, selectedIDs)
-	if err != nil {
-		return Batch{}, err
-	}
 	jobs, err := service.store.ListBatchJobs(ctx, batchID)
 	if err != nil {
 		return Batch{}, err
 	}
-	if err := service.confirmBatchJobs(ctx, jobs); err != nil {
+	decisionsByJob, decisionErr := validateDuplicateDecisions(jobs, selectedIDs, confirmation.DuplicateDecisions)
+	if decisionErr != nil {
+		return Batch{}, decisionErr
+	}
+	err = service.startOrResumeBatch(ctx, batch, confirmation.Revision, selectedIDs)
+	if err != nil {
+		return Batch{}, err
+	}
+	jobs, err = service.store.ListBatchJobs(ctx, batchID)
+	if err != nil {
+		return Batch{}, err
+	}
+	if err := service.confirmBatchJobs(ctx, jobs, decisionsByJob); err != nil {
 		return Batch{}, err
 	}
 	return service.completeBatch(ctx, batchID)
+}
+
+func validateDuplicateDecisions(jobs []importJob, selectedIDs map[string]bool, decisions []DuplicateDecision) (map[string]DuplicateAction, error) {
+	decisionsByJob := make(map[string]DuplicateAction, len(decisions))
+	possibleJobIDs := make(map[string]bool)
+	for _, decision := range decisions {
+		if decision.JobID == "" || decisionsByJob[decision.JobID] != "" {
+			return nil, fmt.Errorf("%w: duplicate decisions require unique non-empty job IDs", ErrInvalidUpload)
+		}
+		decisionsByJob[decision.JobID] = decision.Action
+	}
+	for _, job := range jobs {
+		classification, err := storedDuplicateClassification(job)
+		if err != nil {
+			return nil, err
+		}
+		if classification != DUPLICATE_POSSIBLE {
+			continue
+		}
+		possibleJobIDs[job.ID] = true
+		action := decisionsByJob[job.ID]
+		switch action {
+		case DUPLICATE_ACTION_IMPORT_SEPARATELY:
+			if !selectedIDs[job.ID] {
+				return nil, fmt.Errorf("%w: import-separately decision must select its file", ErrInvalidUpload)
+			}
+		case DUPLICATE_ACTION_DO_NOT_IMPORT:
+			if selectedIDs[job.ID] {
+				return nil, fmt.Errorf("%w: do-not-import decision must not select its file", ErrInvalidUpload)
+			}
+		case DUPLICATE_ACTION_REPLACE_EXISTING:
+			return nil, fmt.Errorf("%w: Track Replacement is not available in this import operation", ErrInvalidUpload)
+		default:
+			return nil, fmt.Errorf("%w: every Possible Duplicate requires an explicit decision", ErrInvalidUpload)
+		}
+	}
+	for jobID := range decisionsByJob {
+		if !possibleJobIDs[jobID] {
+			return nil, fmt.Errorf("%w: duplicate decision does not identify a Possible Duplicate", ErrInvalidUpload)
+		}
+	}
+	return decisionsByJob, nil
+}
+
+func storedDuplicateClassification(job importJob) (DuplicateClassification, error) {
+	if job.PreviewJSON == "" {
+		return DUPLICATE_NONE, nil
+	}
+	var preview Preview
+	if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
+		return "", fmt.Errorf("decode Import Preview for duplicate decision on job %q: %w", job.ID, err)
+	}
+	return preview.DuplicateClassification, nil
 }
 
 func selectedFileIDs(fileIDs []string) (map[string]bool, error) {
@@ -820,7 +946,7 @@ func (service *Service) startOrResumeBatch(ctx context.Context, batch Batch, rev
 	return service.store.StartBatchConfirmation(ctx, batch.ID, revision, selectedIDs)
 }
 
-func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) error {
+func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob, decisions map[string]DuplicateAction) error {
 	for _, job := range jobs {
 		if job.Outcome != "" {
 			continue
@@ -831,7 +957,7 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			}
 			continue
 		}
-		if _, err := service.confirmJob(ctx, job, job.Revision); err != nil {
+		if _, err := service.confirmJob(ctx, job, job.Revision, decisions[job.ID]); err != nil {
 			if handleErr := service.handleBatchConfirmationError(ctx, job, err); handleErr != nil {
 				return handleErr
 			}
@@ -911,8 +1037,8 @@ func (service *Service) preflightCommit(stagedBytes int64, inspection library.Me
 	})
 }
 
-func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
-	identity, journal, err := service.prepareCommit(ctx, job, inspection)
+func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection, albumKey string) (Result, error) {
+	identity, journal, err := service.prepareCommit(ctx, job, inspection, albumKey)
 	if err != nil {
 		return Result{}, err
 	}
@@ -920,11 +1046,11 @@ func (service *Service) commit(ctx context.Context, job importJob, inspection li
 	if err != nil {
 		return Result{}, err
 	}
-	return service.persistAndFinalizeCommit(ctx, job, inspection, identity, journal, placement)
+	return service.persistAndFinalizeCommit(ctx, job, inspection, identity, journal, placement, albumKey)
 }
 
-func (service *Service) prepareCommit(ctx context.Context, job importJob, inspection library.MediaInspection) (commitIdentity, commitJournal, error) {
-	identity, resolveErr := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
+func (service *Service) prepareCommit(ctx context.Context, job importJob, inspection library.MediaInspection, albumKey string) (commitIdentity, commitJournal, error) {
+	identity, resolveErr := service.store.ResolveCommitIdentity(ctx, inspection.Metadata, albumKey)
 	if resolveErr != nil {
 		return commitIdentity{}, commitJournal{}, resolveErr
 	}
@@ -975,12 +1101,13 @@ func (service *Service) placeAndVerifyCommit(ctx context.Context, job importJob,
 	return placement, nil
 }
 
-func (service *Service) persistAndFinalizeCommit(ctx context.Context, job importJob, inspection library.MediaInspection, identity commitIdentity, journal commitJournal, placement placedFiles) (Result, error) {
+func (service *Service) persistAndFinalizeCommit(ctx context.Context, job importJob, inspection library.MediaInspection, identity commitIdentity, journal commitJournal, placement placedFiles, albumKey string) (Result, error) {
 	data := commitData{
 		Job:        job,
 		Identity:   identity,
 		Placement:  placement,
 		Inspection: inspection,
+		AlbumKey:   albumKey,
 	}
 	commitErr := service.store.CommitPending(ctx, data, journal.ID)
 	if commitErr == nil && service.commitResultHook != nil {

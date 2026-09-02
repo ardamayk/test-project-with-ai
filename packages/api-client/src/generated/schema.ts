@@ -819,14 +819,35 @@ export interface components {
         ManagedImportBatchConfirmation: {
             revision: number;
             selectedFileIds: string[];
+            duplicateDecisions?: components["schemas"]["ManagedImportDuplicateDecision"][];
+        };
+        ManagedImportDuplicateDecision: {
+            /** Format: uuid */
+            jobId: string;
+            /** @enum {string} */
+            action: "import_separately" | "replace_existing" | "do_not_import";
         };
         ManagedImportPreview: {
             /** Format: uuid */
             jobId: string;
             /** @enum {string} */
-            status: "awaiting_confirmation";
+            status: "awaiting_confirmation" | "failed";
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
+            /** @enum {string} */
+            duplicateClassification: "none" | "exact_duplicate" | "possible_duplicate";
+            duplicateCandidates?: components["schemas"]["ManagedImportDuplicateCandidate"][];
+        };
+        ManagedImportDuplicateCandidate: {
+            /** Format: uuid */
+            trackId: string;
+            title: string;
+            artists: string[];
+            album: string;
+            discNo: number;
+            trackNo: number;
+            format: string;
+            durationMs: number;
         };
         LibraryMigrationPreview: {
             acceptedCount: number;
@@ -959,6 +980,8 @@ export interface components {
         };
         ManagedImportConfirmation: {
             revision: number;
+            /** @enum {string} */
+            duplicateDecision?: "import_separately" | "replace_existing" | "do_not_import";
         };
         ManagedImportResult: {
             /** Format: uuid */

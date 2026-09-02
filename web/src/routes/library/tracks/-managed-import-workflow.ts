@@ -1,6 +1,7 @@
 import type {
 	ManagedImportBatch,
 	ManagedImportBatchFile,
+	ManagedImportDuplicateDecision,
 	ManagedImportPreview,
 } from "@repo/api-client";
 import { useRef, useState } from "react";
@@ -36,7 +37,10 @@ export type ImportFileEntry = {
 	preview?: ManagedImportPreview;
 	errorMessage?: string;
 	outcome?: ManagedImportBatchFile["outcome"];
+	duplicateDecision?: DuplicateDecision;
 };
+
+export type DuplicateDecision = ManagedImportDuplicateDecision["action"];
 
 export function useManagedImportWorkflow({
 	onOpenChange,
@@ -63,7 +67,10 @@ export function useManagedImportWorkflow({
 					state.entries.some((entry) => entry.jobId === file.jobId),
 			) &&
 			state.entries.every(
-				(entry) => entry.state !== "unresolved" || Boolean(entry.jobId),
+				(entry) =>
+					(entry.state !== "unresolved" || Boolean(entry.jobId)) &&
+					(entry.preview?.duplicateClassification !== "possible_duplicate" ||
+						Boolean(entry.duplicateDecision)),
 			),
 	);
 	return {
@@ -79,6 +86,15 @@ export function useManagedImportWorkflow({
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
 		handleSelectionChange: (key: string, selected: boolean) =>
 			state.updateEntry(key, { selected, hasSelectionOverride: true }),
+		handleDuplicateDecisionChange: (
+			key: string,
+			duplicateDecision: DuplicateDecision,
+		) =>
+			state.updateEntry(key, {
+				duplicateDecision,
+				selected: duplicateDecision !== "do_not_import",
+				hasSelectionOverride: true,
+			}),
 		handleOpenChange: createOpenHandler(state, isCloseLocked, onOpenChange),
 	};
 }
@@ -306,9 +322,11 @@ async function uploadFile(
 			(progress) => updateEntry(entry.key, { progress }),
 			signal,
 		);
+		const duplicateClassification = preview.duplicateClassification ?? "none";
 		updateEntry(entry.key, {
-			state: "accepted",
-			selected: true,
+			state:
+				duplicateClassification === "exact_duplicate" ? "rejected" : "accepted",
+			selected: duplicateClassification === "none",
 			preview,
 			progress: 100,
 		});
@@ -329,11 +347,28 @@ function confirmImportBatch(
 	const selectedFileIds = entries.flatMap((entry) =>
 		entry.selected && entry.jobId ? [entry.jobId] : [],
 	);
-	return apiClient.confirmManagedImportBatch(
-		batch.id,
-		batch.revision,
-		selectedFileIds,
+	const duplicateDecisions = entries.flatMap((entry) =>
+		entry.jobId && entry.duplicateDecision
+			? [
+					{
+						jobId: entry.jobId,
+						action: entry.duplicateDecision,
+					} satisfies ManagedImportDuplicateDecision,
+				]
+			: [],
 	);
+	return duplicateDecisions.length > 0
+		? apiClient.confirmManagedImportBatch(
+				batch.id,
+				batch.revision,
+				selectedFileIds,
+				duplicateDecisions,
+			)
+		: apiClient.confirmManagedImportBatch(
+				batch.id,
+				batch.revision,
+				selectedFileIds,
+			);
 }
 
 function hasLibraryMutation(batch: ManagedImportBatch): boolean {

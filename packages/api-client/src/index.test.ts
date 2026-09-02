@@ -137,9 +137,12 @@ describe('createApiClient', () => {
       batch.id,
       '00000000-0000-4000-8000-000000000001',
     );
-    const report = await client.confirmManagedImportBatch(batch.id, 2, [
-      'import-1',
-    ]);
+    const report = await client.confirmManagedImportBatch(
+      batch.id,
+      2,
+      ['import-1'],
+      [{ jobId: 'import-1', action: 'import_separately' }],
+    );
 
     expect(report.status).toBe('completed');
     expect(JSON.parse(String(transport.mock.calls[1]?.[1]?.body))).toEqual({
@@ -149,6 +152,7 @@ describe('createApiClient', () => {
     expect(JSON.parse(String(transport.mock.calls[2]?.[1]?.body))).toEqual({
       revision: 2,
       selectedFileIds: ['import-1'],
+      duplicateDecisions: [{ jobId: 'import-1', action: 'import_separately' }],
     });
   });
 
