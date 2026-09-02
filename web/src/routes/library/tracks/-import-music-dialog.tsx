@@ -3,6 +3,7 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { Button } from "#/components/ui/button";
 import { isDesktopClient } from "#/desktop/bridge";
 import {
+	type DuplicateDecision,
 	type ImportFileEntry,
 	type ImportState,
 	SUPPORTED_AUDIO_FILE_ACCEPT,
@@ -45,6 +46,7 @@ export function ImportMusicDialog({
 						entries={workflow.entries}
 						isBusy={workflow.isSelectionLocked}
 						onSelectionChange={workflow.handleSelectionChange}
+						onDuplicateDecisionChange={workflow.handleDuplicateDecisionChange}
 					/>
 					<ImportDialogFooter
 						canConfirm={workflow.canConfirm}
@@ -195,10 +197,12 @@ function ImportFileList({
 	entries,
 	isBusy,
 	onSelectionChange,
+	onDuplicateDecisionChange,
 }: {
 	entries: ImportFileEntry[];
 	isBusy: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
+	onDuplicateDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
 	if (entries.length === 0) return null;
 	return (
@@ -210,6 +214,7 @@ function ImportFileList({
 					entry={entry}
 					isBusy={isBusy}
 					onSelectionChange={onSelectionChange}
+					onDuplicateDecisionChange={onDuplicateDecisionChange}
 				/>
 			))}
 		</section>
@@ -220,25 +225,31 @@ function ImportFileRow({
 	entry,
 	isBusy,
 	onSelectionChange,
+	onDuplicateDecisionChange,
 }: {
 	entry: ImportFileEntry;
 	isBusy: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
+	onDuplicateDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
 	const filename = entry.preview?.file.originalFilename ?? entry.file.name;
+	const duplicateClassification =
+		entry.preview?.duplicateClassification ?? "none";
 	return (
 		<article className="grid gap-2 rounded-lg border border-border bg-muted/30 p-4">
 			<div className="flex items-start justify-between gap-3">
-				<label className="flex min-w-0 items-start gap-3">
-					<input
-						type="checkbox"
-						aria-label={`Select ${filename}`}
-						checked={entry.selected}
-						disabled={isBusy || entry.state !== "accepted"}
-						onChange={(event) =>
-							onSelectionChange(entry.key, event.target.checked)
-						}
-					/>
+				<div className="flex min-w-0 items-start gap-3">
+					{duplicateClassification === "none" ? (
+						<input
+							type="checkbox"
+							aria-label={`Select ${filename}`}
+							checked={entry.selected}
+							disabled={isBusy || entry.state !== "accepted"}
+							onChange={(event) =>
+								onSelectionChange(entry.key, event.target.checked)
+							}
+						/>
+					) : null}
 					<span className="min-w-0">
 						<span className="block truncate font-medium text-heading">
 							{entry.preview?.file.title ?? filename}
@@ -251,13 +262,18 @@ function ImportFileRow({
 							</span>
 						) : null}
 					</span>
-				</label>
+				</div>
 				<span className="rounded-full bg-secondary px-2 py-1 font-medium text-xs">
 					{entry.outcome
 						? outcomeLabel(entry.outcome)
 						: stateLabel(entry.state)}
 				</span>
 			</div>
+			<DuplicateReview
+				entry={entry}
+				isBusy={isBusy}
+				onDecisionChange={onDuplicateDecisionChange}
+			/>
 			{entry.state === "unresolved" ? (
 				<div
 					className="h-2 overflow-hidden rounded-full bg-secondary"
@@ -279,6 +295,118 @@ function ImportFileRow({
 		</article>
 	);
 }
+
+function DuplicateReview({
+	entry,
+	isBusy,
+	onDecisionChange,
+}: {
+	entry: ImportFileEntry;
+	isBusy: boolean;
+	onDecisionChange: (key: string, decision: DuplicateDecision) => void;
+}) {
+	const preview = entry.preview;
+	if (!preview?.duplicateCandidates?.length) return null;
+	if (preview.duplicateClassification === "exact_duplicate") {
+		return <ExactDuplicateReview preview={preview} />;
+	}
+	if (preview.duplicateClassification !== "possible_duplicate") return null;
+	return (
+		<fieldset className="grid gap-2 rounded-md border border-border bg-background p-3">
+			<legend className="px-1 font-medium text-heading text-sm">
+				Possible Duplicate
+			</legend>
+			<p className="text-caption text-sm">Different file bytes resemble:</p>
+			<ul className="list-disc pl-5 text-caption text-sm">
+				{preview.duplicateCandidates.map((candidate) => (
+					<li key={candidate.trackId}>
+						{candidate.title} — {candidate.artists.join(", ")}
+					</li>
+				))}
+			</ul>
+			{duplicateDecisionOptions.map((option) => (
+				<DuplicateDecisionOption
+					key={option.value}
+					entry={entry}
+					isBusy={isBusy}
+					option={option}
+					onDecisionChange={onDecisionChange}
+				/>
+			))}
+		</fieldset>
+	);
+}
+
+function ExactDuplicateReview({
+	preview,
+}: {
+	preview: NonNullable<ImportFileEntry["preview"]>;
+}) {
+	const candidate = preview.duplicateCandidates?.[0];
+	if (!candidate) return null;
+	return (
+		<div className="rounded-md border border-border bg-background p-3 text-sm">
+			<p className="font-medium text-heading">Exact Duplicate</p>
+			<p className="mt-1 text-caption">
+				File bytes already belong to {candidate.title}.
+			</p>
+			<details className="mt-2">
+				<summary className="cursor-pointer text-primary underline">
+					View existing Track
+				</summary>
+				<dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-caption">
+					<dt>Artist</dt>
+					<dd>{candidate.artists.join(", ")}</dd>
+					<dt>Album</dt>
+					<dd>{candidate.album}</dd>
+					<dt>Position</dt>
+					<dd>{`${candidate.discNo}.${candidate.trackNo}`}</dd>
+				</dl>
+			</details>
+		</div>
+	);
+}
+
+function DuplicateDecisionOption({
+	entry,
+	isBusy,
+	option,
+	onDecisionChange,
+}: {
+	entry: ImportFileEntry;
+	isBusy: boolean;
+	option: (typeof duplicateDecisionOptions)[number];
+	onDecisionChange: (key: string, decision: DuplicateDecision) => void;
+}) {
+	const isReplacement = option.value === "replace_existing";
+	return (
+		<label className="flex items-center gap-2 text-sm">
+			<input
+				type="radio"
+				name={`duplicate-decision-${entry.key}`}
+				value={option.value}
+				checked={entry.duplicateDecision === option.value}
+				disabled={isBusy || isReplacement}
+				title={
+					isReplacement
+						? "Track Replacement requires the replacement workflow"
+						: undefined
+				}
+				onChange={() => onDecisionChange(entry.key, option.value)}
+			/>
+			{option.label}
+		</label>
+	);
+}
+
+const duplicateDecisionOptions: Array<{
+	value: DuplicateDecision;
+	label: string;
+}> = [
+	{ value: "import_separately", label: "Import separately" },
+	{ value: "replace_existing", label: "Replace existing Track" },
+	{ value: "do_not_import", label: "Do not import" },
+];
 
 function ImportDialogFooter({
 	canConfirm,

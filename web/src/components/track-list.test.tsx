@@ -1,3 +1,4 @@
+import type { Track } from "@repo/api-client";
 import {
 	cleanup,
 	fireEvent,
@@ -11,7 +12,9 @@ import { TrackList } from "./track-list";
 const toggleFavorite = vi.fn();
 const playTrack = vi.fn();
 const deleteTrack = vi.fn();
+const previewTrackDeletion = vi.fn();
 let favorite = false;
+let hasDeletionCapability = true;
 
 vi.mock("@repo/ui", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@repo/ui")>();
@@ -34,10 +37,17 @@ vi.mock("#/hooks/use-favorite-tracks", () => ({
 
 vi.mock("#/hooks/use-delete-library", () => ({
 	useDeleteTrack: () => ({ mutate: deleteTrack, isPending: false }),
-	confirmDelete: () => true,
+	usePreviewTrackDeletion: () => ({
+		mutate: previewTrackDeletion,
+		isPending: false,
+	}),
 }));
 
-const sampleTrack = {
+vi.mock("#/hooks/use-server-capability", () => ({
+	useServerCapability: () => hasDeletionCapability,
+}));
+
+const sampleTrack: Track = {
 	id: "t1",
 	title: "Welcome to New York",
 	artistName: "Taylor Swift",
@@ -47,6 +57,7 @@ const sampleTrack = {
 	discNo: 1,
 	durationMs: 212_000,
 	format: "flac",
+	sourceKind: "managed",
 	genre: "Pop",
 	artists: [],
 	genres: [{ id: "genre-pop", name: "Pop" }],
@@ -68,9 +79,29 @@ describe("TrackList", () => {
 
 	beforeEach(() => {
 		favorite = false;
+		hasDeletionCapability = true;
 		playTrack.mockClear();
 		toggleFavorite.mockClear();
 		deleteTrack.mockClear();
+		previewTrackDeletion.mockReset();
+		previewTrackDeletion.mockImplementation(
+			(
+				_trackId: string,
+				options: { onSuccess: (preview: unknown) => void },
+			) => {
+				options.onSuccess({
+					trackId: "t1",
+					trackTitle: "Welcome to New York",
+					managedFile: {
+						path: "library/taylor-swift/1989/01-welcome.flac",
+						sizeBytes: 50_059_000,
+					},
+					playlistReferences: [{ id: "p1", name: "Road Trip" }],
+					queueReferences: [{ userId: "user", itemCount: 2 }],
+					confirmationToken: "confirm-token",
+				});
+			},
+		);
 	});
 
 	it("renders album tracks with only the title line", () => {
@@ -212,6 +243,25 @@ describe("TrackList", () => {
 		expect(screen.queryByText("Delete track")).toBeNull();
 	});
 
+	it("hides permanent deletion for non-managed Tracks", () => {
+		render(<TrackList tracks={[{ ...sampleTrack, sourceKind: "legacy" }]} />);
+
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		expect(screen.queryByText("Delete track")).toBeNull();
+	});
+
+	it("hides permanent deletion when the server capability is absent", () => {
+		hasDeletionCapability = false;
+		render(<TrackList tracks={[sampleTrack]} />);
+
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		expect(screen.queryByText("Delete track")).toBeNull();
+	});
+
 	it("renders metadata details and delete actions in the context menu", () => {
 		render(<TrackList tracks={[sampleTrack]} />);
 
@@ -262,7 +312,44 @@ describe("TrackList", () => {
 		);
 		fireEvent.click(screen.getByText("Delete track"));
 
-		expect(deleteTrack).toHaveBeenCalledWith("t1", expect.any(Object));
+		const confirmation = screen.getByRole("dialog", {
+			name: "Permanently delete Welcome to New York?",
+		});
+		expect(within(confirmation).getByText("Welcome to New York")).toBeTruthy();
+		expect(
+			within(confirmation).getByText(
+				"library/taylor-swift/1989/01-welcome.flac",
+			),
+		).toBeTruthy();
+		expect(within(confirmation).getByText("47.74 MiB")).toBeTruthy();
+		expect(within(confirmation).getByText("Road Trip")).toBeTruthy();
+		expect(within(confirmation).getByText("2 Queue items")).toBeTruthy();
+		expect(deleteTrack).not.toHaveBeenCalled();
+
+		fireEvent.click(
+			within(confirmation).getByRole("button", { name: "Delete permanently" }),
+		);
+		expect(deleteTrack).toHaveBeenCalledWith(
+			{ trackId: "t1", confirmationToken: "confirm-token" },
+			expect.any(Object),
+		);
+	});
+
+	it("cancels Permanent Track Deletion without mutation", () => {
+		render(<TrackList tracks={[sampleTrack]} />);
+
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(screen.getByText("Delete track"));
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		expect(deleteTrack).not.toHaveBeenCalled();
+		expect(
+			screen.queryByRole("dialog", {
+				name: "Permanently delete Welcome to New York?",
+			}),
+		).toBeNull();
 	});
 
 	it("shows partial and absent ReplayGain Metadata availability", () => {

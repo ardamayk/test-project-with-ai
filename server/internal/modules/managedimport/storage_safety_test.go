@@ -40,6 +40,42 @@ func TestManagedImportRejectsUploadWhenStorageReserveWouldBeExhausted(t *testing
 	testutil.AssertErrorCode(t, response, http.StatusInsufficientStorage, "insufficient_storage")
 }
 
+func TestManagedImportClassifiesExactDuplicateBeforeCommitCapacity(t *testing.T) {
+	fixture := readStorageSafetyFixture(t)
+	const reserveBytes int64 = 1024
+	availableBytes := int64(1 << 40)
+	router := newStorageSafetyRouter(t, config.Config{
+		ManagedStoragePath:           t.TempDir(),
+		ManagedStorageReserveBytes:   reserveBytes,
+		ManagedImportFileLimitBytes:  int64(len(fixture) * 2),
+		ManagedImportBatchLimitBytes: int64(len(fixture) * 2),
+	}, func(string) (int64, error) { return availableBytes, nil })
+	firstJobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+	firstUpload := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+firstJobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type": "audio/flac", "X-Import-Filename": "existing.flac",
+	})
+	if firstUpload.Code != http.StatusOK {
+		t.Fatalf("initial upload status = %d, body = %s", firstUpload.Code, firstUpload.Body.String())
+	}
+	firstConfirm := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+firstJobID+"/confirm", strings.NewReader(`{"revision":2}`), map[string]string{"Content-Type": "application/json"})
+	if firstConfirm.Code != http.StatusOK {
+		t.Fatalf("initial confirm status = %d, body = %s", firstConfirm.Code, firstConfirm.Body.String())
+	}
+	availableBytes = reserveBytes + int64(len(fixture))
+	jobID := testutil.CreateResourceID(t, router, "/api/v1/imports")
+	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type": "audio/flac", "X-Import-Filename": "duplicate.flac",
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("Exact Duplicate upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var preview Preview
+	testutil.DecodeJSON(t, response, &preview)
+	if preview.DuplicateClassification != DUPLICATE_EXACT {
+		t.Fatalf("duplicate classification = %q", preview.DuplicateClassification)
+	}
+}
+
 func TestFailureDetailsPreservesStorageErrors(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -309,6 +345,28 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 	}
 	if !bytes.Equal(storedArtwork, artworks[0]) && !bytes.Equal(storedArtwork, artworks[1]) {
 		t.Fatalf("winning Album Artwork was overwritten with unexpected bytes: %q", storedArtwork)
+	}
+}
+
+func TestRemoveManagedFileDoesNotDeleteAfterContextCancellation(t *testing.T) {
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	path := filepath.Join(storage.root, "library", "track.flac")
+	contents := []byte("managed audio")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(contents)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if isRemoved, err := storage.RemoveManagedFile(ctx, path, fmt.Sprintf("%x", hash)); !errors.Is(err, context.Canceled) || isRemoved {
+		t.Fatalf("RemoveManagedFile() = (%t, %v), want (false, context canceled)", isRemoved, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("managed file changed after cancellation: %v", err)
 	}
 }
 

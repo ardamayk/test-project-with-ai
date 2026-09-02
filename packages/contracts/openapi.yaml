@@ -249,20 +249,55 @@ paths:
     delete:
       tags: [library]
       operationId: deleteTrack
-      summary: Delete track and its music file
+      summary: Permanently delete a Managed Track after reviewing its deletion preview
       parameters:
         - $ref: "#/components/parameters/trackId"
+        - name: X-Permanent-Delete
+          in: header
+          required: true
+          description: Explicit application confirmation required for irreversible deletion
+          schema:
+            type: string
+            enum: ["1"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackDeletionConfirmation"
       responses:
         "200":
-          description: Track deleted
+          description: Managed Track and its exact managed audio file permanently deleted
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeleteResult"
-        "404":
-          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/library/tracks/{trackId}/deletion:
+    get:
+      tags: [library]
+      operationId: previewTrackDeletion
+      summary: Review irreversible Managed Track deletion and all affected references
+      parameters:
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "200":
+          description: Current Permanent Track Deletion preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackDeletionPreview"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/library-migrations/preview:
     post:
       tags: [imports]
@@ -1539,21 +1574,70 @@ components:
           items:
             type: string
             format: uuid
+        duplicateDecisions:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateDecision"
+    ManagedImportDuplicateDecision:
+      type: object
+      required: [jobId, action]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [import_separately, replace_existing, do_not_import]
     ManagedImportPreview:
       type: object
-      required: [jobId, status, revision, file]
+      required: [jobId, status, revision, file, duplicateClassification]
       properties:
         jobId:
           type: string
           format: uuid
         status:
           type: string
-          enum: [awaiting_confirmation]
+          enum: [awaiting_confirmation, failed]
         revision:
           type: integer
           minimum: 1
         file:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
+        duplicateClassification:
+          type: string
+          enum: [none, exact_duplicate, possible_duplicate]
+        duplicateCandidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
+    ManagedImportDuplicateCandidate:
+      type: object
+      required: [trackId, title, artists, album, discNo, trackNo, format, durationMs]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        artists:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        album:
+          type: string
+        discNo:
+          type: integer
+          minimum: 1
+        trackNo:
+          type: integer
+          minimum: 1
+        format:
+          type: string
+        durationMs:
+          type: integer
+          minimum: 1
     LibraryMigrationPreview:
       type: object
       required: [acceptedCount, rejectedCount, files]
@@ -1828,6 +1912,9 @@ components:
         revision:
           type: integer
           minimum: 1
+        duplicateDecision:
+          type: string
+          enum: [import_separately, replace_existing, do_not_import]
     ManagedImportResult:
       type: object
       required: [jobId, status, revision, trackId]
@@ -2013,6 +2100,10 @@ components:
           type: integer
         format:
           type: string
+        sourceKind:
+          type: string
+          enum: [legacy, managed]
+          description: Ownership of the Track's authoritative audio source.
         codec:
           type: string
         container:
@@ -2328,6 +2419,62 @@ components:
       properties:
         deletedFiles:
           type: integer
+    TrackDeletionPreview:
+      type: object
+      required: [trackId, trackTitle, managedFile, playlistReferences, queueReferences, confirmationToken]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        trackTitle:
+          type: string
+        managedFile:
+          $ref: "#/components/schemas/TrackDeletionManagedFile"
+        playlistReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackDeletionPlaylistReference"
+        queueReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackDeletionQueueReference"
+        confirmationToken:
+          type: string
+          description: Opaque token binding confirmation to the reviewed Track, managed file, and relationships
+    TrackDeletionManagedFile:
+      type: object
+      required: [path, sizeBytes]
+      properties:
+        path:
+          type: string
+          description: Managed Storage-relative canonical audio path
+        sizeBytes:
+          type: integer
+          minimum: 0
+    TrackDeletionPlaylistReference:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    TrackDeletionQueueReference:
+      type: object
+      required: [userId, itemCount]
+      properties:
+        userId:
+          type: string
+        itemCount:
+          type: integer
+          minimum: 1
+    TrackDeletionConfirmation:
+      type: object
+      required: [confirmationToken]
+      properties:
+        confirmationToken:
+          type: string
     ScanStatus:
       type: object
       required: [status, scanned, added, updated, removed]

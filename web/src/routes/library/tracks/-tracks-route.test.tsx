@@ -846,6 +846,193 @@ describe("tracks route", () => {
 		expect(screen.getByRole("dialog")).toBeTruthy();
 	});
 
+	it("shows Exact Duplicate details without navigating away", async () => {
+		mocks.uploadManagedImportFile.mockResolvedValueOnce({
+			jobId: "import-1",
+			status: "failed",
+			revision: 2,
+			duplicateClassification: "exact_duplicate",
+			duplicateCandidates: [
+				{
+					trackId: "existing-track",
+					title: "Inspection Fixture",
+					artists: ["Test Artist"],
+					album: "Strict Import Tests",
+					discNo: 1,
+					trackNo: 3,
+					format: "flac",
+					durationMs: 250,
+				},
+			],
+			file: {
+				originalFilename: "duplicate.flac",
+				title: "Inspection Fixture",
+				artists: ["Test Artist"],
+				albumArtists: ["Test Album Artist"],
+				album: "Strict Import Tests",
+				genres: ["Electronic"],
+				trackNo: 3,
+				discNo: 1,
+				durationMs: 250,
+				format: "flac",
+				artworkMediaType: "image/png",
+			},
+		});
+		mocks.getManagedImportBatch.mockResolvedValueOnce({
+			id: "batch-1",
+			status: "uploading",
+			revision: 2,
+			files: [],
+		});
+		await openImportMusicDialog();
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: { files: [new File(["same"], "duplicate.flac")] },
+		});
+
+		const disclosure = await screen.findByText("View existing Track");
+		expect(disclosure.closest("a")).toBeNull();
+		fireEvent.click(disclosure);
+		expect(disclosure.closest("details")?.open).toBe(true);
+		expect(screen.queryByRole("radio")).toBeNull();
+	});
+
+	it("requires an explicit Possible Duplicate decision", async () => {
+		const preview = {
+			...(await mocks.uploadManagedImportFile.getMockImplementation()?.(
+				"import-1",
+			)),
+			duplicateClassification: "possible_duplicate",
+			duplicateCandidates: [
+				{
+					trackId: "existing-track",
+					title: "Existing Track",
+					artists: ["Test Artist"],
+					album: "Strict Import Tests",
+					discNo: 1,
+					trackNo: 3,
+					format: "mp3",
+					durationMs: 245,
+				},
+			],
+		};
+		mocks.uploadManagedImportFile.mockResolvedValueOnce(preview);
+		mocks.getManagedImportBatch.mockResolvedValueOnce({
+			id: "batch-1",
+			status: "uploading",
+			revision: 2,
+			files: [
+				{
+					jobId: "import-1",
+					state: "accepted",
+					status: "awaiting_confirmation",
+					revision: 2,
+					validationProgress: 100,
+					selected: false,
+					preview,
+				},
+			],
+		});
+		await openImportMusicDialog();
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: { files: [new File(["different"], "candidate.flac")] },
+		});
+
+		await screen.findByText("Possible Duplicate");
+		expect(
+			screen.getByRole("button", { name: "Confirm Import" }),
+		).toHaveProperty("disabled", true);
+		fireEvent.click(screen.getByRole("radio", { name: "Import separately" }));
+		expect(
+			screen.getByRole("button", { name: "Confirm Import" }),
+		).toHaveProperty("disabled", false);
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+		await vi.waitFor(() =>
+			expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+				"batch-1",
+				3,
+				["import-1"],
+				[{ jobId: "import-1", action: "import_separately" }],
+			),
+		);
+		expect(
+			screen.getByRole("radio", { name: "Replace existing Track" }),
+		).toBeTruthy();
+		expect(screen.getByRole("radio", { name: "Do not import" })).toBeTruthy();
+	});
+
+	it("stops confirmation when refresh finds a Possible Duplicate", async () => {
+		const preview = {
+			...(await mocks.uploadManagedImportFile.getMockImplementation()?.(
+				"import-1",
+			)),
+			duplicateClassification: "possible_duplicate",
+			duplicateCandidates: [
+				{
+					trackId: "late-track",
+					title: "Late Track",
+					artists: ["Test Artist"],
+					album: "Strict Import Tests",
+					discNo: 1,
+					trackNo: 3,
+					format: "flac",
+					durationMs: 250,
+				},
+			],
+		};
+		mocks.getManagedImportBatch
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 3,
+				files: [
+					{
+						jobId: "import-1",
+						state: "accepted",
+						status: "awaiting_confirmation",
+						revision: 2,
+						validationProgress: 100,
+						selected: true,
+					},
+				],
+			})
+			.mockResolvedValueOnce({
+				id: "batch-1",
+				status: "uploading",
+				revision: 4,
+				files: [
+					{
+						jobId: "import-1",
+						state: "accepted",
+						status: "awaiting_confirmation",
+						revision: 3,
+						validationProgress: 100,
+						selected: false,
+						preview,
+					},
+				],
+			});
+		await openImportMusicDialog();
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: { files: [new File(["different"], "candidate.flac")] },
+		});
+		await screen.findByText("Inspection Fixture");
+		const confirmButton = screen.getByRole("button", {
+			name: "Confirm Import",
+		});
+		await vi.waitFor(() =>
+			expect(confirmButton).toHaveProperty("disabled", false),
+		);
+		fireEvent.click(confirmButton);
+		await vi.waitFor(() =>
+			expect(mocks.getManagedImportBatch).toHaveBeenCalledTimes(2),
+		);
+		expect(mocks.confirmManagedImportBatch).not.toHaveBeenCalled();
+		await screen.findByText("Possible Duplicate");
+		expect(
+			screen.getByRole("button", { name: "Confirm Import" }),
+		).toHaveProperty("disabled", true);
+	});
+
 	it("retains the created batch when the preview refresh fails", async () => {
 		mocks.getManagedImportBatch
 			.mockRejectedValueOnce(new Error("preview refresh unavailable"))

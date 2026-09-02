@@ -7,4 +7,5 @@ var (
 	ErrScanRunning     = errors.New("scan already running")
 	ErrNoMusicPaths    = errors.New("no music paths configured")
 	ErrMigrationStaged = errors.New("legacy Track has a staged Library Migration copy")
+	ErrManagedAlbum    = errors.New("managed albums require per-track permanent deletion")
 )

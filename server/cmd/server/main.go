@@ -69,9 +69,10 @@ func main() {
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB, cfg)
-	importModule := managedimport.NewModule(sqlDB, cfg, library.NewMediaInspector())
 	trackAccess := libModule.TrackAccess()
-	playModule := playback.NewModule(sqlDB, trackAccess)
+	queueEvents := playback.NewQueueEventBroker()
+	importModule := managedimport.NewModule(sqlDB, cfg, library.NewMediaInspector(), queueEvents)
+	playModule := playback.NewModule(sqlDB, trackAccess, queueEvents)
 	playlistModule := playlists.NewModule(sqlDB, trackAccess)
 	radioModule := radio.NewModule(sqlDB, cfg)
 	docsModule := docsmodule.NewModule()
@@ -121,7 +122,7 @@ func corsHandler(allowedOrigins []string) func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview", "X-Migration-Stage"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
@@ -132,13 +133,22 @@ func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		timed := timeoutMiddleware(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isStreamPath(r.URL.Path) {
+			if isUnboundedRequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
 			timed.ServeHTTP(w, r)
 		})
 	}
+}
+
+func isUnboundedRequest(request *http.Request) bool {
+	if isStreamPath(request.URL.Path) {
+		return true
+	}
+	return request.Method == http.MethodDelete &&
+		request.Header.Get("X-Permanent-Delete") == "1" &&
+		strings.HasPrefix(request.URL.Path, "/api/v1/library/tracks/")
 }
 
 func isStreamPath(path string) bool {

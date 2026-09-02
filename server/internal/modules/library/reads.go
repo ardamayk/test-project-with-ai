@@ -24,7 +24,7 @@ const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 const trackReadSelect = `SELECT
 	t.id, t.title, t.artist_name, t.album_id, al.title,
 	t.track_no, COALESCE(t.disc_no, 1), t.track_total, t.disc_total,
-	t.duration_ms, COALESCE(ts.source_format, t.format), COALESCE(ts.size_bytes, t.size_bytes),
+	t.duration_ms, COALESCE(ts.source_format, t.format), COALESCE(ts.source_kind, 'legacy'), COALESCE(ts.size_bytes, t.size_bytes),
 	COALESCE(t.genre, ''), COALESCE(t.sample_rate_hz, 0), COALESCE(t.bit_depth, 0),
 	COALESCE(t.channel_count, 0), COALESCE(t.bitrate_bps, 0), t.codec, t.container,
 	t.sample_format, COALESCE(ts.file_path, t.file_path), t.replaygain_track_gain_db,
@@ -44,7 +44,7 @@ func scanExpandedTrack(scanner rowScanner) (Track, error) {
 	var codec, container, sampleFormat sql.NullString
 	err := scanner.Scan(
 		&track.ID, &track.Title, &track.ArtistName, &track.AlbumID, &track.AlbumTitle,
-		&trackNo, &track.DiscNo, &trackTotal, &discTotal, &track.DurationMs, &track.Format,
+		&trackNo, &track.DiscNo, &trackTotal, &discTotal, &track.DurationMs, &track.Format, &track.SourceKind,
 		&track.SizeBytes, &track.Genre, &track.SampleRateHz, &track.BitDepth, &track.ChannelCount,
 		&track.BitrateBps, &codec, &container, &sampleFormat, &track.FilePath,
 		&track.ReplayGain.TrackGainDB, &track.ReplayGain.TrackPeak,

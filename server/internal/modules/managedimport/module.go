@@ -16,11 +16,11 @@ type Module struct {
 	service  *Service
 }
 
-func NewModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector) *Module {
-	return newModule(database, configuration, inspector, availableStorageBytes)
+func NewModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector, queueEvents ...QueueInvalidationPublisher) *Module {
+	return newModule(database, configuration, inspector, availableStorageBytes, queueEvents...)
 }
 
-func newModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector, capacity storageCapacity) *Module {
+func newModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector, capacity storageCapacity, queueEvents ...QueueInvalidationPublisher) *Module {
 	store := NewStore(database)
 	fileLimit := configuration.ManagedImportFileLimitBytes
 	if fileLimit <= 0 {
@@ -36,6 +36,9 @@ func newModule(database *sql.DB, configuration config.Config, inspector library.
 		BatchBytes:   batchLimit,
 	}, capacity)
 	service := NewService(store, storage, inspector)
+	if len(queueEvents) > 0 {
+		service.queueEvents = queueEvents[0]
+	}
 	return &Module{handlers: NewHandlers(service), service: service}
 }
 
@@ -44,6 +47,9 @@ func (module *Module) Name() string {
 }
 
 func (module *Module) Start(ctx context.Context) error {
+	if err := module.service.RecoverPendingTrackDeletions(ctx); err != nil {
+		return err
+	}
 	if err := module.service.CleanupRestart(ctx); err != nil {
 		return err
 	}
@@ -69,6 +75,8 @@ func (module *Module) cleanupInactive(ctx context.Context) {
 func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Post("/api/v1/library-migrations/preview", module.handlers.PreviewMigration)
 	router.Post("/api/v1/library-migrations/stage", module.handlers.StageMigration)
+	router.Get("/api/v1/library/tracks/{trackId}/deletion", module.handlers.PreviewTrackDeletion)
+	router.Delete("/api/v1/library/tracks/{trackId}", module.handlers.DeleteTrack)
 	router.Get("/api/v1/import-history", module.handlers.ListHistory)
 	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
 	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)

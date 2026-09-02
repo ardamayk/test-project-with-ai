@@ -80,6 +80,44 @@ describe('Managed Import media contracts', () => {
 });
 
 describe('createApiClient', () => {
+  it('previews and explicitly confirms Permanent Track Deletion', async () => {
+    const preview = {
+      trackId: 'track-1',
+      trackTitle: 'Delete Me',
+      managedFile: { path: 'library/artist/album/track.flac', sizeBytes: 11 },
+      playlistReferences: [],
+      queueReferences: [],
+      confirmationToken: 'token-1',
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(preview), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ deletedFiles: 1 }), { status: 200 }),
+      );
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    await expect(client.previewTrackDeletion('track-1')).resolves.toEqual(
+      preview,
+    );
+    await expect(client.deleteTrack('track-1', 'token-1')).resolves.toEqual({
+      deletedFiles: 1,
+    });
+
+    expect(transport).toHaveBeenNthCalledWith(
+      2,
+      'http://music.test/api/v1/library/tracks/track-1',
+      expect.objectContaining({
+        method: 'DELETE',
+        body: JSON.stringify({ confirmationToken: 'token-1' }),
+      }),
+    );
+    const headers = new Headers(transport.mock.calls[1]?.[1]?.headers);
+    expect(headers.get('X-Permanent-Delete')).toBe('1');
+  });
+
   it('requests a strict Legacy Library Migration preview', async () => {
     const migrationPreview = {
       acceptedCount: 1,
@@ -160,9 +198,12 @@ describe('createApiClient', () => {
       batch.id,
       '00000000-0000-4000-8000-000000000001',
     );
-    const report = await client.confirmManagedImportBatch(batch.id, 2, [
-      'import-1',
-    ]);
+    const report = await client.confirmManagedImportBatch(
+      batch.id,
+      2,
+      ['import-1'],
+      [{ jobId: 'import-1', action: 'import_separately' }],
+    );
 
     expect(report.status).toBe('completed');
     expect(JSON.parse(String(transport.mock.calls[1]?.[1]?.body))).toEqual({
@@ -172,6 +213,7 @@ describe('createApiClient', () => {
     expect(JSON.parse(String(transport.mock.calls[2]?.[1]?.body))).toEqual({
       revision: 2,
       selectedFileIds: ['import-1'],
+      duplicateDecisions: [{ jobId: 'import-1', action: 'import_separately' }],
     });
   });
 
@@ -676,6 +718,7 @@ describe('createApiClient', () => {
     expect(client.removePlaylistTrack).toBeTypeOf('function');
     expect(client.deleteAlbum).toBeTypeOf('function');
     expect(client.deleteTrack).toBeTypeOf('function');
+    expect(client.previewTrackDeletion).toBeTypeOf('function');
     expect(client.listRadioStations).toBeTypeOf('function');
     expect(client.getRadioStation).toBeTypeOf('function');
     expect(client.searchRadioStations).toBeTypeOf('function');

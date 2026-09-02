@@ -318,7 +318,7 @@ describe("playlist routes", () => {
 
 		fireEvent.contextMenu(screen.getByRole("row", { name: /Blue Monday/ }));
 		expect(screen.getByText("Details")).toBeTruthy();
-		expect(screen.getByText("Delete track")).toBeTruthy();
+		expect(screen.queryByText("Delete track")).toBeNull();
 		fireEvent.click(screen.getByText("Remove from playlist"));
 
 		await waitFor(() => {

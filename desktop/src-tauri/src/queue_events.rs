@@ -322,7 +322,8 @@ mod tests {
                     "capabilities": [
                         "api.v1",
                         "playback.queue-events.v1",
-                        "managed-import-batches.v1"
+                        "managed-import-batches.v1",
+                        "managed-track-deletion.v1"
                     ],
                 })
                 .to_string();

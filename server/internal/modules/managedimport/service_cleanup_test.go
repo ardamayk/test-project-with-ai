@@ -352,6 +352,49 @@ func TestRejectExactDuplicateRetainsStagingUntilFailureIsPersisted(t *testing.T)
 	}
 }
 
+func TestBatchExactDuplicateCleanupFailureRemainsRetryable(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	store := NewStore(database)
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	batch, upload := createCleanupBatch(t, store, storage)
+	if _, err := database.Exec(`UPDATE managed_import_batches SET status = ? WHERE id = ?`, BATCH_STATUS_CONFIRMING, batch.ID); err != nil {
+		t.Fatalf("start Batch confirmation: %v", err)
+	}
+	jobs, err := store.ListBatchJobs(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("list Batch jobs: %v", err)
+	}
+	job := jobs[0]
+	if err = store.MarkConfirmationExactDuplicate(context.Background(), job.ID); err != nil {
+		t.Fatalf("mark confirmation Exact Duplicate: %v", err)
+	}
+	if err = os.Remove(upload.Path); err != nil {
+		t.Fatalf("replace staged file: %v", err)
+	}
+	if err = os.Mkdir(upload.Path, 0o750); err != nil {
+		t.Fatalf("create staged directory: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(upload.Path, "retained"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("make staged directory non-empty: %v", err)
+	}
+	service := NewService(store, storage, nil)
+	cleanupErr := service.finishExactDuplicateCleanup(context.Background(), job)
+	if cleanupErr == nil || service.handleBatchConfirmationError(context.Background(), job, cleanupErr) == nil {
+		t.Fatal("failed Exact Duplicate cleanup was treated as completed")
+	}
+	storedBatch, err := store.GetBatch(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("get Batch after cleanup failure: %v", err)
+	}
+	storedJob, err := store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get job after cleanup failure: %v", err)
+	}
+	if storedBatch.Status != BATCH_STATUS_CONFIRMING || storedJob.Outcome != "" || storedJob.StagedFilePath != upload.Path {
+		t.Fatalf("cleanup failure state: batch=%+v job=%+v", storedBatch, storedJob)
+	}
+}
+
 func TestUploadKeepsBatchJobRetryableWhenFinalReservationIsCanceled(t *testing.T) {
 	service, store, job := newBatchUploadService(t)
 	ctx, cancel := context.WithCancel(context.Background())

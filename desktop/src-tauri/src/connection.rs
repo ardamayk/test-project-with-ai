@@ -14,9 +14,16 @@ const REQUIRED_SERVER_CAPABILITIES: &[&str] = &[
     "api.v1",
     "playback.queue-events.v1",
     "managed-import-batches.v1",
+    "managed-track-deletion.v1",
 ];
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
-const ALLOWED_REQUEST_HEADERS: &[&str] = &["accept", "authorization", "content-type", "range"];
+const ALLOWED_REQUEST_HEADERS: &[&str] = &[
+    "accept",
+    "authorization",
+    "content-type",
+    "range",
+    "x-permanent-delete",
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerOrigin {
@@ -649,6 +656,7 @@ mod tests {
             "api.v1",
             "playback.queue-events.v1",
             "managed-import-batches.v1",
+            "managed-track-deletion.v1",
             "optional.future",
         ]);
         let check = HttpBridge::new()
@@ -664,6 +672,7 @@ mod tests {
                 "api.v1",
                 "playback.queue-events.v1",
                 "managed-import-batches.v1",
+                "managed-track-deletion.v1",
                 "optional.future"
             ]
         );
@@ -742,6 +751,23 @@ mod tests {
 
         assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
         assert!(error.message.contains("managed-import-batches.v1"));
+    }
+
+    #[tokio::test]
+    async fn managed_track_deletion_capability_is_required() {
+        let origin = serve_health(&[
+            "api.v1",
+            "playback.queue-events.v1",
+            "managed-import-batches.v1",
+        ]);
+        let error = HttpBridge::new()
+            .expect("create bridge")
+            .test_server(&ServerOrigin::parse(&origin).expect("valid origin"))
+            .await
+            .expect_err("Permanent Track Deletion capability should be required");
+
+        assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
+        assert!(error.message.contains("managed-track-deletion.v1"));
     }
 
     #[test]
@@ -864,6 +890,29 @@ mod tests {
         );
         assert_eq!(response.status, 200);
         fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    #[tokio::test]
+    async fn http_bridge_forwards_permanent_delete_confirmation_header() {
+        let origin = serve_health(&["api.v1"]);
+        let configured = ServerOrigin::parse(&origin).expect("valid origin");
+        let request = HttpRequest {
+            method: "DELETE".to_owned(),
+            url: "/api/v1/library/tracks/track-1".to_owned(),
+            headers: BTreeMap::from([
+                ("content-type".to_owned(), "application/json".to_owned()),
+                ("x-permanent-delete".to_owned(), "1".to_owned()),
+            ]),
+            body: Some(br#"{"confirmationToken":"token"}"#.to_vec()),
+        };
+
+        let response = HttpBridge::new()
+            .expect("create bridge")
+            .send(&configured, request)
+            .await
+            .expect("Permanent Track Deletion request succeeds");
+
+        assert_eq!(response.status, 200);
     }
 
     #[tokio::test]

@@ -9,10 +9,14 @@ import {
 	ContextMenuItem,
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
-import { confirmDelete, useDeleteTrack } from "#/hooks/use-delete-library";
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
+import { useServerCapability } from "#/hooks/use-server-capability";
+import { useTrackDeletionFlow } from "#/hooks/use-track-deletion-flow";
 import { getTrackArtistName, getTrackGenreNames } from "#/lib/library-display";
 import { cn } from "#/lib/utils";
+import { TrackDeletionDialog } from "./track-deletion-dialog";
+
+const MANAGED_TRACK_DELETION_CAPABILITY = "managed-track-deletion.v1";
 
 function formatDuration(ms: number): string {
 	if (!ms || ms < 0) return "0:00";
@@ -70,22 +74,15 @@ export function TrackList({
 }) {
 	const { playTrack, currentTrack, getAlbumCoverUrl } = usePlayback();
 	const { isFavorite, toggleFavorite } = useFavoriteTracks();
-	const deleteTrack = useDeleteTrack();
+	const trackDeletion = useTrackDeletionFlow(onDeleteTrackSuccess);
+	const hasDeletionCapability = useServerCapability(
+		MANAGED_TRACK_DELETION_CAPABILITY,
+	);
 	const [detailsTrack, setDetailsTrack] = useState<Track | null>(null);
 
 	const handlePlay = (track: Track) => {
 		const queueTrackIds = (contextTracks ?? tracks).map((t) => t.id);
 		void playTrack(track.id, queueTrackIds);
-	};
-
-	const handleDelete = (track: Track) => {
-		const confirmed = confirmDelete(
-			`Delete "${track.title}"?\n\nThis removes the track from your library and deletes its file from disk.`,
-		);
-		if (!confirmed) return;
-		deleteTrack.mutate(track.id, {
-			onSuccess: () => onDeleteTrackSuccess?.(track),
-		});
 	};
 
 	const rowPadding = compact ? "px-3 py-1.5" : "px-3 py-2.5";
@@ -222,11 +219,13 @@ export function TrackList({
 											{removeLabel}
 										</ContextMenuItem>
 									) : null}
-									{showDelete ? (
+									{showDelete &&
+									track.sourceKind === "managed" &&
+									hasDeletionCapability ? (
 										<ContextMenuItem
 											variant="destructive"
-											disabled={deleteTrack.isPending}
-											onSelect={() => handleDelete(track)}
+											disabled={trackDeletion.isDeleting}
+											onSelect={() => trackDeletion.open(track)}
 										>
 											<Trash2 className="size-4" />
 											Delete track
@@ -243,6 +242,15 @@ export function TrackList({
 				onOpenChange={(isOpen) => {
 					if (!isOpen) setDetailsTrack(null);
 				}}
+			/>
+			<TrackDeletionDialog
+				track={trackDeletion.track}
+				preview={trackDeletion.preview}
+				error={trackDeletion.error}
+				isLoading={trackDeletion.isLoading}
+				isDeleting={trackDeletion.isDeleting}
+				onCancel={trackDeletion.cancel}
+				onConfirm={trackDeletion.confirm}
 			/>
 		</>
 	);

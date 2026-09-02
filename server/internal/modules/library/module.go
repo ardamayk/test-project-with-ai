@@ -49,7 +49,6 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/v1/library/albums/{albumId}", m.handlers.DeleteAlbum)
 	r.Get("/api/v1/library/tracks", m.handlers.ListTracks)
 	r.Get("/api/v1/library/tracks/{trackId}", m.handlers.GetTrack)
-	r.Delete("/api/v1/library/tracks/{trackId}", m.handlers.DeleteTrack)
 }
 
 func (m *Module) TrackAccess() TrackAccess {
