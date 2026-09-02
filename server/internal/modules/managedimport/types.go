@@ -23,6 +23,8 @@ const (
 	ERROR_CODE_EXACT_DUPLICATE                     = "exact_duplicate"
 	ERROR_CODE_REVISION_CONFLICT                   = "import_revision_conflict"
 	UPLOAD_INTERRUPTED_ERROR_CODE                  = "upload_interrupted"
+	IMPORT_INACTIVITY_TIMEOUT                      = 15 * time.Minute
+	IMPORT_CLEANUP_INTERVAL                        = time.Minute
 )
 
 type BatchStatus string

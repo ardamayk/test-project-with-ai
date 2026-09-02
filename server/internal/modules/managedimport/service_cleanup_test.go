@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
@@ -45,6 +47,74 @@ func TestFinishUncommittedBatchFileDoesNotCleanUpAfterCancellation(t *testing.T)
 	if _, err := os.Stat(upload.Path); err != nil {
 		t.Fatalf("staged upload was removed after cancellation: %v", err)
 	}
+}
+
+func TestCleanupInactiveRemovesOnlyExpiredImportBatch(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	store := NewStore(database)
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 2048}, unlimitedStorageCapacity)
+	service := NewService(store, storage, nil)
+	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	expiredBatch, expiredUpload := createCleanupBatch(t, store, storage)
+	activeBatch, activeUpload := createCleanupBatch(t, store, storage)
+	if _, err := database.Exec(`UPDATE managed_import_batches SET updated_at = ? WHERE id = ?`, now.Add(-IMPORT_INACTIVITY_TIMEOUT-time.Second), expiredBatch.ID); err != nil {
+		t.Fatalf("expire Managed Import Batch: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE managed_import_batches SET updated_at = ? WHERE id = ?`, now.Add(-IMPORT_INACTIVITY_TIMEOUT+time.Second), activeBatch.ID); err != nil {
+		t.Fatalf("keep Managed Import Batch active: %v", err)
+	}
+
+	if err := service.CleanupInactive(context.Background(), now); err != nil {
+		t.Fatalf("cleanup inactive Managed Imports: %v", err)
+	}
+	if _, err := os.Stat(expiredUpload.Path); !os.IsNotExist(err) {
+		t.Fatalf("expired staging stat error = %v", err)
+	}
+	if _, err := store.GetBatch(context.Background(), expiredBatch.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get expired Import Batch error = %v", err)
+	}
+	if _, err := os.Stat(activeUpload.Path); err != nil {
+		t.Fatalf("active staging was removed: %v", err)
+	}
+	if _, err := store.GetBatch(context.Background(), activeBatch.ID); err != nil {
+		t.Fatalf("active Import Batch was removed: %v", err)
+	}
+}
+
+func TestCleanupRestartRemovesOrphanStaging(t *testing.T) {
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	upload, err := storage.StageUpload(bytes.NewReader([]byte("orphan")), 6)
+	if err != nil {
+		t.Fatalf("stage orphan upload: %v", err)
+	}
+	service := NewService(NewStore(testutil.OpenMigratedDB(t)), storage, nil)
+
+	if err := service.CleanupRestart(context.Background()); err != nil {
+		t.Fatalf("cleanup restart staging: %v", err)
+	}
+	if _, err := os.Stat(upload.Path); !os.IsNotExist(err) {
+		t.Fatalf("orphan staging stat error = %v", err)
+	}
+}
+
+func createCleanupBatch(t *testing.T, store *Store, storage *Storage) (Batch, stagedUpload) {
+	t.Helper()
+	batch, err := store.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create cleanup batch: %v", err)
+	}
+	job, err := store.CreateJob(context.Background(), batch.ID, "00000000-0000-4000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("create cleanup job: %v", err)
+	}
+	upload, err := storage.StageUpload(bytes.NewReader([]byte("audio")), 5)
+	if err != nil {
+		t.Fatalf("stage cleanup upload: %v", err)
+	}
+	if _, err := store.database.Exec(`UPDATE managed_import_jobs SET status = ?, original_filename = 'track.flac', staged_file_path = ?, content_sha256 = ? WHERE id = ?`, STATUS_AWAITING_CONFIRMATION, upload.Path, strings.Repeat("0", 64), job.ID); err != nil {
+		t.Fatalf("prepare cleanup job: %v", err)
+	}
+	return batch, upload
 }
 
 func TestFinishUncommittedBatchFileRetainsPathWhenCleanupFails(t *testing.T) {
@@ -198,5 +268,35 @@ func assertRetryableBatchJob(t *testing.T, store *Store, jobID string, uploadErr
 	}
 	if job.Status != STATUS_UPLOADING || job.ErrorCode != UPLOAD_INTERRUPTED_ERROR_CODE {
 		t.Fatalf("batch job after interruption = %+v", job)
+	}
+}
+
+func TestCancelBatchReportsUnsafeCleanupAndRetainsRecords(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	store := NewStore(database)
+	batch, err := store.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create unsafe cleanup batch: %v", err)
+	}
+	job, err := store.CreateJob(context.Background(), batch.ID, "00000000-0000-4000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("create unsafe cleanup job: %v", err)
+	}
+	unsafePath := filepath.Join(t.TempDir(), "outside.upload")
+	if _, updateErr := database.Exec(`UPDATE managed_import_jobs SET status = ?, original_filename = 'track.flac', staged_file_path = ?, content_sha256 = ? WHERE id = ?`, STATUS_AWAITING_CONFIRMATION, unsafePath, strings.Repeat("0", 64), job.ID); updateErr != nil {
+		t.Fatalf("set unsafe cleanup path: %v", updateErr)
+	}
+	service := NewService(store, newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity), nil)
+
+	err = service.CancelBatch(context.Background(), batch.ID)
+	if !errors.Is(err, ErrUnsafeStoragePath) {
+		t.Fatalf("cancel unsafe Import Batch error = %v", err)
+	}
+	storedBatch, err := store.GetBatch(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("unsafe Import Batch records were removed: %v", err)
+	}
+	if len(storedBatch.Files) != 1 {
+		t.Fatalf("unsafe Import Batch files = %+v", storedBatch.Files)
 	}
 }

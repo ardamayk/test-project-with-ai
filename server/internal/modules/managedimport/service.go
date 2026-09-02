@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/google/uuid"
@@ -39,6 +40,8 @@ func (service *Service) CreateJob(ctx context.Context, batchID, clientFileID str
 		if _, err := uuid.Parse(clientFileID); err != nil {
 			return Job{}, fmt.Errorf("%w: clientFileId must be a UUID", ErrInvalidUpload)
 		}
+		service.batchConfirmationMu.Lock()
+		defer service.batchConfirmationMu.Unlock()
 	}
 	return service.store.CreateJob(ctx, batchID, clientFileID)
 }
@@ -57,6 +60,149 @@ func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
 		return Job{}, err
 	}
 	return job.Job, nil
+}
+
+func (service *Service) CancelBatch(ctx context.Context, batchID string) error {
+	return service.cancelBatch(ctx, batchID, nil)
+}
+
+func (service *Service) cancelBatch(ctx context.Context, batchID string, updatedBefore *time.Time) error {
+	service.batchConfirmationMu.Lock()
+	defer service.batchConfirmationMu.Unlock()
+	batch, err := service.store.GetBatch(ctx, batchID)
+	if err != nil {
+		return err
+	}
+	if batch.Status == BATCH_STATUS_COMPLETED {
+		return ErrInvalidState
+	}
+	jobs, err := service.store.ListBatchJobs(ctx, batchID)
+	if err != nil {
+		return err
+	}
+	if updatedBefore != nil && service.hasActiveUpload(jobs) {
+		return nil
+	}
+	unlockUploads := service.lockUploads(jobs)
+	defer unlockUploads()
+	if updatedBefore != nil {
+		isEligible, eligibilityErr := service.store.IsBatchUncommittedBefore(ctx, batchID, *updatedBefore)
+		if eligibilityErr != nil || !isEligible {
+			return eligibilityErr
+		}
+	}
+	jobs, err = service.store.ListBatchJobs(ctx, batchID)
+	if err != nil {
+		return err
+	}
+	if err := service.removeUncommittedStaging(jobs); err != nil {
+		return err
+	}
+	return service.store.DeleteBatch(ctx, batchID)
+}
+
+func (service *Service) CancelJob(ctx context.Context, jobID string) error {
+	return service.cancelJob(ctx, jobID, nil)
+}
+
+func (service *Service) cancelJob(ctx context.Context, jobID string, updatedBefore *time.Time) error {
+	if updatedBefore != nil && service.isUploadActive(jobID) {
+		return nil
+	}
+	unlockUpload := service.lockUpload(jobID)
+	defer unlockUpload()
+	if updatedBefore != nil {
+		isEligible, err := service.store.IsStandaloneJobUncommittedBefore(ctx, jobID, *updatedBefore)
+		if err != nil || !isEligible {
+			return err
+		}
+	}
+	job, err := service.store.GetJob(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.BatchID != "" || job.Status == STATUS_COMMITTED {
+		return ErrInvalidState
+	}
+	if err := service.removeUncommittedStaging([]importJob{job}); err != nil {
+		return err
+	}
+	return service.store.DeleteJob(ctx, jobID)
+}
+
+func (service *Service) lockUploads(jobs []importJob) func() {
+	unlocks := make([]func(), 0, len(jobs))
+	for _, job := range jobs {
+		unlocks = append(unlocks, service.lockUpload(job.ID))
+	}
+	return func() {
+		for index := len(unlocks) - 1; index >= 0; index-- {
+			unlocks[index]()
+		}
+	}
+}
+
+func (service *Service) hasActiveUpload(jobs []importJob) bool {
+	for _, job := range jobs {
+		if service.isUploadActive(job.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (service *Service) isUploadActive(jobID string) bool {
+	service.uploadLocksMu.Lock()
+	defer service.uploadLocksMu.Unlock()
+	return service.uploadLocks[jobID] != nil
+}
+
+func (service *Service) removeUncommittedStaging(jobs []importJob) error {
+	var cleanupErr error
+	for _, job := range jobs {
+		if job.Status == STATUS_COMMITTED || job.StagedFilePath == "" {
+			continue
+		}
+		if err := service.storage.RemoveStaged(job.StagedFilePath); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove staging for Managed Import Job %q: %w", job.ID, err))
+		}
+	}
+	return cleanupErr
+}
+
+func (service *Service) CleanupInactive(ctx context.Context, now time.Time) error {
+	cutoff := now.Add(-IMPORT_INACTIVITY_TIMEOUT)
+	return service.cleanupUncommitted(ctx, &cutoff)
+}
+
+func (service *Service) CleanupRestart(ctx context.Context) error {
+	if err := service.storage.RemoveAllStaged(); err != nil {
+		return fmt.Errorf("remove Managed Import restart staging: %w", err)
+	}
+	return service.cleanupUncommitted(ctx, nil)
+}
+
+func (service *Service) cleanupUncommitted(ctx context.Context, updatedBefore *time.Time) error {
+	batchIDs, err := service.store.ListUncommittedBatchIDs(ctx, updatedBefore)
+	if err != nil {
+		return fmt.Errorf("list uncommitted Managed Import Batches: %w", err)
+	}
+	jobIDs, err := service.store.ListUncommittedStandaloneJobIDs(ctx, updatedBefore)
+	if err != nil {
+		return fmt.Errorf("list uncommitted Managed Import Jobs: %w", err)
+	}
+	var cleanupErr error
+	for _, batchID := range batchIDs {
+		if err := service.cancelBatch(ctx, batchID, updatedBefore); err != nil && !errors.Is(err, ErrNotFound) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("cleanup Managed Import Batch %q: %w", batchID, err))
+		}
+	}
+	for _, jobID := range jobIDs {
+		if err := service.cancelJob(ctx, jobID, updatedBefore); err != nil && !errors.Is(err, ErrNotFound) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("cleanup Managed Import Job %q: %w", jobID, err))
+		}
+	}
+	return cleanupErr
 }
 
 func (service *Service) Upload(ctx context.Context, jobID, originalFilename string, body io.Reader, contentLength int64) (Preview, error) {

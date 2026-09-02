@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 	createManagedImportBatch: vi.fn(),
 	getManagedImportBatch: vi.fn(),
 	confirmManagedImportBatch: vi.fn(),
+	cancelManagedImportBatch: vi.fn(),
 	createManagedImportJob: vi.fn(),
 	uploadManagedImportFile: vi.fn(),
 	confirmManagedImport: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock("#/lib/api", () => ({
 		createManagedImportBatch: mocks.createManagedImportBatch,
 		getManagedImportBatch: mocks.getManagedImportBatch,
 		confirmManagedImportBatch: mocks.confirmManagedImportBatch,
+		cancelManagedImportBatch: mocks.cancelManagedImportBatch,
 		createManagedImportJob: mocks.createManagedImportJob,
 		uploadManagedImportFile: mocks.uploadManagedImportFile,
 		confirmManagedImport: mocks.confirmManagedImport,
@@ -244,6 +246,7 @@ describe("tracks route", () => {
 		mocks.createManagedImportBatch.mockReset();
 		mocks.getManagedImportBatch.mockReset();
 		mocks.confirmManagedImportBatch.mockReset();
+		mocks.cancelManagedImportBatch.mockReset();
 		mocks.uploadManagedImportFile.mockReset();
 		mocks.confirmManagedImport.mockReset();
 		mocks.listTracks.mockResolvedValue({
@@ -350,6 +353,7 @@ describe("tracks route", () => {
 				},
 			],
 		});
+		mocks.cancelManagedImportBatch.mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -595,6 +599,7 @@ describe("tracks route", () => {
 			"strict-import.flac",
 			acceptedFile,
 			expect.any(Function),
+			expect.any(AbortSignal),
 		);
 		expect(screen.getByText("Rejected")).toBeTruthy();
 		expect(screen.getByText("TITLE is required")).toBeTruthy();
@@ -685,6 +690,93 @@ describe("tracks route", () => {
 		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
 			"import-1",
 		]);
+	});
+
+	it("confirms modal close and cancels uncommitted server staging", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(true);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["flac bytes"], "strict-import.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+		await screen.findByText("Inspection Fixture");
+
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await vi.waitFor(() =>
+			expect(mocks.cancelManagedImportBatch).toHaveBeenCalledWith("batch-1"),
+		);
+		expect(confirmClose).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		confirmClose.mockRestore();
+	});
+
+	it("aborts active uploads before canceling their server batch", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(true);
+		let uploadSignal: AbortSignal | undefined;
+		mocks.uploadManagedImportFile.mockImplementationOnce(
+			(_jobId, _filename, _file, _onProgress, signal: AbortSignal) => {
+				uploadSignal = signal;
+				return new Promise((_resolve, reject) => {
+					signal.addEventListener("abort", () =>
+						reject(new DOMException("canceled", "AbortError")),
+					);
+				});
+			},
+		);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["flac bytes"], "active.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledOnce(),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await vi.waitFor(() => expect(uploadSignal?.aborted).toBe(true));
+		expect(mocks.cancelManagedImportBatch).toHaveBeenCalledWith("batch-1");
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		confirmClose.mockRestore();
+	});
+
+	it("keeps uncommitted import open when modal close is not confirmed", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(false);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [
+					new File(["flac bytes"], "strict-import.flac", {
+						type: "audio/flac",
+					}),
+				],
+			},
+		});
+		await screen.findByText("Inspection Fixture");
+
+		fireEvent.click(screen.getByRole("button", { name: "Close Import Music" }));
+
+		expect(confirmClose).toHaveBeenCalledOnce();
+		expect(mocks.cancelManagedImportBatch).not.toHaveBeenCalled();
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		confirmClose.mockRestore();
 	});
 
 	it("reconciles an accepted upload whose response was lost", async () => {
@@ -790,6 +882,7 @@ describe("tracks route", () => {
 				"strict-import.flac",
 				file,
 				expect.any(Function),
+				undefined,
 			),
 		);
 		expect(await screen.findByText("Accepted")).toBeDefined();
@@ -849,12 +942,14 @@ describe("tracks route", () => {
 			"second.flac",
 			secondFile,
 			expect.any(Function),
+			undefined,
 		);
 		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalledWith(
 			"server-import-2",
 			"first.flac",
 			firstFile,
 			expect.any(Function),
+			undefined,
 		);
 	});
 

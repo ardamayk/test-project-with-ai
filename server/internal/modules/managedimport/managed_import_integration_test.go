@@ -374,6 +374,13 @@ func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 	if tracks := listTracks(t, router); len(tracks.Items) != 1 || tracks.Items[0].ID != batch.Files[0].TrackID {
 		t.Fatalf("Tracks after partial Import Batch = %+v", tracks.Items)
 	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list completed Import Batch staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("completed Import Batch left staging files: %v", stagedFiles)
+	}
 }
 
 func TestManagedImportBatchReportsExactByteLoserAsRejectedDuplicate(t *testing.T) {
@@ -716,6 +723,79 @@ func TestManagedImportBatchRetriesInterruptedUploadInSameJob(t *testing.T) {
 	}
 }
 
+func TestManagedImportInterruptedUploadPreservesSiblingStaging(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storage := managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20})
+	service := managedimport.NewService(managedimport.NewStore(database), storage, library.NewMediaInspector())
+	batch, err := service.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create interrupted upload batch: %v", err)
+	}
+	sibling, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("create sibling upload job: %v", err)
+	}
+	fixture := readStrictFLACFixture(t)
+	if _, err := service.Upload(context.Background(), sibling.ID, "sibling.flac", bytes.NewReader(fixture), int64(len(fixture))); err != nil {
+		t.Fatalf("upload sibling batch file: %v", err)
+	}
+	var siblingStagedPath string
+	if err := database.QueryRow(`SELECT staged_file_path FROM managed_import_jobs WHERE id = ?`, sibling.ID).Scan(&siblingStagedPath); err != nil {
+		t.Fatalf("read sibling staging path: %v", err)
+	}
+	interrupted, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("create interrupted upload job: %v", err)
+	}
+	_, err = service.Upload(context.Background(), interrupted.ID, "interrupted.flac", bytes.NewReader(fixture[:128]), int64(len(fixture)))
+	if !errors.Is(err, managedimport.ErrUploadInterrupted) {
+		t.Fatalf("interrupted upload error = %v", err)
+	}
+	if _, err := os.Stat(siblingStagedPath); err != nil {
+		t.Fatalf("interrupted upload affected sibling staging: %v", err)
+	}
+}
+
+func TestManagedImportBatchCancellationRemovesUncommittedStaging(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	module := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+	batchResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches", nil, nil)
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, batchResponse, &batch)
+	fixture := readStrictFLACFixture(t)
+	for range 2 {
+		jobID := createBatchImportJob(t, router, batch.ID)
+		uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+			"Content-Type":      "audio/flac",
+			"X-Import-Filename": "cancel-me.flac",
+		})
+		if uploadResponse.Code != http.StatusOK {
+			t.Fatalf("upload cancellable batch file status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+		}
+	}
+
+	response := testutil.ServeRequest(t, router, http.MethodDelete, "/api/v1/import-batches/"+batch.ID, nil, nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("cancel Import Batch status = %d, body = %s", response.Code, response.Body.String())
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list canceled Import Batch staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("canceled Import Batch left staging files: %v", stagedFiles)
+	}
+	getResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/import-batches/"+batch.ID, nil, nil)
+	if getResponse.Code != http.StatusNotFound {
+		t.Fatalf("get canceled Import Batch status = %d, body = %s", getResponse.Code, getResponse.Body.String())
+	}
+	assertNoLibraryEntities(t, database)
+}
+
 func TestManagedImportBatchLeavesCanceledConfirmationResumable(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	storage := managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20})
@@ -1047,6 +1127,50 @@ func TestManagedImportSerializesUploadsForTheSameJob(t *testing.T) {
 	waitForSignal(t, secondDone, "second upload did not finish")
 	if firstResponse.Code != http.StatusOK || secondResponse.Code != http.StatusConflict {
 		t.Fatalf("serialized upload statuses = (%d, %d)", firstResponse.Code, secondResponse.Code)
+	}
+}
+
+func TestManagedImportBatchCancellationCleansPreviewCompletedDuringCancellation(t *testing.T) {
+	inspector := &blockingInspector{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	module := managedimport.NewModule(database, config.Config{ManagedStoragePath: managedStoragePath}, inspector)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+	batchResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches", nil, nil)
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, batchResponse, &batch)
+	jobID := createBatchImportJob(t, router, batch.ID)
+	_, uploadResponse, uploadDone := startManagedImportUpload(t, router, jobID)
+	waitForSignal(t, inspector.started, "upload did not reach inspection")
+	cancelResponse := httptest.NewRecorder()
+	cancelDone := make(chan struct{})
+	go func() {
+		defer close(cancelDone)
+		request := httptest.NewRequest(http.MethodDelete, "/api/v1/import-batches/"+batch.ID, nil)
+		router.ServeHTTP(cancelResponse, request)
+	}()
+	select {
+	case <-cancelDone:
+		t.Fatal("batch cancellation did not wait for active upload")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(inspector.release)
+	waitForSignal(t, uploadDone, "upload did not finish")
+	waitForSignal(t, cancelDone, "batch cancellation did not finish")
+	if uploadResponse.Code != http.StatusOK || cancelResponse.Code != http.StatusNoContent {
+		t.Fatalf("upload/cancel statuses = (%d, %d)", uploadResponse.Code, cancelResponse.Code)
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list cancellation-race staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("batch cancellation race left staging files: %v", stagedFiles)
 	}
 }
 
