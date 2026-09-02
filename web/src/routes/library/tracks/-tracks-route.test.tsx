@@ -576,6 +576,9 @@ describe("tracks route", () => {
 		);
 		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalled();
 		expect(await screen.findByText("import-1")).toBeTruthy();
+		expect(
+			screen.getByRole("button", { name: "Select audio folder" }),
+		).toHaveProperty("disabled", true);
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 		await vi.waitFor(() =>
 			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
@@ -610,6 +613,36 @@ describe("tracks route", () => {
 		expect(mocks.cancelManagedImportBatch).toHaveBeenCalledWith("batch-1");
 		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 		confirmClose.mockRestore();
+	});
+
+	it("locks the dialog while native recursive selection is pending", async () => {
+		mocks.isDesktopClient.mockReturnValue(true);
+		let finishSelection: (files: never[]) => void = () => undefined;
+		mocks.selectDesktopImportFolder.mockReturnValue(
+			new Promise((resolve) => {
+				finishSelection = resolve;
+			}),
+		);
+
+		await openImportMusicDialog();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Select audio folder" }),
+		);
+
+		await vi.waitFor(() =>
+			expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
+				"disabled",
+				true,
+			),
+		);
+		finishSelection([]);
+		await vi.waitFor(() =>
+			expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
+				"disabled",
+				false,
+			),
+		);
+		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
 	});
 
 	it("shows structured native picker errors in the shared dialog", async () => {

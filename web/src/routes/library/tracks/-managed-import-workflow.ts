@@ -80,6 +80,7 @@ export function useManagedImportWorkflow({
 		errorMessage: state.errorMessage,
 		isBusy,
 		isCloseLocked,
+		isPickerLocked: isBusy || state.entries.length > 0 || Boolean(state.batch),
 		isSelectionLocked: isBusy || state.batch?.status === "confirming",
 		isCompleted,
 		canConfirm,
@@ -98,6 +99,7 @@ function useImportWorkflowState() {
 	const [entries, setEntries] = useState<ImportFileEntry[]>([]);
 	const [errorMessage, setErrorMessage] = useState("");
 	const activeUploadController = useRef<AbortController | undefined>(undefined);
+	const isDesktopSelectionPending = useRef(false);
 	function updateEntry(key: string, patch: Partial<ImportFileEntry>) {
 		setEntries((current) =>
 			current.map((entry) =>
@@ -120,6 +122,7 @@ function useImportWorkflowState() {
 		errorMessage,
 		setErrorMessage,
 		activeUploadController,
+		isDesktopSelectionPending,
 		updateEntry,
 		reset,
 	};
@@ -129,6 +132,7 @@ type WorkflowState = ReturnType<typeof useImportWorkflowState>;
 
 function createFileHandler(state: WorkflowState) {
 	return async (fileList: FileList | Array<File | DesktopImportSelection>) => {
+		if (state.entries.length > 0 || state.batch) return;
 		const files = Array.from(fileList).filter(isSupportedVisibleAudioFile);
 		if (files.length === 0) return;
 		state.setImportState("uploading");
@@ -169,6 +173,15 @@ function createFileHandler(state: WorkflowState) {
 function createDesktopSelectionHandler(state: WorkflowState) {
 	const handleFiles = createFileHandler(state);
 	return async (isDirectory: boolean) => {
+		if (
+			state.isDesktopSelectionPending.current ||
+			state.entries.length > 0 ||
+			state.batch
+		) {
+			return;
+		}
+		state.isDesktopSelectionPending.current = true;
+		state.setImportState("uploading");
 		try {
 			const files = await (isDirectory
 				? selectDesktopImportFolder()
@@ -176,6 +189,9 @@ function createDesktopSelectionHandler(state: WorkflowState) {
 			await handleFiles(files);
 		} catch (error) {
 			state.setErrorMessage(importErrorMessage(error));
+		} finally {
+			state.isDesktopSelectionPending.current = false;
+			state.setImportState("idle");
 		}
 	};
 }
@@ -247,7 +263,7 @@ function createOpenHandler(
 	onOpenChange: (isOpen: boolean) => void,
 ) {
 	return async (nextIsOpen: boolean) => {
-		if (isBusy) return;
+		if (isBusy || state.isDesktopSelectionPending.current) return;
 		if (nextIsOpen) {
 			onOpenChange(true);
 			return;

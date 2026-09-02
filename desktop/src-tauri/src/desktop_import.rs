@@ -1,4 +1,6 @@
 use crate::connection::{ConnectionError, HttpBridge, HttpResponse, ServerOrigin};
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::Dir;
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -46,38 +48,50 @@ impl ImportSelectionStore {
         &self,
         roots: impl IntoIterator<Item = PathBuf>,
     ) -> Result<Vec<ImportSelection>, DesktopImportError> {
-        let mut candidates = Vec::new();
+        let mut selected_files = Vec::new();
         for root in roots {
-            collect_audio_files(&root, false, &mut candidates)?;
+            collect_audio_files(&root, false, &mut selected_files)?;
         }
-        candidates.sort();
+        selected_files.sort_by(|left, right| left.path.cmp(&right.path));
+        self.store_selections(selected_files)
+    }
+
+    fn store_selections(
+        &self,
+        selected_files: Vec<SelectedFile>,
+    ) -> Result<Vec<ImportSelection>, DesktopImportError> {
         let mut stored = self.selections.lock().map_err(|_| state_error())?;
-        let mut selections = Vec::with_capacity(candidates.len());
-        for path in candidates {
-            let Some(name) = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(str::to_owned)
-            else {
-                eprintln!("Desktop import skipped a selected path with a non-Unicode filename");
-                continue;
-            };
-            let file = open_verified_file(&path, None)?;
-            let size = file.metadata().map_err(|_| selection_error())?.len();
-            let identity = file_identity(&file.metadata().map_err(|_| selection_error())?);
+        let mut selections = Vec::with_capacity(selected_files.len());
+        for selected_file in selected_files {
             let id = Uuid::new_v4().to_string();
-            stored.insert(
-                id.clone(),
-                SelectedFile {
-                    path,
-                    identity,
-                    name: name.clone(),
-                    size,
-                },
-            );
-            selections.push(ImportSelection { id, name, size });
+            selections.push(ImportSelection {
+                id: id.clone(),
+                name: selected_file.name.clone(),
+                size: selected_file.size,
+            });
+            stored.insert(id, selected_file);
         }
         Ok(selections)
+    }
+
+    #[cfg(test)]
+    fn register_candidates(
+        &self,
+        paths: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Vec<ImportSelection>, DesktopImportError> {
+        let selected_files = paths
+            .into_iter()
+            .map(|path| {
+                let file = open_verified_file(&path, None)?;
+                selected_file(path, file)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.store_selections(selected_files)
+    }
+
+    #[cfg(test)]
+    fn selection_count(&self) -> usize {
+        self.selections.lock().expect("selection store").len()
     }
 
     fn selection(&self, id: &str) -> Result<SelectedFile, DesktopImportError> {
@@ -188,7 +202,7 @@ async fn upload_selection_inner(
     on_progress: Channel<ImportUploadProgress>,
     cancellation: CancellationToken,
 ) -> Result<HttpResponse, DesktopImportError> {
-    let (filename, body) = cancellable_preparation(
+    let (filename, content_length, body) = cancellable_preparation(
         &cancellation,
         prepare_upload(store, selection_id, on_progress),
     )
@@ -201,6 +215,7 @@ async fn upload_selection_inner(
             &upload_path,
             &filename,
             content_type(&filename),
+            content_length,
             body,
         ) => result.map_err(Into::into),
     }
@@ -210,17 +225,21 @@ async fn prepare_upload(
     store: &ImportSelectionStore,
     selection_id: &str,
     on_progress: Channel<ImportUploadProgress>,
-) -> Result<(String, reqwest::Body), DesktopImportError> {
+) -> Result<(String, u64, reqwest::Body), DesktopImportError> {
     let selection = store.selection(selection_id)?;
     let filename = selection.name;
-    let total_bytes = selection.size;
     let file = tokio::task::spawn_blocking(move || {
         open_verified_file(&selection.path, Some(selection.identity))
     })
     .await
     .map_err(|_| state_error())??;
+    let total_bytes = file.metadata().map_err(|_| selection_error())?.len();
     let file = tokio::fs::File::from_std(file);
-    Ok((filename, progress_body(file, total_bytes, on_progress)))
+    Ok((
+        filename,
+        total_bytes,
+        progress_body(file, total_bytes, on_progress),
+    ))
 }
 
 async fn cancellable_preparation<T, F>(
@@ -297,7 +316,7 @@ pub fn import_upload_path(job_id: &str) -> Result<String, DesktopImportError> {
 fn collect_audio_files(
     path: &Path,
     has_hidden_parent: bool,
-    files: &mut Vec<PathBuf>,
+    files: &mut Vec<SelectedFile>,
 ) -> Result<(), DesktopImportError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| selection_error())?;
     if metadata.file_type().is_symlink() {
@@ -312,13 +331,90 @@ fn collect_audio_files(
         return Ok(());
     }
     if metadata.is_dir() {
-        for entry in fs::read_dir(path).map_err(|_| selection_error())? {
-            collect_audio_files(&entry.map_err(|_| selection_error())?.path(), false, files)?;
-        }
+        let directory = open_verified_directory(path)?;
+        collect_directory_files(&directory, path, is_hidden, files)?;
     } else if is_supported_audio(path) {
-        files.push(path.to_owned());
+        if path.file_name().and_then(|value| value.to_str()).is_none() {
+            eprintln!("Desktop import skipped a selected path with a non-Unicode filename");
+            return Ok(());
+        }
+        let file = open_verified_file(path, None)?;
+        files.push(selected_file(path.to_owned(), file)?);
     }
     Ok(())
+}
+
+fn collect_directory_files(
+    directory: &Dir,
+    path: &Path,
+    has_hidden_parent: bool,
+    files: &mut Vec<SelectedFile>,
+) -> Result<(), DesktopImportError> {
+    for entry in directory.entries().map_err(|_| selection_error())? {
+        let entry = entry.map_err(|_| selection_error())?;
+        let name = entry.file_name();
+        if name.to_str().is_none() {
+            eprintln!("Desktop import skipped a selected path with a non-Unicode filename");
+            continue;
+        }
+        let child_path = path.join(&name);
+        let is_hidden = has_hidden_parent || name.to_string_lossy().starts_with('.');
+        if is_hidden {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|_| selection_error())?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            let child = directory
+                .open_dir_nofollow(&name)
+                .map_err(|_| selection_error())?;
+            collect_directory_files(&child, &child_path, false, files)?;
+        } else if is_supported_audio(&child_path) {
+            let mut options = cap_std::fs::OpenOptions::new();
+            options.read(true).follow(FollowSymlinks::No);
+            let file = directory
+                .open_with(&name, &options)
+                .map_err(|_| selection_error())?
+                .into_std();
+            files.push(selected_file(child_path, file)?);
+        }
+    }
+    Ok(())
+}
+
+fn selected_file(path: PathBuf, file: fs::File) -> Result<SelectedFile, DesktopImportError> {
+    let metadata = file.metadata().map_err(|_| selection_error())?;
+    if !metadata.is_file() {
+        return Err(selection_error());
+    }
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(selection_error)?
+        .to_owned();
+    Ok(SelectedFile {
+        path,
+        identity: file_identity(&metadata),
+        name,
+        size: metadata.len(),
+    })
+}
+
+fn open_verified_directory(path: &Path) -> Result<Dir, DesktopImportError> {
+    let selected_metadata = fs::symlink_metadata(path).map_err(|_| selection_error())?;
+    if !selected_metadata.is_dir() || selected_metadata.file_type().is_symlink() {
+        return Err(selection_error());
+    }
+    let file = open_directory_without_following(path).map_err(|_| selection_error())?;
+    let opened_metadata = file.metadata().map_err(|_| selection_error())?;
+    if !opened_metadata.is_dir()
+        || file_identity(&opened_metadata) != file_identity(&selected_metadata)
+    {
+        return Err(selection_error());
+    }
+    Ok(Dir::from_std_file(file))
 }
 
 fn open_verified_file(
@@ -348,6 +444,16 @@ fn open_without_following(path: &Path) -> std::io::Result<fs::File> {
         .open(path)
 }
 
+#[cfg(unix)]
+fn open_directory_without_following(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(path)
+}
+
 #[cfg(windows)]
 fn open_without_following(path: &Path) -> std::io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
@@ -356,6 +462,21 @@ fn open_without_following(path: &Path) -> std::io::Result<fs::File> {
     fs::OpenOptions::new()
         .read(true)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_directory_without_following(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
 }
 
@@ -436,7 +557,8 @@ fn canceled_error() -> DesktopImportError {
 mod tests {
     use super::{
         ImportSelectionStore, ImportUploadProgress, ProgressThrottle, cancellable_preparation,
-        content_type, import_upload_path, upload_selection,
+        collect_directory_files, content_type, import_upload_path, open_verified_directory,
+        upload_selection,
     };
     use crate::connection::{HttpBridge, ServerOrigin};
     use std::fs;
@@ -592,6 +714,51 @@ mod tests {
 
         assert!(store.open_file(&selection.id).is_err());
         fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    #[test]
+    fn failed_registration_does_not_retain_partial_selections() {
+        let fixture = temporary_fixture_path("flac");
+        let missing = temporary_fixture_path("mp3");
+        fs::write(&fixture, b"audio bytes").expect("write fixture");
+        let store = ImportSelectionStore::default();
+
+        assert!(
+            store
+                .register_candidates([fixture.clone(), missing])
+                .is_err()
+        );
+        assert_eq!(store.selection_count(), 0);
+
+        fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_traversal_stays_bound_to_open_directory_handle() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_fixture_path("root");
+        let album = root.join("album");
+        let moved_album = root.join("moved-album");
+        let outside = temporary_fixture_path("outside");
+        fs::create_dir_all(&album).expect("create selected directory");
+        fs::create_dir_all(&outside).expect("create outside directory");
+        fs::write(album.join("song.flac"), b"selected").expect("write selected file");
+        fs::write(outside.join("secret.flac"), b"secret").expect("write outside file");
+        let directory = open_verified_directory(&album).expect("pin selected directory");
+        fs::rename(&album, &moved_album).expect("move selected directory");
+        symlink(&outside, &album).expect("replace directory with symlink");
+        let mut selections = Vec::new();
+
+        collect_directory_files(&directory, &album, false, &mut selections)
+            .expect("traverse pinned directory");
+
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].name, "song.flac");
+        fs::remove_file(album).expect("remove replacement symlink");
+        fs::remove_dir_all(root).expect("remove selected tree");
+        fs::remove_dir_all(outside).expect("remove outside tree");
     }
 
     #[cfg(unix)]

@@ -317,6 +317,7 @@ impl HttpBridge {
         path: &str,
         filename: &str,
         content_type: &str,
+        content_length: u64,
         body: reqwest::Body,
     ) -> Result<HttpResponse, ConnectionError> {
         let response = self
@@ -324,6 +325,7 @@ impl HttpBridge {
             .put(origin.endpoint(path)?)
             .header("accept", "application/json")
             .header("content-type", content_type)
+            .header("content-length", content_length)
             .header("x-import-filename", filename)
             .body(body)
             .send()
@@ -836,6 +838,7 @@ mod tests {
                 "/api/v1/imports/job-1/file",
                 "track.flac",
                 "audio/flac",
+                11,
                 reqwest::Body::wrap_stream(ReaderStream::new(file)),
             )
             .await
@@ -844,11 +847,8 @@ mod tests {
         let request_bytes = request_receiver.recv().expect("request");
         let request = String::from_utf8_lossy(&request_bytes);
         assert!(request.starts_with("PUT /api/v1/imports/job-1/file HTTP/1.1"));
-        assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("transfer-encoding: chunked")
-        );
+        assert!(!request.to_ascii_lowercase().contains("transfer-encoding"));
+        assert!(request.to_ascii_lowercase().contains("content-length: 11"));
         assert!(
             request
                 .to_ascii_lowercase()
