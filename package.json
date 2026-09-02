@@ -18,6 +18,7 @@
     "test:e2e": "mise run web:test:e2e",
     "test:e2e:hls": "mise run server:test:hls",
     "test:git-hooks": "mise run git-hooks:test",
+    "test:main-workflows": "mise run main-workflows:test",
     "test:openapi-generation": "node --test scripts/test-openapi-generation.mjs",
     "test:workspace-tasks": "node --test scripts/test-workspace-tasks.mjs",
     "generate": "mise run generate",

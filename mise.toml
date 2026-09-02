@@ -83,8 +83,8 @@ depends = ["workspace:check", "workspace:typecheck", "server:check", "desktop:ch
 run = ":"
 
 [tasks.test]
-description = "Run workspace, Music Server, Desktop Client, and Git hook tests"
-depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test", "classifier:test"]
+description = "Run workspace, Music Server, Desktop Client, workflow policy, and Git hook tests"
+depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test", "classifier:test", "main-workflows:test"]
 run = ":"
 
 [tasks."git-hooks:test"]
@@ -94,6 +94,10 @@ run = "node --test scripts/test-git-hooks.mjs"
 [tasks."classifier:test"]
 description = "Test pull-request change classification"
 run = "node --test scripts/test-classify-pr-changes.mjs"
+
+[tasks."main-workflows:test"]
+description = "Test full main verification workflow policy"
+run = "node --test scripts/test-main-verification-workflows.mjs"
 
 [tasks."workspace:build"]
 description = "Build workspace production artifacts"

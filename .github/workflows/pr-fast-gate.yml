@@ -1,20 +1,22 @@
-# Shadow pull-request Fast Gate (issue #78).
+# Pull-request Fast Gate and trusted main fast verification.
 #
 # Non-required early checks that run next to the existing required `lint-test`
 # and `e2e` checks. Every check command is a public Mise task from mise.toml.
-# Pull requests restore caches but never publish them; trusted cache entries
-# are written only by main or scheduled workflows.
+# Pull requests restore caches but never publish them. Main updates run every
+# job and publish trusted pnpm, Turbo, Go, golangci-lint, and Cargo caches.
 
 name: PR
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
-# Cancel superseded pull-request revisions. This workflow never runs for push
-# or schedule events, so main and scheduled runs are unaffected.
+# Cancel superseded pull-request revisions. Main runs always finish so every
+# merged revision retains a complete static and unit health signal.
 concurrency:
-  group: pr-fast-gate-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: pr-fast-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -23,11 +25,15 @@ defaults:
   run:
     shell: bash
 
+env:
+  VERIFICATION_LABEL: ${{ github.event_name == 'push' && 'Main / Fast Verification' || 'PR / Fast Gate' }}
+
 jobs:
   classify:
     name: Classify changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    if: github.event_name == 'pull_request'
     outputs:
       desktop_unit: ${{ steps.classify.outputs.desktop_unit }}
       generated_drift: ${{ steps.classify.outputs.generated_drift }}
@@ -63,6 +69,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: [classify]
+    if: always() && (github.event_name == 'push' || needs.classify.result == 'success')
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
@@ -122,6 +129,22 @@ jobs:
         id: test
         run: mise run workspace:test
 
+      - name: Publish pnpm store cache
+        if: github.event_name == 'push' && steps.pnpm_cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ steps.pnpm_store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Publish Turbo cache
+        if: github.event_name == 'push' && steps.turbo_cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('turbo.json') }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Publish job summary
         id: summary
         if: always()
@@ -143,7 +166,7 @@ jobs:
             fi
           }
           {
-            echo "### PR / Fast Gate — Workspace checks"
+            echo "### ${VERIFICATION_LABEL} — Workspace checks"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
@@ -165,6 +188,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: [classify]
+    if: always() && (github.event_name == 'push' || needs.classify.result == 'success')
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       cache_go_hit: ${{ steps.go_cache.outputs.cache-hit }}
@@ -224,6 +248,24 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fast-gate-logs"
           mise run server:test 2>&1 | tee "$RUNNER_TEMP/fast-gate-logs/go-test.log"
 
+      - name: Publish Go module and build caches
+        if: github.event_name == 'push' && steps.go_cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('server/go.sum') }}
+
+      - name: Publish golangci-lint cache
+        if: github.event_name == 'push' && steps.golangci_cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-lint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('server/.golangci.yml', 'server/go.sum') }}
+
       - name: Publish job summary
         id: summary
         if: always()
@@ -245,7 +287,7 @@ jobs:
             fi
           }
           {
-            echo "### PR / Fast Gate — Music Server checks"
+            echo "### ${VERIFICATION_LABEL} — Music Server checks"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
@@ -276,7 +318,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: [classify]
-    if: needs.classify.outputs.desktop_unit == 'true'
+    if: always() && (github.event_name == 'push' || (needs.classify.result == 'success' && needs.classify.outputs.desktop_unit == 'true'))
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
@@ -366,6 +408,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fast-gate-logs"
           mise run desktop:test 2>&1 | tee "$RUNNER_TEMP/fast-gate-logs/cargo-test.log"
 
+      - name: Publish Cargo cache
+        if: github.event_name == 'push' && steps.cargo_cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            desktop/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.version }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
       - name: Publish job summary
         id: summary
         if: always()
@@ -387,7 +441,7 @@ jobs:
             fi
           }
           {
-            echo "### PR / Fast Gate — Desktop Client checks"
+            echo "### ${VERIFICATION_LABEL} — Desktop Client checks"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
@@ -418,7 +472,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: [classify]
-    if: needs.classify.outputs.generated_drift == 'true'
+    if: always() && (github.event_name == 'push' || (needs.classify.result == 'success' && needs.classify.outputs.generated_drift == 'true'))
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
@@ -488,7 +542,7 @@ jobs:
             fi
           }
           {
-            echo "### PR / Fast Gate — Generated drift check"
+            echo "### ${VERIFICATION_LABEL} — Generated drift check"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
@@ -524,19 +578,23 @@ jobs:
       - name: Evaluate gate result
         id: result
         env:
+          EVENT_NAME: ${{ github.event_name }}
           CLASSIFY_RESULT: ${{ needs.classify.result }}
           WORKSPACE_RESULT: ${{ needs.workspace.result }}
           SERVER_RESULT: ${{ needs.music-server.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
           DRIFT_RESULT: ${{ needs.generated-drift.result }}
         run: |
-          # Classification must succeed; conditional jobs may be skipped.
+          # Pull-request classification must succeed and conditional PR jobs
+          # may skip. Every trusted main job must complete successfully.
           result=success
-          if [[ "$CLASSIFY_RESULT" != "success" ]]; then
+          if [[ "$EVENT_NAME" == "pull_request" && "$CLASSIFY_RESULT" != "success" ]]; then
             result=failure
           fi
           for status in "$WORKSPACE_RESULT" "$SERVER_RESULT" "$DESKTOP_RESULT" "$DRIFT_RESULT"; do
-            if [[ "$status" != "success" && "$status" != "skipped" ]]; then
+            if [[ "$EVENT_NAME" == "push" && "$status" != "success" ]]; then
+              result=failure
+            elif [[ "$EVENT_NAME" == "pull_request" && "$status" != "success" && "$status" != "skipped" ]]; then
               result=failure
             fi
           done
@@ -545,6 +603,7 @@ jobs:
       - name: Publish gate summary
         if: always()
         env:
+          EVENT_NAME: ${{ github.event_name }}
           RESULT: ${{ steps.result.outputs.result }}
           CLASSIFY_RESULT: ${{ needs.classify.result }}
           DESKTOP_UNIT: ${{ needs.classify.outputs.desktop_unit }}
@@ -613,14 +672,18 @@ jobs:
           drift_caches="$(cache_cell "$DRIFT_DURATION" \
             "pnpm|$DRIFT_PNPM_HIT|$DRIFT_PNPM_KEY" \
             "go|$DRIFT_GO_HIT|$DRIFT_GO_KEY")"
-          if [[ -z "$DESKTOP_UNIT" ]]; then
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            desktop_decision="included — trusted main verification"
+          elif [[ -z "$DESKTOP_UNIT" ]]; then
             desktop_decision="skipped — classification unavailable (classify job did not succeed)"
           elif [[ "$DESKTOP_UNIT" == "true" ]]; then
             desktop_decision="included (classifier: desktop_unit=true)"
           else
             desktop_decision="skipped — no Desktop Client, contract, global, or unknown-path changes"
           fi
-          if [[ -z "$GENERATED_DRIFT" ]]; then
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            drift_decision="included — trusted main verification"
+          elif [[ -z "$GENERATED_DRIFT" ]]; then
             drift_decision="skipped — classification unavailable (classify job did not succeed)"
           elif [[ "$GENERATED_DRIFT" == "true" ]]; then
             drift_decision="included (classifier: generated_drift=true)"
@@ -628,12 +691,12 @@ jobs:
             drift_decision="skipped — no contract, global, or unknown-path changes"
           fi
           {
-            echo "# PR / Fast Gate (shadow)"
+            echo "# ${VERIFICATION_LABEL}"
             echo
             echo "Result: **$RESULT**"
             echo
-            echo "| Job | Result | Duration | Caches (restore-only) |"
-            echo "| --- | ------ | -------- | --------------------- |"
+            echo "| Job | Result | Duration | Caches |"
+            echo "| --- | ------ | -------- | ------ |"
             echo "| Classify changes | $CLASSIFY_RESULT | — | — |"
             echo "| Workspace checks | $WORKSPACE_RESULT | ${WORKSPACE_DURATION:-—} | $workspace_caches |"
             echo "| Music Server checks | $SERVER_RESULT | ${SERVER_DURATION:-—} | $server_caches |"
@@ -683,5 +746,5 @@ jobs:
       - name: Enforce gate result
         if: steps.result.outputs.result == 'failure'
         run: |
-          echo "PR / Fast Gate failed; see the gate summary for diagnostics." >&2
+          echo "${VERIFICATION_LABEL} failed; see the gate summary for diagnostics." >&2
           exit 1

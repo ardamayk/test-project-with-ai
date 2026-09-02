@@ -35,6 +35,7 @@ defaults:
     shell: bash
 
 env:
+  VERIFICATION_LABEL: ${{ github.event_name == 'push' && 'Main / Integration Verification' || 'PR / Integration Gate' }}
   # Official signed v0.41.0 tag, commit 41f6a645068483470267271e1d09966ca3b9f413.
   # Must stay identical to the digest used by the required `lint-test` job in
   # ci.yml; the verified pinned-mpv cache key incorporates it.
@@ -156,12 +157,27 @@ jobs:
           mkdir -p "$RUNNER_TEMP/integration-gate-logs"
           mise run web:test:e2e 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/web-e2e.log"
 
+      - name: Build Web Client production artifact
+        id: production_build
+        if: github.event_name == 'push'
+        run: mise run web:build 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/web-build.log"
+
+      - name: Upload Web Client production artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: main-web-client
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish job summary
         id: summary
         if: always()
         env:
           START: ${{ steps.timer.outputs.start }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
+          BUILD_OUTCOME: ${{ steps.production_build.outcome }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
           PNPM_CACHE_KEY: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
           PLAYWRIGHT_CACHE_HIT: ${{ steps.playwright_cache.outputs.cache-hit }}
@@ -175,11 +191,12 @@ jobs:
             fi
           }
           {
-            echo "### PR / Integration Gate — Web E2E"
+            echo "### ${VERIFICATION_LABEL} — Web E2E"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
             echo "| Playwright E2E and production smoke | ${TEST_OUTCOME:-not run} |"
+            echo "| Web Client production build | ${BUILD_OUTCOME:-not run} |"
             echo
             echo "| Cache | Status |"
             echo "| ----- | ------ |"
@@ -283,12 +300,36 @@ jobs:
           mkdir -p "$RUNNER_TEMP/integration-gate-logs"
           mise run server:test:hls 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/hls-integration.log"
 
+      - name: Build Music Server production artifact
+        id: production_build
+        if: github.event_name == 'push'
+        run: mise run server:build 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/server-build.log"
+
+      - name: Upload Music Server production artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: main-music-server
+          path: bin/server
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload product documentation artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: main-product-docs
+          path: packages/docs/dist/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish job summary
         id: summary
         if: always()
         env:
           START: ${{ steps.timer.outputs.start }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
+          BUILD_OUTCOME: ${{ steps.production_build.outcome }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
           PNPM_CACHE_KEY: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
           GO_CACHE_HIT: ${{ steps.go_cache.outputs.cache-hit }}
@@ -304,11 +345,12 @@ jobs:
             fi
           }
           {
-            echo "### PR / Integration Gate — Music Server HLS"
+            echo "### ${VERIFICATION_LABEL} — Music Server HLS"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
             echo "| HLS proxy browser integration | ${TEST_OUTCOME:-not run} |"
+            echo "| Music Server, Web Client, and product docs production build | ${BUILD_OUTCOME:-not run} |"
             echo
             echo "| Cache | Status |"
             echo "| ----- | ------ |"
@@ -447,7 +489,7 @@ jobs:
             fi
           }
           {
-            echo "### PR / Integration Gate — Desktop unit"
+            echo "### ${VERIFICATION_LABEL} — Desktop unit"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
@@ -620,12 +662,29 @@ jobs:
         run: |
           mise run desktop:test:mpv 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-mpv.log"
 
+      - name: Build Desktop Client production artifact
+        id: production_build
+        if: github.event_name == 'push'
+        env:
+          EARTHLY_AUDIO_MPV_PATH: ${{ runner.temp }}/earthly-audio-mpv/mpv
+        run: mise run desktop:build 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-build.log"
+
+      - name: Upload Desktop Client production artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: main-desktop-client
+          path: desktop/src-tauri/target/release/earthly-audio-desktop
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish job summary
         id: summary
         if: always()
         env:
           START: ${{ steps.timer.outputs.start }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
+          BUILD_OUTCOME: ${{ steps.production_build.outcome }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
           PNPM_CACHE_KEY: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
           CARGO_CACHE_HIT: ${{ steps.cargo_cache.outputs.cache-hit }}
@@ -641,11 +700,12 @@ jobs:
             fi
           }
           {
-            echo "### PR / Integration Gate — Real pinned mpv"
+            echo "### ${VERIFICATION_LABEL} — Real pinned mpv"
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
             echo "| Desktop Client tests against real pinned mpv | ${TEST_OUTCOME:-not run} |"
+            echo "| Desktop Client production build | ${BUILD_OUTCOME:-not run} |"
             echo
             echo "| Cache | Status |"
             echo "| ----- | ------ |"
@@ -687,14 +747,16 @@ jobs:
           DESKTOP_UNIT_RESULT: ${{ needs.desktop-unit.result }}
           REAL_MPV_RESULT: ${{ needs.real-mpv.result }}
         run: |
-          # Classification must succeed for pull requests; conditional jobs
-          # may be skipped when the classifier did not select them.
+          # Classification must succeed for pull requests; conditional PR
+          # jobs may skip. Every trusted main job must succeed.
           result=success
           if [[ "$EVENT_NAME" == "pull_request" && "$CLASSIFY_RESULT" != "success" ]]; then
             result=failure
           fi
           for status in "$WEB_E2E_RESULT" "$HLS_RESULT" "$DESKTOP_UNIT_RESULT" "$REAL_MPV_RESULT"; do
-            if [[ "$status" != "success" && "$status" != "skipped" ]]; then
+            if [[ "$EVENT_NAME" == "push" && "$status" != "success" ]]; then
+              result=failure
+            elif [[ "$EVENT_NAME" == "pull_request" && "$status" != "success" && "$status" != "skipped" ]]; then
               result=failure
             fi
           done
@@ -794,7 +856,7 @@ jobs:
             classify_row=""
           fi
           {
-            echo "# PR / Integration Gate (shadow)"
+            echo "# ${VERIFICATION_LABEL}"
             echo
             echo "Result: **$RESULT**"
             echo
@@ -867,5 +929,5 @@ jobs:
       - name: Enforce gate result
         if: steps.result.outputs.result == 'failure'
         run: |
-          echo "PR / Integration Gate failed; see the gate summary for diagnostics." >&2
+          echo "${VERIFICATION_LABEL} failed; see the gate summary for diagnostics." >&2
           exit 1
