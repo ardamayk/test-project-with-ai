@@ -239,7 +239,8 @@ export interface paths {
         get: operations["getManagedImportBatch"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Cancel an uncommitted Managed Import Batch and remove its staging */
+        delete: operations["cancelManagedImportBatch"];
         options?: never;
         head?: never;
         patch?: never;
@@ -290,7 +291,8 @@ export interface paths {
         get: operations["getManagedImportJob"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Cancel an uncommitted Managed Import Job and remove its staging */
+        delete: operations["cancelManagedImport"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1676,6 +1678,28 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    cancelManagedImportBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Managed Import Batch canceled and staging removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     confirmManagedImportBatch: {
         parameters: {
             query?: never;
@@ -1752,6 +1776,28 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    cancelManagedImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                importId: components["parameters"]["importId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Managed Import Job canceled and staging removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     uploadManagedImportFile: {
         parameters: {
             query?: never;
@@ -1783,6 +1829,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            /** @description Upload stream was interrupted and this Import Job remains retryable */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             409: components["responses"]["Conflict"];
             /** @description File or batch exceeds the configured Managed Import byte limit */
             413: {

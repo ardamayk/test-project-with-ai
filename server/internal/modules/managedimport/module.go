@@ -1,7 +1,10 @@
 package managedimport
 
 import (
+	"context"
 	"database/sql"
+	"log/slog"
+	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -10,6 +13,7 @@ import (
 
 type Module struct {
 	handlers *Handlers
+	service  *Service
 }
 
 func NewModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector) *Module {
@@ -32,20 +36,43 @@ func newModule(database *sql.DB, configuration config.Config, inspector library.
 		BatchBytes:   batchLimit,
 	}, capacity)
 	service := NewService(store, storage, inspector)
-	return &Module{handlers: NewHandlers(service)}
+	return &Module{handlers: NewHandlers(service), service: service}
 }
 
 func (module *Module) Name() string {
 	return "managed-import"
 }
 
+func (module *Module) Start(ctx context.Context) error {
+	cleanupErr := module.service.CleanupRestart(ctx)
+	go module.cleanupInactive(ctx)
+	return cleanupErr
+}
+
+func (module *Module) cleanupInactive(ctx context.Context) {
+	ticker := time.NewTicker(IMPORT_CLEANUP_INTERVAL)
+	defer ticker.Stop()
+	for {
+		select {
+		case now := <-ticker.C:
+			if err := module.service.CleanupInactive(ctx, now); err != nil {
+				slog.ErrorContext(ctx, "inactive Managed Import cleanup failed", "error", err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Post("/api/v1/library-migrations/preview", module.handlers.PreviewMigration)
 	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
 	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)
+	router.Delete("/api/v1/import-batches/{batchId}", module.handlers.CancelBatch)
 	router.Post("/api/v1/import-batches/{batchId}/confirm", module.handlers.ConfirmBatch)
 	router.Post("/api/v1/imports", module.handlers.CreateJob)
 	router.Get("/api/v1/imports/{importId}", module.handlers.GetJob)
+	router.Delete("/api/v1/imports/{importId}", module.handlers.CancelJob)
 	router.Put("/api/v1/imports/{importId}/file", module.handlers.UploadFile)
 	router.Post("/api/v1/imports/{importId}/confirm", module.handlers.Confirm)
 }

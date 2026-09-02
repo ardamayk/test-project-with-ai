@@ -41,7 +41,8 @@ func main() {
 		slog.Error("unsafe server address", "error", err)
 		os.Exit(1)
 	}
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	if len(cfg.MusicPaths) == 0 {
 		slog.Warn("MUSIC_PATHS is empty; library scan will fail until configured")
@@ -102,6 +103,9 @@ func main() {
 	if err := libModule.Start(ctx); err != nil {
 		slog.Error("library startup failed", "error", err)
 	}
+	if err := importModule.Start(ctx); err != nil {
+		slog.Error("Managed Import startup cleanup failed", "error", err)
+	}
 
 	go func() {
 		slog.Info("server listening", "addr", cfg.Addr, "modules", registry.Names())
@@ -111,9 +115,7 @@ func main() {
 		}
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	<-ctx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

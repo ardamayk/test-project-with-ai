@@ -57,6 +57,14 @@ func (handlers *Handlers) GetBatch(writer http.ResponseWriter, request *http.Req
 	respond.JSON(writer, http.StatusOK, batch)
 }
 
+func (handlers *Handlers) CancelBatch(writer http.ResponseWriter, request *http.Request) {
+	if err := handlers.service.CancelBatch(request.Context(), chi.URLParam(request, "batchId")); err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
 func (handlers *Handlers) ConfirmBatch(writer http.ResponseWriter, request *http.Request) {
 	var confirmation BatchConfirmation
 	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_BATCH_CONFIRMATION_BODY_BYTES))
@@ -95,6 +103,14 @@ func (handlers *Handlers) PreviewMigration(writer http.ResponseWriter, request *
 	respond.JSON(writer, http.StatusOK, preview)
 }
 
+func (handlers *Handlers) CancelJob(writer http.ResponseWriter, request *http.Request) {
+	if err := handlers.service.CancelJob(request.Context(), chi.URLParam(request, "importId")); err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
 func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.Request) {
 	preview, err := handlers.service.Upload(
 		request.Context(),
@@ -131,9 +147,13 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	case errors.Is(err, ErrNotFound):
 		respond.Error(writer, http.StatusNotFound, "import_not_found", "Managed Import Job not found")
 	case errors.Is(err, ErrRevisionConflict):
-		respond.Error(writer, http.StatusConflict, "import_revision_conflict", "Import Preview changed since the supplied revision")
+		respond.Error(writer, http.StatusConflict, ERROR_CODE_REVISION_CONFLICT, "Import Preview changed since the supplied revision")
+	case errors.Is(err, ErrExactDuplicate):
+		respond.Error(writer, http.StatusConflict, ERROR_CODE_EXACT_DUPLICATE, "File bytes match an existing Track")
 	case errors.Is(err, ErrBatchTooLarge):
 		respond.Error(writer, http.StatusRequestEntityTooLarge, "batch_upload_too_large", "Managed Import batch exceeds the configured byte limit")
+	case errors.Is(err, ErrUploadInterrupted):
+		respond.Error(writer, http.StatusRequestTimeout, UPLOAD_INTERRUPTED_ERROR_CODE, "Managed Import upload was interrupted; retry this file")
 	case errors.Is(err, ErrInvalidState):
 		respond.Error(writer, http.StatusConflict, "import_state_conflict", "Managed Import Job is not awaiting this operation")
 	case errors.Is(err, ErrUploadTooLarge):

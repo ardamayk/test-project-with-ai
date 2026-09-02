@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,6 +169,8 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	if idempotentResult.TrackID != result.TrackID || len(listTracks(t, router).Items) != 1 {
 		t.Fatalf("idempotent result = %+v", idempotentResult)
 	}
+	wrongRevisionResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":1}`), map[string]string{"Content-Type": "application/json"})
+	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	assertNormalizedAlbum(t, router, committedTrack.AlbumID, result.TrackID)
 	runLibraryScan(t, router)
 	if len(listTracks(t, router).Items) != 1 {
@@ -182,6 +185,113 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	}
 
 	assertCanonicalStorage(t, managedStoragePath, fixture)
+}
+
+func TestManagedImportSerializesConcurrentConfirmationOfOnePreview(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	jobID, revision := uploadFLACForPreview(t, router, readStrictFLACFixture(t), "concurrent.flac")
+
+	const confirmationCount = 8
+	responses := make(chan *httptest.ResponseRecorder, confirmationCount)
+	start := make(chan struct{})
+	var waitGroup sync.WaitGroup
+	for range confirmationCount {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			responses <- serveImportConfirmation(router, jobID, revision)
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	close(responses)
+
+	trackID := ""
+	for response := range responses {
+		if response.Code != http.StatusOK {
+			t.Fatalf("concurrent confirmation status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var result managedimport.Result
+		testutil.DecodeJSON(t, response, &result)
+		if trackID == "" {
+			trackID = result.TrackID
+		}
+		if result.TrackID != trackID {
+			t.Fatalf("concurrent confirmation Track ID = %q, want %q", result.TrackID, trackID)
+		}
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("concurrently confirmed Track count = %d, err = %v", trackCount, err)
+	}
+}
+
+func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	firstModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	firstRouter := chi.NewRouter()
+	firstModule.RegisterRoutes(firstRouter)
+	secondModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	secondRouter := chi.NewRouter()
+	secondModule.RegisterRoutes(secondRouter)
+	fixture := readStrictFLACFixture(t)
+	firstJobID, firstRevision := uploadFLACForPreview(t, firstRouter, fixture, "first.flac")
+	secondJobID, secondRevision := uploadFLACForPreview(t, secondRouter, fixture, "second.flac")
+
+	type confirmationResult struct {
+		response *httptest.ResponseRecorder
+		jobID    string
+	}
+	results := make(chan confirmationResult, 2)
+	start := make(chan struct{})
+	for _, confirmation := range []struct {
+		jobID    string
+		revision int
+		router   http.Handler
+	}{
+		{jobID: firstJobID, revision: firstRevision, router: firstRouter},
+		{jobID: secondJobID, revision: secondRevision, router: secondRouter},
+	} {
+		confirmation := confirmation
+		go func() {
+			<-start
+			response := serveImportConfirmation(confirmation.router, confirmation.jobID, confirmation.revision)
+			results <- confirmationResult{response: response, jobID: confirmation.jobID}
+		}()
+	}
+	close(start)
+
+	committedCount := 0
+	duplicateCount := 0
+	duplicateJobID := ""
+	for range 2 {
+		result := <-results
+		switch result.response.Code {
+		case http.StatusOK:
+			committedCount++
+		case http.StatusConflict:
+			duplicateCount++
+			duplicateJobID = result.jobID
+			testutil.AssertErrorCode(t, result.response, http.StatusConflict, managedimport.ERROR_CODE_EXACT_DUPLICATE)
+		default:
+			t.Fatalf("exact-byte confirmation for job %q status = %d, body = %s", result.jobID, result.response.Code, result.response.Body.String())
+		}
+	}
+	if committedCount != 1 || duplicateCount != 1 {
+		t.Fatalf("exact-byte confirmation results = %d committed, %d duplicate", committedCount, duplicateCount)
+	}
+	wrongRevisionResponse := serveImportConfirmation(firstRouter, duplicateJobID, 1)
+	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("exact-byte Track count = %d, err = %v", trackCount, err)
+	}
 }
 
 func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
@@ -254,12 +364,73 @@ func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 		t.Fatalf("completed Import Batch = %+v", batch)
 	}
 	outcomes := []managedimport.ImportOutcome{batch.Files[0].Outcome, batch.Files[1].Outcome, batch.Files[2].Outcome, batch.Files[3].Outcome}
-	wantOutcomes := []managedimport.ImportOutcome{managedimport.OUTCOME_IMPORTED, managedimport.OUTCOME_FAILED, managedimport.OUTCOME_REJECTED, managedimport.OUTCOME_NOT_ATTEMPTED}
+	wantOutcomes := []managedimport.ImportOutcome{managedimport.OUTCOME_IMPORTED, managedimport.OUTCOME_REJECTED, managedimport.OUTCOME_REJECTED, managedimport.OUTCOME_NOT_ATTEMPTED}
 	if !reflect.DeepEqual(outcomes, wantOutcomes) {
 		t.Fatalf("Import Batch outcomes = %v, want %v", outcomes, wantOutcomes)
 	}
+	if batch.Files[1].ErrorCode != managedimport.ERROR_CODE_EXACT_DUPLICATE {
+		t.Fatalf("exact-byte Batch failure code = %q", batch.Files[1].ErrorCode)
+	}
 	if tracks := listTracks(t, router); len(tracks.Items) != 1 || tracks.Items[0].ID != batch.Files[0].TrackID {
 		t.Fatalf("Tracks after partial Import Batch = %+v", tracks.Items)
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list completed Import Batch staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("completed Import Batch left staging files: %v", stagedFiles)
+	}
+}
+
+func TestManagedImportBatchReportsExactByteLoserAsRejectedDuplicate(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	fixture := readStrictFLACFixture(t)
+	jobIDs := []string{
+		createBatchImportJob(t, router, batchID),
+		createBatchImportJob(t, router, batchID),
+	}
+	for index, jobID := range jobIDs {
+		response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+			"Content-Type":      "audio/flac",
+			"X-Import-Filename": fmt.Sprintf("duplicate-%d.flac", index),
+		})
+		if response.Code != http.StatusOK {
+			t.Fatalf("upload exact-byte Batch file %d status = %d, body = %s", index, response.Code, response.Body.String())
+		}
+	}
+
+	previewBatch := getImportBatch(t, router, batchID)
+	response := confirmImportBatch(t, router, previewBatch, jobIDs)
+	if response.Code != http.StatusOK {
+		t.Fatalf("confirm exact-byte Batch status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, response, &batch)
+	if len(batch.Files) != 2 {
+		t.Fatalf("exact-byte Batch files = %+v", batch.Files)
+	}
+	if batch.Files[0].Outcome != managedimport.OUTCOME_IMPORTED {
+		t.Fatalf("first exact-byte outcome = %q", batch.Files[0].Outcome)
+	}
+	if batch.Files[1].Outcome != managedimport.OUTCOME_REJECTED || batch.Files[1].ErrorCode != managedimport.ERROR_CODE_EXACT_DUPLICATE {
+		t.Fatalf("second exact-byte result = %+v", batch.Files[1])
+	}
+	repeatedResponse := confirmImportBatch(t, router, previewBatch, jobIDs)
+	if repeatedResponse.Code != http.StatusOK {
+		t.Fatalf("repeat exact-byte Batch status = %d, body = %s", repeatedResponse.Code, repeatedResponse.Body.String())
+	}
+	previewBatch.Revision--
+	staleResponse := confirmImportBatch(t, router, previewBatch, jobIDs)
+	testutil.AssertErrorCode(t, staleResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("exact-byte Batch Track count = %d, err = %v", trackCount, err)
 	}
 }
 
@@ -429,11 +600,12 @@ func TestManagedImportBatchResumesConfirmationAfterInterruption(t *testing.T) {
 	if uploadResponse.Code != http.StatusOK {
 		t.Fatalf("upload resumable batch file status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
 	}
+	previewBatch := getImportBatch(t, router, batchID)
 	if _, err := database.Exec(`UPDATE managed_import_batches SET status = 'confirming', revision = revision + 1 WHERE id = ?`, batchID); err != nil {
 		t.Fatalf("simulate interrupted confirmation: %v", err)
 	}
 
-	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":1,"selectedFileIds":[%q]}`, job.ID)), map[string]string{"Content-Type": "application/json"})
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q]}`, previewBatch.Revision, job.ID)), map[string]string{"Content-Type": "application/json"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("resume Import Batch status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -507,32 +679,156 @@ func TestManagedImportBatchSerializesConcurrentConfirmation(t *testing.T) {
 	}
 }
 
-func TestManagedImportBatchPersistsCanceledUploadFailure(t *testing.T) {
+func TestManagedImportBatchRetriesInterruptedUploadInSameJob(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	router := chi.NewRouter()
+	managedimport.NewModule(database, configuration, library.NewMediaInspector()).RegisterRoutes(router)
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	jobID := createBatchImportJob(t, router, batchID)
+	fixture := readStrictFLACFixture(t)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture[:128]))
+	request.ContentLength = int64(len(fixture))
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "interrupted.flac")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	testutil.AssertErrorCode(t, response, http.StatusRequestTimeout, "upload_interrupted")
+	batch := getImportBatch(t, router, batchID)
+	if len(batch.Files) != 1 || batch.Files[0].JobID != jobID || batch.Files[0].State != managedimport.BATCH_FILE_UNRESOLVED || batch.Files[0].Status != managedimport.STATUS_UPLOADING {
+		t.Fatalf("interrupted Import Batch file = %+v", batch.Files)
+	}
+	var uploadSize int64
+	if err := database.QueryRow(`SELECT upload_size_bytes FROM managed_import_jobs WHERE id = ?`, jobID).Scan(&uploadSize); err != nil || uploadSize != 0 {
+		t.Fatalf("interrupted upload reservation = %d, err = %v", uploadSize, err)
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil || len(stagedFiles) != 0 {
+		t.Fatalf("interrupted staged files = %v, err = %v", stagedFiles, err)
+	}
+
+	retryResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "interrupted.flac",
+	})
+	if retryResponse.Code != http.StatusOK {
+		t.Fatalf("retry interrupted upload status = %d, body = %s", retryResponse.Code, retryResponse.Body.String())
+	}
+	batch = getImportBatch(t, router, batchID)
+	if len(batch.Files) != 1 || batch.Files[0].JobID != jobID || batch.Files[0].State != managedimport.BATCH_FILE_ACCEPTED || !batch.Files[0].Selected || batch.Files[0].ErrorCode != "" || batch.Files[0].ErrorReason != "" {
+		t.Fatalf("retried Import Batch file = %+v", batch.Files)
+	}
+}
+
+func TestManagedImportInterruptedUploadPreservesSiblingStaging(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	storage := managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20})
 	service := managedimport.NewService(managedimport.NewStore(database), storage, library.NewMediaInspector())
 	batch, err := service.CreateBatch(context.Background())
 	if err != nil {
-		t.Fatalf("create canceled upload batch: %v", err)
+		t.Fatalf("create interrupted upload batch: %v", err)
 	}
-	job, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
+	sibling, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
 	if err != nil {
-		t.Fatalf("create canceled upload job: %v", err)
+		t.Fatalf("create sibling upload job: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	_, err = service.Upload(ctx, job.ID, "canceled.flac", &cancelingReader{cancel: cancel}, -1)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled upload error = %v", err)
+	fixture := readStrictFLACFixture(t)
+	if _, uploadErr := service.Upload(context.Background(), sibling.ID, "sibling.flac", bytes.NewReader(fixture), int64(len(fixture))); uploadErr != nil {
+		t.Fatalf("upload sibling batch file: %v", uploadErr)
 	}
-	persistedJob, err := service.GetJob(context.Background(), job.ID)
+	var siblingStagedPath string
+	if queryErr := database.QueryRow(`SELECT staged_file_path FROM managed_import_jobs WHERE id = ?`, sibling.ID).Scan(&siblingStagedPath); queryErr != nil {
+		t.Fatalf("read sibling staging path: %v", queryErr)
+	}
+	interrupted, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
 	if err != nil {
-		t.Fatalf("get canceled upload job: %v", err)
+		t.Fatalf("create interrupted upload job: %v", err)
 	}
-	if persistedJob.Status != managedimport.STATUS_FAILED {
-		t.Fatalf("canceled upload job status = %q", persistedJob.Status)
+	_, err = service.Upload(context.Background(), interrupted.ID, "interrupted.flac", bytes.NewReader(fixture[:128]), int64(len(fixture)))
+	if !errors.Is(err, managedimport.ErrUploadInterrupted) {
+		t.Fatalf("interrupted upload error = %v", err)
 	}
-	if persistedJob.ErrorCode != "validation_cancelled" {
-		t.Fatalf("canceled upload error code = %q", persistedJob.ErrorCode)
+	if _, err := os.Stat(siblingStagedPath); err != nil {
+		t.Fatalf("interrupted upload affected sibling staging: %v", err)
+	}
+}
+
+func TestManagedImportBatchCancellationRemovesUncommittedStaging(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	module := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+	batchResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches", nil, nil)
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, batchResponse, &batch)
+	fixture := readStrictFLACFixture(t)
+	for range 2 {
+		jobID := createBatchImportJob(t, router, batch.ID)
+		uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+			"Content-Type":      "audio/flac",
+			"X-Import-Filename": "cancel-me.flac",
+		})
+		if uploadResponse.Code != http.StatusOK {
+			t.Fatalf("upload cancellable batch file status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+		}
+	}
+
+	response := testutil.ServeRequest(t, router, http.MethodDelete, "/api/v1/import-batches/"+batch.ID, nil, nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("cancel Import Batch status = %d, body = %s", response.Code, response.Body.String())
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list canceled Import Batch staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("canceled Import Batch left staging files: %v", stagedFiles)
+	}
+	getResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/import-batches/"+batch.ID, nil, nil)
+	if getResponse.Code != http.StatusNotFound {
+		t.Fatalf("get canceled Import Batch status = %d, body = %s", getResponse.Code, getResponse.Body.String())
+	}
+	assertNoLibraryEntities(t, database)
+}
+
+func TestManagedImportJobCancellationRemovesOneBatchFile(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	module := managedimport.NewModule(database, config.Config{ManagedStoragePath: managedStoragePath}, library.NewMediaInspector())
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+	batchResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches", nil, nil)
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, batchResponse, &batch)
+	jobID := createBatchImportJob(t, router, batch.ID)
+	fixture := readStrictFLACFixture(t)
+	uploadResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "cancel-file.flac",
+	})
+	if uploadResponse.Code != http.StatusOK {
+		t.Fatalf("upload cancellable Import Job status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+	}
+
+	response := testutil.ServeRequest(t, router, http.MethodDelete, "/api/v1/imports/"+jobID, nil, nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("cancel batch-owned Import Job status = %d, body = %s", response.Code, response.Body.String())
+	}
+	updatedBatch := getImportBatch(t, router, batch.ID)
+	if len(updatedBatch.Files) != 0 || updatedBatch.Revision <= batch.Revision {
+		t.Fatalf("Import Batch after file cancellation = %+v", updatedBatch)
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list canceled Import Job staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("canceled Import Job left staging files: %v", stagedFiles)
 	}
 }
 
@@ -870,6 +1166,143 @@ func TestManagedImportSerializesUploadsForTheSameJob(t *testing.T) {
 	}
 }
 
+func TestManagedImportBatchCancellationCleansPreviewCompletedDuringCancellation(t *testing.T) {
+	inspector := &blockingInspector{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	module := managedimport.NewModule(database, config.Config{ManagedStoragePath: managedStoragePath}, inspector)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+	batchResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches", nil, nil)
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, batchResponse, &batch)
+	jobID := createBatchImportJob(t, router, batch.ID)
+	_, uploadResponse, uploadDone := startManagedImportUpload(t, router, jobID)
+	waitForSignal(t, inspector.started, "upload did not reach inspection")
+	cancelResponse := httptest.NewRecorder()
+	cancelDone := make(chan struct{})
+	go func() {
+		defer close(cancelDone)
+		request := httptest.NewRequest(http.MethodDelete, "/api/v1/import-batches/"+batch.ID, nil)
+		router.ServeHTTP(cancelResponse, request)
+	}()
+	waitForSignal(t, cancelDone, "batch cancellation did not stop active upload")
+	waitForSignal(t, uploadDone, "canceled upload did not finish")
+	close(inspector.release)
+	if uploadResponse.Code != http.StatusRequestTimeout || cancelResponse.Code != http.StatusNoContent {
+		t.Fatalf("upload/cancel statuses = (%d, %d)", uploadResponse.Code, cancelResponse.Code)
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list cancellation-race staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("batch cancellation race left staging files: %v", stagedFiles)
+	}
+}
+
+func TestInactiveCleanupCancelsStalledUploadAfterFifteenMinutes(t *testing.T) {
+	inspector := &blockingInspector{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	service := managedimport.NewService(
+		managedimport.NewStore(database),
+		managedimport.NewStorage(managedStoragePath, managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20}),
+		inspector,
+	)
+	batch, err := service.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create stalled upload batch: %v", err)
+	}
+	job, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("create stalled upload job: %v", err)
+	}
+	uploadDone := make(chan error, 1)
+	fixture := readStrictFLACFixture(t)
+	go func() {
+		_, uploadErr := service.Upload(context.Background(), job.ID, "stalled.flac", bytes.NewReader(fixture), int64(len(fixture)))
+		uploadDone <- uploadErr
+	}()
+	waitForSignal(t, inspector.started, "stalled upload did not reach inspection")
+
+	if cleanupErr := service.CleanupInactive(context.Background(), time.Now().Add(16*time.Minute)); cleanupErr != nil {
+		t.Fatalf("cleanup stalled Managed Import upload: %v", cleanupErr)
+	}
+	close(inspector.release)
+	select {
+	case uploadErr := <-uploadDone:
+		if !errors.Is(uploadErr, context.Canceled) {
+			t.Fatalf("stalled upload error = %v", uploadErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled upload did not stop")
+	}
+	if _, getErr := service.GetBatch(context.Background(), batch.ID); !errors.Is(getErr, managedimport.ErrNotFound) {
+		t.Fatalf("get expired stalled Import Batch error = %v", getErr)
+	}
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil {
+		t.Fatalf("list stalled upload staging: %v", err)
+	}
+	if len(stagedFiles) != 0 {
+		t.Fatalf("stalled upload left staging files: %v", stagedFiles)
+	}
+}
+
+func TestManagedImportCancellationWaitsForSuccessfulConfirmation(t *testing.T) {
+	inspector := &blockingConfirmationInspector{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	database := testutil.OpenMigratedDB(t)
+	service := managedimport.NewService(
+		managedimport.NewStore(database),
+		managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20}),
+		inspector,
+	)
+	job, err := service.CreateJob(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("create confirm-race job: %v", err)
+	}
+	fixture := readStrictFLACFixture(t)
+	preview, err := service.Upload(context.Background(), job.ID, "confirm-race.flac", bytes.NewReader(fixture), int64(len(fixture)))
+	if err != nil {
+		t.Fatalf("upload confirm-race job: %v", err)
+	}
+	confirmationDone := make(chan error, 1)
+	go func() {
+		_, confirmErr := service.Confirm(context.Background(), job.ID, preview.Revision)
+		confirmationDone <- confirmErr
+	}()
+	waitForSignal(t, inspector.started, "confirmation did not reach inspection")
+	cancellationDone := make(chan error, 1)
+	go func() { cancellationDone <- service.CancelJob(context.Background(), job.ID) }()
+	select {
+	case cancelErr := <-cancellationDone:
+		t.Fatalf("cancellation finished during confirmation: %v", cancelErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(inspector.release)
+	if confirmErr := <-confirmationDone; confirmErr != nil {
+		t.Fatalf("confirm during cancellation race: %v", confirmErr)
+	}
+	if cancelErr := <-cancellationDone; !errors.Is(cancelErr, managedimport.ErrInvalidState) {
+		t.Fatalf("cancel committed Managed Import error = %v", cancelErr)
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("confirmed Track count = %d, err = %v", trackCount, err)
+	}
+}
+
 func TestManagedImportDetectsFLACWithoutTrustingFilenameOrContentType(t *testing.T) {
 	router := newManagedImportRouter(t, library.NewMediaInspector())
 	jobID := createManagedImportJob(t, router)
@@ -912,6 +1345,29 @@ type completionCancellingInspector struct {
 type blockingInspector struct {
 	started chan struct{}
 	release chan struct{}
+}
+
+type blockingConfirmationInspector struct {
+	mutex   sync.Mutex
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (inspector *blockingConfirmationInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
+	inspector.mutex.Lock()
+	inspector.calls++
+	call := inspector.calls
+	inspector.mutex.Unlock()
+	if call > 1 {
+		inspector.started <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return library.MediaInspection{}, ctx.Err()
+		case <-inspector.release:
+		}
+	}
+	return library.NewMediaInspector().Inspect(ctx, path, reportProgress)
 }
 
 func (inspector *blockingInspector) Inspect(ctx context.Context, path string, reportProgress library.InspectionProgressReporter) (library.MediaInspection, error) {
@@ -1612,15 +2068,6 @@ func confirmImportBatch(t *testing.T, router http.Handler, batch managedimport.B
 	return testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batch.ID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
 }
 
-type cancelingReader struct {
-	cancel context.CancelFunc
-}
-
-func (reader *cancelingReader) Read(_ []byte) (int, error) {
-	reader.cancel()
-	return 0, context.Canceled
-}
-
 type cancelOnConfirmationInspector struct {
 	delegate library.MediaInspector
 	cancel   context.CancelFunc
@@ -1729,6 +2176,15 @@ type albumArtworkResponse struct {
 	Height        int    `json:"height"`
 	SizeBytes     int    `json:"sizeBytes"`
 	SourceTrackID string `json:"sourceTrackId"`
+}
+
+func serveImportConfirmation(router http.Handler, jobID string, revision int) *httptest.ResponseRecorder {
+	body := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
 }
 
 func assertNormalizedAlbum(t *testing.T, router http.Handler, albumID, sourceTrackID string) {

@@ -44,10 +44,10 @@ type migrationSetRules struct {
 }
 
 func (service *Service) PreviewMigration(ctx context.Context) (MigrationPreview, error) {
-	if !service.migrationPreviewMu.TryLock() {
+	if !libraryMigrationPreviewMu.TryLock() {
 		return MigrationPreview{}, ErrMigrationInProgress
 	}
-	defer service.migrationPreviewMu.Unlock()
+	defer libraryMigrationPreviewMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return MigrationPreview{}, err
 	}

@@ -311,6 +311,19 @@ paths:
                 $ref: "#/components/schemas/ManagedImportBatch"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [imports]
+      operationId: cancelManagedImportBatch
+      summary: Cancel an uncommitted Managed Import Batch and remove its staging
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+      responses:
+        "204":
+          description: Managed Import Batch canceled and staging removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/import-batches/{batchId}/confirm:
     post:
       tags: [imports]
@@ -371,6 +384,19 @@ paths:
                 $ref: "#/components/schemas/ManagedImportJob"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [imports]
+      operationId: cancelManagedImport
+      summary: Cancel an uncommitted Managed Import Job and remove its staging
+      parameters:
+        - $ref: "#/components/parameters/importId"
+      responses:
+        "204":
+          description: Managed Import Job canceled and staging removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/imports/{importId}/file:
     put:
       tags: [imports]
@@ -410,6 +436,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "408":
+          description: Upload stream was interrupted and this Import Job remains retryable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           $ref: "#/components/responses/Conflict"
         "413":

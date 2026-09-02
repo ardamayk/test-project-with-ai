@@ -20,6 +20,11 @@ const (
 	MAX_ORIGINAL_FILENAME_BYTES                    = 255
 	BITS_PER_KILOBIT                               = 1000
 	VALIDATION_CLEANUP_TIMEOUT                     = 5 * time.Second
+	ERROR_CODE_EXACT_DUPLICATE                     = "exact_duplicate"
+	ERROR_CODE_REVISION_CONFLICT                   = "import_revision_conflict"
+	UPLOAD_INTERRUPTED_ERROR_CODE                  = "upload_interrupted"
+	IMPORT_INACTIVITY_TIMEOUT                      = 15 * time.Minute
+	IMPORT_CLEANUP_INTERVAL                        = time.Minute
 )
 
 type BatchStatus string
@@ -55,8 +60,10 @@ var (
 	ErrNotFound            = errors.New("managed import job not found")
 	ErrInvalidState        = errors.New("managed import job is not awaiting this operation")
 	ErrRevisionConflict    = errors.New("managed import revision conflict")
+	ErrExactDuplicate      = errors.New("managed import file exactly duplicates a committed Track")
 	ErrUploadTooLarge      = errors.New("managed import file exceeds upload limit")
 	ErrBatchTooLarge       = errors.New("managed import batch exceeds upload limit")
+	ErrUploadInterrupted   = errors.New("managed import upload was interrupted")
 	ErrInvalidUpload       = errors.New("managed import upload is invalid")
 	ErrInsufficientStorage = errors.New("managed storage capacity is insufficient")
 	ErrUnsafeStoragePath   = errors.New("managed storage path is unsafe")

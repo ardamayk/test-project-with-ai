@@ -3,13 +3,27 @@ import type {
 	ManagedImportBatchFile,
 	ManagedImportPreview,
 } from "@repo/api-client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { isDesktopClient } from "#/desktop/bridge";
 import { apiClient } from "#/lib/api";
 
 export type ImportState = "idle" | "uploading" | "confirming";
 
 const MAX_CONCURRENT_UPLOADS = 3;
+const SUPPORTED_AUDIO_EXTENSIONS = [
+	"flac",
+	"mp3",
+	"m4a",
+	"ogg",
+	"opus",
+	"wav",
+] as const;
+const SUPPORTED_AUDIO_EXTENSION_SET = new Set<string>(
+	SUPPORTED_AUDIO_EXTENSIONS,
+);
+export const SUPPORTED_AUDIO_FILE_ACCEPT = SUPPORTED_AUDIO_EXTENSIONS.map(
+	(extension) => `.${extension}`,
+).join(",");
 
 export type ImportFileEntry = {
 	key: string;
@@ -34,7 +48,10 @@ export function useManagedImportWorkflow({
 	const state = useImportWorkflowState();
 	const isBusy = state.importState !== "idle";
 	const isCompleted = state.batch?.status === "completed";
-	const isCloseLocked = isBusy || state.batch?.status === "confirming";
+	const isCloseLocked =
+		(isBusy && !state.batch) ||
+		state.importState === "confirming" ||
+		state.batch?.status === "confirming";
 	const canConfirm = Boolean(
 		state.batch &&
 			state.entries.length > 0 &&
@@ -55,7 +72,7 @@ export function useManagedImportWorkflow({
 		errorMessage: state.errorMessage,
 		isBusy,
 		isCloseLocked,
-		isSelectionLocked: isCloseLocked,
+		isSelectionLocked: isBusy || state.batch?.status === "confirming",
 		isCompleted,
 		canConfirm,
 		handleFiles: createFileHandler(state),
@@ -71,6 +88,7 @@ function useImportWorkflowState() {
 	const [batch, setBatch] = useState<ManagedImportBatch>();
 	const [entries, setEntries] = useState<ImportFileEntry[]>([]);
 	const [errorMessage, setErrorMessage] = useState("");
+	const activeUploadController = useRef<AbortController | undefined>(undefined);
 	function updateEntry(key: string, patch: Partial<ImportFileEntry>) {
 		setEntries((current) =>
 			current.map((entry) =>
@@ -92,6 +110,7 @@ function useImportWorkflowState() {
 		setEntries,
 		errorMessage,
 		setErrorMessage,
+		activeUploadController,
 		updateEntry,
 		reset,
 	};
@@ -101,12 +120,14 @@ type WorkflowState = ReturnType<typeof useImportWorkflowState>;
 
 function createFileHandler(state: WorkflowState) {
 	return async (fileList: FileList | File[]) => {
-		const files = Array.from(fileList);
+		const files = Array.from(fileList).filter(isSupportedVisibleAudioFile);
 		if (files.length === 0) return;
 		state.setImportState("uploading");
 		state.setErrorMessage("");
 		const initialEntries = files.map(createImportFileEntry);
 		state.setEntries(initialEntries);
+		const uploadController = new AbortController();
+		state.activeUploadController.current = uploadController;
 		try {
 			const createdBatch = await apiClient.createManagedImportBatch();
 			state.setBatch(createdBatch);
@@ -115,6 +136,7 @@ function createFileHandler(state: WorkflowState) {
 					createdBatch.id,
 					initialEntries,
 					state.updateEntry,
+					uploadController.signal,
 				);
 			state.setBatch(previewBatch);
 			state.setEntries((current) =>
@@ -124,11 +146,27 @@ function createFileHandler(state: WorkflowState) {
 				),
 			);
 		} catch (error) {
+			if (uploadController.signal.aborted) return;
 			state.setErrorMessage(importErrorMessage(error));
 		} finally {
+			if (state.activeUploadController.current === uploadController) {
+				state.activeUploadController.current = undefined;
+			}
 			state.setImportState("idle");
 		}
 	};
+}
+
+function isSupportedVisibleAudioFile(file: File): boolean {
+	const clientPath = file.webkitRelativePath || file.name;
+	if (clientPath.split("/").some((segment) => segment.startsWith("."))) {
+		return false;
+	}
+	const extensionSeparator = file.name.lastIndexOf(".");
+	if (extensionSeparator < 0) return false;
+	return SUPPORTED_AUDIO_EXTENSION_SET.has(
+		file.name.slice(extensionSeparator + 1).toLowerCase(),
+	);
 }
 
 function createConfirmHandler(
@@ -181,10 +219,27 @@ function createOpenHandler(
 	isBusy: boolean,
 	onOpenChange: (isOpen: boolean) => void,
 ) {
-	return (nextIsOpen: boolean) => {
+	return async (nextIsOpen: boolean) => {
 		if (isBusy) return;
-		if (!nextIsOpen) state.reset();
-		onOpenChange(nextIsOpen);
+		if (nextIsOpen) {
+			onOpenChange(true);
+			return;
+		}
+		if (state.batch && state.batch.status !== "completed") {
+			const isConfirmed = window.confirm(
+				"Cancel this import and remove all uncommitted uploads?",
+			);
+			if (!isConfirmed) return;
+			state.activeUploadController.current?.abort();
+			try {
+				await apiClient.cancelManagedImportBatch(state.batch.id);
+			} catch (error) {
+				state.setErrorMessage(importErrorMessage(error));
+				return;
+			}
+		}
+		state.reset();
+		onOpenChange(false);
 	};
 }
 
@@ -192,11 +247,18 @@ async function uploadImportBatch(
 	batchId: string,
 	entries: ImportFileEntry[],
 	updateEntry: (key: string, patch: Partial<ImportFileEntry>) => void,
+	signal: AbortSignal,
 ): Promise<{ batch: ManagedImportBatch; entries: ImportFileEntry[] }> {
-	const preparedEntries = await createBatchJobs(batchId, entries, updateEntry);
-	await runWithConcurrency(preparedEntries, ({ entry, jobId }) =>
-		uploadFile(jobId, entry, updateEntry),
+	const preparedEntries = await createBatchJobs(
+		batchId,
+		entries,
+		updateEntry,
+		signal,
 	);
+	await runWithConcurrency(preparedEntries, ({ entry, jobId }) =>
+		uploadFile(jobId, entry, updateEntry, signal),
+	);
+	signal.throwIfAborted();
 	let batch = await apiClient.getManagedImportBatch(batchId);
 	let reconciledEntries = attachCreatedJobs(entries, preparedEntries);
 	reconciledEntries = attachServerJobs(reconciledEntries, batch.files);
@@ -211,9 +273,11 @@ async function createBatchJobs(
 	batchId: string,
 	entries: ImportFileEntry[],
 	updateEntry: (key: string, patch: Partial<ImportFileEntry>) => void,
+	signal: AbortSignal,
 ) {
 	const preparedEntries: Array<{ entry: ImportFileEntry; jobId: string }> = [];
 	for (const entry of entries) {
+		signal.throwIfAborted();
 		try {
 			const job = await apiClient.createManagedImportJob(batchId, entry.key);
 			updateEntry(entry.key, { jobId: job.id });
@@ -232,6 +296,7 @@ async function uploadFile(
 	jobId: string,
 	entry: ImportFileEntry,
 	updateEntry: (key: string, patch: Partial<ImportFileEntry>) => void,
+	signal?: AbortSignal,
 ) {
 	try {
 		const preview = await apiClient.uploadManagedImportFile(
@@ -239,6 +304,7 @@ async function uploadFile(
 			entry.file.name,
 			entry.file,
 			(progress) => updateEntry(entry.key, { progress }),
+			signal,
 		);
 		updateEntry(entry.key, {
 			state: "accepted",
@@ -247,6 +313,7 @@ async function uploadFile(
 			progress: 100,
 		});
 	} catch (error) {
+		if (signal?.aborted) throw error;
 		updateEntry(entry.key, {
 			state: "rejected",
 			selected: false,
@@ -397,9 +464,14 @@ async function retryUnresolvedUploads(
 		);
 		return entry.jobId && isUnresolved ? [{ entry, jobId: entry.jobId }] : [];
 	});
-	await runWithConcurrency(retryableEntries, ({ entry, jobId }) =>
-		uploadFile(jobId, entry, updateEntry),
-	);
+	await runWithConcurrency(retryableEntries, async ({ entry, jobId }) => {
+		updateEntry(entry.key, {
+			state: "unresolved",
+			progress: 0,
+			errorMessage: undefined,
+		});
+		await uploadFile(jobId, entry, updateEntry);
+	});
 }
 
 function importErrorMessage(error: unknown): string {

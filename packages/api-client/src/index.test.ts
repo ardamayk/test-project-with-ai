@@ -174,6 +174,27 @@ describe('createApiClient', () => {
     );
   });
 
+  it('cancels Managed Import staging through explicit DELETE requests', async () => {
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    await client.cancelManagedImportBatch('batch-1');
+    await client.cancelManagedImport('import-1');
+
+    expect(transport).toHaveBeenNthCalledWith(
+      1,
+      'http://music.test/api/v1/import-batches/batch-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+    expect(transport).toHaveBeenNthCalledWith(
+      2,
+      'http://music.test/api/v1/imports/import-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
   it('streams one Managed Import file and confirms its preview revision', async () => {
     const transport = vi
       .fn<typeof fetch>()
