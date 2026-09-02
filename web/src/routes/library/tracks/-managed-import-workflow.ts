@@ -9,6 +9,7 @@ import {
 	type DesktopImportSelection,
 	desktopUploadImportFile,
 	isDesktopClient,
+	releaseDesktopImportSelections,
 	selectDesktopImportFiles,
 	selectDesktopImportFolder,
 } from "#/desktop/bridge";
@@ -230,6 +231,7 @@ function createConfirmHandler(
 			const report = await confirmImportBatch(currentBatch, reconciledEntries);
 			state.setBatch(report);
 			state.setEntries((current) => mergeBatchFiles(current, report.files));
+			await releaseNativeSelections(reconciledEntries);
 			if (hasLibraryMutation(report)) await onCommitted();
 		} catch (error) {
 			state.setErrorMessage(importErrorMessage(error));
@@ -262,6 +264,12 @@ function createOpenHandler(
 				state.setErrorMessage(importErrorMessage(error));
 				return;
 			}
+		}
+		try {
+			await releaseNativeSelections(state.entries);
+		} catch (error) {
+			state.setErrorMessage(importErrorMessage(error));
+			return;
 		}
 		state.reset();
 		onOpenChange(false);
@@ -427,6 +435,15 @@ function isDesktopImportSelection(
 	file: File | DesktopImportSelection,
 ): file is DesktopImportSelection {
 	return !(file instanceof File);
+}
+
+function releaseNativeSelections(entries: ImportFileEntry[]): Promise<void> {
+	const selectionIds = entries.flatMap((entry) =>
+		isDesktopImportSelection(entry.file) ? [entry.file.id] : [],
+	);
+	return selectionIds.length > 0
+		? releaseDesktopImportSelections(selectionIds)
+		: Promise.resolve();
 }
 
 function mergeBatchFiles(

@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 	selectDesktopImportFiles: vi.fn(),
 	selectDesktopImportFolder: vi.fn(),
 	desktopUploadImportFile: vi.fn(),
+	releaseDesktopImportSelections: vi.fn(),
 }));
 
 const libraryTracks = [
@@ -73,6 +74,7 @@ vi.mock("#/desktop/bridge", () => ({
 	selectDesktopImportFiles: mocks.selectDesktopImportFiles,
 	selectDesktopImportFolder: mocks.selectDesktopImportFolder,
 	desktopUploadImportFile: mocks.desktopUploadImportFile,
+	releaseDesktopImportSelections: mocks.releaseDesktopImportSelections,
 }));
 
 vi.mock("#/components/track-list", () => ({
@@ -267,6 +269,9 @@ describe("tracks route", () => {
 		mocks.selectDesktopImportFiles.mockReset();
 		mocks.selectDesktopImportFolder.mockReset();
 		mocks.desktopUploadImportFile.mockReset();
+		mocks.releaseDesktopImportSelections
+			.mockReset()
+			.mockResolvedValue(undefined);
 		mocks.listTracks.mockResolvedValue({
 			items: libraryTracks,
 		});
@@ -571,6 +576,40 @@ describe("tracks route", () => {
 		);
 		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalled();
 		expect(await screen.findByText("import-1")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+		await vi.waitFor(() =>
+			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
+				"opaque-selection",
+			]),
+		);
+	});
+
+	it("releases native selections when canceling an uncommitted import", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(true);
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "opaque-selection", name: "track.flac", size: 42 },
+		]);
+		mocks.desktopUploadImportFile.mockResolvedValue(
+			new Response(JSON.stringify(createImportPreview("import-1")), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		await openImportMusicDialog();
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+		await screen.findByText("import-1");
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await vi.waitFor(() =>
+			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
+				"opaque-selection",
+			]),
+		);
+		expect(mocks.cancelManagedImportBatch).toHaveBeenCalledWith("batch-1");
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		confirmClose.mockRestore();
 	});
 
 	it("shows structured native picker errors in the shared dialog", async () => {

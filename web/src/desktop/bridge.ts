@@ -62,6 +62,12 @@ export function cancelDesktopImportUpload(uploadId: string): Promise<void> {
 	return invoke("desktop_cancel_import_upload", { uploadId });
 }
 
+export function releaseDesktopImportSelections(
+	selectionIds: string[],
+): Promise<void> {
+	return invoke("desktop_release_import_selections", { selectionIds });
+}
+
 export async function desktopUploadImportFile(
 	selectionId: string,
 	jobId: string,

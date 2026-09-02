@@ -3,6 +3,7 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,8 +24,21 @@ pub struct ImportSelection {
 
 #[derive(Default)]
 pub struct ImportSelectionStore {
-    paths: Mutex<HashMap<String, PathBuf>>,
+    selections: Mutex<HashMap<String, SelectedFile>>,
     cancellations: Mutex<HashMap<String, CancellationToken>>,
+}
+
+#[derive(Clone)]
+struct SelectedFile {
+    path: PathBuf,
+    identity: FileIdentity,
+    name: String,
+    size: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    values: [u64; 4],
 }
 
 impl ImportSelectionStore {
@@ -37,10 +51,9 @@ impl ImportSelectionStore {
             collect_audio_files(&root, false, &mut candidates)?;
         }
         candidates.sort();
-        let mut paths = self.paths.lock().map_err(|_| state_error())?;
+        let mut stored = self.selections.lock().map_err(|_| state_error())?;
         let mut selections = Vec::with_capacity(candidates.len());
         for path in candidates {
-            let metadata = fs::metadata(&path).map_err(|_| selection_error())?;
             let Some(name) = path
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -49,24 +62,44 @@ impl ImportSelectionStore {
                 eprintln!("Desktop import skipped a selected path with a non-Unicode filename");
                 continue;
             };
+            let file = open_verified_file(&path, None)?;
+            let size = file.metadata().map_err(|_| selection_error())?.len();
+            let identity = file_identity(&file.metadata().map_err(|_| selection_error())?);
             let id = Uuid::new_v4().to_string();
-            paths.insert(id.clone(), path);
-            selections.push(ImportSelection {
-                id,
-                name,
-                size: metadata.len(),
-            });
+            stored.insert(
+                id.clone(),
+                SelectedFile {
+                    path,
+                    identity,
+                    name: name.clone(),
+                    size,
+                },
+            );
+            selections.push(ImportSelection { id, name, size });
         }
         Ok(selections)
     }
 
-    pub fn path(&self, id: &str) -> Result<Option<PathBuf>, DesktopImportError> {
-        Ok(self
-            .paths
-            .lock()
-            .map_err(|_| state_error())?
+    fn selection(&self, id: &str) -> Result<SelectedFile, DesktopImportError> {
+        let selections = self.selections.lock().map_err(|_| state_error())?;
+        selections
             .get(id)
-            .cloned())
+            .cloned()
+            .ok_or_else(invalid_selection_error)
+    }
+
+    #[cfg(test)]
+    pub fn open_file(&self, id: &str) -> Result<fs::File, DesktopImportError> {
+        let selection = self.selection(id)?;
+        open_verified_file(&selection.path, Some(selection.identity))
+    }
+
+    pub fn release(&self, ids: &[String]) -> Result<(), DesktopImportError> {
+        let mut selections = self.selections.lock().map_err(|_| state_error())?;
+        for id in ids {
+            selections.remove(id);
+        }
+        Ok(())
     }
 
     pub fn begin_upload(&self, upload_id: &str) -> Result<CancellationToken, DesktopImportError> {
@@ -155,7 +188,11 @@ async fn upload_selection_inner(
     on_progress: Channel<ImportUploadProgress>,
     cancellation: CancellationToken,
 ) -> Result<HttpResponse, DesktopImportError> {
-    let (filename, body) = prepare_upload(store, selection_id, on_progress).await?;
+    let (filename, body) = cancellable_preparation(
+        &cancellation,
+        prepare_upload(store, selection_id, on_progress),
+    )
+    .await?;
     let upload_path = import_upload_path(job_id)?;
     tokio::select! {
         _ = cancellation.cancelled() => Err(canceled_error()),
@@ -174,19 +211,51 @@ async fn prepare_upload(
     selection_id: &str,
     on_progress: Channel<ImportUploadProgress>,
 ) -> Result<(String, reqwest::Body), DesktopImportError> {
-    let path = store
-        .path(selection_id)?
-        .ok_or_else(invalid_selection_error)?;
-    let filename = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(selection_error)?
-        .to_owned();
-    let file = tokio::fs::File::open(&path)
-        .await
-        .map_err(|_| selection_error())?;
-    let total_bytes = file.metadata().await.map_err(|_| selection_error())?.len();
+    let selection = store.selection(selection_id)?;
+    let filename = selection.name;
+    let total_bytes = selection.size;
+    let file = tokio::task::spawn_blocking(move || {
+        open_verified_file(&selection.path, Some(selection.identity))
+    })
+    .await
+    .map_err(|_| state_error())??;
+    let file = tokio::fs::File::from_std(file);
     Ok((filename, progress_body(file, total_bytes, on_progress)))
+}
+
+async fn cancellable_preparation<T, F>(
+    cancellation: &CancellationToken,
+    preparation: F,
+) -> Result<T, DesktopImportError>
+where
+    F: Future<Output = Result<T, DesktopImportError>>,
+{
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(canceled_error()),
+        result = preparation => result,
+    }
+}
+
+#[derive(Default)]
+struct ProgressThrottle {
+    last_percentage: u8,
+}
+
+impl ProgressThrottle {
+    fn update(&mut self, sent_bytes: u64, total_bytes: u64) -> Option<ImportUploadProgress> {
+        if total_bytes == 0 {
+            return None;
+        }
+        let percentage = ((sent_bytes as u128 * 100) / total_bytes as u128).min(100) as u8;
+        if percentage <= self.last_percentage {
+            return None;
+        }
+        self.last_percentage = percentage;
+        Some(ImportUploadProgress {
+            sent_bytes,
+            total_bytes,
+        })
+    }
 }
 
 fn progress_body(
@@ -196,14 +265,14 @@ fn progress_body(
 ) -> reqwest::Body {
     let sent_bytes = Arc::new(AtomicU64::new(0));
     let progress_bytes = sent_bytes.clone();
+    let mut progress_throttle = ProgressThrottle::default();
     let stream = ReaderStream::new(file).map(move |chunk| {
         let chunk = chunk?;
         let sent =
             progress_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed) + chunk.len() as u64;
-        if let Err(error) = on_progress.send(ImportUploadProgress {
-            sent_bytes: sent,
-            total_bytes,
-        }) {
+        if let Some(progress) = progress_throttle.update(sent, total_bytes)
+            && let Err(error) = on_progress.send(progress)
+        {
             eprintln!("Desktop import progress receiver closed: {error}");
         }
         Ok::<_, std::io::Error>(chunk)
@@ -250,6 +319,67 @@ fn collect_audio_files(
         files.push(path.to_owned());
     }
     Ok(())
+}
+
+fn open_verified_file(
+    path: &Path,
+    expected_identity: Option<FileIdentity>,
+) -> Result<fs::File, DesktopImportError> {
+    let selected_metadata = fs::symlink_metadata(path).map_err(|_| selection_error())?;
+    if !selected_metadata.is_file() || selected_metadata.file_type().is_symlink() {
+        return Err(selection_error());
+    }
+    let file = open_without_following(path).map_err(|_| selection_error())?;
+    let opened_metadata = file.metadata().map_err(|_| selection_error())?;
+    let selected_identity = expected_identity.unwrap_or_else(|| file_identity(&selected_metadata));
+    if !opened_metadata.is_file() || file_identity(&opened_metadata) != selected_identity {
+        return Err(selection_error());
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_without_following(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_without_following(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &fs::Metadata) -> FileIdentity {
+    use std::os::unix::fs::MetadataExt;
+
+    FileIdentity {
+        values: [metadata.dev(), metadata.ino(), 0, 0],
+    }
+}
+
+#[cfg(windows)]
+fn file_identity(metadata: &fs::Metadata) -> FileIdentity {
+    use std::os::windows::fs::MetadataExt;
+
+    FileIdentity {
+        values: [
+            metadata.volume_serial_number().unwrap_or_default() as u64,
+            metadata.file_index().unwrap_or_default(),
+            0,
+            0,
+        ],
+    }
 }
 
 fn is_supported_audio(path: &Path) -> bool {
@@ -305,8 +435,8 @@ fn canceled_error() -> DesktopImportError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ImportSelectionStore, ImportUploadProgress, content_type, import_upload_path,
-        upload_selection,
+        ImportSelectionStore, ImportUploadProgress, ProgressThrottle, cancellable_preparation,
+        content_type, import_upload_path, upload_selection,
     };
     use crate::connection::{HttpBridge, ServerOrigin};
     use std::fs;
@@ -319,6 +449,7 @@ mod tests {
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tauri::ipc::Channel;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn recursive_selection_returns_only_supported_visible_audio() {
@@ -405,6 +536,84 @@ mod tests {
         let cancellation = store.begin_upload("upload-1").expect("begin upload");
 
         assert!(cancellation.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_pending_file_preparation() {
+        let cancellation = CancellationToken::new();
+        let pending_cancellation = cancellation.clone();
+        let preparation = async {
+            std::future::pending::<()>().await;
+            Ok::<_, super::DesktopImportError>(())
+        };
+        let pending = tokio::spawn(async move {
+            cancellable_preparation(&pending_cancellation, preparation).await
+        });
+
+        cancellation.cancel();
+        let error = tokio::time::timeout(Duration::from_millis(100), pending)
+            .await
+            .expect("preparation stops promptly")
+            .expect("preparation task")
+            .expect_err("preparation is canceled");
+
+        assert_eq!(error.code, "canceled");
+    }
+
+    #[test]
+    fn progress_is_coalesced_to_percentage_transitions() {
+        let mut throttle = ProgressThrottle::default();
+        let updates = (1..=256)
+            .filter_map(|chunk| throttle.update(chunk * 4096, 1024 * 1024))
+            .collect::<Vec<_>>();
+
+        assert_eq!(updates.len(), 100);
+        assert_eq!(
+            updates.last().map(|progress| progress.sent_bytes),
+            Some(1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn selection_remains_retryable_until_explicit_release() {
+        let fixture = temporary_fixture_path("flac");
+        fs::write(&fixture, b"audio bytes").expect("write fixture");
+        let store = ImportSelectionStore::default();
+        let selection = store
+            .register_paths([fixture.clone()])
+            .expect("register file")
+            .remove(0);
+
+        store.open_file(&selection.id).expect("first upload");
+        store.open_file(&selection.id).expect("retry upload");
+        store
+            .release(std::slice::from_ref(&selection.id))
+            .expect("release selection");
+
+        assert!(store.open_file(&selection.id).is_err());
+        fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_file_rejects_a_replacement_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = temporary_fixture_path("flac");
+        let replacement = temporary_fixture_path("secret");
+        fs::write(&fixture, b"selected bytes").expect("write selected file");
+        fs::write(&replacement, b"secret bytes").expect("write replacement");
+        let store = ImportSelectionStore::default();
+        let selection = store
+            .register_paths([fixture.clone()])
+            .expect("register file")
+            .remove(0);
+        fs::remove_file(&fixture).expect("remove selected path");
+        symlink(&replacement, &fixture).expect("replace path with symlink");
+
+        assert!(store.open_file(&selection.id).is_err());
+        fs::remove_file(fixture).expect("remove symlink");
+        fs::remove_file(replacement).expect("remove replacement");
     }
 
     #[tokio::test(flavor = "multi_thread")]

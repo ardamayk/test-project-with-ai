@@ -25,6 +25,7 @@ import {
 	initializeMediaProxy,
 	listenForQueueEvents,
 	listenForServerConnectionChanges,
+	releaseDesktopImportSelections,
 	saveServerConnection,
 	selectDesktopImportFiles,
 	selectDesktopImportFolder,
@@ -83,6 +84,17 @@ describe("desktop bridge", () => {
 		expect(invokeMock).toHaveBeenNthCalledWith(
 			2,
 			"desktop_select_import_folder",
+		);
+	});
+
+	it("releases opaque native selections", async () => {
+		invokeMock.mockResolvedValue(undefined);
+
+		await releaseDesktopImportSelections(["opaque-1", "opaque-2"]);
+
+		expect(invokeMock).toHaveBeenCalledWith(
+			"desktop_release_import_selections",
+			{ selectionIds: ["opaque-1", "opaque-2"] },
 		);
 	});
 

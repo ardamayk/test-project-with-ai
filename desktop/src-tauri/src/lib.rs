@@ -241,6 +241,14 @@ fn desktop_cancel_import_upload(
     state.import_selections.cancel(&upload_id)
 }
 
+#[tauri::command]
+fn desktop_release_import_selections(
+    state: State<'_, AppState>,
+    selection_ids: Vec<String>,
+) -> Result<(), DesktopImportError> {
+    state.import_selections.release(&selection_ids)
+}
+
 fn desktop_import_state_error() -> DesktopImportError {
     DesktopImportError {
         code: "state_unavailable",
@@ -1010,6 +1018,7 @@ pub fn run() -> tauri::Result<()> {
             desktop_select_import_folder,
             desktop_upload_import_file,
             desktop_cancel_import_upload,
+            desktop_release_import_selections,
             get_media_proxy_url,
             desktop_reconnect_queue_events,
             get_desktop_playback_state,
