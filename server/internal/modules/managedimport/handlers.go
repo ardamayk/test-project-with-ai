@@ -15,6 +15,7 @@ import (
 )
 
 const MIGRATION_PREVIEW_REQUEST_HEADER = "X-Migration-Preview"
+const MIGRATION_STAGE_REQUEST_HEADER = "X-Migration-Stage"
 const IMPORT_FILENAME_HEADER = "X-Import-Filename"
 const IMPORT_FILENAME_ENCODING_HEADER = "X-Import-Filename-Encoding"
 const URL_FILENAME_ENCODING = "url"
@@ -114,6 +115,19 @@ func (handlers *Handlers) PreviewMigration(writer http.ResponseWriter, request *
 		return
 	}
 	respond.JSON(writer, http.StatusOK, preview)
+}
+
+func (handlers *Handlers) StageMigration(writer http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(MIGRATION_STAGE_REQUEST_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "migration_stage_forbidden", "Library Migration staging requires an explicit application request")
+		return
+	}
+	stage, err := handlers.service.StageMigration(request.Context())
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, stage)
 }
 
 func (handlers *Handlers) CancelJob(writer http.ResponseWriter, request *http.Request) {

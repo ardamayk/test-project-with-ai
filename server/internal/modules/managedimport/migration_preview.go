@@ -14,6 +14,7 @@ const MIGRATION_CAPACITY_REASON = "Managed Storage does not have enough capacity
 
 type migrationCandidate struct {
 	previewIndex int
+	source       legacyMigrationSource
 	fileSize     int64
 	artworkBytes int64
 	inspection   library.MediaInspection
@@ -48,21 +49,26 @@ func (service *Service) PreviewMigration(ctx context.Context) (MigrationPreview,
 		return MigrationPreview{}, ErrMigrationInProgress
 	}
 	defer libraryMigrationPreviewMu.Unlock()
+	preview, _, err := service.previewMigration(ctx)
+	return preview, err
+}
+
+func (service *Service) previewMigration(ctx context.Context) (MigrationPreview, []migrationCandidate, error) {
 	if err := ctx.Err(); err != nil {
-		return MigrationPreview{}, err
+		return MigrationPreview{}, nil, err
 	}
 	sources, err := service.store.ListLegacyMigrationSources(ctx)
 	if err != nil {
-		return MigrationPreview{}, err
+		return MigrationPreview{}, nil, err
 	}
 	preview, candidates, err := service.inspectMigrationSources(ctx, sources)
 	if err != nil {
-		return MigrationPreview{}, err
+		return MigrationPreview{}, nil, err
 	}
 	validateMigrationSet(&preview, candidates)
 	requirement, err := migrationStorageRequirement(preview, candidates)
 	if err != nil {
-		return MigrationPreview{}, err
+		return MigrationPreview{}, nil, err
 	}
 	if requirement.SelectedBytes > service.storage.batchLimit {
 		rejectAcceptedMigrationFiles(&preview, ErrBatchTooLarge)
@@ -71,11 +77,11 @@ func (service *Service) PreviewMigration(ctx context.Context) (MigrationPreview,
 		if errors.Is(capacityErr, ErrInsufficientStorage) {
 			rejectAcceptedMigrationFiles(&preview, capacityErr)
 		} else if capacityErr != nil {
-			return MigrationPreview{}, capacityErr
+			return MigrationPreview{}, nil, capacityErr
 		}
 	}
 	countMigrationResults(&preview)
-	return preview, nil
+	return preview, candidates, nil
 }
 
 func (service *Service) inspectMigrationSources(ctx context.Context, sources []legacyMigrationSource) (MigrationPreview, []migrationCandidate, error) {
@@ -100,7 +106,7 @@ func (service *Service) inspectMigrationSources(ctx context.Context, sources []l
 		preview.Files = append(preview.Files, acceptedMigrationFile(source, inspection))
 		artworkBytes := int64(len(inspection.AlbumArtwork.Data))
 		inspection.AlbumArtwork.Data = nil
-		candidates = append(candidates, migrationCandidate{previewIndex: len(preview.Files) - 1, fileSize: file.Size(), artworkBytes: artworkBytes, inspection: inspection})
+		candidates = append(candidates, migrationCandidate{previewIndex: len(preview.Files) - 1, source: source, fileSize: file.Size(), artworkBytes: artworkBytes, inspection: inspection})
 	}
 	return preview, candidates, nil
 }

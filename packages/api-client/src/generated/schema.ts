@@ -211,6 +211,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library-migrations/stage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copy and verify accepted Legacy Tracks in hidden pending Managed Storage locations */
+        post: operations["stageLibraryMigration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches": {
         parameters: {
             query?: never;
@@ -846,6 +863,27 @@ export interface components {
             /** @description Machine-readable field associated with a rejection. */
             errorField?: string;
             /** @description Actionable per-file rejection reason. */
+            errorReason?: string;
+        };
+        LibraryMigrationStage: {
+            verifiedCount: number;
+            rejectedCount: number;
+            failedCount: number;
+            files: components["schemas"]["LibraryMigrationStageFile"][];
+        };
+        LibraryMigrationStageFile: {
+            /** Format: uuid */
+            trackId: string;
+            /** @description Display-only basename of the existing Legacy Track source. */
+            originalFilename: string;
+            /** @enum {string} */
+            state: "verified" | "rejected" | "failed";
+            /** Format: uuid */
+            pendingTrackId?: string;
+            sourceSha256?: string;
+            pendingSha256?: string;
+            errorCode?: string;
+            errorField?: string;
             errorReason?: string;
         };
         ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportWavPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
@@ -1571,6 +1609,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getAlbumCover: {
@@ -1666,6 +1705,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     previewLibraryMigration: {
@@ -1687,6 +1727,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryMigrationPreview"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    stageLibraryMigration: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Non-simple application header required to confirm explicit migration staging */
+                "X-Migration-Stage": "1";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-file result of staging and verifying the current Library Migration candidates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMigrationStage"];
                 };
             };
             403: components["responses"]["Forbidden"];

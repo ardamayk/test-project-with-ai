@@ -112,6 +112,17 @@ func (storage *Storage) StageUpload(source io.Reader, contentLength int64) (uplo
 	return storage.writeStagedUpload(root, source, contentLength)
 }
 
+func (storage *Storage) StageMigrationSource(sourcePath string, sourceSize int64) (upload stagedUpload, returnErr error) {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return stagedUpload{}, fmt.Errorf("open Legacy Track source for migration: %w", err)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, closeManagedStorageFile(source, "Legacy Track migration source"))
+	}()
+	return storage.StageUpload(source, sourceSize)
+}
+
 func (storage *Storage) UploadReservationSize(contentLength int64) (int64, error) {
 	if err := storage.validateUploadLength(contentLength); err != nil {
 		return 0, err
@@ -262,17 +273,24 @@ func (storage *Storage) RemoveAllStaged() (returnErr error) {
 }
 
 func (storage *Storage) Place(stagedPath string, inspection library.MediaInspection, identity commitIdentity, artworkCreatedCallbacks ...func() error) (placement placedFiles, returnErr error) {
+	plannedPlacement, planErr := storage.planPlacement(stagedPath, inspection, identity)
+	if planErr != nil {
+		return placedFiles{}, planErr
+	}
+	return storage.placePlanned(plannedPlacement, inspection, identity, 0o750, "place Managed Track at Canonical Library Path", artworkCreatedCallbacks...)
+}
+
+func (storage *Storage) PlaceMigration(plannedPlacement placedFiles, inspection library.MediaInspection) (placement placedFiles, returnErr error) {
+	return storage.placePlanned(plannedPlacement, inspection, commitIdentity{}, 0o700, "place pending Library Migration copy")
+}
+
+func (storage *Storage) placePlanned(placement placedFiles, inspection library.MediaInspection, identity commitIdentity, directoryMode os.FileMode, audioOperation string, artworkCreatedCallbacks ...func() error) (_ placedFiles, returnErr error) {
 	root, openErr := storage.openRoot()
 	if openErr != nil {
 		return placedFiles{}, openErr
 	}
 	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
-	plannedPlacement, planErr := storage.planPlacement(stagedPath, inspection, identity)
-	if planErr != nil {
-		return placedFiles{}, planErr
-	}
-	placement = plannedPlacement
-	if err := ensureDirectory(root, storage.root, filepath.Dir(placement.audioRelative), 0o750); err != nil {
+	if err := ensureDirectory(root, storage.root, filepath.Dir(placement.audioRelative), directoryMode); err != nil {
 		return placedFiles{}, err
 	}
 	shouldCreateArtwork, prepareErr := storage.prepareArtwork(root, &placement, inspection, identity)
@@ -280,19 +298,18 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 		return placedFiles{}, prepareErr
 	}
 	if err := root.Rename(placement.stagedRelative, placement.audioRelative); err != nil {
-		return placedFiles{}, fmt.Errorf("place Managed Track at Canonical Library Path: %w", err)
+		return placedFiles{}, fmt.Errorf("%s: %w", audioOperation, err)
 	}
-	if !shouldCreateArtwork {
-		return placement, nil
+	if shouldCreateArtwork {
+		artworkCreated, err := writeRootedArtwork(
+			root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data,
+			inspection.AlbumArtwork.SHA256, artworkCreatedCallbacks...,
+		)
+		if err != nil {
+			return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
+		}
+		placement.artworkCreated = artworkCreated
 	}
-	artworkCreated, err := writeRootedArtwork(
-		root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data,
-		inspection.AlbumArtwork.SHA256, artworkCreatedCallbacks...,
-	)
-	if err != nil {
-		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
-	}
-	placement.artworkCreated = artworkCreated
 	return placement, nil
 }
 
@@ -309,6 +326,89 @@ func (storage *Storage) VerifyPlacement(placement placedFiles, audioSHA256, artw
 		return fmt.Errorf("verify canonical Album Artwork: %w", err)
 	}
 	return nil
+}
+
+func (storage *Storage) VerifyMigrationPlacement(placement placedFiles, identity commitIdentity, audioSHA256, artworkSHA256 string) (returnErr error) {
+	parts := strings.Split(filepath.Clean(placement.audioRelative), string(filepath.Separator))
+	if len(parts) != 4 || parts[0] != ".migration" ||
+		!strings.HasSuffix(parts[1], "-"+identity.AlbumArtistID) ||
+		!strings.HasSuffix(parts[2], "-"+identity.AlbumID) ||
+		!strings.Contains(parts[3], "-"+identity.TrackID+".") {
+		return fmt.Errorf("%w: pending Library Migration path is not canonical", ErrUnsafeStoragePath)
+	}
+	if err := storage.VerifyPlacement(placement, audioSHA256, artworkSHA256); err != nil {
+		return err
+	}
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	stream, err := root.Open(placement.audioRelative)
+	if err != nil {
+		return fmt.Errorf("open pending Library Migration stream: %w", err)
+	}
+	_, streamErr := io.Copy(io.Discard, stream)
+	closeErr := closeManagedStorageFile(stream, "pending Library Migration stream")
+	if streamErr != nil || closeErr != nil {
+		return fmt.Errorf("verify pending Library Migration stream: %w", errors.Join(streamErr, closeErr))
+	}
+	return nil
+}
+
+func (storage *Storage) CleanupMigrationPlacement(placement placedFiles) error {
+	rollbackErr := storage.Rollback(placement)
+	removeErr := storage.RemoveStaged(storage.absolutePath(placement.stagedRelative))
+	return errors.Join(rollbackErr, removeErr)
+}
+
+func (storage *Storage) CleanupRecordedMigrationCopy(copy migrationCopyRecord, removeArtwork bool) (returnErr error) {
+	placement, err := storage.recordedMigrationPlacement(copy)
+	if err != nil {
+		return err
+	}
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	audioErr := removeRootedFile(root, placement.audioRelative, "pending Library Migration audio")
+	if errors.Is(audioErr, os.ErrNotExist) {
+		audioErr = nil
+	}
+	var artworkErr error
+	if removeArtwork {
+		artworkErr = removeRootedFile(root, placement.artworkRelative, "pending Library Migration artwork")
+		if errors.Is(artworkErr, os.ErrNotExist) {
+			artworkErr = nil
+		}
+	}
+	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	return errors.Join(audioErr, artworkErr, directoryErr)
+}
+
+func (storage *Storage) recordedMigrationPlacement(copy migrationCopyRecord) (placedFiles, error) {
+	audioRelative, err := storage.relativePath(copy.PendingAudioPath)
+	if err != nil {
+		return placedFiles{}, err
+	}
+	artworkRelative, err := storage.relativePath(copy.PendingArtworkPath)
+	if err != nil {
+		return placedFiles{}, err
+	}
+	audioParts := strings.Split(filepath.Clean(audioRelative), string(filepath.Separator))
+	if len(audioParts) != 4 || audioParts[0] != ".migration" ||
+		!strings.HasSuffix(audioParts[1], "-"+copy.PendingAlbumArtistID) ||
+		!strings.HasSuffix(audioParts[2], "-"+copy.PendingAlbumID) ||
+		!strings.Contains(audioParts[3], "-"+copy.PendingTrackID+".") ||
+		filepath.Dir(audioRelative) != filepath.Dir(artworkRelative) ||
+		!strings.HasPrefix(filepath.Base(artworkRelative), "cover.") {
+		return placedFiles{}, fmt.Errorf("%w: recorded pending Library Migration path is not canonical", ErrUnsafeStoragePath)
+	}
+	return placedFiles{
+		AudioPath: copy.PendingAudioPath, ArtworkPath: copy.PendingArtworkPath,
+		audioRelative: audioRelative, artworkRelative: artworkRelative,
+	}, nil
 }
 
 func (storage *Storage) CleanupPlacement(placement placedFiles) error {
@@ -336,6 +436,35 @@ func (storage *Storage) placementFromJournal(journal commitJournal) (placedFiles
 }
 
 func (storage *Storage) planPlacement(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placedFiles, error) {
+	metadata := inspection.Metadata
+	albumRelative := filepath.Join(
+		"library",
+		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
+		slug(metadata.Album)+"-"+identity.AlbumID,
+	)
+	artworkRelative := filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
+	if identity.ExistingArtworkPath != "" {
+		var err error
+		artworkRelative, albumRelative, err = storage.existingCanonicalAlbum(identity, inspection)
+		if err != nil {
+			return placedFiles{}, err
+		}
+	}
+	return storage.planPlacementInAlbum(stagedPath, inspection, identity.TrackID, albumRelative, artworkRelative)
+}
+
+func (storage *Storage) planMigrationPlacement(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placedFiles, error) {
+	metadata := inspection.Metadata
+	albumRelative := filepath.Join(
+		".migration",
+		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
+		slug(metadata.Album)+"-"+identity.AlbumID,
+	)
+	artworkRelative := filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
+	return storage.planPlacementInAlbum(stagedPath, inspection, identity.TrackID, albumRelative, artworkRelative)
+}
+
+func (storage *Storage) planPlacementInAlbum(stagedPath string, inspection library.MediaInspection, trackID, albumRelative, artworkRelative string) (placedFiles, error) {
 	stagedRelative, err := storage.relativePath(stagedPath)
 	if err != nil {
 		return placedFiles{}, err
@@ -345,26 +474,11 @@ func (storage *Storage) planPlacement(stagedPath string, inspection library.Medi
 		return placedFiles{}, err
 	}
 	metadata := inspection.Metadata
-	albumRelative := filepath.Join(
-		"library",
-		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
-		slug(metadata.Album)+"-"+identity.AlbumID,
-	)
-	artworkRelative := filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
-	if identity.ExistingArtworkPath != "" {
-		artworkRelative, albumRelative, err = storage.existingCanonicalAlbum(identity, inspection)
-		if err != nil {
-			return placedFiles{}, err
-		}
-	}
-	audioFilename := fmt.Sprintf("%02d-%02d-%s-%s%s", metadata.DiscPosition.Number, metadata.TrackPosition.Number, slug(metadata.Title), identity.TrackID, extension)
+	audioFilename := fmt.Sprintf("%02d-%02d-%s-%s%s", metadata.DiscPosition.Number, metadata.TrackPosition.Number, slug(metadata.Title), trackID, extension)
 	audioRelative := filepath.Join(albumRelative, audioFilename)
 	return placedFiles{
-		AudioPath:       storage.absolutePath(audioRelative),
-		ArtworkPath:     storage.absolutePath(artworkRelative),
-		audioRelative:   audioRelative,
-		artworkRelative: artworkRelative,
-		stagedRelative:  stagedRelative,
+		AudioPath: storage.absolutePath(audioRelative), ArtworkPath: storage.absolutePath(artworkRelative),
+		audioRelative: audioRelative, artworkRelative: artworkRelative, stagedRelative: stagedRelative,
 	}, nil
 }
 

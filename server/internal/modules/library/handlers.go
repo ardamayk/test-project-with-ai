@@ -130,6 +130,10 @@ func (h *Handlers) DeleteAlbum(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusNotFound, "not_found", "album not found")
 		return
 	}
+	if errors.Is(err, ErrMigrationStaged) {
+		respond.Error(w, http.StatusConflict, "migration_staged", err.Error())
+		return
+	}
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -142,6 +146,10 @@ func (h *Handlers) DeleteTrack(w http.ResponseWriter, r *http.Request) {
 	result, err := h.service.DeleteTrack(r.Context(), trackID)
 	if errors.Is(err, ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
+		return
+	}
+	if errors.Is(err, ErrMigrationStaged) {
+		respond.Error(w, http.StatusConflict, "migration_staged", err.Error())
 		return
 	}
 	if err != nil {

@@ -84,13 +84,7 @@ func main() {
 	r.Use(middleware.ClientIPFromRemoteAddr)
 	r.Use(middleware.Recoverer)
 	r.Use(streamAwareTimeout(60 * time.Second))
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.CORSOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	r.Use(corsHandler(cfg.CORSOrigins))
 
 	r.Get("/api/v1/health", apiHandler.GetHealth)
 	r.Get("/api/v1/me", apiHandler.GetMe)
@@ -123,6 +117,16 @@ func main() {
 	}
 }
 
+func corsHandler(allowedOrigins []string) func(http.Handler) http.Handler {
+	return cors.Handler(cors.Options{
+		AllowedOrigins:   allowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview", "X-Migration-Stage"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	})
+}
+
 func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 	timeoutMiddleware := middleware.Timeout(timeout)
 	return func(next http.Handler) http.Handler {
@@ -138,7 +142,7 @@ func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 }
 
 func isStreamPath(path string) bool {
-	if path == "/api/v1/playback/queue/events" || path == "/api/v1/library-migrations/preview" {
+	if path == "/api/v1/playback/queue/events" || path == "/api/v1/library-migrations/preview" || path == "/api/v1/library-migrations/stage" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/imports/") && strings.HasSuffix(path, "/file") {

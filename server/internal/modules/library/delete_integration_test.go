@@ -3,6 +3,7 @@ package library_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -120,6 +121,80 @@ func TestDeleteTrackRemovesDatabaseRowsAndFile(t *testing.T) {
 	}
 	if trackCount != 0 {
 		t.Fatalf("track count = %d, want 0", trackCount)
+	}
+}
+
+func TestDeleteBlocksTracksAndAlbumsWithPendingMigrationCopies(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		delete func(*library.Store, string, string) error
+	}{
+		{
+			name: "Track",
+			delete: func(store *library.Store, trackID, _ string) error {
+				_, err := store.DeleteTrack(context.Background(), trackID, os.Remove)
+				return err
+			},
+		},
+		{
+			name: "Album",
+			delete: func(store *library.Store, _, albumID string) error {
+				_, err := store.DeleteAlbum(context.Background(), albumID, os.Remove)
+				return err
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			database := setupLibraryDB(t)
+			store := library.NewStore(database)
+			trackPath := filepath.Join(t.TempDir(), "legacy.flac")
+			if err := os.WriteFile(trackPath, []byte("legacy audio"), 0o640); err != nil {
+				t.Fatalf("write Legacy Track: %v", err)
+			}
+			metadata := library.FileMetadata{
+				Path: trackPath, Format: "flac", SizeBytes: 12, ModTime: time.Now(), Title: "Legacy Track",
+				Artist: "Legacy Artist", AlbumArtist: "Legacy Artist", Album: "Legacy Album", TrackNo: 1,
+				DurationMs: 1000, SampleRateHz: 44100, BitDepth: 16,
+			}
+			if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+				t.Fatalf("seed Legacy Track: %v", err)
+			}
+			var trackID, albumID string
+			if err := database.QueryRow(`SELECT id, album_id FROM tracks WHERE file_path = ?`, trackPath).Scan(&trackID, &albumID); err != nil {
+				t.Fatalf("read Legacy Track identity: %v", err)
+			}
+			validHash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			if _, err := database.Exec(`
+				INSERT INTO legacy_migration_copies (
+					source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+					source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+					pending_sha256, artwork_sha256, inspection_json, status
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'verified')`,
+				trackID, "pending-track-"+trackID, "pending-album-"+trackID, "pending-artist-"+trackID,
+				trackPath, filepath.Join(t.TempDir(), "pending.flac"), filepath.Join(t.TempDir(), "cover.png"),
+				validHash, validHash, validHash,
+			); err != nil {
+				t.Fatalf("seed verified migration copy: %v", err)
+			}
+
+			err := testCase.delete(store, trackID, albumID)
+			if !errors.Is(err, library.ErrMigrationStaged) {
+				t.Fatalf("delete staged %s error = %v", testCase.name, err)
+			}
+			if _, err := os.Stat(trackPath); err != nil {
+				t.Fatalf("Legacy source changed after blocked deletion: %v", err)
+			}
+			var trackCount, copyCount int
+			if err := database.QueryRow(`SELECT COUNT(*) FROM tracks WHERE id = ?`, trackID).Scan(&trackCount); err != nil {
+				t.Fatalf("count retained Legacy Track: %v", err)
+			}
+			if err := database.QueryRow(`SELECT COUNT(*) FROM legacy_migration_copies WHERE source_track_id = ?`, trackID).Scan(&copyCount); err != nil {
+				t.Fatalf("count retained migration copy: %v", err)
+			}
+			if trackCount != 1 || copyCount != 1 {
+				t.Fatalf("retained rows = (%d Tracks, %d migration copies)", trackCount, copyCount)
+			}
+		})
 	}
 }
 
