@@ -749,7 +749,7 @@ func (s *Store) updateTrackAudioFormatIfZero(ctx context.Context, trackID string
 func (s *Store) GetAlbumCover(ctx context.Context, albumID string) (mime string, data []byte, err error) {
 	var artworkPath string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT media_type, file_path FROM album_artwork WHERE album_id = ?`, albumID,
+		`SELECT media_type, file_path FROM visible_album_artwork WHERE album_id = ?`, albumID,
 	).Scan(&mime, &artworkPath)
 	if err == nil {
 		data, err = os.ReadFile(artworkPath)

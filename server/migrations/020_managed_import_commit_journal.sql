@@ -5,6 +5,12 @@ CREATE VIEW visible_tracks AS
     SELECT * FROM tracks
     WHERE missing_at IS NULL AND is_pending_commit = 0;
 
+CREATE VIEW visible_album_artwork AS
+    SELECT artwork.*
+    FROM album_artwork artwork
+    JOIN tracks source_track ON source_track.id = artwork.source_track_id
+    WHERE source_track.is_pending_commit = 0;
+
 CREATE TABLE managed_import_commit_journal (
     id TEXT PRIMARY KEY,
     job_id TEXT NOT NULL,
@@ -32,5 +38,6 @@ CREATE INDEX idx_managed_import_commit_journal_phase
 
 -- +goose Down
 DROP TABLE IF EXISTS managed_import_commit_journal;
+DROP VIEW IF EXISTS visible_album_artwork;
 DROP VIEW IF EXISTS visible_tracks;
 ALTER TABLE tracks DROP COLUMN is_pending_commit;

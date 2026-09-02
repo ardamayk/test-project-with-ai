@@ -261,7 +261,7 @@ func (storage *Storage) RemoveAllStaged() (returnErr error) {
 	return returnErr
 }
 
-func (storage *Storage) Place(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placement placedFiles, returnErr error) {
+func (storage *Storage) Place(stagedPath string, inspection library.MediaInspection, identity commitIdentity, artworkCreatedCallbacks ...func() error) (placement placedFiles, returnErr error) {
 	root, openErr := storage.openRoot()
 	if openErr != nil {
 		return placedFiles{}, openErr
@@ -285,7 +285,10 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if !shouldCreateArtwork {
 		return placement, nil
 	}
-	artworkCreated, err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data, inspection.AlbumArtwork.SHA256)
+	artworkCreated, err := writeRootedArtwork(
+		root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data,
+		inspection.AlbumArtwork.SHA256, artworkCreatedCallbacks...,
+	)
 	if err != nil {
 		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 	}
@@ -418,6 +421,9 @@ func (storage *Storage) Rollback(placement placedFiles) (returnErr error) {
 	var removeArtworkErr error
 	if placement.artworkCreated {
 		removeArtworkErr = removeRootedFile(root, placement.artworkRelative, "Canonical Album Artwork")
+		if errors.Is(removeArtworkErr, os.ErrNotExist) {
+			removeArtworkErr = nil
+		}
 	}
 	restoreErr := restoreRootedFile(root, placement.audioRelative, placement.stagedRelative)
 	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
@@ -553,13 +559,18 @@ func verifyRootedFileHash(root *os.Root, path, expectedHash string) error {
 	return nil
 }
 
-func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string) (bool, error) {
+func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string, createdCallbacks ...func() error) (bool, error) {
 	artwork, err := root.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, os.ErrExist) {
 		return false, verifyMatchingArtwork(root, path, expectedHash)
 	}
 	if err != nil {
 		return false, fmt.Errorf("create canonical Album Artwork: %w", err)
+	}
+	if len(createdCallbacks) > 0 && createdCallbacks[0] != nil {
+		if err := createdCallbacks[0](); err != nil {
+			return false, errors.Join(err, closeManagedStorageFile(artwork, "canonical Album Artwork"), removeRootedFile(root, path, "Canonical Album Artwork"))
+		}
 	}
 	if err := restrictManagedStoragePath(absoluteRoot, path, false); err != nil {
 		return false, errors.Join(err, closeManagedStorageFile(artwork, "canonical Album Artwork"), removeRootedFile(root, path, "Canonical Album Artwork"))

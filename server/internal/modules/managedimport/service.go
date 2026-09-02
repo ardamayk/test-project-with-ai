@@ -17,15 +17,16 @@ import (
 )
 
 type Service struct {
-	store           *Store
-	storage         *Storage
-	inspector       library.MediaInspector
-	uploadLocksMu   sync.Mutex
-	uploadLocks     map[string]*uploadLock
-	activeUploadsMu sync.Mutex
-	activeUploads   map[string]*activeUpload
-	cancelingJobs   map[string]bool
-	commitPhaseHook func(commitPhase) error
+	store            *Store
+	storage          *Storage
+	inspector        library.MediaInspector
+	uploadLocksMu    sync.Mutex
+	uploadLocks      map[string]*uploadLock
+	activeUploadsMu  sync.Mutex
+	activeUploads    map[string]*activeUpload
+	cancelingJobs    map[string]bool
+	commitPhaseHook  func(commitPhase) error
+	commitResultHook func() error
 }
 
 var managedImportCommitMu sync.Mutex
@@ -321,15 +322,8 @@ func (service *Service) recoverCommit(ctx context.Context, journal commitJournal
 	switch journal.Phase {
 	case COMMIT_PHASE_PREPARED, COMMIT_PHASE_PLACED, COMMIT_PHASE_VERIFIED:
 		return service.rollbackUncommittedJournal(ctx, journal, placement)
-	case COMMIT_PHASE_DATABASE_COMMITTED:
+	case COMMIT_PHASE_DATABASE_COMMITTED, COMMIT_PHASE_CLEANED:
 		return service.completePendingJournal(ctx, journal, placement)
-	case COMMIT_PHASE_CLEANED:
-		job, err := service.store.GetJob(ctx, journal.JobID)
-		if err != nil {
-			return err
-		}
-		_, err = service.store.FinalizeCommit(ctx, job, journal.TrackID, journal.ID)
-		return err
 	default:
 		return fmt.Errorf("unsupported Managed Import commit phase %q", journal.Phase)
 	}
@@ -367,11 +361,13 @@ func (service *Service) completePendingJournal(ctx context.Context, journal comm
 		}
 		return service.store.RollbackCommitJournal(ctx, journal.ID, reason)
 	}
-	if err := service.storage.CleanupPlacement(placement); err != nil {
-		return err
-	}
-	if err := service.store.UpdateCommitPhase(ctx, journal.ID, COMMIT_PHASE_CLEANED); err != nil {
-		return err
+	if journal.Phase == COMMIT_PHASE_DATABASE_COMMITTED {
+		if err := service.storage.CleanupPlacement(placement); err != nil {
+			return err
+		}
+		if err := service.store.UpdateCommitPhase(ctx, journal.ID, COMMIT_PHASE_CLEANED); err != nil {
+			return err
+		}
 	}
 	job, err := service.store.GetJob(ctx, journal.JobID)
 	if err != nil {
@@ -688,6 +684,19 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if err != nil {
 		return Result{}, err
 	}
+	journal, hasJournal, err := service.store.FindIncompleteCommitJournal(ctx, job.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	if hasJournal {
+		if recoveryErr := service.recoverCommit(ctx, journal); recoveryErr != nil {
+			return Result{}, recoveryErr
+		}
+		job, err = service.store.GetJob(ctx, job.ID)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	if job.Status == STATUS_COMMITTED {
 		if revision != job.Revision-1 {
 			return Result{}, ErrRevisionConflict
@@ -841,6 +850,20 @@ func (service *Service) handleBatchConfirmationError(ctx context.Context, job im
 	if ctx.Err() != nil {
 		return errors.Join(confirmationErr, ctx.Err())
 	}
+	persistedJob, err := service.store.GetJob(ctx, job.ID)
+	if err != nil {
+		return errors.Join(confirmationErr, err)
+	}
+	if persistedJob.Status == STATUS_COMMITTED {
+		return nil
+	}
+	_, hasJournal, journalErr := service.store.FindIncompleteCommitJournal(ctx, job.ID)
+	if journalErr != nil {
+		return errors.Join(confirmationErr, journalErr)
+	}
+	if hasJournal {
+		return confirmationErr
+	}
 	errorCode, reason := failureDetails(confirmationErr)
 	finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, errorCode, reason)
 	if finishErr != nil {
@@ -909,7 +932,7 @@ func (service *Service) prepareCommit(ctx context.Context, job importJob, inspec
 		ID: uuid.NewString(), JobID: job.ID, TrackID: identity.TrackID, Phase: COMMIT_PHASE_PREPARED,
 		StagedFilePath: job.StagedFilePath, AudioFilePath: plannedPlacement.AudioPath,
 		ArtworkFilePath: plannedPlacement.ArtworkPath, AudioSHA256: inspection.FileSHA256,
-		ArtworkSHA256: inspection.AlbumArtwork.SHA256, IsArtworkCreated: identity.ExistingArtworkPath == "",
+		ArtworkSHA256: inspection.AlbumArtwork.SHA256,
 	}
 	if err := service.store.CreateCommitJournal(ctx, journal); err != nil {
 		return commitIdentity{}, commitJournal{}, err
@@ -921,7 +944,10 @@ func (service *Service) prepareCommit(ctx context.Context, job importJob, inspec
 }
 
 func (service *Service) placeAndVerifyCommit(ctx context.Context, job importJob, inspection library.MediaInspection, identity commitIdentity, journal commitJournal) (placedFiles, error) {
-	placement, placementErr := service.storage.Place(job.StagedFilePath, inspection, identity)
+	placement, placementErr := service.storage.Place(job.StagedFilePath, inspection, identity, func() error {
+		journal.IsArtworkCreated = true
+		return service.store.MarkCommitArtworkCreated(ctx, journal.ID)
+	})
 	if placementErr != nil {
 		journalErr := service.store.RollbackCommitJournal(context.WithoutCancel(ctx), journal.ID, "canonical placement failed")
 		return placedFiles{}, errors.Join(placementErr, journalErr)
@@ -952,8 +978,19 @@ func (service *Service) persistAndFinalizeCommit(ctx context.Context, job import
 		Placement:  placement,
 		Inspection: inspection,
 	}
-	if err := service.store.CommitPending(ctx, data, journal.ID); err != nil {
-		return Result{}, errors.Join(err, service.rollbackFilesystemCommit(ctx, journal, placement, "database commit failed"))
+	commitErr := service.store.CommitPending(ctx, data, journal.ID)
+	if commitErr == nil && service.commitResultHook != nil {
+		commitErr = service.commitResultHook()
+	}
+	if commitErr != nil {
+		persisted, journalErr := service.store.GetCommitJournal(context.WithoutCancel(ctx), journal.ID)
+		if journalErr != nil {
+			return Result{}, errors.Join(commitErr, journalErr)
+		}
+		if persisted.Phase == COMMIT_PHASE_VERIFIED {
+			return Result{}, errors.Join(commitErr, service.rollbackFilesystemCommit(ctx, persisted, placement, "database commit failed"))
+		}
+		return Result{}, commitErr
 	}
 	if err := service.afterCommitPhase(COMMIT_PHASE_DATABASE_COMMITTED); err != nil {
 		return Result{}, err

@@ -60,6 +60,15 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 			if _, err := libraryStore.GetTrackFilePath(context.Background(), trackID); !errors.Is(err, library.ErrNotFound) {
 				t.Fatalf("pending Track stream path visible at phase %q: %v", phase, err)
 			}
+			if phase == COMMIT_PHASE_DATABASE_COMMITTED || phase == COMMIT_PHASE_CLEANED {
+				var albumID string
+				if err := database.QueryRow(`SELECT album_id FROM tracks WHERE id = ?`, trackID).Scan(&albumID); err != nil {
+					t.Fatalf("read pending Track Album: %v", err)
+				}
+				if _, _, err := libraryStore.GetAlbumCover(context.Background(), albumID); !errors.Is(err, library.ErrNotFound) {
+					t.Fatalf("pending Track artwork visible at phase %q: %v", phase, err)
+				}
+			}
 			tracks, listErr := libraryStore.ListTracks(context.Background(), 100, 0, "")
 			if listErr != nil || tracks.Total != 0 || len(tracks.Items) != 0 {
 				t.Fatalf("pending Track listed at phase %q: tracks = %+v, error = %v", phase, tracks, listErr)
@@ -136,12 +145,15 @@ func TestRecoverPreparedJournalAfterPlacementGapRemovesCanonicalOrphans(t *testi
 		ID: "placement-gap", JobID: job.ID, TrackID: identity.TrackID, Phase: COMMIT_PHASE_PREPARED,
 		StagedFilePath: job.StagedFilePath, AudioFilePath: planned.AudioPath,
 		ArtworkFilePath: planned.ArtworkPath, AudioSHA256: inspection.FileSHA256,
-		ArtworkSHA256: inspection.AlbumArtwork.SHA256, IsArtworkCreated: true,
+		ArtworkSHA256: inspection.AlbumArtwork.SHA256,
 	}
 	if err := service.store.CreateCommitJournal(context.Background(), journal); err != nil {
 		t.Fatalf("create prepared journal: %v", err)
 	}
-	if _, err := storage.Place(job.StagedFilePath, inspection, identity); err != nil {
+	if _, err := storage.Place(job.StagedFilePath, inspection, identity, func() error {
+		journal.IsArtworkCreated = true
+		return service.store.MarkCommitArtworkCreated(context.Background(), journal.ID)
+	}); err != nil {
 		t.Fatalf("place before journal transition: %v", err)
 	}
 
@@ -159,48 +171,91 @@ func TestRecoverPreparedJournalAfterPlacementGapRemovesCanonicalOrphans(t *testi
 }
 
 func TestRecoverCorruptPendingCanonicalTrackRollsBackWithReason(t *testing.T) {
+	for _, phase := range []commitPhase{COMMIT_PHASE_DATABASE_COMMITTED, COMMIT_PHASE_CLEANED} {
+		t.Run(string(phase), func(t *testing.T) {
+			database := testutil.OpenMigratedDB(t)
+			storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+			service, job, inspection := prepareCommitRecoveryJob(t, database, storage)
+			service.commitPhaseHook = func(reached commitPhase) error {
+				if reached == phase {
+					return errInjectedCommitCrash
+				}
+				return nil
+			}
+			if _, err := service.Confirm(context.Background(), job.ID, job.Revision); !errors.Is(err, errInjectedCommitCrash) {
+				t.Fatalf("interrupt database commit: %v", err)
+			}
+
+			var canonicalPath string
+			if err := database.QueryRow(`SELECT audio_file_path FROM managed_import_commit_journal WHERE job_id = ?`, job.ID).Scan(&canonicalPath); err != nil {
+				t.Fatalf("read canonical path: %v", err)
+			}
+			if err := os.WriteFile(canonicalPath, []byte("corrupt"), 0o600); err != nil {
+				t.Fatalf("corrupt canonical Track: %v", err)
+			}
+
+			restarted := NewService(NewStore(database), storage, recoveryInspector{inspection: inspection})
+			if err := restarted.RecoverCommits(context.Background()); err != nil {
+				t.Fatalf("recover corrupt canonical Track: %v", err)
+			}
+			storedJob, err := restarted.store.GetJob(context.Background(), job.ID)
+			if err != nil {
+				t.Fatalf("get rolled-back job: %v", err)
+			}
+			if storedJob.Status != STATUS_AWAITING_CONFIRMATION {
+				t.Fatalf("rolled-back job status = %q", storedJob.Status)
+			}
+			if _, err := library.NewStore(database).GetTrack(context.Background(), commitTrackID(t, database, job.ID)); !errors.Is(err, library.ErrNotFound) {
+				t.Fatalf("corrupt pending Track visible after recovery: %v", err)
+			}
+			var recoveredPhase commitPhase
+			var reason string
+			if err := database.QueryRow(`SELECT phase, recovery_reason FROM managed_import_commit_journal WHERE job_id = ?`, job.ID).Scan(&recoveredPhase, &reason); err != nil {
+				t.Fatalf("read rollback reason: %v", err)
+			}
+			if recoveredPhase != COMMIT_PHASE_ROLLED_BACK || reason == "" {
+				t.Fatalf("recovery record = (%q, %q)", recoveredPhase, reason)
+			}
+		})
+	}
+}
+
+func TestRecoverPreparedJournalPreservesPreexistingCanonicalArtwork(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
 	service, job, inspection := prepareCommitRecoveryJob(t, database, storage)
-	service.commitPhaseHook = func(reached commitPhase) error {
-		if reached == COMMIT_PHASE_DATABASE_COMMITTED {
-			return errInjectedCommitCrash
-		}
-		return nil
-	}
-	if _, err := service.Confirm(context.Background(), job.ID, job.Revision); !errors.Is(err, errInjectedCommitCrash) {
-		t.Fatalf("interrupt database commit: %v", err)
-	}
-
-	var canonicalPath string
-	if err := database.QueryRow(`SELECT audio_file_path FROM managed_import_commit_journal WHERE job_id = ?`, job.ID).Scan(&canonicalPath); err != nil {
-		t.Fatalf("read canonical path: %v", err)
-	}
-	if err := os.WriteFile(canonicalPath, []byte("corrupt"), 0o600); err != nil {
-		t.Fatalf("corrupt canonical Track: %v", err)
-	}
-
-	restarted := NewService(NewStore(database), storage, recoveryInspector{inspection: inspection})
-	if err := restarted.RecoverCommits(context.Background()); err != nil {
-		t.Fatalf("recover corrupt canonical Track: %v", err)
-	}
-	storedJob, err := restarted.store.GetJob(context.Background(), job.ID)
+	identity, err := service.store.ResolveCommitIdentity(context.Background(), inspection.Metadata)
 	if err != nil {
-		t.Fatalf("get rolled-back job: %v", err)
+		t.Fatalf("resolve commit identity: %v", err)
 	}
-	if storedJob.Status != STATUS_AWAITING_CONFIRMATION {
-		t.Fatalf("rolled-back job status = %q", storedJob.Status)
+	planned, err := storage.planPlacement(job.StagedFilePath, inspection, identity)
+	if err != nil {
+		t.Fatalf("plan placement: %v", err)
 	}
-	if _, err := library.NewStore(database).GetTrack(context.Background(), commitTrackID(t, database, job.ID)); !errors.Is(err, library.ErrNotFound) {
-		t.Fatalf("corrupt pending Track visible after recovery: %v", err)
+	if mkdirErr := os.MkdirAll(filepath.Dir(planned.ArtworkPath), 0o750); mkdirErr != nil {
+		t.Fatalf("create canonical Album directory: %v", mkdirErr)
 	}
-	var phase commitPhase
-	var reason string
-	if err := database.QueryRow(`SELECT phase, recovery_reason FROM managed_import_commit_journal WHERE job_id = ?`, job.ID).Scan(&phase, &reason); err != nil {
-		t.Fatalf("read rollback reason: %v", err)
+	if writeErr := os.WriteFile(planned.ArtworkPath, inspection.AlbumArtwork.Data, 0o640); writeErr != nil {
+		t.Fatalf("create preexisting Album Artwork: %v", writeErr)
 	}
-	if phase != COMMIT_PHASE_ROLLED_BACK || reason == "" {
-		t.Fatalf("recovery record = (%q, %q)", phase, reason)
+	journal := commitJournal{
+		ID: "prepared-existing-artwork", JobID: job.ID, TrackID: identity.TrackID, Phase: COMMIT_PHASE_PREPARED,
+		StagedFilePath: job.StagedFilePath, AudioFilePath: planned.AudioPath,
+		ArtworkFilePath: planned.ArtworkPath, AudioSHA256: inspection.FileSHA256,
+		ArtworkSHA256: inspection.AlbumArtwork.SHA256,
+	}
+	if createErr := service.store.CreateCommitJournal(context.Background(), journal); createErr != nil {
+		t.Fatalf("create prepared journal: %v", createErr)
+	}
+	if recoveryErr := service.RecoverCommits(context.Background()); recoveryErr != nil {
+		t.Fatalf("recover prepared journal: %v", recoveryErr)
+	}
+	contents, err := os.ReadFile(planned.ArtworkPath)
+	if err != nil {
+		t.Fatalf("read preserved Album Artwork: %v", err)
+	}
+	if !bytes.Equal(contents, inspection.AlbumArtwork.Data) {
+		t.Fatalf("preserved Album Artwork = %q", contents)
 	}
 }
 
@@ -242,21 +297,70 @@ func TestCleanupRestartCompletesPendingDatabaseCommitWithoutDeletingContent(t *t
 	}
 }
 
+func TestConfirmBatchResumesDurableCommitAfterLaterError(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	service, batch, job, _ := prepareBatchCommitRecoveryJob(t, database, storage)
+	service.commitPhaseHook = func(reached commitPhase) error {
+		if reached == COMMIT_PHASE_DATABASE_COMMITTED {
+			return errInjectedCommitCrash
+		}
+		return nil
+	}
+	confirmation := BatchConfirmation{Revision: batch.Revision, SelectedFileIDs: []string{job.ID}}
+	if _, err := service.ConfirmBatch(context.Background(), batch.ID, confirmation); !errors.Is(err, errInjectedCommitCrash) {
+		t.Fatalf("interrupt Batch database commit: %v", err)
+	}
+	persistedJob, err := service.store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get interrupted Batch job: %v", err)
+	}
+	if persistedJob.Status != STATUS_AWAITING_CONFIRMATION || persistedJob.Outcome != "" {
+		t.Fatalf("interrupted Batch job = %+v", persistedJob)
+	}
+
+	service.commitPhaseHook = nil
+	completed, err := service.ConfirmBatch(context.Background(), batch.ID, confirmation)
+	if err != nil {
+		t.Fatalf("resume Batch commit: %v", err)
+	}
+	if completed.Status != BATCH_STATUS_COMPLETED || len(completed.Files) != 1 || completed.Files[0].Outcome != OUTCOME_IMPORTED {
+		t.Fatalf("resumed Batch = %+v", completed)
+	}
+}
+
+func TestConfirmResumesWhenCommitResultIsAmbiguous(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	service, job, _ := prepareCommitRecoveryJob(t, database, storage)
+	service.commitResultHook = func() error { return errInjectedCommitCrash }
+	if _, err := service.Confirm(context.Background(), job.ID, job.Revision); !errors.Is(err, errInjectedCommitCrash) {
+		t.Fatalf("ambiguous database commit result: %v", err)
+	}
+	journal, err := service.store.GetCommitJournal(context.Background(), commitJournalID(t, database, job.ID))
+	if err != nil {
+		t.Fatalf("get preserved commit journal: %v", err)
+	}
+	if journal.Phase != COMMIT_PHASE_DATABASE_COMMITTED {
+		t.Fatalf("preserved commit phase = %q", journal.Phase)
+	}
+	if _, statErr := os.Stat(journal.AudioFilePath); statErr != nil {
+		t.Fatalf("stat preserved canonical Track: %v", statErr)
+	}
+
+	service.commitResultHook = nil
+	result, err := service.Confirm(context.Background(), job.ID, job.Revision)
+	if err != nil {
+		t.Fatalf("resume ambiguous database commit: %v", err)
+	}
+	if result.Status != STATUS_COMMITTED || result.TrackID != journal.TrackID {
+		t.Fatalf("resumed commit result = %+v", result)
+	}
+}
+
 func prepareCommitRecoveryJob(t *testing.T, database *sql.DB, storage *Storage) (*Service, importJob, library.MediaInspection) {
 	t.Helper()
-	content := []byte("managed audio")
-	audioHash := sha256.Sum256(content)
-	artwork := []byte("artwork")
-	artworkHash := sha256.Sum256(artwork)
-	inspection := library.MediaInspection{
-		Metadata: library.NormalizedMediaMetadata{
-			Title: "Recovery Track", Artists: []string{"Track Artist"}, AlbumArtists: []string{"Album Artist"},
-			Album: "Recovery Album", Genres: []string{"Rock"}, TrackPosition: library.MediaPosition{Number: 1}, DiscPosition: library.MediaPosition{Number: 1},
-		},
-		AlbumArtwork: library.AlbumArtwork{MIMEType: "image/png", Width: 1, Height: 1, Data: artwork, SHA256: hex.EncodeToString(artworkHash[:])},
-		Audio:        library.TechnicalAudioProperties{Format: "flac", Container: "flac", Codec: "flac", DurationMs: 1000, SampleRateHz: 44100, ChannelCount: 2, BitDepth: 16, BitrateKbps: 800},
-		FileSHA256:   hex.EncodeToString(audioHash[:]),
-	}
+	content, inspection := commitRecoveryFixture()
 	store := NewStore(database)
 	created, err := store.CreateJob(context.Background(), "", "")
 	if err != nil {
@@ -273,6 +377,50 @@ func prepareCommitRecoveryJob(t *testing.T, database *sql.DB, storage *Storage) 
 	return NewService(store, storage, recoveryInspector{inspection: inspection}), job, inspection
 }
 
+func commitRecoveryFixture() ([]byte, library.MediaInspection) {
+	content := []byte("managed audio")
+	audioHash := sha256.Sum256(content)
+	artwork := []byte("artwork")
+	artworkHash := sha256.Sum256(artwork)
+	inspection := library.MediaInspection{
+		Metadata: library.NormalizedMediaMetadata{
+			Title: "Recovery Track", Artists: []string{"Track Artist"}, AlbumArtists: []string{"Album Artist"},
+			Album: "Recovery Album", Genres: []string{"Rock"}, TrackPosition: library.MediaPosition{Number: 1}, DiscPosition: library.MediaPosition{Number: 1},
+		},
+		AlbumArtwork: library.AlbumArtwork{MIMEType: "image/png", Width: 1, Height: 1, Data: artwork, SHA256: hex.EncodeToString(artworkHash[:])},
+		Audio:        library.TechnicalAudioProperties{Format: "flac", Container: "flac", Codec: "flac", DurationMs: 1000, SampleRateHz: 44100, ChannelCount: 2, BitDepth: 16, BitrateKbps: 800},
+		FileSHA256:   hex.EncodeToString(audioHash[:]),
+	}
+	return content, inspection
+}
+
+func prepareBatchCommitRecoveryJob(t *testing.T, database *sql.DB, storage *Storage) (*Service, Batch, importJob, library.MediaInspection) {
+	t.Helper()
+	content, inspection := commitRecoveryFixture()
+	service := NewService(NewStore(database), storage, recoveryInspector{inspection: inspection})
+	batch, err := service.store.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create recovery Batch: %v", err)
+	}
+	created, err := service.store.CreateJob(context.Background(), batch.ID, "recovery-file")
+	if err != nil {
+		t.Fatalf("create recovery Batch job: %v", err)
+	}
+	upload, err := storage.StageUpload(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		t.Fatalf("stage recovery Batch upload: %v", err)
+	}
+	job, err := service.store.MarkPreview(context.Background(), created.ID, "track.flac", upload.Path, upload.SHA256, `{}`, upload.Size, 1024)
+	if err != nil {
+		t.Fatalf("mark recovery Batch preview: %v", err)
+	}
+	batch, err = service.store.GetBatch(context.Background(), batch.ID)
+	if err != nil {
+		t.Fatalf("get recovery Batch: %v", err)
+	}
+	return service, batch, job, inspection
+}
+
 func commitTrackID(t *testing.T, database *sql.DB, jobID string) string {
 	t.Helper()
 	var trackID string
@@ -282,6 +430,17 @@ func commitTrackID(t *testing.T, database *sql.DB, jobID string) string {
 		t.Fatalf("read journaled Track ID: %v", err)
 	}
 	return trackID
+}
+
+func commitJournalID(t *testing.T, database *sql.DB, jobID string) string {
+	t.Helper()
+	var journalID string
+	if err := database.QueryRow(`
+		SELECT id FROM managed_import_commit_journal
+		WHERE job_id = ? ORDER BY created_at DESC LIMIT 1`, jobID).Scan(&journalID); err != nil {
+		t.Fatalf("read commit journal ID: %v", err)
+	}
+	return journalID
 }
 
 func assertNoCanonicalFiles(t *testing.T, storageRoot string) {

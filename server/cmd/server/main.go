@@ -100,11 +100,10 @@ func main() {
 
 	server := newHTTPServer(cfg.Addr, r)
 
-	if err := libModule.Start(ctx); err != nil {
-		slog.Error("library startup failed", "error", err)
-	}
 	if err := importModule.Start(ctx); err != nil {
 		slog.Error("Managed Import startup cleanup failed", "error", err)
+	} else if err := libModule.Start(ctx); err != nil {
+		slog.Error("library startup failed", "error", err)
 	}
 
 	go func() {

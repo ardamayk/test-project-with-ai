@@ -255,13 +255,13 @@ func (s *Store) readAlbumArtwork(ctx context.Context, albumIDs []string) (map[st
 	}
 	query := fmt.Sprintf(`SELECT album_id, source_track_id, content_sha256, media_type,
 		width, height, encoded_size_bytes
-		FROM album_artwork WHERE album_id IN (%s)
+		FROM visible_album_artwork WHERE album_id IN (%s)
 		UNION ALL
 		SELECT legacy.album_id, legacy.source_track_id, legacy.content_sha256, legacy.media_type,
 			legacy.width, legacy.height, legacy.encoded_size_bytes
 		FROM legacy_album_artwork_metadata legacy
 		WHERE legacy.album_id IN (%s) AND NOT EXISTS (
-			SELECT 1 FROM album_artwork current WHERE current.album_id = legacy.album_id
+			SELECT 1 FROM visible_album_artwork current WHERE current.album_id = legacy.album_id
 		)`, placeholders, placeholders)
 	args = append(args, args...)
 	rows, err := s.db.QueryContext(ctx, query, args...)

@@ -844,6 +844,17 @@ func (store *Store) MarkCommitPlaced(ctx context.Context, journalID string, isAr
 	return requireMutation(result)
 }
 
+func (store *Store) MarkCommitArtworkCreated(ctx context.Context, journalID string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal
+		SET artwork_created = 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase = ?`, journalID, COMMIT_PHASE_PREPARED)
+	if err != nil {
+		return fmt.Errorf("journal Canonical Album Artwork creation: %w", err)
+	}
+	return requireMutation(result)
+}
+
 func (store *Store) UpdateCommitPhase(ctx context.Context, journalID string, phase commitPhase) error {
 	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_commit_journal SET phase = ?, updated_at = CURRENT_TIMESTAMP
@@ -907,6 +918,39 @@ func (store *Store) ListIncompleteCommitJournals(ctx context.Context) (journals 
 		return nil, fmt.Errorf("iterate Managed Import commit journals: %w", err)
 	}
 	return journals, nil
+}
+
+func (store *Store) GetCommitJournal(ctx context.Context, journalID string) (commitJournal, error) {
+	return store.readCommitJournal(ctx, `WHERE id = ?`, journalID)
+}
+
+func (store *Store) FindIncompleteCommitJournal(ctx context.Context, jobID string) (commitJournal, bool, error) {
+	journal, err := store.readCommitJournal(ctx, `WHERE job_id = ? AND phase NOT IN (?, ?)`, jobID, COMMIT_PHASE_COMPLETED, COMMIT_PHASE_ROLLED_BACK)
+	if errors.Is(err, ErrNotFound) {
+		return commitJournal{}, false, nil
+	}
+	return journal, err == nil, err
+}
+
+func (store *Store) readCommitJournal(ctx context.Context, where string, args ...any) (commitJournal, error) {
+	var journal commitJournal
+	err := store.database.QueryRowContext(ctx, `
+		SELECT id, job_id, track_id, phase, staged_file_path, audio_file_path,
+			artwork_file_path, audio_sha256, artwork_sha256, artwork_created,
+			COALESCE(recovery_reason, '')
+		FROM managed_import_commit_journal `+where, args...).Scan(
+		&journal.ID, &journal.JobID, &journal.TrackID, &journal.Phase,
+		&journal.StagedFilePath, &journal.AudioFilePath, &journal.ArtworkFilePath,
+		&journal.AudioSHA256, &journal.ArtworkSHA256, &journal.IsArtworkCreated,
+		&journal.RecoveryReason,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return commitJournal{}, ErrNotFound
+	}
+	if err != nil {
+		return commitJournal{}, fmt.Errorf("read Managed Import commit journal: %w", err)
+	}
+	return journal, nil
 }
 
 func (store *Store) CommitPending(ctx context.Context, data commitData, journalID string) (returnErr error) {
