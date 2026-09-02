@@ -58,6 +58,14 @@ const (
 
 type ImportStatus string
 
+type DuplicateClassification string
+
+const (
+	DUPLICATE_NONE     DuplicateClassification = "none"
+	DUPLICATE_EXACT    DuplicateClassification = "exact_duplicate"
+	DUPLICATE_POSSIBLE DuplicateClassification = "possible_duplicate"
+)
+
 type commitPhase string
 
 const (
@@ -135,15 +143,42 @@ type BatchFile struct {
 }
 
 type BatchConfirmation struct {
-	Revision        int      `json:"revision"`
-	SelectedFileIDs []string `json:"selectedFileIds"`
+	Revision           int                 `json:"revision"`
+	SelectedFileIDs    []string            `json:"selectedFileIds"`
+	DuplicateDecisions []DuplicateDecision `json:"duplicateDecisions,omitempty"`
 }
 
+type DuplicateDecision struct {
+	JobID  string          `json:"jobId"`
+	Action DuplicateAction `json:"action"`
+}
+
+type DuplicateAction string
+
+const (
+	DUPLICATE_ACTION_IMPORT_SEPARATELY DuplicateAction = "import_separately"
+	DUPLICATE_ACTION_REPLACE_EXISTING  DuplicateAction = "replace_existing"
+	DUPLICATE_ACTION_DO_NOT_IMPORT     DuplicateAction = "do_not_import"
+)
+
 type Preview struct {
-	JobID    string       `json:"jobId"`
-	Status   ImportStatus `json:"status"`
-	Revision int          `json:"revision"`
-	File     PreviewFile  `json:"file"`
+	JobID                   string                  `json:"jobId"`
+	Status                  ImportStatus            `json:"status"`
+	Revision                int                     `json:"revision"`
+	File                    PreviewFile             `json:"file"`
+	DuplicateClassification DuplicateClassification `json:"duplicateClassification"`
+	DuplicateCandidates     []DuplicateCandidate    `json:"duplicateCandidates,omitempty"`
+}
+
+type DuplicateCandidate struct {
+	TrackID    string   `json:"trackId"`
+	Title      string   `json:"title"`
+	Artists    []string `json:"artists"`
+	Album      string   `json:"album"`
+	DiscNo     int      `json:"discNo"`
+	TrackNo    int      `json:"trackNo"`
+	Format     string   `json:"format"`
+	DurationMs int      `json:"durationMs"`
 }
 
 type PreviewFile struct {
@@ -221,7 +256,8 @@ type MigrationStageFile struct {
 }
 
 type Confirmation struct {
-	Revision int `json:"revision"`
+	Revision          int             `json:"revision"`
+	DuplicateDecision DuplicateAction `json:"duplicateDecision,omitempty"`
 }
 
 type Result struct {
@@ -322,10 +358,11 @@ func validationError(err error) error {
 
 func previewFromInspection(job importJob, inspection library.MediaInspection) Preview {
 	return Preview{
-		JobID:    job.ID,
-		Status:   job.Status,
-		Revision: job.Revision,
-		File:     previewFileFromInspection(job.OriginalFilename, inspection),
+		JobID:                   job.ID,
+		Status:                  job.Status,
+		Revision:                job.Revision,
+		File:                    previewFileFromInspection(job.OriginalFilename, inspection),
+		DuplicateClassification: DUPLICATE_NONE,
 	}
 }
 

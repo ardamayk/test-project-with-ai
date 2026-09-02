@@ -34,6 +34,7 @@ type commitData struct {
 	Identity   commitIdentity
 	Placement  placedFiles
 	Inspection library.MediaInspection
+	AlbumKey   string
 }
 
 type legacyMigrationSource struct {
@@ -746,6 +747,119 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 	return store.GetJob(ctx, jobID)
 }
 
+func (store *Store) MarkExactDuplicate(ctx context.Context, jobID, originalFilename, stagedPath, contentSHA256, previewJSON, trackID string, uploadSize int64) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Exact Duplicate transition: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Exact Duplicate transition: %w", rollbackErr))
+		}
+	}()
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs
+		SET status = ?, revision = revision + 1, original_filename = ?, content_sha256 = ?,
+			track_id = ?, preview_json = ?, error_code = ?, error_field = 'file',
+			error_reason = 'file bytes match an existing Track',
+			outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END, selected = 0,
+			staged_file_path = ?, upload_size_bytes = ?, validation_progress = 100,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ?`, STATUS_FAILED, originalFilename, contentSHA256,
+		trackID, previewJSON, ERROR_CODE_EXACT_DUPLICATE, OUTCOME_REJECTED, stagedPath, uploadSize, jobID, STATUS_UPLOADING)
+	if err != nil {
+		return fmt.Errorf("mark Exact Duplicate: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("mark Exact Duplicate: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?) AND status = ?`,
+		jobID, BATCH_STATUS_UPLOADING); err != nil {
+		return fmt.Errorf("revise Exact Duplicate Batch file: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Exact Duplicate transition: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) ClearStagedFile(ctx context.Context, jobID string) error {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Managed Import staging cleanup: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs SET staged_file_path = NULL, upload_size_bytes = 0,
+			status = CASE WHEN error_code = ? THEN ? ELSE status END,
+			outcome = CASE WHEN error_code = ? AND batch_id IS NOT NULL THEN ? ELSE outcome END,
+			selected = CASE WHEN error_code = ? THEN 0 ELSE selected END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND staged_file_path IS NOT NULL`, ERROR_CODE_EXACT_DUPLICATE, STATUS_FAILED,
+		ERROR_CODE_EXACT_DUPLICATE, OUTCOME_REJECTED, ERROR_CODE_EXACT_DUPLICATE, jobID)
+	if err != nil {
+		return fmt.Errorf("clear Managed Import staging path: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("clear Managed Import staging path: %w", err)
+	}
+	if err := archiveStandaloneHistory(ctx, transaction, jobID, HISTORY_RESULT_FAILED); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Managed Import staging cleanup: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) MarkConfirmationExactDuplicate(ctx context.Context, jobID string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_jobs
+		SET status = ?, error_code = ?, error_field = 'file',
+			error_reason = 'file bytes match an existing Track',
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ?`, STATUS_FAILED, ERROR_CODE_EXACT_DUPLICATE,
+		jobID, STATUS_AWAITING_CONFIRMATION)
+	if err != nil {
+		return fmt.Errorf("mark confirmation Exact Duplicate: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("mark confirmation Exact Duplicate: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) RefreshDuplicatePreview(ctx context.Context, jobID, previewJSON string) error {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin duplicate preview refresh: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs SET preview_json = ?, revision = revision + 1, selected = 0,
+			updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+		previewJSON, jobID, STATUS_AWAITING_CONFIRMATION)
+	if err != nil {
+		return fmt.Errorf("refresh duplicate preview: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("refresh duplicate preview: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?) AND status = ?`,
+		jobID, BATCH_STATUS_UPLOADING); err != nil {
+		return fmt.Errorf("revise refreshed duplicate batch: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit duplicate preview refresh: %w", err)
+	}
+	return nil
+}
+
 func (store *Store) MarkUploadInterrupted(ctx context.Context, jobID, originalFilename string) (returnErr error) {
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
@@ -1252,7 +1366,155 @@ func (store *Store) FindExactDuplicateTrackID(ctx context.Context, contentSHA256
 	return trackID, nil
 }
 
-func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) (commitIdentity, error) {
+func (store *Store) ClassifyDuplicate(ctx context.Context, inspection library.MediaInspection) (DuplicateClassification, []DuplicateCandidate, error) {
+	trackID, err := store.FindExactDuplicateTrackID(ctx, inspection.FileSHA256)
+	if err != nil {
+		return "", nil, err
+	}
+	if trackID != "" {
+		candidate, readErr := store.readDuplicateCandidate(ctx, trackID)
+		if readErr != nil {
+			return "", nil, readErr
+		}
+		return DUPLICATE_EXACT, []DuplicateCandidate{candidate}, nil
+	}
+	trackIDs, err := store.findPossibleDuplicateTrackIDs(ctx, inspection.Metadata)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(trackIDs) == 0 {
+		return DUPLICATE_NONE, nil, nil
+	}
+	candidates := make([]DuplicateCandidate, 0, len(trackIDs))
+	for _, candidateTrackID := range trackIDs {
+		candidate, readErr := store.readDuplicateCandidate(ctx, candidateTrackID)
+		if readErr != nil {
+			return "", nil, readErr
+		}
+		candidates = append(candidates, candidate)
+	}
+	return DUPLICATE_POSSIBLE, candidates, nil
+}
+
+func (store *Store) findPossibleDuplicateTrackIDs(ctx context.Context, metadata library.NormalizedMediaMetadata) ([]string, error) {
+	positionIDs, err := store.findDuplicatesByPosition(ctx, metadata)
+	if err != nil {
+		return nil, err
+	}
+	identityIDs, err := store.findDuplicatesByIdentity(ctx, metadata)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(positionIDs)+len(identityIDs))
+	trackIDs := make([]string, 0, len(positionIDs)+len(identityIDs))
+	for _, trackID := range append(positionIDs, identityIDs...) {
+		if !seen[trackID] {
+			seen[trackID] = true
+			trackIDs = append(trackIDs, trackID)
+		}
+	}
+	return trackIDs, nil
+}
+
+func (store *Store) findDuplicatesByPosition(ctx context.Context, metadata library.NormalizedMediaMetadata) ([]string, error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT tracks.id
+		FROM tracks
+		JOIN albums ON albums.id = tracks.album_id
+		WHERE tracks.missing_at IS NULL
+			AND albums.identity_key = ?
+			AND COALESCE(tracks.disc_no, 1) = ? AND tracks.track_no = ?
+		ORDER BY tracks.id`, albumIdentityKey(metadata), metadata.DiscPosition.Number,
+		metadata.TrackPosition.Number)
+	if err != nil {
+		return nil, fmt.Errorf("inspect possible Managed Import position duplicates: %w", err)
+	}
+	return scanTrackIDs(rows, "position duplicates")
+}
+
+func (store *Store) findDuplicatesByIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) ([]string, error) {
+	normalizedArtists := make([]string, len(metadata.Artists))
+	for index, artist := range metadata.Artists {
+		normalizedArtists[index] = normalizeIdentity(artist)
+	}
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT tracks.id
+		FROM tracks
+		JOIN albums ON albums.id = tracks.album_id
+		WHERE tracks.missing_at IS NULL
+			AND albums.identity_key = ?
+			AND tracks.title_sort = ?
+			AND COALESCE((SELECT GROUP_CONCAT(name_normalized, char(30)) FROM (
+				SELECT artists.name_normalized
+				FROM track_artists JOIN artists ON artists.id = track_artists.artist_id
+				WHERE track_artists.track_id = tracks.id ORDER BY track_artists.position
+			)), '') = ?
+		ORDER BY tracks.id`, albumIdentityKey(metadata), normalizeIdentity(metadata.Title),
+		strings.Join(normalizedArtists, "\x1e"))
+	if err != nil {
+		return nil, fmt.Errorf("inspect possible Managed Import identity duplicates: %w", err)
+	}
+	return scanTrackIDs(rows, "identity duplicates")
+}
+
+func scanTrackIDs(rows *sql.Rows, description string) (trackIDs []string, returnErr error) {
+	defer func() {
+		if err := rows.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close Managed Import %s: %w", description, err))
+		}
+	}()
+	for rows.Next() {
+		var trackID string
+		if err := rows.Scan(&trackID); err != nil {
+			return nil, fmt.Errorf("scan Managed Import %s: %w", description, err)
+		}
+		trackIDs = append(trackIDs, trackID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Managed Import %s: %w", description, err)
+	}
+	return trackIDs, nil
+}
+
+func (store *Store) readDuplicateCandidate(ctx context.Context, trackID string) (candidate DuplicateCandidate, returnErr error) {
+	err := store.database.QueryRowContext(ctx, `
+		SELECT tracks.id, tracks.title, albums.title, COALESCE(tracks.disc_no, 1),
+			tracks.track_no, tracks.format, tracks.duration_ms
+		FROM tracks JOIN albums ON albums.id = tracks.album_id
+		WHERE tracks.id = ?`, trackID,
+	).Scan(&candidate.TrackID, &candidate.Title, &candidate.Album, &candidate.DiscNo,
+		&candidate.TrackNo, &candidate.Format, &candidate.DurationMs)
+	if err != nil {
+		return DuplicateCandidate{}, fmt.Errorf("read Managed Import duplicate candidate: %w", err)
+	}
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT artists.name FROM track_artists
+		JOIN artists ON artists.id = track_artists.artist_id
+		WHERE track_artists.track_id = ? ORDER BY track_artists.position`, trackID)
+	if err != nil {
+		return DuplicateCandidate{}, fmt.Errorf("read duplicate candidate Artists: %w", err)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, rows.Close())
+	}()
+	for rows.Next() {
+		var artist string
+		if err := rows.Scan(&artist); err != nil {
+			return DuplicateCandidate{}, fmt.Errorf("scan duplicate candidate Artist: %w", err)
+		}
+		candidate.Artists = append(candidate.Artists, artist)
+	}
+	if err := rows.Err(); err != nil {
+		return DuplicateCandidate{}, fmt.Errorf("iterate duplicate candidate Artists: %w", err)
+	}
+	return candidate, nil
+}
+
+func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata, albumKeys ...string) (commitIdentity, error) {
+	albumKey := albumIdentityKey(metadata)
+	if len(albumKeys) > 0 {
+		albumKey = albumKeys[0]
+	}
 	identity := commitIdentity{TrackID: uuid.NewString()}
 	albumArtistID, err := store.resolveAlbumArtistID(ctx, metadata.AlbumArtists[0])
 	if err != nil {
@@ -1264,7 +1526,7 @@ func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.
 		`SELECT albums.id, album_artwork.file_path, album_artwork.content_sha256
 		FROM albums
 		LEFT JOIN album_artwork ON album_artwork.album_id = albums.id
-		WHERE albums.identity_key = ?`, albumIdentityKey(metadata),
+		WHERE albums.identity_key = ?`, albumKey,
 	).Scan(&identity.AlbumID, &artworkPath, &artworkSHA256)
 	if errors.Is(err, sql.ErrNoRows) {
 		identity.AlbumID = uuid.NewString()
@@ -1627,7 +1889,7 @@ func upsertAlbum(ctx context.Context, transaction *sql.Tx, data commitData, arti
 	metadata := data.Inspection.Metadata
 	primaryArtistID := artistIDs[normalizeIdentity(metadata.AlbumArtists[0])]
 	var existingID string
-	err := transaction.QueryRowContext(ctx, `SELECT id FROM albums WHERE identity_key = ?`, albumIdentityKey(metadata)).Scan(&existingID)
+	err := transaction.QueryRowContext(ctx, `SELECT id FROM albums WHERE identity_key = ?`, data.AlbumKey).Scan(&existingID)
 	if err == nil {
 		if existingID != data.Identity.AlbumID {
 			return fmt.Errorf("resolved Album identity changed during Managed Import commit")
@@ -1644,7 +1906,7 @@ func upsertAlbum(ctx context.Context, transaction *sql.Tx, data commitData, arti
 	_, err = transaction.ExecContext(ctx, `
 		INSERT INTO albums (id, artist_id, title, title_sort, year, release_date, genres, identity_key)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		data.Identity.AlbumID, primaryArtistID, metadata.Album, normalizeIdentity(metadata.Album), nullablePositive(metadata.Year), releaseDate(metadata.Year), string(genres), albumIdentityKey(metadata),
+		data.Identity.AlbumID, primaryArtistID, metadata.Album, normalizeIdentity(metadata.Album), nullablePositive(metadata.Year), releaseDate(metadata.Year), string(genres), data.AlbumKey,
 	)
 	if err != nil {
 		return fmt.Errorf("create Managed Import Album: %w", err)
