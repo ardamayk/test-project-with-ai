@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,6 +185,114 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	assertCanonicalStorage(t, managedStoragePath, fixture)
 }
 
+func TestManagedImportSerializesConcurrentConfirmationOfOnePreview(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	jobID, revision := uploadFLACForPreview(t, router, readStrictFLACFixture(t), "concurrent.flac")
+
+	const confirmationCount = 8
+	responses := make(chan *httptest.ResponseRecorder, confirmationCount)
+	start := make(chan struct{})
+	var waitGroup sync.WaitGroup
+	for range confirmationCount {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			body := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision))
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", body)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			responses <- response
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	close(responses)
+
+	trackID := ""
+	for response := range responses {
+		if response.Code != http.StatusOK {
+			t.Fatalf("concurrent confirmation status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var result managedimport.Result
+		testutil.DecodeJSON(t, response, &result)
+		if trackID == "" {
+			trackID = result.TrackID
+		}
+		if result.TrackID != trackID {
+			t.Fatalf("concurrent confirmation Track ID = %q, want %q", result.TrackID, trackID)
+		}
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("concurrently confirmed Track count = %d, err = %v", trackCount, err)
+	}
+}
+
+func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	fixture := readStrictFLACFixture(t)
+	firstJobID, firstRevision := uploadFLACForPreview(t, router, fixture, "first.flac")
+	secondJobID, secondRevision := uploadFLACForPreview(t, router, fixture, "second.flac")
+
+	type confirmationResult struct {
+		response *httptest.ResponseRecorder
+		jobID    string
+	}
+	results := make(chan confirmationResult, 2)
+	start := make(chan struct{})
+	for _, confirmation := range []struct {
+		jobID    string
+		revision int
+	}{
+		{jobID: firstJobID, revision: firstRevision},
+		{jobID: secondJobID, revision: secondRevision},
+	} {
+		confirmation := confirmation
+		go func() {
+			<-start
+			body := strings.NewReader(fmt.Sprintf(`{"revision":%d}`, confirmation.revision))
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/imports/"+confirmation.jobID+"/confirm", body)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			results <- confirmationResult{response: response, jobID: confirmation.jobID}
+		}()
+	}
+	close(start)
+
+	committedCount := 0
+	duplicateCount := 0
+	for range 2 {
+		result := <-results
+		switch result.response.Code {
+		case http.StatusOK:
+			committedCount++
+		case http.StatusConflict:
+			duplicateCount++
+			testutil.AssertErrorCode(t, result.response, http.StatusConflict, "exact_duplicate")
+		default:
+			t.Fatalf("exact-byte confirmation for job %q status = %d, body = %s", result.jobID, result.response.Code, result.response.Body.String())
+		}
+	}
+	if committedCount != 1 || duplicateCount != 1 {
+		t.Fatalf("exact-byte confirmation results = %d committed, %d duplicate", committedCount, duplicateCount)
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("exact-byte Track count = %d, err = %v", trackCount, err)
+	}
+}
+
 func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()
@@ -254,12 +363,58 @@ func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 		t.Fatalf("completed Import Batch = %+v", batch)
 	}
 	outcomes := []managedimport.ImportOutcome{batch.Files[0].Outcome, batch.Files[1].Outcome, batch.Files[2].Outcome, batch.Files[3].Outcome}
-	wantOutcomes := []managedimport.ImportOutcome{managedimport.OUTCOME_IMPORTED, managedimport.OUTCOME_FAILED, managedimport.OUTCOME_REJECTED, managedimport.OUTCOME_NOT_ATTEMPTED}
+	wantOutcomes := []managedimport.ImportOutcome{managedimport.OUTCOME_IMPORTED, managedimport.OUTCOME_REJECTED, managedimport.OUTCOME_REJECTED, managedimport.OUTCOME_NOT_ATTEMPTED}
 	if !reflect.DeepEqual(outcomes, wantOutcomes) {
 		t.Fatalf("Import Batch outcomes = %v, want %v", outcomes, wantOutcomes)
 	}
+	if batch.Files[1].ErrorCode != "exact_duplicate" {
+		t.Fatalf("exact-byte Batch failure code = %q", batch.Files[1].ErrorCode)
+	}
 	if tracks := listTracks(t, router); len(tracks.Items) != 1 || tracks.Items[0].ID != batch.Files[0].TrackID {
 		t.Fatalf("Tracks after partial Import Batch = %+v", tracks.Items)
+	}
+}
+
+func TestManagedImportBatchReportsExactByteLoserAsRejectedDuplicate(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	importModule.RegisterRoutes(router)
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	fixture := readStrictFLACFixture(t)
+	jobIDs := []string{
+		createBatchImportJob(t, router, batchID),
+		createBatchImportJob(t, router, batchID),
+	}
+	for index, jobID := range jobIDs {
+		response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+			"Content-Type":      "audio/flac",
+			"X-Import-Filename": fmt.Sprintf("duplicate-%d.flac", index),
+		})
+		if response.Code != http.StatusOK {
+			t.Fatalf("upload exact-byte Batch file %d status = %d, body = %s", index, response.Code, response.Body.String())
+		}
+	}
+
+	response := confirmImportBatch(t, router, getImportBatch(t, router, batchID), jobIDs)
+	if response.Code != http.StatusOK {
+		t.Fatalf("confirm exact-byte Batch status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var batch managedimport.Batch
+	testutil.DecodeJSON(t, response, &batch)
+	if len(batch.Files) != 2 {
+		t.Fatalf("exact-byte Batch files = %+v", batch.Files)
+	}
+	if batch.Files[0].Outcome != managedimport.OUTCOME_IMPORTED {
+		t.Fatalf("first exact-byte outcome = %q", batch.Files[0].Outcome)
+	}
+	if batch.Files[1].Outcome != managedimport.OUTCOME_REJECTED || batch.Files[1].ErrorCode != "exact_duplicate" {
+		t.Fatalf("second exact-byte result = %+v", batch.Files[1])
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("exact-byte Batch Track count = %d, err = %v", trackCount, err)
 	}
 }
 

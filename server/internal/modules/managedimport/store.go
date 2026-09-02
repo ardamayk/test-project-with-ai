@@ -494,6 +494,23 @@ func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata lib
 	return "", nil
 }
 
+func (store *Store) FindExactDuplicateTrackID(ctx context.Context, contentSHA256 string) (string, error) {
+	var trackID string
+	err := store.database.QueryRowContext(ctx, `
+		SELECT tracks.id
+		FROM track_sources
+		JOIN tracks ON tracks.id = track_sources.track_id
+		WHERE track_sources.content_sha256 = ?`, contentSHA256,
+	).Scan(&trackID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect exact Managed Import duplicate: %w", err)
+	}
+	return trackID, nil
+}
+
 func (store *Store) ResolveCommitIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) (commitIdentity, error) {
 	identity := commitIdentity{TrackID: uuid.NewString()}
 	albumArtistID, err := store.resolveAlbumArtistID(ctx, metadata.AlbumArtists[0])

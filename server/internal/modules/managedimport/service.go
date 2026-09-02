@@ -311,8 +311,17 @@ func (service *Service) Confirm(ctx context.Context, jobID string, revision int)
 }
 
 func (service *Service) confirmJob(ctx context.Context, job importJob, revision int) (Result, error) {
+	service.commitMu.Lock()
+	defer service.commitMu.Unlock()
+	job, err := service.store.GetJob(ctx, job.ID)
+	if err != nil {
+		return Result{}, err
+	}
 	if job.Status == STATUS_COMMITTED {
 		return Result{JobID: job.ID, Status: job.Status, Revision: job.Revision, TrackID: job.TrackID}, nil
+	}
+	if job.Status == STATUS_FAILED && job.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
+		return Result{}, ErrExactDuplicate
 	}
 	if job.Status != STATUS_AWAITING_CONFIRMATION {
 		return Result{}, ErrInvalidState
@@ -328,8 +337,8 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if err != nil {
 		return Result{}, validationError(err)
 	}
-	if err := service.validateAlbumPositions(ctx, job.ID, inspection.Metadata); err != nil {
-		return Result{}, err
+	if positionErr := service.validateAlbumPositions(ctx, job.ID, inspection.Metadata); positionErr != nil {
+		return Result{}, positionErr
 	}
 	if inspection.FileSHA256 != job.ContentSHA256 {
 		return Result{}, &ValidationError{
@@ -339,10 +348,27 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 			Err:    errors.New("staged file hash changed after Import Preview"),
 		}
 	}
-	if err := service.preflightCommit(stagedBytes, inspection); err != nil {
+	existingTrackID, err := service.store.FindExactDuplicateTrackID(ctx, inspection.FileSHA256)
+	if err != nil {
 		return Result{}, err
 	}
+	if existingTrackID != "" {
+		return Result{}, service.rejectExactDuplicate(ctx, job)
+	}
+	if preflightErr := service.preflightCommit(stagedBytes, inspection); preflightErr != nil {
+		return Result{}, preflightErr
+	}
 	return service.commit(ctx, job, inspection)
+}
+
+func (service *Service) rejectExactDuplicate(ctx context.Context, job importJob) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	cleanupErr := service.storage.RemoveStaged(job.StagedFilePath)
+	if cleanupErr == nil {
+		cleanupErr = service.store.MarkFailed(cleanupCtx, job.ID, job.OriginalFilename, ERROR_CODE_EXACT_DUPLICATE, "file", "file bytes match an existing Track")
+	}
+	return errors.Join(ErrExactDuplicate, cleanupErr)
 }
 
 func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confirmation BatchConfirmation) (Batch, error) {
@@ -406,6 +432,16 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) 
 			continue
 		}
 		if _, err := service.confirmJob(ctx, job, job.Revision); err != nil {
+			if errors.Is(err, ErrExactDuplicate) {
+				persistedJob, getErr := service.store.GetJob(ctx, job.ID)
+				if getErr != nil {
+					return errors.Join(err, getErr)
+				}
+				if persistedJob.Outcome == OUTCOME_REJECTED && persistedJob.ErrorCode == ERROR_CODE_EXACT_DUPLICATE {
+					continue
+				}
+				return err
+			}
 			if ctx.Err() != nil {
 				return errors.Join(err, ctx.Err())
 			}
@@ -454,9 +490,6 @@ func (service *Service) preflightCommit(stagedBytes int64, inspection library.Me
 }
 
 func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
-	// Filesystem artwork ownership and its database commit form one serialized unit.
-	service.commitMu.Lock()
-	defer service.commitMu.Unlock()
 	identity, err := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
 	if err != nil {
 		return Result{}, err

@@ -20,6 +20,7 @@ const (
 	MAX_ORIGINAL_FILENAME_BYTES                    = 255
 	BITS_PER_KILOBIT                               = 1000
 	VALIDATION_CLEANUP_TIMEOUT                     = 5 * time.Second
+	ERROR_CODE_EXACT_DUPLICATE                     = "exact_duplicate"
 )
 
 type BatchStatus string
@@ -55,6 +56,7 @@ var (
 	ErrNotFound            = errors.New("managed import job not found")
 	ErrInvalidState        = errors.New("managed import job is not awaiting this operation")
 	ErrRevisionConflict    = errors.New("managed import revision conflict")
+	ErrExactDuplicate      = errors.New("managed import file exactly duplicates a committed Track")
 	ErrUploadTooLarge      = errors.New("managed import file exceeds upload limit")
 	ErrBatchTooLarge       = errors.New("managed import batch exceeds upload limit")
 	ErrInvalidUpload       = errors.New("managed import upload is invalid")
