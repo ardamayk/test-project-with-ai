@@ -180,6 +180,12 @@ jobs:
         with:
           cache_save: false
 
+      # The Music Server shells out to ffprobe/ffmpeg for library import.
+      - name: Install Music Server system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Restore Go module and build caches
         id: go_cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
