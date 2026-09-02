@@ -301,7 +301,10 @@ func (storage *Storage) placePlanned(placement placedFiles, inspection library.M
 		return placedFiles{}, fmt.Errorf("%s: %w", audioOperation, err)
 	}
 	if shouldCreateArtwork {
-		artworkCreated, err := writeRootedArtwork(root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data, inspection.AlbumArtwork.SHA256)
+		artworkCreated, err := writeRootedArtwork(
+			root, storage.root, placement.artworkRelative, inspection.AlbumArtwork.Data,
+			inspection.AlbumArtwork.SHA256, artworkCreatedCallbacks...,
+		)
 		if err != nil {
 			return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
 		}
