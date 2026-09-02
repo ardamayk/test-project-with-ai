@@ -1,6 +1,7 @@
 package managedimport
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -633,7 +634,10 @@ func (storage *Storage) ResolveManagedFile(path, expectedHash string) (relativeP
 	return relativePath, info.Size(), nil
 }
 
-func (storage *Storage) RemoveManagedFile(path, expectedHash string) (isRemoved bool, returnErr error) {
+func (storage *Storage) RemoveManagedFile(ctx context.Context, path, expectedHash string) (isRemoved bool, returnErr error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	relativePath, err := storage.relativePath(path)
 	if err != nil {
 		return false, err
@@ -653,13 +657,52 @@ func (storage *Storage) RemoveManagedFile(path, expectedHash string) (isRemoved 
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return false, fmt.Errorf("%w: managed Track source is not a regular file", ErrUnsafeStoragePath)
 	}
-	if err := verifyRootedFileHash(root, relativePath, expectedHash); err != nil {
+	if err := verifyRootedFileHashContext(ctx, root, relativePath, expectedHash); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return false, contextErr
+		}
 		return false, fmt.Errorf("%w: managed Track source identity changed: %v", ErrUnsafeStoragePath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
 	if err := root.Remove(relativePath); err != nil {
 		return false, fmt.Errorf("remove Managed Track source: %w", err)
 	}
 	return true, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
+}
+
+func verifyRootedFileHashContext(ctx context.Context, root *os.Root, path, expectedHash string) error {
+	if err := rejectSymlinks(root, path); err != nil {
+		return err
+	}
+	file, err := root.Open(path)
+	if err != nil {
+		return fmt.Errorf("open Managed Storage file for verification: %w", err)
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, contextReader{ctx: ctx, reader: file})
+	closeErr := closeManagedStorageFile(file, "Managed Storage verification file")
+	if copyErr != nil || closeErr != nil {
+		return fmt.Errorf("hash Managed Storage file: %w", errors.Join(copyErr, closeErr))
+	}
+	actualHash := hex.EncodeToString(hash.Sum(nil))
+	if actualHash != expectedHash {
+		return fmt.Errorf("verify Managed Storage file hash: got %s, want %s", actualHash, expectedHash)
+	}
+	return nil
 }
 
 func ensureDirectory(root *os.Root, absoluteRoot, path string, mode os.FileMode) error {

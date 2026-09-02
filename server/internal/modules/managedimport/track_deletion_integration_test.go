@@ -12,10 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/managedimport"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
 )
@@ -124,6 +126,35 @@ func TestManagedTrackDeletionRetainsAlbumAndArtistWithActiveTrack(t *testing.T) 
 	}
 }
 
+func TestManagedTrackDeletionRemovesFinalAlbumArtwork(t *testing.T) {
+	managedStoragePath := t.TempDir()
+	database, router := newTrackDeletionRouter(t, managedStoragePath)
+	seedManagedTrackForDeletion(t, database, managedStoragePath, "track-1", "album-1", "artist-1", "Delete Me")
+	artworkPath := filepath.Join(managedStoragePath, "library", "artist-1", "album-1", "cover.png")
+	artwork := "album-artwork"
+	writeDeletionFile(t, artworkPath, artwork)
+	artworkHash := fmt.Sprintf("%x", sha256.Sum256([]byte(artwork)))
+	if _, err := database.Exec(`
+		INSERT INTO album_artwork (
+			id, album_id, source_track_id, content_sha256, media_type,
+			width, height, encoded_size_bytes, file_path
+		) VALUES ('artwork-1', 'album-1', 'track-1', ?, 'image/png', 1, 1, ?, ?)`, artworkHash, len(artwork), artworkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	previewResponse := performTrackDeletionRequest(t, router, http.MethodGet, "/api/v1/library/tracks/track-1/deletion", nil, false)
+	var preview managedimport.TrackDeletionPreview
+	decodeDeletionResponse(t, previewResponse, &preview)
+	body, _ := json.Marshal(managedimport.TrackDeletionConfirmation{ConfirmationToken: preview.ConfirmationToken})
+	response := performTrackDeletionRequest(t, router, http.MethodDelete, "/api/v1/library/tracks/track-1", body, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(artworkPath); !os.IsNotExist(err) {
+		t.Fatalf("orphaned final-Album Artwork stat error = %v", err)
+	}
+}
+
 func TestManagedTrackDeletionRequiresExplicitApplicationConfirmation(t *testing.T) {
 	managedStoragePath := t.TempDir()
 	database, router := newTrackDeletionRouter(t, managedStoragePath)
@@ -139,6 +170,41 @@ func TestManagedTrackDeletionRequiresExplicitApplicationConfirmation(t *testing.
 	}
 }
 
+func TestManagedTrackDeletionPublishesAffectedQueueInvalidation(t *testing.T) {
+	managedStoragePath := t.TempDir()
+	database := testutil.OpenMigratedDB(t)
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close deletion test database: %v", err)
+		}
+	})
+	queueEvents := playback.NewQueueEventBroker()
+	events, unsubscribe := queueEvents.Subscribe("user-1")
+	t.Cleanup(unsubscribe)
+	router := chi.NewRouter()
+	managedimport.NewModule(database, config.Config{ManagedStoragePath: managedStoragePath}, library.NewMediaInspector(), queueEvents).RegisterRoutes(router)
+	seedManagedTrackForDeletion(t, database, managedStoragePath, "track-1", "album-1", "artist-1", "Delete Me")
+	seedDeletionReferences(t, database, "track-1")
+
+	previewResponse := performTrackDeletionRequest(t, router, http.MethodGet, "/api/v1/library/tracks/track-1/deletion", nil, false)
+	var preview managedimport.TrackDeletionPreview
+	decodeDeletionResponse(t, previewResponse, &preview)
+	body, _ := json.Marshal(managedimport.TrackDeletionConfirmation{ConfirmationToken: preview.ConfirmationToken})
+	response := performTrackDeletionRequest(t, router, http.MethodDelete, "/api/v1/library/tracks/track-1", body, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	select {
+	case event := <-events:
+		if event.Revision != "1" || event.Sequence != "1" {
+			t.Fatalf("Queue invalidation = %+v", event)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("affected Queue invalidation was not published")
+	}
+}
+
 func TestManagedTrackDeletionRecoveryCompletesPreparedDeletion(t *testing.T) {
 	for _, isFileRemoved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("file_removed_%t", isFileRemoved), func(t *testing.T) {
@@ -149,7 +215,21 @@ func TestManagedTrackDeletionRecoveryCompletesPreparedDeletion(t *testing.T) {
 			if err := database.QueryRow(`SELECT content_sha256 FROM track_sources WHERE track_id = 'track-1'`).Scan(&contentSHA256); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := database.Exec(`INSERT INTO permanent_track_deletions (track_id, file_path, content_sha256) VALUES ('track-1', ?, ?)`, trackPath, contentSHA256); err != nil {
+			artworkPath := filepath.Join(managedStoragePath, "library", "artist-1", "album-1", "cover.png")
+			artwork := "album-artwork"
+			writeDeletionFile(t, artworkPath, artwork)
+			artworkHash := fmt.Sprintf("%x", sha256.Sum256([]byte(artwork)))
+			if _, err := database.Exec(`
+				INSERT INTO album_artwork (
+					id, album_id, source_track_id, content_sha256, media_type,
+					width, height, encoded_size_bytes, file_path
+				) VALUES ('artwork-1', 'album-1', 'track-1', ?, 'image/png', 1, 1, ?, ?)`, artworkHash, len(artwork), artworkPath); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(`
+				INSERT INTO permanent_track_deletions (
+					track_id, file_path, content_sha256, artwork_file_path, artwork_content_sha256
+				) VALUES ('track-1', ?, ?, ?, ?)`, trackPath, contentSHA256, artworkPath, artworkHash); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := database.Exec(`UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = 'track-1'`); err != nil {
@@ -172,6 +252,9 @@ func TestManagedTrackDeletionRecoveryCompletesPreparedDeletion(t *testing.T) {
 			assertDeletionCount(t, database, `SELECT COUNT(*) FROM permanent_track_deletions`, 0)
 			if _, err := os.Stat(trackPath); !os.IsNotExist(err) {
 				t.Fatalf("managed file still exists: %v", err)
+			}
+			if _, err := os.Stat(artworkPath); !os.IsNotExist(err) {
+				t.Fatalf("Managed Album Artwork still exists: %v", err)
 			}
 		})
 	}

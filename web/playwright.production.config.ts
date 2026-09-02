@@ -24,6 +24,7 @@ export default defineConfig({
 	webServer: [
 		{
 			command: "go run ./cmd/server",
+			timeout: 120_000,
 			url: `${PRODUCTION_API_ORIGIN}/api/v1/health`,
 			cwd: "../server",
 			env: {
@@ -34,6 +35,7 @@ export default defineConfig({
 		},
 		{
 			command: "pnpm build && pnpm preview --host 127.0.0.1 --port 4173",
+			timeout: 120_000,
 			url: "http://127.0.0.1:4173",
 			env: { VITE_PROXY_TARGET: PRODUCTION_API_ORIGIN },
 			reuseExistingServer: false,

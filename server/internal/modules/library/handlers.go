@@ -91,6 +91,10 @@ func (h *Handlers) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusNotFound, "not_found", "album not found")
 		return
 	}
+	if errors.Is(err, ErrManagedAlbum) {
+		respond.Error(w, http.StatusConflict, "managed_album_requires_track_deletion", err.Error())
+		return
+	}
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return

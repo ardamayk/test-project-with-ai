@@ -10,10 +10,13 @@ import {
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
+import { useServerCapability } from "#/hooks/use-server-capability";
 import { useTrackDeletionFlow } from "#/hooks/use-track-deletion-flow";
 import { getTrackArtistName, getTrackGenreNames } from "#/lib/library-display";
 import { cn } from "#/lib/utils";
 import { TrackDeletionDialog } from "./track-deletion-dialog";
+
+const MANAGED_TRACK_DELETION_CAPABILITY = "managed-track-deletion.v1";
 
 function formatDuration(ms: number): string {
 	if (!ms || ms < 0) return "0:00";
@@ -72,6 +75,9 @@ export function TrackList({
 	const { playTrack, currentTrack, getAlbumCoverUrl } = usePlayback();
 	const { isFavorite, toggleFavorite } = useFavoriteTracks();
 	const trackDeletion = useTrackDeletionFlow(onDeleteTrackSuccess);
+	const hasDeletionCapability = useServerCapability(
+		MANAGED_TRACK_DELETION_CAPABILITY,
+	);
 	const [detailsTrack, setDetailsTrack] = useState<Track | null>(null);
 
 	const handlePlay = (track: Track) => {
@@ -213,7 +219,9 @@ export function TrackList({
 											{removeLabel}
 										</ContextMenuItem>
 									) : null}
-									{showDelete ? (
+									{showDelete &&
+									track.sourceKind === "managed" &&
+									hasDeletionCapability ? (
 										<ContextMenuItem
 											variant="destructive"
 											disabled={trackDeletion.isDeleting}

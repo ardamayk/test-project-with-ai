@@ -27,6 +27,7 @@ type Service struct {
 	cancelingJobs    map[string]bool
 	commitPhaseHook  func(commitPhase) error
 	commitResultHook func() error
+	queueEvents      QueueInvalidationPublisher
 }
 
 var managedImportCommitMu sync.Mutex
@@ -69,6 +70,7 @@ func NewService(store *Store, storage *Storage, inspector library.MediaInspector
 		uploadLocks:   make(map[string]*uploadLock),
 		activeUploads: make(map[string]*activeUpload),
 		cancelingJobs: make(map[string]bool),
+		queueEvents:   discardQueueInvalidations{},
 	}
 }
 

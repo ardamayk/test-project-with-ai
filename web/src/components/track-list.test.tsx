@@ -1,3 +1,4 @@
+import type { Track } from "@repo/api-client";
 import {
 	cleanup,
 	fireEvent,
@@ -13,6 +14,7 @@ const playTrack = vi.fn();
 const deleteTrack = vi.fn();
 const previewTrackDeletion = vi.fn();
 let favorite = false;
+let hasDeletionCapability = true;
 
 vi.mock("@repo/ui", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@repo/ui")>();
@@ -41,7 +43,11 @@ vi.mock("#/hooks/use-delete-library", () => ({
 	}),
 }));
 
-const sampleTrack = {
+vi.mock("#/hooks/use-server-capability", () => ({
+	useServerCapability: () => hasDeletionCapability,
+}));
+
+const sampleTrack: Track = {
 	id: "t1",
 	title: "Welcome to New York",
 	artistName: "Taylor Swift",
@@ -51,6 +57,7 @@ const sampleTrack = {
 	discNo: 1,
 	durationMs: 212_000,
 	format: "flac",
+	sourceKind: "managed",
 	genre: "Pop",
 	artists: [],
 	genres: [{ id: "genre-pop", name: "Pop" }],
@@ -72,6 +79,7 @@ describe("TrackList", () => {
 
 	beforeEach(() => {
 		favorite = false;
+		hasDeletionCapability = true;
 		playTrack.mockClear();
 		toggleFavorite.mockClear();
 		deleteTrack.mockClear();
@@ -232,6 +240,25 @@ describe("TrackList", () => {
 	it("hides destructive delete when disabled", () => {
 		render(<TrackList tracks={[sampleTrack]} showDelete={false} />);
 
+		expect(screen.queryByText("Delete track")).toBeNull();
+	});
+
+	it("hides permanent deletion for non-managed Tracks", () => {
+		render(<TrackList tracks={[{ ...sampleTrack, sourceKind: "legacy" }]} />);
+
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		expect(screen.queryByText("Delete track")).toBeNull();
+	});
+
+	it("hides permanent deletion when the server capability is absent", () => {
+		hasDeletionCapability = false;
+		render(<TrackList tracks={[sampleTrack]} />);
+
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
 		expect(screen.queryByText("Delete track")).toBeNull();
 	});
 

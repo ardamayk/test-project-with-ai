@@ -15,6 +15,7 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	var importUploadHasDeadline bool
 	var migrationPreviewHasDeadline bool
 	var migrationStageHasDeadline bool
+	var permanentDeletionHasDeadline bool
 	var apiHasDeadline bool
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +55,11 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		if r.Method == http.MethodDelete {
+			permanentDeletionHasDeadline = hasDeadline
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		apiHasDeadline = hasDeadline
 		w.WriteHeader(http.StatusOK)
 	})
@@ -63,6 +69,9 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 		httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/api/v1/tracks/track-1/stream", nil),
 	)
+	permanentDeletionRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/library/tracks/track-1", nil)
+	permanentDeletionRequest.Header.Set("X-Permanent-Delete", "1")
+	wrapped.ServeHTTP(httptest.NewRecorder(), permanentDeletionRequest)
 	wrapped.ServeHTTP(
 		httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/api/v1/radio/preview/station-1/stream", nil),
@@ -112,6 +121,9 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	}
 	if migrationStageHasDeadline {
 		t.Fatal("Library Migration stage should not inherit request timeout deadline")
+	}
+	if permanentDeletionHasDeadline {
+		t.Fatal("Permanent Track Deletion should not inherit request timeout deadline")
 	}
 	if !apiHasDeadline {
 		t.Fatal("non-stream API route should keep request timeout deadline")

@@ -249,6 +249,45 @@ func TestDeleteAlbumRemovesTracksAndFiles(t *testing.T) {
 	}
 }
 
+func TestDeleteAlbumRejectsManagedTracksWithoutMutation(t *testing.T) {
+	tempDir := t.TempDir()
+	trackPath := filepath.Join(tempDir, "managed.flac")
+	if err := os.WriteFile(trackPath, []byte("managed-audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	database := setupLibraryDB(t)
+	store := library.NewStore(database)
+	metadata := library.FileMetadata{
+		Path: trackPath, Format: "flac", SizeBytes: 13, ModTime: time.Now(),
+		Title: "Managed", Artist: "Artist", AlbumArtist: "Artist", Album: "Album",
+		TrackNo: 1, DurationMs: 1000,
+	}
+	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE track_sources SET source_kind = 'managed', content_sha256 = ?`, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	var albumID string
+	if err := database.QueryRow(`SELECT album_id FROM tracks`).Scan(&albumID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.DeleteAlbum(context.Background(), albumID, os.Remove); err == nil {
+		t.Fatal("managed Album deletion succeeded through the legacy path")
+	}
+	if _, err := os.Stat(trackPath); err != nil {
+		t.Fatalf("managed Track file changed: %v", err)
+	}
+	var trackCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tracks WHERE album_id = ?`, albumID).Scan(&trackCount); err != nil {
+		t.Fatal(err)
+	}
+	if trackCount != 1 {
+		t.Fatalf("managed Track count = %d, want 1", trackCount)
+	}
+}
+
 func TestDeleteTrackRemovesQueueAndEmptyAlbum(t *testing.T) {
 	tempDir := t.TempDir()
 	trackPath := filepath.Join(tempDir, "track.flac")

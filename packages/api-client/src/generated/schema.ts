@@ -1107,6 +1107,11 @@ export interface components {
             discTotal?: number;
             durationMs: number;
             format: string;
+            /**
+             * @description Ownership of the Track's authoritative audio source.
+             * @enum {string}
+             */
+            sourceKind?: "legacy" | "managed";
             codec?: string;
             container?: string;
             sampleFormat?: string;

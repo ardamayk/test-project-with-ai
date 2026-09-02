@@ -2048,6 +2048,10 @@ components:
           type: integer
         format:
           type: string
+        sourceKind:
+          type: string
+          enum: [legacy, managed]
+          description: Ownership of the Track's authoritative audio source.
         codec:
           type: string
         container:

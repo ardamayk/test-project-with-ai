@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 const PERMANENT_DELETE_CONFIRMATION_HEADER = "X-Permanent-Delete"
@@ -54,6 +55,8 @@ type trackDeletionState struct {
 	AlbumID        string
 	FilePath       string
 	ContentSHA256  string
+	ArtworkPath    string
+	ArtworkSHA256  string
 	TrackRevision  int
 	SourceRevision int
 }
@@ -62,6 +65,20 @@ type deletionQueryer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type QueueInvalidationPublisher interface {
+	Publish(userID, revision, sequence string)
+}
+
+type discardQueueInvalidations struct{}
+
+func (discardQueueInvalidations) Publish(string, string, string) {}
+
+type queueInvalidation struct {
+	userID   string
+	revision string
+	sequence string
 }
 
 func (service *Service) PreviewTrackDeletion(ctx context.Context, trackID string) (TrackDeletionPreview, error) {
@@ -82,14 +99,25 @@ func (service *Service) DeleteTrack(ctx context.Context, confirmation TrackDelet
 	if err != nil {
 		return TrackDeletionResult{}, err
 	}
-	isRemoved, removeErr := service.storage.RemoveManagedFile(state.FilePath, state.ContentSHA256)
-	if removeErr != nil && !isRemoved {
-		return TrackDeletionResult{}, errors.Join(removeErr, service.cancelPreparedTrackDeletion(ctx, state.Preview.TrackID))
+	hasRemoved, allRemoved, removeErr := service.removePreparedDeletionFiles(ctx, state)
+	completionContext, cancelCompletion := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
+	defer cancelCompletion()
+	if removeErr != nil && !hasRemoved {
+		return TrackDeletionResult{}, errors.Join(removeErr, service.cancelPreparedTrackDeletion(completionContext, state.Preview.TrackID))
 	}
-	if finalizeErr := service.finalizePreparedTrackDeletion(ctx, state.Preview.TrackID); finalizeErr != nil {
+	if !allRemoved {
+		return TrackDeletionResult{}, removeErr
+	}
+	invalidations, finalizeErr := service.finalizePreparedTrackDeletion(completionContext, state.Preview.TrackID)
+	if finalizeErr != nil {
 		return TrackDeletionResult{}, errors.Join(removeErr, finalizeErr)
 	}
-	return TrackDeletionResult{DeletedFiles: 1}, removeErr
+	service.publishQueueInvalidations(invalidations)
+	deletedFiles := 1
+	if state.ArtworkPath != "" {
+		deletedFiles++
+	}
+	return TrackDeletionResult{DeletedFiles: deletedFiles}, removeErr
 }
 
 type TrackDeletionRequest struct {
@@ -111,8 +139,9 @@ func (service *Service) prepareTrackDeletion(ctx context.Context, confirmation T
 		return state, ErrDeletionConflict
 	}
 	if _, err := transaction.ExecContext(ctx, `
-		INSERT INTO permanent_track_deletions (track_id, file_path, content_sha256)
-		VALUES (?, ?, ?)`, confirmation.TrackID, state.FilePath, state.ContentSHA256); err != nil {
+		INSERT INTO permanent_track_deletions (
+			track_id, file_path, content_sha256, artwork_file_path, artwork_content_sha256
+		) VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))`, confirmation.TrackID, state.FilePath, state.ContentSHA256, state.ArtworkPath, state.ArtworkSHA256); err != nil {
 		return state, fmt.Errorf("journal Permanent Track Deletion: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx, `UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, confirmation.TrackID); err != nil {
@@ -142,38 +171,60 @@ func (service *Service) cancelPreparedTrackDeletion(ctx context.Context, trackID
 	return nil
 }
 
-func (service *Service) finalizePreparedTrackDeletion(ctx context.Context, trackID string) (returnErr error) {
+func (service *Service) finalizePreparedTrackDeletion(ctx context.Context, trackID string) (invalidations []queueInvalidation, returnErr error) {
 	transaction, err := service.store.database.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin Permanent Track Deletion finalization: %w", err)
+		return nil, fmt.Errorf("begin Permanent Track Deletion finalization: %w", err)
 	}
 	defer func() { returnErr = errors.Join(returnErr, rollbackDeletionTransaction(transaction, "finalization")) }()
 	state, err := loadPendingTrackDeletionState(ctx, transaction, trackID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := deleteTrackRelationships(ctx, transaction, state); err != nil {
-		return err
+	invalidations, err = deleteTrackRelationships(ctx, transaction, state)
+	if err != nil {
+		return nil, err
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("commit Permanent Track Deletion finalization: %w", err)
+		return nil, fmt.Errorf("commit Permanent Track Deletion finalization: %w", err)
 	}
-	return nil
+	return invalidations, nil
+}
+
+func (service *Service) publishQueueInvalidations(invalidations []queueInvalidation) {
+	for _, invalidation := range invalidations {
+		service.queueEvents.Publish(invalidation.userID, invalidation.revision, invalidation.sequence)
+	}
+}
+
+func (service *Service) removePreparedDeletionFiles(ctx context.Context, state trackDeletionState) (hasRemoved, allRemoved bool, returnErr error) {
+	audioRemoved, audioErr := service.storage.RemoveManagedFile(ctx, state.FilePath, state.ContentSHA256)
+	if !audioRemoved {
+		return false, false, audioErr
+	}
+	if state.ArtworkPath == "" {
+		return true, true, audioErr
+	}
+	artworkRemoved, artworkErr := service.storage.RemoveManagedFile(ctx, state.ArtworkPath, state.ArtworkSHA256)
+	return true, artworkRemoved, errors.Join(audioErr, artworkErr)
 }
 
 func (service *Service) RecoverPendingTrackDeletions(ctx context.Context) (returnErr error) {
-	rows, err := service.store.database.QueryContext(ctx, `SELECT track_id, file_path, content_sha256 FROM permanent_track_deletions ORDER BY created_at, track_id`)
+	rows, err := service.store.database.QueryContext(ctx, `
+		SELECT track_id, file_path, content_sha256,
+			COALESCE(artwork_file_path, ''), COALESCE(artwork_content_sha256, '')
+		FROM permanent_track_deletions ORDER BY created_at, track_id`)
 	if err != nil {
 		return fmt.Errorf("list pending Permanent Track Deletions: %w", err)
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, closeDeletionRows(rows, "pending Permanent Track Deletions"))
 	}()
-	type pendingDeletion struct{ trackID, filePath, contentSHA256 string }
+	type pendingDeletion struct{ trackID, filePath, contentSHA256, artworkPath, artworkSHA256 string }
 	pending := []pendingDeletion{}
 	for rows.Next() {
 		var deletion pendingDeletion
-		if err := rows.Scan(&deletion.trackID, &deletion.filePath, &deletion.contentSHA256); err != nil {
+		if err := rows.Scan(&deletion.trackID, &deletion.filePath, &deletion.contentSHA256, &deletion.artworkPath, &deletion.artworkSHA256); err != nil {
 			return fmt.Errorf("read pending Permanent Track Deletion: %w", err)
 		}
 		pending = append(pending, deletion)
@@ -185,13 +236,20 @@ func (service *Service) RecoverPendingTrackDeletions(ctx context.Context) (retur
 		return fmt.Errorf("close pending Permanent Track Deletions before recovery: %w", err)
 	}
 	for _, deletion := range pending {
-		isRemoved, removeErr := service.storage.RemoveManagedFile(deletion.filePath, deletion.contentSHA256)
-		if removeErr != nil && !isRemoved {
+		state := trackDeletionState{
+			Preview:  TrackDeletionPreview{TrackID: deletion.trackID},
+			FilePath: deletion.filePath, ContentSHA256: deletion.contentSHA256,
+			ArtworkPath: deletion.artworkPath, ArtworkSHA256: deletion.artworkSHA256,
+		}
+		_, allRemoved, removeErr := service.removePreparedDeletionFiles(ctx, state)
+		if !allRemoved {
 			return fmt.Errorf("recover pending Permanent Track Deletion %q: %w", deletion.trackID, removeErr)
 		}
-		if finalizeErr := service.finalizePreparedTrackDeletion(ctx, deletion.trackID); finalizeErr != nil {
+		invalidations, finalizeErr := service.finalizePreparedTrackDeletion(ctx, deletion.trackID)
+		if finalizeErr != nil {
 			return fmt.Errorf("finalize recovered Permanent Track Deletion %q: %w", deletion.trackID, errors.Join(removeErr, finalizeErr))
 		}
+		service.publishQueueInvalidations(invalidations)
 		if removeErr != nil {
 			return fmt.Errorf("close Managed Storage after recovering Permanent Track Deletion %q: %w", deletion.trackID, removeErr)
 		}
@@ -202,10 +260,12 @@ func (service *Service) RecoverPendingTrackDeletions(ctx context.Context) (retur
 func loadPendingTrackDeletionState(ctx context.Context, queryer deletionQueryer, trackID string) (trackDeletionState, error) {
 	var state trackDeletionState
 	err := queryer.QueryRowContext(ctx, `
-		SELECT tracks.album_id, permanent_track_deletions.file_path, permanent_track_deletions.content_sha256
+		SELECT tracks.album_id, permanent_track_deletions.file_path, permanent_track_deletions.content_sha256,
+			COALESCE(permanent_track_deletions.artwork_file_path, ''),
+			COALESCE(permanent_track_deletions.artwork_content_sha256, '')
 		FROM permanent_track_deletions
 		JOIN tracks ON tracks.id = permanent_track_deletions.track_id
-		WHERE tracks.id = ?`, trackID).Scan(&state.AlbumID, &state.FilePath, &state.ContentSHA256)
+		WHERE tracks.id = ?`, trackID).Scan(&state.AlbumID, &state.FilePath, &state.ContentSHA256, &state.ArtworkPath, &state.ArtworkSHA256)
 	if errors.Is(err, sql.ErrNoRows) {
 		return state, ErrTrackNotFound
 	}
@@ -215,6 +275,24 @@ func loadPendingTrackDeletionState(ctx context.Context, queryer deletionQueryer,
 	state.Preview.TrackID = trackID
 	state.Preview.QueueReferences, err = listDeletionQueues(ctx, queryer, trackID)
 	return state, err
+}
+
+func loadFinalAlbumArtwork(ctx context.Context, queryer deletionQueryer, storage *Storage, trackID, albumID string) (string, string, error) {
+	var path, contentSHA256 string
+	err := queryer.QueryRowContext(ctx, `
+		SELECT file_path, content_sha256 FROM album_artwork
+		WHERE album_id = ?
+		AND NOT EXISTS (SELECT 1 FROM tracks WHERE album_id = ? AND id != ?)`, albumID, albumID, trackID).Scan(&path, &contentSHA256)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("load final-Album Artwork: %w", err)
+	}
+	if _, _, err := storage.ResolveManagedFile(path, contentSHA256); err != nil {
+		return "", "", fmt.Errorf("validate final-Album Artwork: %w", err)
+	}
+	return path, contentSHA256, nil
 }
 
 func rollbackDeletionTransaction(transaction *sql.Tx, operation string) error {
@@ -269,6 +347,10 @@ func loadTrackDeletionState(ctx context.Context, queryer deletionQueryer, storag
 		return trackDeletionState{}, err
 	}
 	state.Preview.QueueReferences, err = listDeletionQueues(ctx, queryer, trackID)
+	if err != nil {
+		return trackDeletionState{}, err
+	}
+	state.ArtworkPath, state.ArtworkSHA256, err = loadFinalAlbumArtwork(ctx, queryer, storage, trackID, state.AlbumID)
 	if err != nil {
 		return trackDeletionState{}, err
 	}
@@ -327,6 +409,8 @@ func deletionToken(state trackDeletionState) (string, error) {
 		AlbumID            string
 		FilePath           string
 		ContentSHA256      string
+		ArtworkPath        string
+		ArtworkSHA256      string
 		TrackRevision      int
 		SourceRevision     int
 		PlaylistReferences []TrackDeletionPlaylistReference
@@ -334,6 +418,7 @@ func deletionToken(state trackDeletionState) (string, error) {
 	}{
 		TrackID: state.Preview.TrackID, TrackTitle: state.Preview.TrackTitle, AlbumID: state.AlbumID,
 		FilePath: state.FilePath, ContentSHA256: state.ContentSHA256, TrackRevision: state.TrackRevision,
+		ArtworkPath: state.ArtworkPath, ArtworkSHA256: state.ArtworkSHA256,
 		SourceRevision: state.SourceRevision, PlaylistReferences: state.Preview.PlaylistReferences,
 		QueueReferences: state.Preview.QueueReferences,
 	}
@@ -352,45 +437,50 @@ func tokensEqual(expected, actual string) bool {
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(actual)) == 1
 }
 
-func deleteTrackRelationships(ctx context.Context, transaction *sql.Tx, state trackDeletionState) error {
+func deleteTrackRelationships(ctx context.Context, transaction *sql.Tx, state trackDeletionState) ([]queueInvalidation, error) {
 	artistIDs, err := deletionArtistIDs(ctx, transaction, state.Preview.TrackID, state.AlbumID)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	invalidations := make([]queueInvalidation, 0, len(state.Preview.QueueReferences))
 	for _, queue := range state.Preview.QueueReferences {
-		if _, err := transaction.ExecContext(ctx, `
+		var invalidation queueInvalidation
+		invalidation.userID = queue.UserID
+		if err := transaction.QueryRowContext(ctx, `
 			INSERT INTO playback_queue_state (user_id, revision, event_sequence) VALUES (?, 1, 1)
-			ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1, event_sequence = event_sequence + 1`, queue.UserID); err != nil {
-			return fmt.Errorf("advance affected Queue revision: %w", err)
+			ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1, event_sequence = event_sequence + 1
+			RETURNING revision, event_sequence`, queue.UserID).Scan(&invalidation.revision, &invalidation.sequence); err != nil {
+			return nil, fmt.Errorf("advance affected Queue revision: %w", err)
 		}
+		invalidations = append(invalidations, invalidation)
 	}
 	if _, err := transaction.ExecContext(ctx, `DELETE FROM playback_queue WHERE track_id = ?`, state.Preview.TrackID); err != nil {
-		return fmt.Errorf("delete Queue references: %w", err)
+		return nil, fmt.Errorf("delete Queue references: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx, `DELETE FROM playlist_tracks WHERE track_id = ?`, state.Preview.TrackID); err != nil {
-		return fmt.Errorf("delete Playlist references: %w", err)
+		return nil, fmt.Errorf("delete Playlist references: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE track_id = ? AND status = 'committed'`, state.Preview.TrackID); err != nil {
-		return fmt.Errorf("archive completed Managed Import Job before Track deletion: %w", err)
+		return nil, fmt.Errorf("archive completed Managed Import Job before Track deletion: %w", err)
 	}
 	if err := moveOrDeleteArtworkReference(ctx, transaction, state.Preview.TrackID, state.AlbumID); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := transaction.ExecContext(ctx, `DELETE FROM tracks WHERE id = ?`, state.Preview.TrackID); err != nil {
-		return fmt.Errorf("delete Managed Track: %w", err)
+		return nil, fmt.Errorf("delete Managed Track: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx, `DELETE FROM albums WHERE id = ? AND NOT EXISTS (SELECT 1 FROM tracks WHERE album_id = ?)`, state.AlbumID, state.AlbumID); err != nil {
-		return fmt.Errorf("delete empty Album: %w", err)
+		return nil, fmt.Errorf("delete empty Album: %w", err)
 	}
 	for _, artistID := range artistIDs {
 		if _, err := transaction.ExecContext(ctx, `
 			DELETE FROM artists WHERE id = ?
 			AND NOT EXISTS (SELECT 1 FROM track_artists WHERE artist_id = ?)
 			AND NOT EXISTS (SELECT 1 FROM album_artists WHERE artist_id = ?)`, artistID, artistID, artistID); err != nil {
-			return fmt.Errorf("delete inactive Artist: %w", err)
+			return nil, fmt.Errorf("delete inactive Artist: %w", err)
 		}
 	}
-	return nil
+	return invalidations, nil
 }
 
 func moveOrDeleteArtworkReference(ctx context.Context, transaction *sql.Tx, trackID, albumID string) error {

@@ -11,9 +11,13 @@ type Module struct {
 	handlers *Handlers
 }
 
-func NewModule(db *sql.DB, tracks library.TrackAccess) *Module {
+func NewModule(db *sql.DB, tracks library.TrackAccess, queueEventBrokers ...*QueueEventBroker) *Module {
 	store := NewStore(db, tracks)
-	return &Module{handlers: NewHandlers(store, tracks, NewQueueEventBroker())}
+	queueEvents := NewQueueEventBroker()
+	if len(queueEventBrokers) > 0 {
+		queueEvents = queueEventBrokers[0]
+	}
+	return &Module{handlers: NewHandlers(store, tracks, queueEvents)}
 }
 
 func (m *Module) Name() string {

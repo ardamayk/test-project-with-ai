@@ -312,6 +312,28 @@ func TestManagedImportPublishesArtworkWithoutReplacingConcurrentWinner(t *testin
 	}
 }
 
+func TestRemoveManagedFileDoesNotDeleteAfterContextCancellation(t *testing.T) {
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	path := filepath.Join(storage.root, "library", "track.flac")
+	contents := []byte("managed audio")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(contents)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if isRemoved, err := storage.RemoveManagedFile(ctx, path, fmt.Sprintf("%x", hash)); !errors.Is(err, context.Canceled) || isRemoved {
+		t.Fatalf("RemoveManagedFile() = (%t, %v), want (false, context canceled)", isRemoved, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("managed file changed after cancellation: %v", err)
+	}
+}
+
 func newStorageSafetyRouter(t *testing.T, configuration config.Config, capacity storageCapacity) http.Handler {
 	t.Helper()
 	database := testutil.OpenMigratedDB(t)

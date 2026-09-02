@@ -16,11 +16,11 @@ type Module struct {
 	service  *Service
 }
 
-func NewModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector) *Module {
-	return newModule(database, configuration, inspector, availableStorageBytes)
+func NewModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector, queueEvents ...QueueInvalidationPublisher) *Module {
+	return newModule(database, configuration, inspector, availableStorageBytes, queueEvents...)
 }
 
-func newModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector, capacity storageCapacity) *Module {
+func newModule(database *sql.DB, configuration config.Config, inspector library.MediaInspector, capacity storageCapacity, queueEvents ...QueueInvalidationPublisher) *Module {
 	store := NewStore(database)
 	fileLimit := configuration.ManagedImportFileLimitBytes
 	if fileLimit <= 0 {
@@ -36,6 +36,9 @@ func newModule(database *sql.DB, configuration config.Config, inspector library.
 		BatchBytes:   batchLimit,
 	}, capacity)
 	service := NewService(store, storage, inspector)
+	if len(queueEvents) > 0 {
+		service.queueEvents = queueEvents[0]
+	}
 	return &Module{handlers: NewHandlers(service), service: service}
 }
 
