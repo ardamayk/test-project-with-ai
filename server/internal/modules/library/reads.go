@@ -12,13 +12,13 @@ const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 	FROM album_artists
 	WHERE EXISTS (
 		SELECT 1 FROM tracks
-		WHERE tracks.album_id = album_artists.album_id AND tracks.missing_at IS NULL
+		WHERE tracks.album_id = album_artists.album_id AND tracks.missing_at IS NULL AND tracks.is_pending_commit = 0
 	)
 	UNION
 	SELECT track_artists.artist_id, tracks.album_id
 	FROM track_artists
 	INNER JOIN tracks ON tracks.id = track_artists.track_id
-	WHERE tracks.missing_at IS NULL
+	WHERE tracks.missing_at IS NULL AND tracks.is_pending_commit = 0
 )
 `
 
@@ -181,7 +181,7 @@ func (s *Store) readAlbumGenres(ctx context.Context, albumIDs []string) (map[str
 		FROM tracks
 		INNER JOIN track_genres relations ON relations.track_id = tracks.id
 		INNER JOIN genres ON genres.id = relations.genre_id
-		WHERE tracks.missing_at IS NULL AND tracks.album_id IN (%s)
+		WHERE tracks.missing_at IS NULL AND tracks.is_pending_commit = 0 AND tracks.album_id IN (%s)
 		GROUP BY tracks.album_id, genres.id, genres.name
 		ORDER BY tracks.album_id, MIN(relations.position), genres.name`, albumIDs, func(rows *sql.Rows) (string, Genre, error) {
 		var albumID string

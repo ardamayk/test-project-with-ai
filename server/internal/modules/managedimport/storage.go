@@ -282,9 +282,6 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	if err := root.Rename(placement.stagedRelative, placement.audioRelative); err != nil {
 		return placedFiles{}, fmt.Errorf("place Managed Track at Canonical Library Path: %w", err)
 	}
-	if err := verifyRootedFileHash(root, placement.audioRelative, inspection.FileSHA256); err != nil {
-		return placedFiles{}, errors.Join(err, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
-	}
 	if !shouldCreateArtwork {
 		return placement, nil
 	}
@@ -294,6 +291,45 @@ func (storage *Storage) Place(stagedPath string, inspection library.MediaInspect
 	}
 	placement.artworkCreated = artworkCreated
 	return placement, nil
+}
+
+func (storage *Storage) VerifyPlacement(placement placedFiles, audioSHA256, artworkSHA256 string) (returnErr error) {
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	if err := verifyRootedFileHash(root, placement.audioRelative, audioSHA256); err != nil {
+		return fmt.Errorf("verify canonical Managed Track: %w", err)
+	}
+	if err := verifyRootedFileHash(root, placement.artworkRelative, artworkSHA256); err != nil {
+		return fmt.Errorf("verify canonical Album Artwork: %w", err)
+	}
+	return nil
+}
+
+func (storage *Storage) CleanupPlacement(placement placedFiles) error {
+	return storage.RemoveStaged(storage.absolutePath(placement.stagedRelative))
+}
+
+func (storage *Storage) placementFromJournal(journal commitJournal) (placedFiles, error) {
+	audioRelative, err := storage.relativePath(journal.AudioFilePath)
+	if err != nil {
+		return placedFiles{}, err
+	}
+	artworkRelative, err := storage.relativePath(journal.ArtworkFilePath)
+	if err != nil {
+		return placedFiles{}, err
+	}
+	stagedRelative, err := storage.relativePath(journal.StagedFilePath)
+	if err != nil {
+		return placedFiles{}, err
+	}
+	return placedFiles{
+		AudioPath: journal.AudioFilePath, ArtworkPath: journal.ArtworkFilePath,
+		audioRelative: audioRelative, artworkRelative: artworkRelative,
+		stagedRelative: stagedRelative, artworkCreated: journal.IsArtworkCreated,
+	}, nil
 }
 
 func (storage *Storage) planPlacement(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placedFiles, error) {

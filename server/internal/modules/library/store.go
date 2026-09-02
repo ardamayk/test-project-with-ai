@@ -200,7 +200,7 @@ func (s *Store) ListArtists(ctx context.Context, limit, offset int, q string) (A
 }
 
 func (s *Store) ListAlbums(ctx context.Context, limit, offset int, artistID, q string) (AlbumList, error) {
-	where := "WHERE t.missing_at IS NULL"
+	where := "WHERE t.missing_at IS NULL AND t.is_pending_commit = 0"
 	args := []any{}
 	if artistID != "" {
 		where += ` AND (EXISTS (
@@ -209,7 +209,7 @@ func (s *Store) ListAlbums(ctx context.Context, limit, offset int, artistID, q s
 		) OR EXISTS (
 			SELECT 1 FROM tracks filter_track
 			INNER JOIN track_artists filter_track_credit ON filter_track_credit.track_id = filter_track.id
-			WHERE filter_track.album_id = al.id AND filter_track.missing_at IS NULL
+			WHERE filter_track.album_id = al.id AND filter_track.missing_at IS NULL AND filter_track.is_pending_commit = 0
 				AND filter_track_credit.artist_id = ?
 		))`
 		args = append(args, artistID, artistID)
@@ -237,7 +237,7 @@ func (s *Store) ListAlbums(ctx context.Context, limit, offset int, artistID, q s
 		INNER JOIN artists legacy_artist ON legacy_artist.id = al.artist_id
 		LEFT JOIN album_artists primary_credit ON primary_credit.album_id = al.id AND primary_credit.position = 0
 		LEFT JOIN artists primary_artist ON primary_artist.id = primary_credit.artist_id
-		INNER JOIN tracks t ON t.album_id = al.id AND t.missing_at IS NULL
+		INNER JOIN tracks t ON t.album_id = al.id AND t.missing_at IS NULL AND t.is_pending_commit = 0
 		` + where + `
 		GROUP BY al.id, al.title, primary_artist.id, primary_artist.name,
 			legacy_artist.id, legacy_artist.name, al.year, al.release_date, al.genres
@@ -282,7 +282,7 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 		SELECT al.id, al.title, COALESCE(primary_artist.id, legacy_artist.id),
 			COALESCE(primary_artist.name, legacy_artist.name), al.year, al.release_date,
 			COALESCE(al.genres, '[]'),
-			(SELECT COUNT(*) FROM tracks t WHERE t.album_id = al.id AND t.missing_at IS NULL)
+			(SELECT COUNT(*) FROM tracks t WHERE t.album_id = al.id AND t.missing_at IS NULL AND t.is_pending_commit = 0)
 		FROM albums al
 		INNER JOIN artists legacy_artist ON legacy_artist.id = al.artist_id
 		LEFT JOIN album_artists primary_credit ON primary_credit.album_id = al.id AND primary_credit.position = 0
@@ -299,7 +299,7 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 	album.Genres = decodeGenres(genresRaw.String)
 
 	rows, err := s.db.QueryContext(ctx, trackReadSelect+`
-		WHERE t.album_id = ? AND t.missing_at IS NULL
+		WHERE t.album_id = ? AND t.missing_at IS NULL AND t.is_pending_commit = 0
 		ORDER BY COALESCE(t.disc_no, 1), COALESCE(t.track_no, 9999), t.title_sort, t.id`, albumID)
 	if err != nil {
 		return AlbumDetail{}, fmt.Errorf("list Album %q Tracks: %w", albumID, err)
@@ -330,7 +330,7 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 }
 
 func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (TrackList, error) {
-	where := "WHERE t.missing_at IS NULL"
+	where := "WHERE t.missing_at IS NULL AND t.is_pending_commit = 0"
 	args := []any{}
 	if q != "" {
 		where += ` AND (t.title LIKE ? OR al.title LIKE ? OR EXISTS (
@@ -383,7 +383,7 @@ func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (Tr
 
 func (s *Store) GetTrack(ctx context.Context, trackID string) (Track, error) {
 	row := s.db.QueryRowContext(ctx, trackReadSelect+`
-		WHERE t.id = ? AND t.missing_at IS NULL`, trackID)
+		WHERE t.id = ? AND t.missing_at IS NULL AND t.is_pending_commit = 0`, trackID)
 	track, err := scanExpandedTrack(row)
 	if err == sql.ErrNoRows {
 		return Track{}, ErrNotFound
@@ -403,7 +403,7 @@ func (s *Store) GetTrackFilePath(ctx context.Context, trackID string) (string, e
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(track_sources.file_path, tracks.file_path)
 		FROM tracks LEFT JOIN track_sources ON track_sources.track_id = tracks.id
-		WHERE tracks.id = ? AND tracks.missing_at IS NULL`, trackID,
+		WHERE tracks.id = ? AND tracks.missing_at IS NULL AND tracks.is_pending_commit = 0`, trackID,
 	).Scan(&path)
 	if err == sql.ErrNoRows {
 		return "", ErrNotFound
@@ -900,7 +900,7 @@ func (s *Store) listMissingTrackIDs(ctx context.Context, paths map[string]struct
 		SELECT tracks.id, COALESCE(track_sources.file_path, tracks.file_path)
 		FROM tracks
 		LEFT JOIN track_sources ON track_sources.track_id = tracks.id
-		WHERE tracks.missing_at IS NULL
+		WHERE tracks.missing_at IS NULL AND tracks.is_pending_commit = 0
 			AND COALESCE(track_sources.source_kind, 'legacy') = 'legacy'`)
 	if err != nil {
 		return nil, err
