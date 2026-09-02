@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+pnpm exec lint-staged --config lint-staged.config.mjs
+
+if ! git diff --cached --quiet -- \
+	packages/contracts/openapi.yaml \
+	packages/contracts/oapi-codegen.yaml \
+	packages/contracts/package.json \
+	scripts/generate-openapi.sh \
+	scripts/check-openapi-generation.sh \
+	server/go.mod \
+	server/go.sum \
+	pnpm-lock.yaml; then
+	mise run generate:check
+fi

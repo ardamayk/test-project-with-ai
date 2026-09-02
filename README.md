@@ -75,6 +75,14 @@ mise run ci:full          # fast + integration + production builds
 
 Targeted commands include `mise run web:test`, `mise run ui:test`, `mise run api-client:test`, `mise run server:test`, and `mise run desktop:test`. Root pnpm commands remain compatibility proxies; new development and CI automation should call Mise.
 
+## Git hooks
+
+`pnpm install` configures repository-managed Husky hooks for local development. Pre-commit formats and checks staged JavaScript, TypeScript, JSON, Go, and Rust source, preserving partial staging, and runs OpenAPI drift verification only when generation inputs are staged. Pre-push runs the complete `mise run ci:fast` policy.
+
+Hooks provide fast local feedback; CI remains authoritative. Use Git's `--no-verify` option when a hook must be bypassed. Hook installation is disabled in CI and production dependency installs.
+
+If `graphify-out/` exists and `graphify` is available on `PATH`, post-commit and branch-switch post-checkout hooks update the graph in the background. Missing Graphify is an intentional no-op; no machine-specific executable path is required.
+
 ## Developer docs
 
 - [AGENTS.md](AGENTS.md) — conventions for contributors and AI agents

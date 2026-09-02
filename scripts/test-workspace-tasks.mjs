@@ -136,6 +136,7 @@ test("Mise exposes the cross-language public task contract", () => {
 		"test",
 		"server:test",
 		"desktop:test",
+		"git-hooks:test",
 		"generate",
 		"generate:check",
 		"ci:fast",
@@ -148,13 +149,13 @@ test("Mise exposes the cross-language public task contract", () => {
 
 test("aggregate Mise tasks select every language domain", () => {
 	for (const [aggregateTask, selectedTasks] of [
-		[
-			"build",
-			["web:build", "docs:build", "server:build", "desktop:build"],
-		],
+		["build", ["web:build", "docs:build", "server:build", "desktop:build"]],
 		["format", ["workspace:format", "server:format", "desktop:format"]],
 		["check", ["workspace:check", "server:check", "desktop:check"]],
-		["test", ["workspace:test", "server:test", "desktop:test"]],
+		[
+			"test",
+			["workspace:test", "server:test", "desktop:test", "git-hooks:test"],
+		],
 	]) {
 		const dryRun = runMiseTaskDryRun(aggregateTask);
 		for (const selectedTask of selectedTasks) {
@@ -238,7 +239,9 @@ test("CI policy tasks reuse public task compositions", () => {
 });
 
 test("root pnpm compatibility commands delegate to Mise", async () => {
-	const packageJson = await import("../package.json", { with: { type: "json" } });
+	const packageJson = await import("../package.json", {
+		with: { type: "json" },
+	});
 
 	for (const scriptName of [
 		"build",
@@ -258,7 +261,11 @@ test("root pnpm compatibility commands delegate to Mise", async () => {
 		"check",
 		"start",
 	]) {
-		assert.match(packageJson.default.scripts[scriptName], /^mise run /, scriptName);
+		assert.match(
+			packageJson.default.scripts[scriptName],
+			/^mise run /,
+			scriptName,
+		);
 	}
 });
 
