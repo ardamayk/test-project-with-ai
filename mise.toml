@@ -51,16 +51,11 @@ set -euo pipefail
 
 [tasks.generate]
 description = "Regenerate committed OpenAPI clients"
-run = "pnpm turbo run generate"
+run = "bash scripts/generate-openapi.sh"
 
 [tasks."generate:check"]
 description = "Verify committed OpenAPI clients are current"
-run = """
-#!/usr/bin/env bash
-set -euo pipefail
-mise run generate
-git diff --exit-code -- packages/api-client/src/generated/schema.ts server/internal/api/gen/types.gen.go
-"""
+run = "bash scripts/check-openapi-generation.sh"
 
 [tasks.format]
 description = "Format the workspace, Music Server, and Desktop Client"
