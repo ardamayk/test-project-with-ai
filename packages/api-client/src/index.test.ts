@@ -195,6 +195,52 @@ describe('createApiClient', () => {
     );
   });
 
+  it('lists retained terminal Import History results', async () => {
+    const payload = {
+      items: [
+        {
+          importId: 'batch-1',
+          startedAt: '2026-09-02T10:00:00Z',
+          completedAt: '2026-09-02T10:01:00Z',
+          resultCode: 'partially_completed',
+          counts: {
+            total: 2,
+            imported: 1,
+            rejected: 1,
+            failed: 0,
+            replaced: 0,
+            notAttempted: 0,
+            canceled: 0,
+          },
+          files: [
+            {
+              fileId: 'file-1',
+              jobId: 'job-1',
+              safeFilename: 'track.flac',
+              startedAt: '2026-09-02T10:00:00Z',
+              completedAt: '2026-09-02T10:01:00Z',
+              contentSha256: '0'.repeat(64),
+              resultCode: 'imported',
+              createdTrackId: 'track-1',
+            },
+          ],
+        },
+      ],
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(payload));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    const history = await client.listImportHistory();
+
+    expect(history).toEqual(payload);
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/import-history',
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+  });
+
   it('streams one Managed Import file and confirms its preview revision', async () => {
     const transport = vi
       .fn<typeof fetch>()

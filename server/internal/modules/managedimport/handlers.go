@@ -57,6 +57,15 @@ func (handlers *Handlers) GetBatch(writer http.ResponseWriter, request *http.Req
 	respond.JSON(writer, http.StatusOK, batch)
 }
 
+func (handlers *Handlers) ListHistory(writer http.ResponseWriter, request *http.Request) {
+	history, err := handlers.service.ListHistory(request.Context())
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, history)
+}
+
 func (handlers *Handlers) CancelBatch(writer http.ResponseWriter, request *http.Request) {
 	if err := handlers.service.CancelBatch(request.Context(), chi.URLParam(request, "batchId")); err != nil {
 		handleError(writer, request, err)

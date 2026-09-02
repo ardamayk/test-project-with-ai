@@ -78,6 +78,9 @@ export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile'];
 export type ManagedImportPreview = Schemas['ManagedImportPreview'];
 export type ManagedImportPreviewFile = Schemas['ManagedImportPreviewFile'];
 export type ManagedImportResult = Schemas['ManagedImportResult'];
+export type ManagedImportHistoryList = Schemas['ManagedImportHistoryList'];
+export type ManagedImportHistoryItem = Schemas['ManagedImportHistoryItem'];
+export type ManagedImportHistoryFile = Schemas['ManagedImportHistoryFile'];
 export type LibraryMigrationPreview = Schemas['LibraryMigrationPreview'];
 export type ManagedImportUploadProgress = (progress: number) => void;
 export type QueueConflictResponse = Omit<
@@ -408,6 +411,8 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'POST',
         headers: { 'X-Migration-Preview': '1' },
       }),
+    listImportHistory: () =>
+      request<ManagedImportHistoryList>('/api/v1/import-history'),
     createManagedImportBatch: () =>
       request<ManagedImportBatch>('/api/v1/import-batches', { method: 'POST' }),
     getManagedImportBatch: (batchId: string) =>

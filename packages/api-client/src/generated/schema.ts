@@ -228,6 +228,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List up to 20 most recent terminal Managed Import results */
+        get: operations["listImportHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches/{batchId}": {
         parameters: {
             query?: never;
@@ -757,6 +774,47 @@ export interface components {
             outcome?: "imported" | "rejected" | "failed" | "replaced" | "not_attempted";
             /** Format: uuid */
             trackId?: string;
+        };
+        ManagedImportHistoryList: {
+            items: components["schemas"]["ManagedImportHistoryItem"][];
+        };
+        ManagedImportHistoryItem: {
+            /** Format: uuid */
+            importId: string;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            completedAt: string;
+            /** @enum {string} */
+            resultCode: "completed" | "partially_completed" | "failed" | "canceled";
+            counts: components["schemas"]["ManagedImportHistoryCounts"];
+            files: components["schemas"]["ManagedImportHistoryFile"][];
+        };
+        ManagedImportHistoryCounts: {
+            total: number;
+            imported: number;
+            rejected: number;
+            failed: number;
+            replaced: number;
+            notAttempted: number;
+            canceled: number;
+        };
+        ManagedImportHistoryFile: {
+            /** Format: uuid */
+            fileId: string;
+            /** Format: uuid */
+            jobId: string;
+            safeFilename?: string;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            completedAt: string;
+            contentSha256?: string;
+            resultCode: string;
+            /** Format: uuid */
+            createdTrackId?: string;
+            /** Format: uuid */
+            replacedTrackId?: string;
         };
         ManagedImportBatchConfirmation: {
             revision: number;
@@ -1651,6 +1709,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ManagedImportBatch"];
+                };
+            };
+        };
+    };
+    listImportHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent terminal Import History without staged audio or raw metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportHistoryList"];
                 };
             };
         };
