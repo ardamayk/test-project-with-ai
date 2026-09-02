@@ -593,11 +593,12 @@ func TestManagedImportBatchResumesConfirmationAfterInterruption(t *testing.T) {
 	if uploadResponse.Code != http.StatusOK {
 		t.Fatalf("upload resumable batch file status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
 	}
+	previewBatch := getImportBatch(t, router, batchID)
 	if _, err := database.Exec(`UPDATE managed_import_batches SET status = 'confirming', revision = revision + 1 WHERE id = ?`, batchID); err != nil {
 		t.Fatalf("simulate interrupted confirmation: %v", err)
 	}
 
-	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":1,"selectedFileIds":[%q]}`, job.ID)), map[string]string{"Content-Type": "application/json"})
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q]}`, previewBatch.Revision, job.ID)), map[string]string{"Content-Type": "application/json"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("resume Import Batch status = %d, body = %s", response.Code, response.Body.String())
 	}
