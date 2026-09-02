@@ -84,7 +84,7 @@ run = ":"
 
 [tasks.test]
 description = "Run workspace, Music Server, Desktop Client, workflow policy, and Git hook tests"
-depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test", "classifier:test", "main-workflows:test"]
+depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test", "classifier:test", "main-workflows:test", "clean-room:test"]
 run = ":"
 
 [tasks."git-hooks:test"]
@@ -98,6 +98,10 @@ run = "node --test scripts/test-classify-pr-changes.mjs"
 [tasks."main-workflows:test"]
 description = "Test full main verification workflow policy"
 run = "node --test scripts/test-main-verification-workflows.mjs"
+
+[tasks."clean-room:test"]
+description = "Test clean-room verification behavior and workflow policy"
+run = "node --test scripts/test-clean-room-verification.mjs"
 
 [tasks."workspace:build"]
 description = "Build workspace production artifacts"
@@ -271,6 +275,10 @@ mise run generate:check
 mise run ci:integration
 mise run build
 """
+
+[tasks."ci:clean-room"]
+description = "Run full verification and container construction with isolated empty caches"
+run = "bash scripts/run-clean-room-verification.sh"
 
 # Optional debugging aid only: smoke-tests that the selected Integration Gate
 # job still wires up under nektos/act. It is never authoritative (GitHub-hosted

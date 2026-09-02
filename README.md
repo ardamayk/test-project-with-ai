@@ -71,7 +71,10 @@ The launcher automatically selects native Wayland with the NVIDIA explicit-sync 
 mise run ci:fast          # static checks and unit tests
 mise run ci:integration   # Playwright, HLS, and pinned-mpv tests
 mise run ci:full          # fast + integration + production builds
+mise run ci:clean-room    # full verification + container build with isolated empty caches
 ```
+
+`ci:clean-room` requires Docker with Buildx and the native dependencies used by the integration tests. It performs a forced frozen dependency install, runs the full verification contract, and constructs the container without regenerating committed clients. Go, Cargo, Turbo, pnpm, Playwright, Mise, and container-builder caches are redirected to temporary state that is removed on success, failure, or interruption; existing global developer caches are never deleted or rewritten.
 
 Classify pull-request validation from repository-owned path policy:
 

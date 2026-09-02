@@ -508,27 +508,7 @@ jobs:
           cache_save: false
 
       - name: Install Tauri Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            ffmpeg \
-            libayatana-appindicator3-dev \
-            libass-dev \
-            libavcodec-dev \
-            libavfilter-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libplacebo-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libswresample-dev \
-            libswscale-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            meson \
-            ninja-build \
-            pkg-config
+        run: bash scripts/install-linux-verification-dependencies.sh
 
       - name: Resolve pnpm store path
         id: pnpm_store
@@ -583,25 +563,9 @@ jobs:
       - name: Build pinned mpv from verified source
         id: mpv_build
         if: ${{ !cancelled() && steps.mpv_cache.outputs.cache-hit != 'true' }}
-        run: |
-          version="$(tr -d '\r\n' < desktop/src-tauri/mpv-version.txt)"
-          archive="${RUNNER_TEMP}/mpv-${version}.tar.gz"
-          source_directory="${RUNNER_TEMP}/mpv-${version}"
-          binary_directory="${RUNNER_TEMP}/earthly-audio-mpv"
-          curl --fail --location --retry 3 \
-            "https://github.com/mpv-player/mpv/archive/refs/tags/v${version}.tar.gz" \
-            --output "${archive}"
-          echo "${MPV_SOURCE_SHA256}  ${archive}" | sha256sum --check
-          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}"
-          meson setup "${source_directory}/build" "${source_directory}" ${MPV_BUILD_FLAGS} \
-            2>&1 | tee "$RUNNER_TEMP/main-desktop-logs/mpv-build.log"
-          meson compile -C "${source_directory}/build" ./mpv:executable \
-            2>&1 | tee -a "$RUNNER_TEMP/main-desktop-logs/mpv-build.log"
-          install -d -m 0755 "${binary_directory}"
-          install -m 0755 "${source_directory}/build/mpv" "${binary_directory}/mpv"
-          binary_sha256="$(sha256sum "${binary_directory}/mpv" | cut -d ' ' -f 1)"
-          echo "binary_sha256=${binary_sha256}" >> "$GITHUB_OUTPUT"
-          (cd "${binary_directory}" && sha256sum mpv > mpv.sha256)
+        env:
+          MPV_BUILD_LOG: ${{ runner.temp }}/main-desktop-logs/mpv-build.log
+        run: bash scripts/build-pinned-mpv.sh
 
       - name: Verify restored pinned mpv
         id: mpv_restore_verify

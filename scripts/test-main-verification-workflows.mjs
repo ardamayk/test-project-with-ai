@@ -14,6 +14,10 @@ const integrationWorkflow = readFileSync(
 	new URL("../.github/workflows/pr-integration-gate.yml", import.meta.url),
 	"utf8",
 );
+const pinnedMpvBuilder = readFileSync(
+	new URL("build-pinned-mpv.sh", import.meta.url),
+	"utf8",
+);
 
 function getJob(workflow, jobName) {
 	const jobStart = workflow.indexOf(`  ${jobName}:\n`);
@@ -105,10 +109,11 @@ test("pinned mpv cache paths remain runnable and tamper-evident", () => {
 		/Record start time[\s\S]*mkdir -p "\$RUNNER_TEMP\/integration-gate-logs"/,
 	);
 	assert.match(mainWorkflow, /MPV_CACHE_SCHEMA: v2/);
-	assert.match(mainDesktopJob, /binary_sha256=.*sha256sum/);
+	assert.match(mainDesktopJob, /bash scripts\/build-pinned-mpv\.sh/);
+	assert.match(pinnedMpvBuilder, /binarySha256=.*sha256sum/);
 	assert.match(
-		mainDesktopJob,
-		/echo "binary_sha256=\$\{binary_sha256\}" >> "\$GITHUB_OUTPUT"/,
+		pinnedMpvBuilder,
+		/echo "binary_sha256=\$\{binarySha256\}" >> "\$\{GITHUB_OUTPUT\}"/,
 	);
 	assert.match(mainDesktopJob, /name: Verify restored pinned mpv/);
 	assert.match(
