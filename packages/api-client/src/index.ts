@@ -84,6 +84,7 @@ export type ManagedImportHistoryList = Schemas['ManagedImportHistoryList'];
 export type ManagedImportHistoryItem = Schemas['ManagedImportHistoryItem'];
 export type ManagedImportHistoryFile = Schemas['ManagedImportHistoryFile'];
 export type LibraryMigrationPreview = Schemas['LibraryMigrationPreview'];
+export type LibraryMigrationStage = Schemas['LibraryMigrationStage'];
 export type ManagedImportUploadProgress = (progress: number) => void;
 export type QueueConflictResponse = Omit<
   Schemas['QueueConflictResponse'],
@@ -412,6 +413,11 @@ export function createApiClient(config: ApiClientConfig) {
       request<LibraryMigrationPreview>('/api/v1/library-migrations/preview', {
         method: 'POST',
         headers: { 'X-Migration-Preview': '1' },
+      }),
+    stageLibraryMigration: () =>
+      request<LibraryMigrationStage>('/api/v1/library-migrations/stage', {
+        method: 'POST',
+        headers: { 'X-Migration-Stage': '1' },
       }),
     listImportHistory: () =>
       request<ManagedImportHistoryList>('/api/v1/import-history'),

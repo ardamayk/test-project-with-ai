@@ -187,6 +187,8 @@ paths:
                 $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/library/albums/{albumId}/cover:
     get:
       tags: [library]
@@ -259,6 +261,8 @@ paths:
                 $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/library-migrations/preview:
     post:
       tags: [imports]
@@ -279,6 +283,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LibraryMigrationPreview"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/library-migrations/stage:
+    post:
+      tags: [imports]
+      operationId: stageLibraryMigration
+      summary: Copy and verify accepted Legacy Tracks in hidden pending Managed Storage locations
+      parameters:
+        - name: X-Migration-Stage
+          in: header
+          required: true
+          description: Non-simple application header required to confirm explicit migration staging
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: Per-file result of staging and verifying the current Library Migration candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryMigrationStage"
         "409":
           $ref: "#/components/responses/Conflict"
         "403":
@@ -1613,6 +1641,51 @@ components:
         errorReason:
           type: string
           description: Actionable per-file rejection reason.
+    LibraryMigrationStage:
+      type: object
+      required: [verifiedCount, rejectedCount, failedCount, files]
+      properties:
+        verifiedCount:
+          type: integer
+          minimum: 0
+        rejectedCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryMigrationStageFile"
+    LibraryMigrationStageFile:
+      type: object
+      required: [trackId, originalFilename, state]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        originalFilename:
+          type: string
+          description: Display-only basename of the existing Legacy Track source.
+        state:
+          type: string
+          enum: [verified, rejected, failed]
+        pendingTrackId:
+          type: string
+          format: uuid
+        sourceSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        pendingSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        errorCode:
+          type: string
+        errorField:
+          type: string
+        errorReason:
+          type: string
     ManagedImportPreviewFile:
       oneOf:
         - $ref: "#/components/schemas/ManagedImportFlacPreviewFile"

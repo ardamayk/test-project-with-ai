@@ -224,6 +224,34 @@ type MigrationPreviewFile struct {
 	ErrorReason      string             `json:"errorReason,omitempty"`
 }
 
+type MigrationStageState string
+
+const (
+	MIGRATION_STAGE_VERIFIED MigrationStageState = "verified"
+	MIGRATION_STAGE_REJECTED MigrationStageState = "rejected"
+	MIGRATION_STAGE_FAILED   MigrationStageState = "failed"
+)
+
+type MigrationStage struct {
+	VerifiedCount int                  `json:"verifiedCount"`
+	RejectedCount int                  `json:"rejectedCount"`
+	FailedCount   int                  `json:"failedCount"`
+	Files         []MigrationStageFile `json:"files"`
+}
+
+type MigrationStageFile struct {
+	TrackID          string              `json:"trackId"`
+	OriginalFilename string              `json:"originalFilename"`
+	State            MigrationStageState `json:"state"`
+	PendingTrackID   string              `json:"pendingTrackId,omitempty"`
+	PendingPath      string              `json:"-"`
+	SourceSHA256     string              `json:"sourceSha256,omitempty"`
+	PendingSHA256    string              `json:"pendingSha256,omitempty"`
+	ErrorCode        string              `json:"errorCode,omitempty"`
+	ErrorField       string              `json:"errorField,omitempty"`
+	ErrorReason      string              `json:"errorReason,omitempty"`
+}
+
 type Confirmation struct {
 	Revision          int             `json:"revision"`
 	DuplicateDecision DuplicateAction `json:"duplicateDecision,omitempty"`
