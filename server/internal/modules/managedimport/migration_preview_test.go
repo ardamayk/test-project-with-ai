@@ -30,6 +30,8 @@ type migrationInspector struct {
 
 var migrationPreviewHeaders = map[string]string{MIGRATION_PREVIEW_REQUEST_HEADER: "1"}
 
+const SECOND_MIGRATION_SHA256 = "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func (inspector migrationInspector) Inspect(_ context.Context, path string, _ library.InspectionProgressReporter) (library.MediaInspection, error) {
 	if inspector.onInspect != nil {
 		inspector.onInspect(path)
@@ -292,6 +294,7 @@ func TestLibraryMigrationPreviewValidatesAlbumRulesAcrossAcceptedFiles(t *testin
 	firstInspection.Metadata.TrackPosition.Total = 10
 	firstInspection.AlbumArtwork.SHA256 = "first-artwork"
 	secondInspection := strictMigrationInspection()
+	secondInspection.FileSHA256 = SECOND_MIGRATION_SHA256
 	secondInspection.Metadata.HasDiscNumber = true
 	secondInspection.Metadata.DiscPosition = library.MediaPosition{Number: 2, Total: 2}
 	secondInspection.Metadata.TrackPosition = library.MediaPosition{Number: 2, Total: 11}
@@ -321,6 +324,7 @@ func TestLibraryMigrationPreviewRejectsConflictingArtworkAcrossAcceptedFiles(t *
 	firstInspection := strictMigrationInspection()
 	firstInspection.AlbumArtwork.SHA256 = "first-artwork"
 	secondInspection := strictMigrationInspection()
+	secondInspection.FileSHA256 = SECOND_MIGRATION_SHA256
 	secondInspection.Metadata.TrackPosition.Number = 2
 	secondInspection.AlbumArtwork.SHA256 = "second-artwork"
 	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
@@ -360,6 +364,7 @@ func TestLibraryMigrationPreviewRejectsConflictingTotalsAcrossAcceptedFiles(t *t
 			firstPath, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", []byte("first legacy audio"), 1)
 			secondPath, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", []byte("second legacy audio"), 2)
 			firstInspection, secondInspection := strictMigrationInspection(), strictMigrationInspection()
+			secondInspection.FileSHA256 = SECOND_MIGRATION_SHA256
 			firstInspection.Metadata.HasDiscNumber = true
 			secondInspection.Metadata.HasDiscNumber = true
 			secondInspection.Metadata.TrackPosition.Number = 2
@@ -377,6 +382,138 @@ func TestLibraryMigrationPreviewRejectsConflictingTotalsAcrossAcceptedFiles(t *t
 				assertMigrationFile(t, file, trackID, MIGRATION_FILE_REJECTED, "invalid_metadata", testCase.reason)
 			}
 		})
+	}
+}
+
+func TestLibraryMigrationPreviewRejectsDuplicateHashesWithinMigration(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	firstPath, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", []byte("same bytes"), 1)
+	secondPath, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", []byte("same bytes"), 2)
+	firstInspection, secondInspection := strictMigrationInspection(), strictMigrationInspection()
+	secondInspection.Metadata.TrackPosition.Number = 2
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		firstPath: {inspection: firstInspection}, secondPath: {inspection: secondInspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	for _, trackID := range []string{firstTrackID, secondTrackID} {
+		file := findMigrationFile(t, preview, trackID)
+		assertMigrationFile(t, file, trackID, MIGRATION_FILE_REJECTED, "exact_duplicate", "file bytes duplicate another Legacy Track in the migration")
+	}
+}
+
+func TestLibraryMigrationPreviewRejectsDuplicateAlbumPositionsWithinMigration(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	firstPath, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", []byte("first bytes"), 1)
+	secondPath, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", []byte("second bytes"), 2)
+	firstInspection, secondInspection := strictMigrationInspection(), strictMigrationInspection()
+	secondInspection.FileSHA256 = SECOND_MIGRATION_SHA256
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		firstPath: {inspection: firstInspection}, secondPath: {inspection: secondInspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	for _, trackID := range []string{firstTrackID, secondTrackID} {
+		file := findMigrationFile(t, preview, trackID)
+		assertMigrationFile(t, file, trackID, MIGRATION_FILE_REJECTED, "invalid_metadata", "Track position conflicts with another Track in the Album")
+	}
+}
+
+func TestLibraryMigrationPreviewRejectsDiscNumberAboveMigrationTotal(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	firstPath, firstTrackID := seedLegacyMigrationTrack(t, database, "first.flac", []byte("first bytes"), 1)
+	secondPath, secondTrackID := seedLegacyMigrationTrack(t, database, "second.flac", []byte("second bytes"), 2)
+	firstInspection, secondInspection := strictMigrationInspection(), strictMigrationInspection()
+	firstInspection.Metadata.HasDiscNumber = true
+	firstInspection.Metadata.DiscPosition.Total = 2
+	secondInspection.FileSHA256 = SECOND_MIGRATION_SHA256
+	secondInspection.Metadata.HasDiscNumber = true
+	secondInspection.Metadata.DiscPosition.Number = 3
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		firstPath: {inspection: firstInspection}, secondPath: {inspection: secondInspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	for _, trackID := range []string{firstTrackID, secondTrackID} {
+		file := findMigrationFile(t, preview, trackID)
+		assertMigrationFile(t, file, trackID, MIGRATION_FILE_REJECTED, "invalid_metadata", "DISCNUMBER total conflicts with another Track in the Album")
+	}
+}
+
+func TestLibraryMigrationPreviewRejectsExistingAlbumArtworkConflict(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	candidatePath, candidateTrackID := seedLegacyMigrationTrack(t, database, "candidate.flac", []byte("candidate bytes"), 1)
+	_, existingTrackID := seedLegacyMigrationTrack(t, database, "existing.flac", []byte("existing bytes"), 2)
+	inspection := strictMigrationInspection()
+	inspection.AlbumArtwork.SHA256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	var albumID string
+	if err := database.QueryRow(`SELECT album_id FROM tracks WHERE id = ?`, existingTrackID).Scan(&albumID); err != nil {
+		t.Fatalf("read existing Album ID: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE albums SET identity_key = ? WHERE id = ?`, albumIdentityKey(inspection.Metadata), albumID); err != nil {
+		t.Fatalf("seed existing Album identity: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE track_sources SET source_kind = 'managed', content_sha256 = ? WHERE track_id = ?`, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", existingTrackID); err != nil {
+		t.Fatalf("seed existing Managed Track source: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO album_artwork (id, album_id, source_track_id, content_sha256, media_type, width, height, encoded_size_bytes, file_path) VALUES (?, ?, ?, ?, 'image/png', 1, 1, 1, ?)`,
+		"existing-artwork", albumID, existingTrackID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", filepath.Join(t.TempDir(), "cover.png")); err != nil {
+		t.Fatalf("seed existing Album Artwork: %v", err)
+	}
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		candidatePath: {inspection: inspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	assertMigrationFile(t, preview.Files[0], candidateTrackID, MIGRATION_FILE_REJECTED, "album_artwork_conflict", "embedded Album Artwork differs from the existing Album")
+}
+
+func TestLibraryMigrationPreviewPropagatesUnsafeStorage(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourcePath, _ := seedLegacyMigrationTrack(t, database, "track.flac", []byte("legacy audio"), 1)
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		sourcePath: {inspection: strictMigrationInspection()},
+	}}, func(string) (int64, error) { return 0, ErrUnsafeStoragePath })
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, migrationPreviewHeaders)
+	testutil.AssertErrorCode(t, response, http.StatusConflict, "unsafe_storage_path")
+}
+
+func TestLibraryMigrationPreviewReleasesArtworkPayloadAfterInspection(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourcePath, _ := seedLegacyMigrationTrack(t, database, "track.flac", []byte("legacy audio"), 1)
+	inspection := strictMigrationInspection()
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: config.DEFAULT_MANAGED_IMPORT_FILE_LIMIT_BYTES, BatchBytes: config.DEFAULT_MANAGED_IMPORT_BATCH_LIMIT_BYTES}, unlimitedStorageCapacity)
+	service := NewService(NewStore(database), storage, migrationInspector{results: map[string]migrationInspectionResult{sourcePath: {inspection: inspection}}})
+	sources, err := service.store.ListLegacyMigrationSources(context.Background())
+	if err != nil {
+		t.Fatalf("list migration sources: %v", err)
+	}
+
+	_, candidates, err := service.inspectMigrationSources(context.Background(), sources)
+	if err != nil {
+		t.Fatalf("inspect migration sources: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].artworkBytes != int64(len(inspection.AlbumArtwork.Data)) || candidates[0].inspection.AlbumArtwork.Data != nil {
+		t.Fatalf("retained migration candidate artwork = %+v", candidates)
 	}
 }
 

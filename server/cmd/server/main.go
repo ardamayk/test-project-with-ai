@@ -137,7 +137,7 @@ func streamAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 }
 
 func isStreamPath(path string) bool {
-	if path == "/api/v1/playback/queue/events" {
+	if path == "/api/v1/playback/queue/events" || path == "/api/v1/library-migrations/preview" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/imports/") && strings.HasSuffix(path, "/file") {

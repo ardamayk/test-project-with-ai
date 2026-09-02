@@ -78,6 +78,22 @@ func (store *Store) FindManagedTrackByHash(ctx context.Context, contentSHA256 st
 	return trackID, nil
 }
 
+func (store *Store) FindAlbumArtworkHash(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {
+	var contentSHA256 string
+	err := store.database.QueryRowContext(ctx, `
+		SELECT album_artwork.content_sha256
+		FROM albums JOIN album_artwork ON album_artwork.album_id = albums.id
+		WHERE albums.identity_key = ?`, albumIdentityKey(metadata),
+	).Scan(&contentSHA256)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("find existing Album Artwork hash: %w", err)
+	}
+	return contentSHA256, nil
+}
+
 func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string) (_ Job, returnErr error) {
 	job := Job{ID: uuid.NewString(), Status: STATUS_UPLOADING, Revision: 1}
 	if batchID == "" {
