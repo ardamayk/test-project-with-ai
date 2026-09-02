@@ -117,6 +117,59 @@ func TestLibraryMigrationPreviewRejectsAcceptedFilesWhenCapacityIsInsufficient(t
 	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_REJECTED, "insufficient_storage", "Managed Storage does not have enough capacity for this migration and its safety reserve")
 }
 
+func TestLibraryMigrationPreviewAppliesConfiguredFileLimitAfterStrictInspection(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourceBytes := []byte("legacy audio")
+	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "track.flac", sourceBytes, 1)
+	configuration := config.Config{
+		ManagedStoragePath:          t.TempDir(),
+		ManagedImportFileLimitBytes: int64(len(sourceBytes) - 1),
+	}
+	module := newModule(database, configuration, migrationInspector{results: map[string]migrationInspectionResult{
+		sourcePath: {inspection: strictMigrationInspection()},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("migration preview status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	if preview.AcceptedCount != 0 || preview.RejectedCount != 1 {
+		t.Fatalf("file-limit migration preview = %+v", preview)
+	}
+	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_REJECTED, "upload_too_large", "file exceeds the configured per-file byte limit")
+}
+
+func TestLibraryMigrationPreviewIgnoresUnrelatedAwaitingImportPreviews(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	sourcePath, trackID := seedLegacyMigrationTrack(t, database, "track.flac", []byte("legacy audio"), 1)
+	awaitingPath := filepath.Join(t.TempDir(), "awaiting.flac")
+	if _, err := database.Exec(`INSERT INTO managed_import_jobs (
+		id, status, revision, original_filename, staged_file_path, content_sha256
+	) VALUES ('awaiting-job', 'awaiting_confirmation', 2, 'awaiting.flac', ?, ?)`, awaitingPath, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err != nil {
+		t.Fatalf("seed unrelated awaiting Import Preview: %v", err)
+	}
+	legacyInspection := strictMigrationInspection()
+	legacyInspection.Metadata.HasDiscNumber = false
+	awaitingInspection := strictMigrationInspection()
+	awaitingInspection.Metadata.HasDiscNumber = true
+	awaitingInspection.Metadata.DiscPosition = library.MediaPosition{Number: 2, Total: 2}
+	module := newModule(database, config.Config{ManagedStoragePath: t.TempDir()}, migrationInspector{results: map[string]migrationInspectionResult{
+		sourcePath:   {inspection: legacyInspection},
+		awaitingPath: {inspection: awaitingInspection},
+	}}, unlimitedStorageCapacity)
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library-migrations/preview", nil, nil)
+	var preview MigrationPreview
+	testutil.DecodeJSON(t, response, &preview)
+	assertMigrationFile(t, preview.Files[0], trackID, MIGRATION_FILE_ACCEPTED, "", "")
+}
+
 func seedLegacyMigrationTrack(t *testing.T, database *sql.DB, filename string, contents []byte, trackNumber int) (string, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), filename)

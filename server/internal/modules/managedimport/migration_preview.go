@@ -17,35 +17,71 @@ func (service *Service) PreviewMigration(ctx context.Context) (MigrationPreview,
 	if err != nil {
 		return MigrationPreview{}, err
 	}
+	preview, requirement, err := service.inspectMigrationSources(ctx, sources)
+	if err != nil {
+		return MigrationPreview{}, err
+	}
+	if requirement.SelectedBytes > service.storage.batchLimit {
+		rejectAcceptedMigrationFiles(&preview, ErrBatchTooLarge)
+	} else if requirement.SelectedBytes > 0 {
+		capacityErr := service.storage.Preflight(requirement)
+		if errors.Is(capacityErr, ErrInsufficientStorage) || errors.Is(capacityErr, ErrUnsafeStoragePath) {
+			rejectAcceptedMigrationFiles(&preview, capacityErr)
+		} else if capacityErr != nil {
+			return MigrationPreview{}, capacityErr
+		}
+	}
+	countMigrationResults(&preview)
+	return preview, nil
+}
+
+func (service *Service) inspectMigrationSources(ctx context.Context, sources []legacyMigrationSource) (MigrationPreview, StorageRequirement, error) {
 	preview := MigrationPreview{Files: make([]MigrationPreviewFile, 0, len(sources))}
-	var selectedBytes int64
-	var temporaryBytes int64
+	var requirement StorageRequirement
 	for _, source := range sources {
 		file, inspection, inspectErr := service.inspectLegacyMigrationSource(ctx, source)
 		if inspectErr != nil {
 			preview.Files = append(preview.Files, rejectedMigrationFile(source, inspectErr))
 			continue
 		}
-		selectedBytes, err = addByteCounts(selectedBytes, file.Size())
-		if err != nil {
-			return MigrationPreview{}, fmt.Errorf("calculate Library Migration selected capacity: %w", err)
+		if validationErr := service.validateMigrationInspection(ctx, file, inspection); validationErr != nil {
+			preview.Files = append(preview.Files, rejectedMigrationFile(source, validationErr))
+			continue
 		}
-		temporaryBytes, err = addByteCounts(temporaryBytes, file.Size(), int64(len(inspection.AlbumArtwork.Data)))
+		var err error
+		requirement.SelectedBytes, err = addByteCounts(requirement.SelectedBytes, file.Size())
 		if err != nil {
-			return MigrationPreview{}, fmt.Errorf("calculate Library Migration temporary capacity: %w", err)
+			return MigrationPreview{}, StorageRequirement{}, fmt.Errorf("calculate Library Migration selected capacity: %w", err)
+		}
+		requirement.TemporaryBytes, err = addByteCounts(requirement.TemporaryBytes, file.Size(), int64(len(inspection.AlbumArtwork.Data)))
+		if err != nil {
+			return MigrationPreview{}, StorageRequirement{}, fmt.Errorf("calculate Library Migration temporary capacity: %w", err)
 		}
 		preview.Files = append(preview.Files, acceptedMigrationFile(source, inspection))
 	}
-	if selectedBytes > 0 {
-		if err := service.storage.Preflight(StorageRequirement{SelectedBytes: selectedBytes, TemporaryBytes: temporaryBytes}); err != nil {
-			if !errors.Is(err, ErrInsufficientStorage) && !errors.Is(err, ErrUnsafeStoragePath) {
-				return MigrationPreview{}, err
+	return preview, requirement, nil
+}
+
+func (service *Service) validateMigrationInspection(ctx context.Context, file os.FileInfo, inspection library.MediaInspection) error {
+	if err := service.storage.validateUploadLength(file.Size()); err != nil {
+		return err
+	}
+	metadata := inspection.Metadata
+	if !metadata.HasDiscNumber {
+		requiresDiscNumber, err := service.store.AlbumRequiresDiscNumber(ctx, metadata)
+		if err != nil {
+			return err
+		}
+		if requiresDiscNumber {
+			return &ValidationError{
+				Code:   string(library.INSPECTION_ERROR_INVALID_METADATA),
+				Field:  "DISCNUMBER",
+				Reason: "DISCNUMBER is required for a known multi-disc Album",
+				Err:    errors.New("DISCNUMBER is required for a known multi-disc Album"),
 			}
-			rejectMigrationCapacity(&preview, err)
 		}
 	}
-	countMigrationResults(&preview)
-	return preview, nil
+	return service.validateExistingAlbumTotals(ctx, metadata)
 }
 
 func (service *Service) inspectLegacyMigrationSource(ctx context.Context, source legacyMigrationSource) (os.FileInfo, library.MediaInspection, error) {
@@ -98,9 +134,9 @@ func rejectedMigrationFile(source legacyMigrationSource, err error) MigrationPre
 	}
 }
 
-func rejectMigrationCapacity(preview *MigrationPreview, capacityErr error) {
-	code, reason := failureDetails(capacityErr)
-	if errors.Is(capacityErr, ErrInsufficientStorage) {
+func rejectAcceptedMigrationFiles(preview *MigrationPreview, rejectionErr error) {
+	code, reason := failureDetails(rejectionErr)
+	if errors.Is(rejectionErr, ErrInsufficientStorage) {
 		reason = MIGRATION_CAPACITY_REASON
 	}
 	for index := range preview.Files {
