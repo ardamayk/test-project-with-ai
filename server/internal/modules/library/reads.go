@@ -11,14 +11,13 @@ const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 	SELECT album_artists.artist_id, album_artists.album_id
 	FROM album_artists
 	WHERE EXISTS (
-		SELECT 1 FROM tracks
-		WHERE tracks.album_id = album_artists.album_id AND tracks.missing_at IS NULL AND tracks.is_pending_commit = 0
+		SELECT 1 FROM visible_tracks
+		WHERE visible_tracks.album_id = album_artists.album_id
 	)
 	UNION
 	SELECT track_artists.artist_id, tracks.album_id
 	FROM track_artists
-	INNER JOIN tracks ON tracks.id = track_artists.track_id
-	WHERE tracks.missing_at IS NULL AND tracks.is_pending_commit = 0
+	INNER JOIN visible_tracks ON visible_tracks.id = track_artists.track_id
 )
 `
 
@@ -30,7 +29,7 @@ const trackReadSelect = `SELECT
 	COALESCE(t.channel_count, 0), COALESCE(t.bitrate_bps, 0), t.codec, t.container,
 	t.sample_format, COALESCE(ts.file_path, t.file_path), t.replaygain_track_gain_db,
 	t.replaygain_track_peak, t.replaygain_album_gain_db, t.replaygain_album_peak
-FROM tracks t
+FROM visible_tracks t
 INNER JOIN albums al ON al.id = t.album_id
 LEFT JOIN track_sources ts ON ts.track_id = t.id
 `
@@ -178,10 +177,10 @@ func (s *Store) readTrackArtists(ctx context.Context, trackIDs []string) (map[st
 
 func (s *Store) readAlbumGenres(ctx context.Context, albumIDs []string) (map[string][]Genre, error) {
 	return readRelations(ctx, s, "read Album Genres", `SELECT tracks.album_id, genres.id, genres.name, MIN(relations.position)
-		FROM tracks
+		FROM visible_tracks tracks
 		INNER JOIN track_genres relations ON relations.track_id = tracks.id
 		INNER JOIN genres ON genres.id = relations.genre_id
-		WHERE tracks.missing_at IS NULL AND tracks.is_pending_commit = 0 AND tracks.album_id IN (%s)
+		WHERE tracks.album_id IN (%s)
 		GROUP BY tracks.album_id, genres.id, genres.name
 		ORDER BY tracks.album_id, MIN(relations.position), genres.name`, albumIDs, func(rows *sql.Rows) (string, Genre, error) {
 		var albumID string

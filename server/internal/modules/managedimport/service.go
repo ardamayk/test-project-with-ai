@@ -337,11 +337,6 @@ func (service *Service) recoverCommit(ctx context.Context, journal commitJournal
 
 func (service *Service) rollbackUncommittedJournal(ctx context.Context, journal commitJournal, placement placedFiles) error {
 	reason := fmt.Sprintf("restart rolled back commit from %s phase", journal.Phase)
-	if journal.Phase == COMMIT_PHASE_PREPARED {
-		if _, err := os.Stat(journal.ArtworkFilePath); err == nil {
-			reason += "; canonical artwork retained because creation was not journaled"
-		}
-	}
 	_, canonicalErr := os.Stat(journal.AudioFilePath)
 	if canonicalErr == nil {
 		if err := service.storage.Rollback(placement); err != nil {
@@ -351,6 +346,9 @@ func (service *Service) rollbackUncommittedJournal(ctx context.Context, journal 
 	} else if !errors.Is(canonicalErr, os.ErrNotExist) {
 		reasonErr := service.store.RecordCommitRecoveryReason(ctx, journal.ID, reason+"; canonical state unreadable")
 		return errors.Join(canonicalErr, reasonErr)
+	} else if err := service.storage.CleanupPreparedPlacement(placement); err != nil {
+		reasonErr := service.store.RecordCommitRecoveryReason(ctx, journal.ID, reason+"; prepared placement cleanup failed")
+		return errors.Join(err, reasonErr)
 	}
 	return service.store.RollbackCommitJournal(ctx, journal.ID, reason)
 }
@@ -887,47 +885,67 @@ func (service *Service) preflightCommit(stagedBytes int64, inspection library.Me
 }
 
 func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
+	identity, journal, err := service.prepareCommit(ctx, job, inspection)
+	if err != nil {
+		return Result{}, err
+	}
+	placement, err := service.placeAndVerifyCommit(ctx, job, inspection, identity, journal)
+	if err != nil {
+		return Result{}, err
+	}
+	return service.persistAndFinalizeCommit(ctx, job, inspection, identity, journal, placement)
+}
+
+func (service *Service) prepareCommit(ctx context.Context, job importJob, inspection library.MediaInspection) (commitIdentity, commitJournal, error) {
 	identity, resolveErr := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
 	if resolveErr != nil {
-		return Result{}, resolveErr
+		return commitIdentity{}, commitJournal{}, resolveErr
 	}
 	plannedPlacement, planErr := service.storage.planPlacement(job.StagedFilePath, inspection, identity)
 	if planErr != nil {
-		return Result{}, planErr
+		return commitIdentity{}, commitJournal{}, planErr
 	}
 	journal := commitJournal{
 		ID: uuid.NewString(), JobID: job.ID, TrackID: identity.TrackID, Phase: COMMIT_PHASE_PREPARED,
 		StagedFilePath: job.StagedFilePath, AudioFilePath: plannedPlacement.AudioPath,
 		ArtworkFilePath: plannedPlacement.ArtworkPath, AudioSHA256: inspection.FileSHA256,
-		ArtworkSHA256: inspection.AlbumArtwork.SHA256,
+		ArtworkSHA256: inspection.AlbumArtwork.SHA256, IsArtworkCreated: identity.ExistingArtworkPath == "",
 	}
 	if err := service.store.CreateCommitJournal(ctx, journal); err != nil {
-		return Result{}, err
+		return commitIdentity{}, commitJournal{}, err
 	}
 	if err := service.afterCommitPhase(COMMIT_PHASE_PREPARED); err != nil {
-		return Result{}, err
+		return commitIdentity{}, commitJournal{}, err
 	}
+	return identity, journal, nil
+}
+
+func (service *Service) placeAndVerifyCommit(ctx context.Context, job importJob, inspection library.MediaInspection, identity commitIdentity, journal commitJournal) (placedFiles, error) {
 	placement, placementErr := service.storage.Place(job.StagedFilePath, inspection, identity)
 	if placementErr != nil {
 		journalErr := service.store.RollbackCommitJournal(context.WithoutCancel(ctx), journal.ID, "canonical placement failed")
-		return Result{}, errors.Join(placementErr, journalErr)
+		return placedFiles{}, errors.Join(placementErr, journalErr)
 	}
 	journal.IsArtworkCreated = placement.artworkCreated
 	if err := service.store.MarkCommitPlaced(ctx, journal.ID, placement.artworkCreated); err != nil {
-		return Result{}, err
+		return placedFiles{}, err
 	}
 	if err := service.afterCommitPhase(COMMIT_PHASE_PLACED); err != nil {
-		return Result{}, err
+		return placedFiles{}, err
 	}
 	if err := service.storage.VerifyPlacement(placement, journal.AudioSHA256, journal.ArtworkSHA256); err != nil {
-		return Result{}, errors.Join(err, service.rollbackFilesystemCommit(ctx, journal, placement, "canonical verification failed"))
+		return placedFiles{}, errors.Join(err, service.rollbackFilesystemCommit(ctx, journal, placement, "canonical verification failed"))
 	}
 	if err := service.store.UpdateCommitPhase(ctx, journal.ID, COMMIT_PHASE_VERIFIED); err != nil {
-		return Result{}, err
+		return placedFiles{}, err
 	}
 	if err := service.afterCommitPhase(COMMIT_PHASE_VERIFIED); err != nil {
-		return Result{}, err
+		return placedFiles{}, err
 	}
+	return placement, nil
+}
+
+func (service *Service) persistAndFinalizeCommit(ctx context.Context, job importJob, inspection library.MediaInspection, identity commitIdentity, journal commitJournal, placement placedFiles) (Result, error) {
 	data := commitData{
 		Job:        job,
 		Identity:   identity,

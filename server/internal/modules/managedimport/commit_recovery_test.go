@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -50,8 +51,16 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 			}
 
 			libraryStore := library.NewStore(database)
-			if _, err := libraryStore.GetTrack(context.Background(), commitTrackID(t, database, job.ID)); !errors.Is(err, library.ErrNotFound) {
+			trackID := commitTrackID(t, database, job.ID)
+			if _, err := libraryStore.GetTrack(context.Background(), trackID); !errors.Is(err, library.ErrNotFound) {
 				t.Fatalf("pending Track visible at phase %q: %v", phase, err)
+			}
+			if _, err := libraryStore.GetTrackFilePath(context.Background(), trackID); !errors.Is(err, library.ErrNotFound) {
+				t.Fatalf("pending Track stream path visible at phase %q: %v", phase, err)
+			}
+			tracks, listErr := libraryStore.ListTracks(context.Background(), 100, 0, "")
+			if listErr != nil || tracks.Total != 0 || len(tracks.Items) != 0 {
+				t.Fatalf("pending Track listed at phase %q: tracks = %+v, error = %v", phase, tracks, listErr)
 			}
 
 			restarted := NewService(NewStore(database), storage, recoveryInspector{inspection: inspection})
@@ -87,6 +96,45 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecoverPreparedJournalAfterPlacementGapRemovesCanonicalOrphans(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storageRoot := t.TempDir()
+	storage := newStorage(storageRoot, StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	service, job, inspection := prepareCommitRecoveryJob(t, database, storage)
+	identity, resolveErr := service.store.ResolveCommitIdentity(context.Background(), inspection.Metadata)
+	if resolveErr != nil {
+		t.Fatalf("resolve commit identity: %v", resolveErr)
+	}
+	planned, planErr := storage.planPlacement(job.StagedFilePath, inspection, identity)
+	if planErr != nil {
+		t.Fatalf("plan placement: %v", planErr)
+	}
+	journal := commitJournal{
+		ID: "placement-gap", JobID: job.ID, TrackID: identity.TrackID, Phase: COMMIT_PHASE_PREPARED,
+		StagedFilePath: job.StagedFilePath, AudioFilePath: planned.AudioPath,
+		ArtworkFilePath: planned.ArtworkPath, AudioSHA256: inspection.FileSHA256,
+		ArtworkSHA256: inspection.AlbumArtwork.SHA256, IsArtworkCreated: true,
+	}
+	if err := service.store.CreateCommitJournal(context.Background(), journal); err != nil {
+		t.Fatalf("create prepared journal: %v", err)
+	}
+	if _, err := storage.Place(job.StagedFilePath, inspection, identity); err != nil {
+		t.Fatalf("place before journal transition: %v", err)
+	}
+
+	if err := service.RecoverCommits(context.Background()); err != nil {
+		t.Fatalf("recover placement gap: %v", err)
+	}
+	storedJob, err := service.store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get recovered job: %v", err)
+	}
+	if _, err := os.Stat(storedJob.StagedFilePath); err != nil {
+		t.Fatalf("stat restored staging file: %v", err)
+	}
+	assertNoCanonicalFiles(t, storageRoot)
 }
 
 func TestRecoverCorruptPendingCanonicalTrackRollsBackWithReason(t *testing.T) {
@@ -213,4 +261,21 @@ func commitTrackID(t *testing.T, database *sql.DB, jobID string) string {
 		t.Fatalf("read journaled Track ID: %v", err)
 	}
 	return trackID
+}
+
+func assertNoCanonicalFiles(t *testing.T, storageRoot string) {
+	t.Helper()
+	libraryPath := filepath.Join(storageRoot, "library")
+	err := filepath.WalkDir(libraryPath, func(_ string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			t.Fatalf("canonical orphan remains: %s", entry.Name())
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspect canonical files: %v", err)
+	}
 }

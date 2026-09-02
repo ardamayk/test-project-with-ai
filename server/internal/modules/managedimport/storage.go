@@ -419,7 +419,26 @@ func (storage *Storage) Rollback(placement placedFiles) (returnErr error) {
 	if placement.artworkCreated {
 		removeArtworkErr = removeRootedFile(root, placement.artworkRelative, "Canonical Album Artwork")
 	}
-	return errors.Join(removeArtworkErr, restoreRootedFile(root, placement.audioRelative, placement.stagedRelative))
+	restoreErr := restoreRootedFile(root, placement.audioRelative, placement.stagedRelative)
+	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	return errors.Join(removeArtworkErr, restoreErr, directoryErr)
+}
+
+func (storage *Storage) CleanupPreparedPlacement(placement placedFiles) (returnErr error) {
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	var artworkErr error
+	if placement.artworkCreated {
+		artworkErr = removeRootedFile(root, placement.artworkRelative, "uncommitted Canonical Album Artwork")
+		if errors.Is(artworkErr, os.ErrNotExist) {
+			artworkErr = nil
+		}
+	}
+	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	return errors.Join(artworkErr, directoryErr)
 }
 
 func (storage *Storage) openRoot() (*os.Root, error) {
@@ -535,29 +554,55 @@ func verifyRootedFileHash(root *os.Root, path, expectedHash string) error {
 }
 
 func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, expectedHash string) (bool, error) {
-	temporaryPath := filepath.Join(filepath.Dir(path), ".cover-"+uuid.NewString())
-	temporary, err := root.OpenFile(temporaryPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	artwork, err := root.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return false, verifyMatchingArtwork(root, path, expectedHash)
+	}
 	if err != nil {
-		return false, fmt.Errorf("create temporary Album Artwork: %w", err)
+		return false, fmt.Errorf("create canonical Album Artwork: %w", err)
 	}
-	if err := restrictManagedStoragePath(absoluteRoot, temporaryPath, false); err != nil {
-		return false, errors.Join(err, closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+	if err := restrictManagedStoragePath(absoluteRoot, path, false); err != nil {
+		return false, errors.Join(err, closeManagedStorageFile(artwork, "canonical Album Artwork"), removeRootedFile(root, path, "Canonical Album Artwork"))
 	}
-	if _, err := temporary.Write(data); err != nil {
-		return false, errors.Join(fmt.Errorf("write Album Artwork: %w", err), closeManagedStorageFile(temporary, "temporary Album Artwork"), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+	if _, err := artwork.Write(data); err != nil {
+		return false, errors.Join(fmt.Errorf("write Album Artwork: %w", err), closeManagedStorageFile(artwork, "canonical Album Artwork"), removeRootedFile(root, path, "Canonical Album Artwork"))
 	}
-	if err := closeManagedStorageFile(temporary, "temporary Album Artwork"); err != nil {
-		return false, errors.Join(err, removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
+	if err := closeManagedStorageFile(artwork, "canonical Album Artwork"); err != nil {
+		return false, errors.Join(err, removeRootedFile(root, path, "Canonical Album Artwork"))
 	}
-	if err := root.Link(temporaryPath, path); errors.Is(err, os.ErrExist) {
-		return false, errors.Join(verifyMatchingArtwork(root, path, expectedHash), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
-	} else if err != nil {
-		return false, errors.Join(fmt.Errorf("place Album Artwork: %w", err), removeRootedFile(root, temporaryPath, "temporary Album Artwork"))
-	}
-	if err := removeRootedFile(root, temporaryPath, "temporary Album Artwork"); err != nil {
+	if err := verifyRootedFileHash(root, path, expectedHash); err != nil {
 		return false, errors.Join(err, removeRootedFile(root, path, "Canonical Album Artwork"))
 	}
 	return true, nil
+}
+
+func removeEmptyCanonicalDirectories(root *os.Root, directoryPath string) (returnErr error) {
+	for directoryPath != "." && directoryPath != "library" {
+		directory, err := root.Open(directoryPath)
+		if errors.Is(err, os.ErrNotExist) {
+			directoryPath = filepath.Dir(directoryPath)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("open canonical directory for rollback: %w", err)
+		}
+		entries, readErr := directory.ReadDir(1)
+		closeErr := closeManagedStorageFile(directory, "canonical rollback directory")
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return errors.Join(fmt.Errorf("inspect canonical directory for rollback: %w", readErr), closeErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if len(entries) > 0 {
+			return nil
+		}
+		if err := root.Remove(directoryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove empty canonical directory: %w", err)
+		}
+		directoryPath = filepath.Dir(directoryPath)
+	}
+	return nil
 }
 
 func verifyMatchingArtwork(root *os.Root, path, expectedHash string) error {

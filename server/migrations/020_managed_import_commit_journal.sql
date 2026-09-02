@@ -1,6 +1,10 @@
 -- +goose Up
 ALTER TABLE tracks ADD COLUMN is_pending_commit INTEGER NOT NULL DEFAULT 0 CHECK (is_pending_commit IN (0, 1));
 
+CREATE VIEW visible_tracks AS
+    SELECT * FROM tracks
+    WHERE missing_at IS NULL AND is_pending_commit = 0;
+
 CREATE TABLE managed_import_commit_journal (
     id TEXT PRIMARY KEY,
     job_id TEXT NOT NULL,
@@ -28,4 +32,5 @@ CREATE INDEX idx_managed_import_commit_journal_phase
 
 -- +goose Down
 DROP TABLE IF EXISTS managed_import_commit_journal;
+DROP VIEW IF EXISTS visible_tracks;
 ALTER TABLE tracks DROP COLUMN is_pending_commit;
