@@ -75,6 +75,16 @@ func (s *Store) deleteTrack(ctx context.Context, trackID string, removeFile func
 
 func (s *Store) DeleteAlbum(ctx context.Context, albumID string, removeFile func(path string) error) (DeleteResult, error) {
 	return runStoreMutation(ctx, s, "legacy Album deletion", func(store *Store, tx *sql.Tx) (DeleteResult, error) {
+		var managedTrackCount int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM tracks
+			JOIN track_sources ON track_sources.track_id = tracks.id
+			WHERE tracks.album_id = ? AND track_sources.source_kind = 'managed'`, albumID).Scan(&managedTrackCount); err != nil {
+			return DeleteResult{}, fmt.Errorf("inspect Album source ownership: %w", err)
+		}
+		if managedTrackCount > 0 {
+			return DeleteResult{}, ErrManagedAlbum
+		}
 		result, err := store.deleteAlbum(ctx, albumID, removeFile)
 		if err != nil {
 			return DeleteResult{}, err

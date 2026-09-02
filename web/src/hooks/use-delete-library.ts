@@ -55,12 +55,24 @@ export function useDeleteTrack() {
 	const playback = usePlayback();
 
 	return useMutation({
-		mutationFn: (trackId: string) => apiClient.deleteTrack(trackId),
-		onSuccess: async (_result, trackId) => {
+		mutationFn: ({
+			trackId,
+			confirmationToken,
+		}: {
+			trackId: string;
+			confirmationToken: string;
+		}) => apiClient.deleteTrack(trackId, confirmationToken),
+		onSuccess: async (_result, { trackId }) => {
 			await syncPlaybackAfterDelete(playback, trackId);
 			await invalidateLibraryCache(queryClient, { trackId });
 			await invalidatePlaylistCache(queryClient);
 		},
+	});
+}
+
+export function usePreviewTrackDeletion() {
+	return useMutation({
+		mutationFn: (trackId: string) => apiClient.previewTrackDeletion(trackId),
 	});
 }
 

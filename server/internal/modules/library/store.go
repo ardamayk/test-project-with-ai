@@ -70,6 +70,7 @@ type Track struct {
 	DiscTotal    *int               `json:"discTotal,omitempty"`
 	DurationMs   int                `json:"durationMs"`
 	Format       string             `json:"format"`
+	SourceKind   string             `json:"sourceKind"`
 	Codec        string             `json:"codec,omitempty"`
 	Container    string             `json:"container,omitempty"`
 	SampleFormat string             `json:"sampleFormat,omitempty"`

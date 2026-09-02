@@ -15,6 +15,7 @@ import (
 
 const MIGRATION_PREVIEW_REQUEST_HEADER = "X-Migration-Preview"
 const MIGRATION_STAGE_REQUEST_HEADER = "X-Migration-Stage"
+const MAX_TRACK_DELETION_BODY_BYTES = 1024
 
 type Handlers struct {
 	service *Service
@@ -126,6 +127,38 @@ func (handlers *Handlers) StageMigration(writer http.ResponseWriter, request *ht
 	respond.JSON(writer, http.StatusOK, stage)
 }
 
+func (handlers *Handlers) PreviewTrackDeletion(writer http.ResponseWriter, request *http.Request) {
+	preview, err := handlers.service.PreviewTrackDeletion(request.Context(), chi.URLParam(request, "trackId"))
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, preview)
+}
+
+func (handlers *Handlers) DeleteTrack(writer http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(PERMANENT_DELETE_CONFIRMATION_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "permanent_deletion_forbidden", "Permanent Track Deletion requires explicit confirmation")
+		return
+	}
+	var confirmation TrackDeletionConfirmation
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_TRACK_DELETION_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&confirmation); err != nil || confirmation.ConfirmationToken == "" {
+		respond.Error(writer, http.StatusBadRequest, "invalid_deletion_confirmation", "Permanent Track Deletion requires the preview confirmation token")
+		return
+	}
+	result, err := handlers.service.DeleteTrack(request.Context(), TrackDeletionRequest{
+		TrackID:           chi.URLParam(request, "trackId"),
+		ConfirmationToken: confirmation.ConfirmationToken,
+	})
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, result)
+}
+
 func (handlers *Handlers) CancelJob(writer http.ResponseWriter, request *http.Request) {
 	if err := handlers.service.CancelJob(request.Context(), chi.URLParam(request, "importId")); err != nil {
 		handleError(writer, request, err)
@@ -167,6 +200,12 @@ func (handlers *Handlers) Confirm(writer http.ResponseWriter, request *http.Requ
 
 func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrTrackNotFound):
+		respond.Error(writer, http.StatusNotFound, "track_not_found", "Track not found")
+	case errors.Is(err, ErrNotManagedTrack):
+		respond.Error(writer, http.StatusConflict, "not_managed_track", "Only Managed Tracks can be permanently deleted")
+	case errors.Is(err, ErrDeletionConflict):
+		respond.Error(writer, http.StatusConflict, "deletion_preview_changed", "Track or its references changed; review Permanent Track Deletion again")
 	case errors.Is(err, ErrNotFound):
 		respond.Error(writer, http.StatusNotFound, "import_not_found", "Managed Import Job not found")
 	case errors.Is(err, ErrRevisionConflict):

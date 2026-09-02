@@ -19,6 +19,7 @@ export default defineConfig({
 	webServer: [
 		{
 			command: "go run ./cmd/server",
+			timeout: 120_000,
 			url: "http://localhost:8090/api/v1/health",
 			reuseExistingServer: !process.env.CI,
 			cwd: "../server",
@@ -26,6 +27,7 @@ export default defineConfig({
 		},
 		{
 			command: "pnpm dev",
+			timeout: 120_000,
 			url: "http://localhost:3000",
 			reuseExistingServer: !process.env.CI,
 		},
