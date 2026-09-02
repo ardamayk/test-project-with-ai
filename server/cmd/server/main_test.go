@@ -13,6 +13,7 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	var radioPreviewHasDeadline bool
 	var queueEventsHasDeadline bool
 	var importUploadHasDeadline bool
+	var migrationPreviewHasDeadline bool
 	var apiHasDeadline bool
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +40,11 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 		}
 		if r.URL.Path == "/api/v1/imports/import-1/file" {
 			importUploadHasDeadline = hasDeadline
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/api/v1/library-migrations/preview" {
+			migrationPreviewHasDeadline = hasDeadline
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -69,6 +75,10 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	)
 	wrapped.ServeHTTP(
 		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, "/api/v1/library-migrations/preview", nil),
+	)
+	wrapped.ServeHTTP(
+		httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/api/v1/health", nil),
 	)
 
@@ -86,6 +96,9 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	}
 	if importUploadHasDeadline {
 		t.Fatal("Managed Import upload should not inherit request timeout deadline")
+	}
+	if migrationPreviewHasDeadline {
+		t.Fatal("Library Migration preview should not inherit request timeout deadline")
 	}
 	if !apiHasDeadline {
 		t.Fatal("non-stream API route should keep request timeout deadline")

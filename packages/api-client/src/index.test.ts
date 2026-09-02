@@ -80,6 +80,28 @@ describe('Managed Import media contracts', () => {
 });
 
 describe('createApiClient', () => {
+  it('requests a strict Legacy Library Migration preview', async () => {
+    const migrationPreview = {
+      acceptedCount: 1,
+      rejectedCount: 1,
+      files: [],
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(migrationPreview));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    const result = await client.previewLibraryMigration();
+
+    expect(result).toEqual(migrationPreview);
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/library-migrations/preview',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const request = transport.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get('X-Migration-Preview')).toBe('1');
+  });
+
   it('creates and confirms a multi-file Managed Import Batch', async () => {
     const createdBatch = {
       id: 'batch-1',

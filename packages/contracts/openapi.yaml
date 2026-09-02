@@ -259,6 +259,30 @@ paths:
                 $ref: "#/components/schemas/DeleteResult"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/library-migrations/preview:
+    post:
+      tags: [imports]
+      operationId: previewLibraryMigration
+      summary: Analyze every Legacy Track through the Strict Import Profile without changing library state
+      parameters:
+        - name: X-Migration-Preview
+          in: header
+          required: true
+          description: Non-simple application header required to prevent cross-origin form submissions
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: Stable accepted and rejected Library Migration preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryMigrationPreview"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/import-batches:
     post:
       tags: [imports]
@@ -1074,6 +1098,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: Not found
       content:
@@ -1397,6 +1427,44 @@ components:
           minimum: 1
         file:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
+    LibraryMigrationPreview:
+      type: object
+      required: [acceptedCount, rejectedCount, files]
+      properties:
+        acceptedCount:
+          type: integer
+          minimum: 0
+        rejectedCount:
+          type: integer
+          minimum: 0
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryMigrationPreviewFile"
+    LibraryMigrationPreviewFile:
+      type: object
+      required: [trackId, originalFilename, state]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        originalFilename:
+          type: string
+          description: Display-only basename of the existing Legacy Track source.
+        state:
+          type: string
+          enum: [accepted, rejected]
+        preview:
+          $ref: "#/components/schemas/ManagedImportPreviewFile"
+        errorCode:
+          type: string
+          description: Stable Strict Import Profile or capacity failure code.
+        errorField:
+          type: string
+          description: Machine-readable field associated with a rejection.
+        errorReason:
+          type: string
+          description: Actionable per-file rejection reason.
     ManagedImportPreviewFile:
       oneOf:
         - $ref: "#/components/schemas/ManagedImportFlacPreviewFile"

@@ -194,6 +194,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library-migrations/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Analyze every Legacy Track through the Strict Import Profile without changing library state */
+        post: operations["previewLibraryMigration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches": {
         parameters: {
             query?: never;
@@ -753,6 +770,26 @@ export interface components {
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
         };
+        LibraryMigrationPreview: {
+            acceptedCount: number;
+            rejectedCount: number;
+            files: components["schemas"]["LibraryMigrationPreviewFile"][];
+        };
+        LibraryMigrationPreviewFile: {
+            /** Format: uuid */
+            trackId: string;
+            /** @description Display-only basename of the existing Legacy Track source. */
+            originalFilename: string;
+            /** @enum {string} */
+            state: "accepted" | "rejected";
+            preview?: components["schemas"]["ManagedImportPreviewFile"];
+            /** @description Stable Strict Import Profile or capacity failure code. */
+            errorCode?: string;
+            /** @description Machine-readable field associated with a rejection. */
+            errorField?: string;
+            /** @description Actionable per-file rejection reason. */
+            errorReason?: string;
+        };
         ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportWavPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
         ManagedImportPreviewFileCommon: {
             originalFilename: string;
@@ -1188,6 +1225,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description Forbidden */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description Not found */
         NotFound: {
             headers: {
@@ -1562,6 +1608,31 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    previewLibraryMigration: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Non-simple application header required to prevent cross-origin form submissions */
+                "X-Migration-Preview": "1";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stable accepted and rejected Library Migration preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMigrationPreview"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     createManagedImportBatch: {

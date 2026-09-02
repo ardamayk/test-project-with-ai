@@ -32,8 +32,72 @@ type commitData struct {
 	Inspection library.MediaInspection
 }
 
+type legacyMigrationSource struct {
+	TrackID  string
+	FilePath string
+}
+
 func NewStore(database *sql.DB) *Store {
 	return &Store{database: database}
+}
+
+func (store *Store) ListLegacyMigrationSources(ctx context.Context) (sources []legacyMigrationSource, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT track_sources.track_id, track_sources.file_path
+		FROM track_sources
+		INNER JOIN tracks ON tracks.id = track_sources.track_id
+		WHERE track_sources.source_kind = 'legacy' AND tracks.missing_at IS NULL
+		ORDER BY track_sources.track_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list legacy migration sources: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close legacy migration sources: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var source legacyMigrationSource
+		if err := rows.Scan(&source.TrackID, &source.FilePath); err != nil {
+			return nil, fmt.Errorf("read legacy migration source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate legacy migration sources: %w", err)
+	}
+	return sources, nil
+}
+
+func (store *Store) FindManagedTrackByHash(ctx context.Context, contentSHA256 string) (string, error) {
+	var trackID string
+	err := store.database.QueryRowContext(ctx, `
+		SELECT track_id FROM track_sources
+		WHERE source_kind = 'managed' AND content_sha256 = ?`, contentSHA256,
+	).Scan(&trackID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("find Managed Track by content hash: %w", err)
+	}
+	return trackID, nil
+}
+
+func (store *Store) FindAlbumArtworkHash(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {
+	var contentSHA256 string
+	err := store.database.QueryRowContext(ctx, `
+		SELECT album_artwork.content_sha256
+		FROM albums JOIN album_artwork ON album_artwork.album_id = albums.id
+		WHERE albums.identity_key = ?`, albumIdentityKey(metadata),
+	).Scan(&contentSHA256)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("find existing Album Artwork hash: %w", err)
+	}
+	return contentSHA256, nil
 }
 
 func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string) (_ Job, returnErr error) {

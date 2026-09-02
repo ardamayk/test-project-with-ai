@@ -78,6 +78,7 @@ export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile'];
 export type ManagedImportPreview = Schemas['ManagedImportPreview'];
 export type ManagedImportPreviewFile = Schemas['ManagedImportPreviewFile'];
 export type ManagedImportResult = Schemas['ManagedImportResult'];
+export type LibraryMigrationPreview = Schemas['LibraryMigrationPreview'];
 export type ManagedImportUploadProgress = (progress: number) => void;
 export type QueueConflictResponse = Omit<
   Schemas['QueueConflictResponse'],
@@ -401,6 +402,11 @@ export function createApiClient(config: ApiClientConfig) {
     deleteTrack: (trackId: string) =>
       request<DeleteResult>(`/api/v1/library/tracks/${trackId}`, {
         method: 'DELETE',
+      }),
+    previewLibraryMigration: () =>
+      request<LibraryMigrationPreview>('/api/v1/library-migrations/preview', {
+        method: 'POST',
+        headers: { 'X-Migration-Preview': '1' },
       }),
     createManagedImportBatch: () =>
       request<ManagedImportBatch>('/api/v1/import-batches', { method: 'POST' }),

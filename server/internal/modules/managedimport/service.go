@@ -28,6 +28,7 @@ type Service struct {
 
 var managedImportCommitMu sync.Mutex
 var managedImportBatchConfirmationMu sync.Mutex
+var libraryMigrationPreviewMu sync.Mutex
 
 type uploadLock struct {
 	mutex sync.Mutex
