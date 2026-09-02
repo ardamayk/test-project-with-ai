@@ -40,6 +40,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up Mise toolchain
+        uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+        with:
+          cache_save: false
+
+      # Conditional validation depends on the classifier, so its own fixture
+      # suite must pass before its outputs are trusted.
+      - name: Test pull-request change classifier
+        run: mise run classifier:test
+
       - name: Classify pull-request changes
         id: classify
         run: |
@@ -90,7 +100,7 @@ jobs:
         id: turbo_cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: node_modules/.cache/turbo
+          path: .turbo/cache
           key: turbo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('turbo.json') }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             turbo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('turbo.json') }}-
@@ -98,13 +108,11 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify workspace formatting
-        id: format
-        run: mise run workspace:format:check
-
-      - name: Lint workspace
-        id: lint
-        run: mise run workspace:lint
+      # `biome check` covers formatting, linting, and assists, matching the
+      # `mise run check` policy exactly.
+      - name: Workspace static checks
+        id: check
+        run: mise run workspace:check
 
       - name: Type-check workspace
         id: typecheck
@@ -119,8 +127,7 @@ jobs:
         if: always()
         env:
           START: ${{ steps.timer.outputs.start }}
-          FORMAT_OUTCOME: ${{ steps.format.outcome }}
-          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
           TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
@@ -140,8 +147,7 @@ jobs:
             echo
             echo "| Check | Result |"
             echo "| ----- | ------ |"
-            echo "| Formatting | ${FORMAT_OUTCOME:-not run} |"
-            echo "| Lint | ${LINT_OUTCOME:-not run} |"
+            echo "| Static checks (format, lint, assists) | ${CHECK_OUTCOME:-not run} |"
             echo "| Type check | ${TYPECHECK_OUTCOME:-not run} |"
             echo "| Unit tests | ${TEST_OUTCOME:-not run} |"
             echo
@@ -648,17 +654,34 @@ jobs:
             echo "- Generated drift check: $drift_decision"
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$RESULT" != "success" ]]; then
+            log_artifacts=""
+            if [[ "$SERVER_RESULT" == "failure" ]]; then
+              log_artifacts+="- \`fast-gate-music-server-logs\`"$'\n'
+            fi
+            if [[ "$DESKTOP_RESULT" == "failure" ]]; then
+              log_artifacts+="- \`fast-gate-desktop-client-logs\`"$'\n'
+            fi
+            if [[ "$DRIFT_RESULT" == "failure" ]]; then
+              log_artifacts+="- \`fast-gate-generated-drift-logs\`"$'\n'
+            fi
             {
               echo
-              echo "## Failure logs"
+              echo "## Failure diagnostics"
               echo
-              echo "Failed-check logs are attached to this run as"
-              echo "\`fast-gate-*-logs\` artifacts: $RUN_URL"
+              if [[ -n "$log_artifacts" ]]; then
+                echo "Failed-check logs are attached to this run:"
+                echo
+                printf '%s' "$log_artifacts"
+                echo
+                echo "Run: $RUN_URL"
+              else
+                echo "No log artifacts apply to this failure; see the failed job's step output: $RUN_URL"
+              fi
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Enforce gate result
         if: steps.result.outputs.result == 'failure'
         run: |
-          echo "PR / Fast Gate failed; see the job summaries and fast-gate-*-logs artifacts." >&2
+          echo "PR / Fast Gate failed; see the gate summary for diagnostics." >&2
           exit 1
