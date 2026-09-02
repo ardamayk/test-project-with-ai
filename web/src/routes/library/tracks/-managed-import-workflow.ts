@@ -1,7 +1,9 @@
-import type {
-	ManagedImportBatch,
-	ManagedImportBatchFile,
-	ManagedImportPreview,
+import {
+	ApiError,
+	type ManagedImportBatch,
+	type ManagedImportBatchFile,
+	type ManagedImportDuplicateDecision,
+	type ManagedImportPreview,
 } from "@repo/api-client";
 import { useRef, useState } from "react";
 import { isDesktopClient } from "#/desktop/bridge";
@@ -36,7 +38,10 @@ export type ImportFileEntry = {
 	preview?: ManagedImportPreview;
 	errorMessage?: string;
 	outcome?: ManagedImportBatchFile["outcome"];
+	duplicateDecision?: DuplicateDecision;
 };
+
+export type DuplicateDecision = ManagedImportDuplicateDecision["action"];
 
 export function useManagedImportWorkflow({
 	onOpenChange,
@@ -63,7 +68,10 @@ export function useManagedImportWorkflow({
 					state.entries.some((entry) => entry.jobId === file.jobId),
 			) &&
 			state.entries.every(
-				(entry) => entry.state !== "unresolved" || Boolean(entry.jobId),
+				(entry) =>
+					(entry.state !== "unresolved" || Boolean(entry.jobId)) &&
+					(entry.preview?.duplicateClassification !== "possible_duplicate" ||
+						Boolean(entry.duplicateDecision)),
 			),
 	);
 	return {
@@ -79,6 +87,15 @@ export function useManagedImportWorkflow({
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
 		handleSelectionChange: (key: string, selected: boolean) =>
 			state.updateEntry(key, { selected, hasSelectionOverride: true }),
+		handleDuplicateDecisionChange: (
+			key: string,
+			duplicateDecision: DuplicateDecision,
+		) =>
+			state.updateEntry(key, {
+				duplicateDecision,
+				selected: duplicateDecision !== "do_not_import",
+				hasSelectionOverride: true,
+			}),
 		handleOpenChange: createOpenHandler(state, isCloseLocked, onOpenChange),
 	};
 }
@@ -202,16 +219,57 @@ function createConfirmHandler(
 			if (currentBatch.files.some((file) => file.state === "unresolved")) {
 				throw new Error("Some files are still unresolved. Retry confirmation.");
 			}
+			if (hasUndecidedPossibleDuplicate(reconciledEntries)) {
+				state.setErrorMessage("Review the newly detected Possible Duplicate.");
+				return;
+			}
 			const report = await confirmImportBatch(currentBatch, reconciledEntries);
 			state.setBatch(report);
 			state.setEntries((current) => mergeBatchFiles(current, report.files));
 			if (hasLibraryMutation(report)) await onCommitted();
 		} catch (error) {
-			state.setErrorMessage(importErrorMessage(error));
+			if (
+				!(error instanceof ApiError) ||
+				error.body.code !== "import_revision_conflict"
+			) {
+				state.setErrorMessage(importErrorMessage(error));
+				return;
+			}
+			try {
+				const isReconciled = await reconcileAfterConfirmationError(state);
+				state.setErrorMessage(
+					isReconciled
+						? "Review the newly detected Possible Duplicate."
+						: importErrorMessage(error),
+				);
+			} catch (refreshError) {
+				state.setErrorMessage(
+					`${importErrorMessage(error)} Refresh failed: ${importErrorMessage(refreshError)}`,
+				);
+			}
 		} finally {
 			state.setImportState("idle");
 		}
 	};
+}
+
+function hasUndecidedPossibleDuplicate(entries: ImportFileEntry[]): boolean {
+	return entries.some(
+		(entry) =>
+			entry.preview?.duplicateClassification === "possible_duplicate" &&
+			!entry.duplicateDecision,
+	);
+}
+
+async function reconcileAfterConfirmationError(
+	state: WorkflowState,
+): Promise<boolean> {
+	if (!state.batch) return false;
+	const batch = await apiClient.getManagedImportBatch(state.batch.id);
+	const entries = mergeBatchFiles(state.entries, batch.files);
+	state.setBatch(batch);
+	state.setEntries(entries);
+	return hasUndecidedPossibleDuplicate(entries);
 }
 
 function createOpenHandler(
@@ -306,9 +364,11 @@ async function uploadFile(
 			(progress) => updateEntry(entry.key, { progress }),
 			signal,
 		);
+		const duplicateClassification = preview.duplicateClassification ?? "none";
 		updateEntry(entry.key, {
-			state: "accepted",
-			selected: true,
+			state:
+				duplicateClassification === "exact_duplicate" ? "rejected" : "accepted",
+			selected: duplicateClassification === "none",
 			preview,
 			progress: 100,
 		});
@@ -329,11 +389,28 @@ function confirmImportBatch(
 	const selectedFileIds = entries.flatMap((entry) =>
 		entry.selected && entry.jobId ? [entry.jobId] : [],
 	);
-	return apiClient.confirmManagedImportBatch(
-		batch.id,
-		batch.revision,
-		selectedFileIds,
+	const duplicateDecisions = entries.flatMap((entry) =>
+		entry.jobId && entry.duplicateDecision
+			? [
+					{
+						jobId: entry.jobId,
+						action: entry.duplicateDecision,
+					} satisfies ManagedImportDuplicateDecision,
+				]
+			: [],
 	);
+	return duplicateDecisions.length > 0
+		? apiClient.confirmManagedImportBatch(
+				batch.id,
+				batch.revision,
+				selectedFileIds,
+				duplicateDecisions,
+			)
+		: apiClient.confirmManagedImportBatch(
+				batch.id,
+				batch.revision,
+				selectedFileIds,
+			);
 }
 
 function hasLibraryMutation(batch: ManagedImportBatch): boolean {

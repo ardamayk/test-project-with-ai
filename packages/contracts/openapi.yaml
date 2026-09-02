@@ -1539,21 +1539,70 @@ components:
           items:
             type: string
             format: uuid
+        duplicateDecisions:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateDecision"
+    ManagedImportDuplicateDecision:
+      type: object
+      required: [jobId, action]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [import_separately, replace_existing, do_not_import]
     ManagedImportPreview:
       type: object
-      required: [jobId, status, revision, file]
+      required: [jobId, status, revision, file, duplicateClassification]
       properties:
         jobId:
           type: string
           format: uuid
         status:
           type: string
-          enum: [awaiting_confirmation]
+          enum: [awaiting_confirmation, failed]
         revision:
           type: integer
           minimum: 1
         file:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
+        duplicateClassification:
+          type: string
+          enum: [none, exact_duplicate, possible_duplicate]
+        duplicateCandidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
+    ManagedImportDuplicateCandidate:
+      type: object
+      required: [trackId, title, artists, album, discNo, trackNo, format, durationMs]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        artists:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        album:
+          type: string
+        discNo:
+          type: integer
+          minimum: 1
+        trackNo:
+          type: integer
+          minimum: 1
+        format:
+          type: string
+        durationMs:
+          type: integer
+          minimum: 1
     LibraryMigrationPreview:
       type: object
       required: [acceptedCount, rejectedCount, files]
@@ -1828,6 +1877,9 @@ components:
         revision:
           type: integer
           minimum: 1
+        duplicateDecision:
+          type: string
+          enum: [import_separately, replace_existing, do_not_import]
     ManagedImportResult:
       type: object
       required: [jobId, status, revision, trackId]

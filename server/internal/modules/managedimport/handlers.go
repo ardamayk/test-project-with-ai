@@ -157,7 +157,7 @@ func (handlers *Handlers) Confirm(writer http.ResponseWriter, request *http.Requ
 		respond.Error(writer, http.StatusBadRequest, "invalid_confirmation", "Managed Import confirmation requires a positive revision")
 		return
 	}
-	result, err := handlers.service.Confirm(request.Context(), chi.URLParam(request, "importId"), confirmation.Revision)
+	result, err := handlers.service.ConfirmWithDecision(request.Context(), chi.URLParam(request, "importId"), confirmation.Revision, confirmation.DuplicateDecision)
 	if err != nil {
 		handleError(writer, request, err)
 		return
