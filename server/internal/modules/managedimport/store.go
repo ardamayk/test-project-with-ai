@@ -1392,6 +1392,9 @@ func (store *Store) FinalizeCommit(ctx context.Context, job importJob, trackID, 
 	if err := requireMutation(journalResult); err != nil {
 		return Result{}, err
 	}
+	if err := archiveStandaloneHistory(ctx, transaction, job.ID, HISTORY_RESULT_COMPLETED); err != nil {
+		return Result{}, err
+	}
 	if err := transaction.Commit(); err != nil {
 		return Result{}, fmt.Errorf("commit Managed Import finalization: %w", err)
 	}
