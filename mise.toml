@@ -286,9 +286,17 @@ command -v docker >/dev/null 2>&1 || {
   echo "Docker (or a compatible container engine) is required by act; see docs/testing/act-smoke.md." >&2
   exit 1
 }
+# Smoke runs still need a pull_request event payload: the classify job reads
+# the base and head SHAs from it. Default to the merge-base with origin/main
+# so the documented no-argument invocation completes.
+base="$(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD~1)"
+head="$(git rev-parse HEAD)"
+event_file="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/act-pull-request-event.json"
+printf '{"pull_request":{"base":{"sha":"%s"},"head":{"sha":"%s"}}}\n' "$base" "$head" > "$event_file"
 # Defaults to the cheapest job; select another one with, for example:
 #   mise run ci:act:smoke -- --job web-e2e
 exec act pull_request \
   --workflow .github/workflows/pr-integration-gate.yml \
+  --eventpath "$event_file" \
   "$@"
 """

@@ -94,6 +94,7 @@ jobs:
     if: always() && (github.event_name == 'push' || (needs.classify.result == 'success' && needs.classify.outputs.web_e2e == 'true'))
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      test_outcome: ${{ steps.test.outcome }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
       cache_pnpm_key: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
       cache_playwright_hit: ${{ steps.playwright_cache.outputs.cache-hit }}
@@ -211,6 +212,7 @@ jobs:
     if: always() && (github.event_name == 'push' || (needs.classify.result == 'success' && needs.classify.outputs.hls == 'true'))
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      test_outcome: ${{ steps.test.outcome }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
       cache_pnpm_key: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
       cache_go_hit: ${{ steps.go_cache.outputs.cache-hit }}
@@ -348,6 +350,7 @@ jobs:
     if: always() && (github.event_name == 'push' || (needs.classify.result == 'success' && needs.classify.outputs.desktop_unit == 'true'))
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      test_outcome: ${{ steps.test.outcome }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
       cache_pnpm_key: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
       cache_cargo_hit: ${{ steps.cargo_cache.outputs.cache-hit }}
@@ -478,6 +481,8 @@ jobs:
     if: always() && (github.event_name == 'push' || (needs.classify.result == 'success' && needs.classify.outputs.real_mpv == 'true'))
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
+      test_outcome: ${{ steps.test.outcome }}
+      build_outcome: ${{ steps.mpv_build.outcome }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
       cache_pnpm_key: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
       cache_cargo_hit: ${{ steps.cargo_cache.outputs.cache-hit }}
@@ -523,15 +528,20 @@ jobs:
             pkg-config
 
       # The cache key carries the pinned version, the verified source digest,
-      # the build flags, the operating system, and the architecture, so a
-      # binary can only be restored from the exact verified provenance.
+      # the build flags, the operating system, the architecture, and the
+      # runner image fingerprint, so a binary can only be restored from the
+      # exact verified provenance of a compatible runner image.
       - name: Record pinned mpv identity
         id: mpv_meta
         run: |
           version="$(tr -d '\r\n' < desktop/src-tauri/mpv-version.txt)"
           flags_digest="$(printf '%s' "$MPV_BUILD_FLAGS" | sha256sum | cut -d ' ' -f 1 | cut -c 1-16)"
+          # mpv is dynamically linked against system packages; the image
+          # fingerprint keeps a cached binary from outliving an image ABI change.
+          image_fingerprint="${ImageOS:-unknown}-${ImageVersion:-unknown}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "flags_digest=${flags_digest}" >> "$GITHUB_OUTPUT"
+          echo "image_fingerprint=${image_fingerprint}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve pnpm store path
         id: pnpm_store
@@ -564,9 +574,10 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/earthly-audio-mpv
-          key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
+          key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
 
       - name: Build pinned mpv from verified source
+        id: mpv_build
         if: steps.mpv_cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/integration-gate-logs"
@@ -595,7 +606,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/earthly-audio-mpv
-          key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
+          key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
@@ -723,6 +734,11 @@ jobs:
           DESKTOP_UNIT_CARGO_KEY: ${{ needs.desktop-unit.outputs.cache_cargo_key }}
           REAL_MPV_RESULT: ${{ needs.real-mpv.result }}
           REAL_MPV_DURATION: ${{ needs.real-mpv.outputs.duration }}
+          WEB_E2E_TEST_OUTCOME: ${{ needs.web-e2e.outputs.test_outcome }}
+          HLS_TEST_OUTCOME: ${{ needs.hls.outputs.test_outcome }}
+          DESKTOP_UNIT_TEST_OUTCOME: ${{ needs.desktop-unit.outputs.test_outcome }}
+          REAL_MPV_TEST_OUTCOME: ${{ needs.real-mpv.outputs.test_outcome }}
+          REAL_MPV_BUILD_OUTCOME: ${{ needs.real-mpv.outputs.build_outcome }}
           REAL_MPV_PNPM_HIT: ${{ needs.real-mpv.outputs.cache_pnpm_hit }}
           REAL_MPV_PNPM_KEY: ${{ needs.real-mpv.outputs.cache_pnpm_key }}
           REAL_MPV_CARGO_HIT: ${{ needs.real-mpv.outputs.cache_cargo_hit }}
@@ -816,18 +832,20 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           if [[ "$RESULT" != "success" ]]; then
+            # Advertise only diagnostics whose producing step ran and failed;
+            # a job that failed during setup has no artifacts at all.
             log_artifacts=""
-            if [[ "$HLS_RESULT" == "failure" ]]; then
+            if [[ "$HLS_TEST_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-hls-logs\` (native log, 14 days)"$'\n'
               log_artifacts+="- \`integration-gate-hls-browser-diagnostics\` (browser report, traces, screenshots, 7 days)"$'\n'
             fi
-            if [[ "$WEB_E2E_RESULT" == "failure" ]]; then
+            if [[ "$WEB_E2E_TEST_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-web-e2e-diagnostics\` (browser report, traces, screenshots, retry data, 7 days)"$'\n'
             fi
-            if [[ "$DESKTOP_UNIT_RESULT" == "failure" ]]; then
+            if [[ "$DESKTOP_UNIT_TEST_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-desktop-unit-logs\` (native log, 14 days)"$'\n'
             fi
-            if [[ "$REAL_MPV_RESULT" == "failure" ]]; then
+            if [[ "$REAL_MPV_TEST_OUTCOME" == "failure" || "$REAL_MPV_BUILD_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-real-mpv-logs\` (native logs, 14 days)"$'\n'
             fi
             {

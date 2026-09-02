@@ -11,6 +11,11 @@ locally with [nektos/act](https://nektosact.com).
 - Debugging a single job without pushing a revision to retrigger CI, for
   example `mise run ci:act:smoke -- --job web-e2e`. Without arguments it
   runs the cheapest job (`classify`).
+- The task generates a minimal `pull_request` event payload (base = merge
+  base with `origin/main`, head = `HEAD`) so the classifier job can run.
+  Note that `--job` runs one job without its `needs`, so conditions that
+  read the classifier outputs may skip the selected job; run the whole
+  workflow (no `--job`) to exercise the full chain.
 
 ## What it is not
 

@@ -20,22 +20,24 @@ const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 // Git exports session variables (for example GIT_DIR when invoked from a
 // linked worktree) to hooks, and they would redirect the fixture
 // repositories' Git commands at the real repository. The fixtures describe
-// their own repositories on disk, so those variables never apply here.
-const GIT_SESSION_VARIABLES = [
-	"GIT_DIR",
-	"GIT_WORK_TREE",
-	"GIT_INDEX_FILE",
-	"GIT_OBJECT_DIRECTORY",
-	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
-	"GIT_COMMON_DIR",
-	"GIT_PREFIX",
-	"GIT_GRAFT_FILE",
-	"GIT_NAMESPACE",
-];
+// their own repositories on disk, so those variables never apply here; the
+// complete list comes from Git itself.
+let gitSessionVariablesCache;
+
+function gitSessionVariables() {
+	gitSessionVariablesCache ??= spawnSync(
+		"git",
+		["rev-parse", "--local-env-vars"],
+		{ encoding: "utf8" },
+	)
+		.stdout.split("\n")
+		.filter(Boolean);
+	return gitSessionVariablesCache;
+}
 
 function withoutGitSessionVariables(environment) {
 	const cleaned = { ...environment };
-	for (const name of GIT_SESSION_VARIABLES) {
+	for (const name of gitSessionVariables()) {
 		delete cleaned[name];
 	}
 	return cleaned;
