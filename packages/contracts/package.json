@@ -3,12 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "generate": "pnpm run generate:go && pnpm run generate:ts",
+    "generate": "bash ../../scripts/generate-openapi.sh",
     "build": "echo 'contracts package has no build'",
-    "generate:go": "cd ../../server && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -config ../packages/contracts/oapi-codegen.yaml ../packages/contracts/openapi.yaml",
-    "generate:ts": "openapi-typescript openapi.yaml -o ../api-client/src/generated/schema.ts"
+    "generate:check": "bash ../../scripts/check-openapi-generation.sh"
   },
   "devDependencies": {
-    "openapi-typescript": "^7.8.0"
+    "openapi-typescript": "7.13.0"
   }
 }

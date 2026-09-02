@@ -10,8 +10,13 @@
     "./widgets": "./src/widgets/index.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit",
-    "test": "vitest run"
+    "format": "pnpm --dir ../.. exec biome format --write packages/ui",
+    "format:check": "pnpm --dir ../.. exec biome format packages/ui",
+    "lint": "pnpm --dir ../.. exec biome lint packages/ui",
+    "check": "pnpm --dir ../.. exec biome check packages/ui",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run"
   },
   "peerDependencies": {
     "@tanstack/react-router": "^1.0.0",

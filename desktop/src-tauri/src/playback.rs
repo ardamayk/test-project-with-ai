@@ -22,7 +22,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -240,6 +240,9 @@ enum MpvWorkerRequest {
     Shutdown,
 }
 
+type StartedMpvProcess = (Box<dyn MpvProcessAdapter>, Receiver<MpvEvent>, PathBuf);
+type MpvWorker = (Sender<MpvWorkerRequest>, JoinHandle<()>, Receiver<MpvEvent>);
+
 pub(crate) struct RealMpvProcess {
     requests: Sender<MpvWorkerRequest>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -255,10 +258,7 @@ impl RealMpvProcess {
         Ok((process, events))
     }
 
-    fn start(
-        binary: PathBuf,
-        extra_arguments: Vec<String>,
-    ) -> Result<(Box<dyn MpvProcessAdapter>, Receiver<MpvEvent>, PathBuf), String> {
+    fn start(binary: PathBuf, extra_arguments: Vec<String>) -> Result<StartedMpvProcess, String> {
         ensure_pinned_mpv(&binary)?;
         let ipc_directory = create_private_ipc_directory()?;
         match start_mpv_worker(&binary, &ipc_directory, extra_arguments) {
@@ -343,7 +343,7 @@ impl RealMpvProcess {
     }
 }
 
-fn remove_ipc_directory(path: &PathBuf, context: &str) {
+fn remove_ipc_directory(path: &Path, context: &str) {
     if let Err(error) = fs::remove_dir_all(path)
         && error.kind() != ErrorKind::NotFound
     {
@@ -534,7 +534,7 @@ impl Drop for RealMpvProcess {
     }
 }
 
-fn ensure_pinned_mpv(binary: &PathBuf) -> Result<(), String> {
+fn ensure_pinned_mpv(binary: &Path) -> Result<(), String> {
     let output = Command::new(binary)
         .arg("--version")
         .output()
@@ -572,10 +572,10 @@ fn create_private_ipc_directory() -> Result<PathBuf, String> {
 }
 
 fn start_mpv_worker(
-    binary: &PathBuf,
-    ipc_directory: &PathBuf,
+    binary: &Path,
+    ipc_directory: &Path,
     extra_arguments: Vec<String>,
-) -> Result<(Sender<MpvWorkerRequest>, JoinHandle<()>, Receiver<MpvEvent>), String> {
+) -> Result<MpvWorker, String> {
     let socket_path = ipc_directory.join("control.sock");
     let mut command = Command::new(binary);
     configure_mpv_command(&mut command, &socket_path, extra_arguments);
@@ -593,11 +593,7 @@ fn start_mpv_worker(
     Ok(spawn_mpv_worker(child, stream))
 }
 
-fn configure_mpv_command(
-    command: &mut Command,
-    socket_path: &PathBuf,
-    extra_arguments: Vec<String>,
-) {
+fn configure_mpv_command(command: &mut Command, socket_path: &Path, extra_arguments: Vec<String>) {
     command
         .arg("--no-config")
         .arg("--idle=yes")
@@ -616,7 +612,7 @@ fn configure_mpv_command(
         .stderr(Stdio::null());
 }
 
-fn wait_for_mpv_socket(child: &mut Child, socket_path: &PathBuf) -> Result<(), String> {
+fn wait_for_mpv_socket(child: &mut Child, socket_path: &Path) -> Result<(), String> {
     let deadline = Instant::now() + MPV_START_TIMEOUT;
     while Instant::now() < deadline {
         if socket_path.exists() {
@@ -880,6 +876,26 @@ type StateListener = Arc<dyn Fn(PlaybackSessionState) + Send + Sync>;
 type ProcessStarter =
     Arc<dyn Fn() -> Result<(Box<dyn MpvProcessAdapter>, Receiver<MpvEvent>), String> + Send + Sync>;
 
+struct PlaybackControllerSetup {
+    lifecycle: Arc<Mutex<PlaybackLifecycle>>,
+    starter: Option<ProcessStarter>,
+    path_observer: Option<Arc<dyn PipeWireObserver>>,
+    output_device_adapter: Option<Box<dyn AlsaOutputDeviceAdapter>>,
+    adaptive_system_rate: Option<AdaptiveSystemRateController>,
+}
+
+impl PlaybackControllerSetup {
+    fn new(lifecycle: Arc<Mutex<PlaybackLifecycle>>) -> Self {
+        Self {
+            lifecycle,
+            starter: None,
+            path_observer: None,
+            output_device_adapter: None,
+            adaptive_system_rate: None,
+        }
+    }
+}
+
 pub(crate) struct PlaybackController {
     process: Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
     state: Arc<Mutex<PlaybackSessionState>>,
@@ -907,11 +923,13 @@ impl PlaybackController {
         Ok(Self::start_internal(
             process,
             events,
-            lifecycle.clone(),
-            Some(starter),
-            Some(path_observer),
-            Some(Box::new(CommandAlsaOutputDeviceAdapter::new())),
-            Some(adaptive_system_rate),
+            PlaybackControllerSetup {
+                starter: Some(starter),
+                path_observer: Some(path_observer),
+                output_device_adapter: Some(Box::new(CommandAlsaOutputDeviceAdapter::new())),
+                adaptive_system_rate: Some(adaptive_system_rate),
+                ..PlaybackControllerSetup::new(lifecycle)
+            },
             listener,
         ))
     }
@@ -925,11 +943,7 @@ impl PlaybackController {
         Self::start_internal(
             process,
             events,
-            Arc::new(Mutex::new(PlaybackLifecycle::new())),
-            None,
-            None,
-            None,
-            None,
+            PlaybackControllerSetup::new(Arc::new(Mutex::new(PlaybackLifecycle::new()))),
             listener,
         )
     }
@@ -944,11 +958,10 @@ impl PlaybackController {
         Self::start_internal(
             process,
             events,
-            Arc::new(Mutex::new(PlaybackLifecycle::new())),
-            None,
-            Some(path_observer),
-            None,
-            None,
+            PlaybackControllerSetup {
+                path_observer: Some(path_observer),
+                ..PlaybackControllerSetup::new(Arc::new(Mutex::new(PlaybackLifecycle::new())))
+            },
             listener,
         )
     }
@@ -967,11 +980,10 @@ impl PlaybackController {
         Self::start_internal(
             process,
             events,
-            lifecycle.clone(),
-            Some(Arc::new(starter)),
-            None,
-            None,
-            None,
+            PlaybackControllerSetup {
+                starter: Some(Arc::new(starter)),
+                ..PlaybackControllerSetup::new(lifecycle)
+            },
             listener,
         )
     }
@@ -991,11 +1003,11 @@ impl PlaybackController {
         Self::start_internal(
             process,
             events,
-            lifecycle,
-            Some(Arc::new(starter)),
-            None,
-            None,
-            Some(adaptive_system_rate),
+            PlaybackControllerSetup {
+                starter: Some(Arc::new(starter)),
+                adaptive_system_rate: Some(adaptive_system_rate),
+                ..PlaybackControllerSetup::new(lifecycle)
+            },
             listener,
         )
     }
@@ -1010,11 +1022,10 @@ impl PlaybackController {
         Self::start_internal(
             process,
             events,
-            Arc::new(Mutex::new(PlaybackLifecycle::new())),
-            None,
-            None,
-            Some(output_devices),
-            None,
+            PlaybackControllerSetup {
+                output_device_adapter: Some(output_devices),
+                ..PlaybackControllerSetup::new(Arc::new(Mutex::new(PlaybackLifecycle::new())))
+            },
             listener,
         )
     }
@@ -1030,11 +1041,11 @@ impl PlaybackController {
         Self::start_internal(
             process,
             events,
-            Arc::new(Mutex::new(PlaybackLifecycle::new())),
-            None,
-            Some(path_observer),
-            Some(output_devices),
-            None,
+            PlaybackControllerSetup {
+                path_observer: Some(path_observer),
+                output_device_adapter: Some(output_devices),
+                ..PlaybackControllerSetup::new(Arc::new(Mutex::new(PlaybackLifecycle::new())))
+            },
             listener,
         )
     }
@@ -1049,11 +1060,10 @@ impl PlaybackController {
         Self::start_internal(
             process,
             events,
-            Arc::new(Mutex::new(PlaybackLifecycle::new())),
-            None,
-            None,
-            None,
-            Some(adaptive_system_rate),
+            PlaybackControllerSetup {
+                adaptive_system_rate: Some(adaptive_system_rate),
+                ..PlaybackControllerSetup::new(Arc::new(Mutex::new(PlaybackLifecycle::new())))
+            },
             listener,
         )
     }
@@ -1061,13 +1071,16 @@ impl PlaybackController {
     fn start_internal(
         process: Box<dyn MpvProcessAdapter>,
         events: Receiver<MpvEvent>,
-        lifecycle: Arc<Mutex<PlaybackLifecycle>>,
-        starter: Option<ProcessStarter>,
-        path_observer: Option<Arc<dyn PipeWireObserver>>,
-        output_device_adapter: Option<Box<dyn AlsaOutputDeviceAdapter>>,
-        adaptive_system_rate: Option<AdaptiveSystemRateController>,
+        setup: PlaybackControllerSetup,
         listener: impl Fn(PlaybackSessionState) + Send + Sync + 'static,
     ) -> Self {
+        let PlaybackControllerSetup {
+            lifecycle,
+            starter,
+            path_observer,
+            output_device_adapter,
+            adaptive_system_rate,
+        } = setup;
         let process = Arc::new(Mutex::new(process));
         let state = Arc::new(Mutex::new(PlaybackSessionState::default()));
         let queue = Arc::new(Mutex::new(PlaybackQueueContext::default()));
@@ -1852,10 +1865,10 @@ impl Drop for PlaybackController {
                 ));
             }
         }
-        if let Some(event_thread) = self.event_thread.take() {
-            if event_thread.join().is_err() {
-                eprintln!("Native playback event thread shutdown failed: thread panicked.");
-            }
+        if let Some(event_thread) = self.event_thread.take()
+            && event_thread.join().is_err()
+        {
+            eprintln!("Native playback event thread shutdown failed: thread panicked.");
         }
     }
 }
@@ -1990,17 +2003,7 @@ fn dispatch_regular_playback_event(
             decoder.format.sample_rate_hz,
         );
     }
-    if process_mpv_event(
-        &context.process,
-        &context.state,
-        &context.queue,
-        event,
-        &context.listener,
-        &context.lifecycle,
-        context.path_observer.as_deref(),
-        context.adaptive_system_rate.as_deref(),
-        *last_path_refresh,
-    ) {
+    if process_mpv_event(context, event, *last_path_refresh) {
         *last_path_refresh = Instant::now();
     }
 }
@@ -2427,39 +2430,39 @@ fn pause_disconnected_output(
 }
 
 fn process_mpv_event(
-    process: &Arc<Mutex<Box<dyn MpvProcessAdapter>>>,
-    state: &Arc<Mutex<PlaybackSessionState>>,
-    queue: &Arc<Mutex<PlaybackQueueContext>>,
+    context: &PlaybackEventContext,
     event: MpvEvent,
-    listener: &StateListener,
-    lifecycle: &Arc<Mutex<PlaybackLifecycle>>,
-    path_observer: Option<&dyn PipeWireObserver>,
-    adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
     last_path_refresh: Instant,
 ) -> bool {
     let is_decoder_readiness = matches!(event, MpvEvent::Decoder(_));
     let is_stable_playback = is_stable_playback_event(&event);
     let should_refresh_path = matches!(event, MpvEvent::Time(_))
         && last_path_refresh.elapsed() >= PATH_REFRESH_INTERVAL
-        && path_observer.is_some();
+        && context.path_observer.is_some();
     match handle_mpv_event(
-        process,
-        state,
-        queue,
+        &context.process,
+        &context.state,
+        &context.queue,
         event,
-        listener,
-        path_observer,
-        adaptive_system_rate,
+        &context.listener,
+        context.path_observer.as_deref(),
+        context.adaptive_system_rate.as_deref(),
     ) {
         Err(error) => eprintln!(
             "Native playback event state update failed: {}",
             error.message
         ),
-        Ok(()) if is_stable_playback => mark_recovered_player_stable(state, lifecycle, listener),
+        Ok(()) if is_stable_playback => {
+            mark_recovered_player_stable(&context.state, &context.lifecycle, &context.listener)
+        }
         Ok(()) => {}
     }
     if should_refresh_path && !is_decoder_readiness {
-        refresh_pipewire_telemetry(state, listener, path_observer);
+        refresh_pipewire_telemetry(
+            &context.state,
+            &context.listener,
+            context.path_observer.as_deref(),
+        );
     }
     is_decoder_readiness || should_refresh_path
 }
@@ -6099,10 +6102,12 @@ mod tests {
             0o600
         );
         let controller = PlaybackController::start(process, events, |_| {});
-        let mut processed = ProcessingState::default();
-        processed.profile = crate::processing::ProcessingProfile::Processed;
-        processed.software_volume = 0.37;
-        processed.replay_gain_mode = ReplayGainMode::Album;
+        let mut processed = ProcessingState {
+            profile: crate::processing::ProcessingProfile::Processed,
+            software_volume: 0.37,
+            replay_gain_mode: ReplayGainMode::Album,
+            ..ProcessingState::default()
+        };
         processed.equalizer.is_enabled = true;
         let applied = controller
             .apply_processing(

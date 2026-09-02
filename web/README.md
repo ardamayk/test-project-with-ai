@@ -6,7 +6,7 @@ To run this application:
 
 ```bash
 pnpm install
-pnpm dev
+mise run web:dev
 ```
 
 # Building For Production
@@ -14,7 +14,7 @@ pnpm dev
 To build this application for production:
 
 ```bash
-pnpm build
+mise run web:build
 ```
 
 ## Testing
@@ -22,7 +22,7 @@ pnpm build
 This project uses [Vitest](https://vitest.dev/) for testing. You can run the tests with:
 
 ```bash
-pnpm test
+mise run web:test
 ```
 
 ## Styling
@@ -44,9 +44,9 @@ This project uses [Biome](https://biomejs.dev/) for linting and formatting. The 
 
 
 ```bash
-pnpm lint
-pnpm format
-pnpm check
+mise run web:check
+mise run web:format
+mise run web:typecheck
 ```
 
 

@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+scripts/run-graphify-hook.sh post-checkout "$@"

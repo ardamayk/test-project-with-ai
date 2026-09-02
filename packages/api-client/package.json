@@ -7,8 +7,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "format": "pnpm --dir ../.. exec biome format --write packages/api-client",
+    "format:check": "pnpm --dir ../.. exec biome format packages/api-client",
+    "lint": "pnpm --dir ../.. exec biome lint packages/api-client",
+    "check": "pnpm --dir ../.. exec biome check packages/api-client",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:unit": "vitest run",
     "generate": "echo 'Generated via @repo/contracts'"
   },
   "devDependencies": {
