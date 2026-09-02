@@ -1,5 +1,6 @@
 FROM node:24.13.1-alpine AS frontend-builder
 WORKDIR /src
+RUN apk add --no-cache bash
 COPY go.work package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY server ./server
 COPY packages ./packages

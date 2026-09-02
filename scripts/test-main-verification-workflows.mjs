@@ -14,6 +14,10 @@ const integrationWorkflow = readFileSync(
 	new URL("../.github/workflows/pr-integration-gate.yml", import.meta.url),
 	"utf8",
 );
+const nightlyWorkflow = readFileSync(
+	new URL("../.github/workflows/nightly.yml", import.meta.url),
+	"utf8",
+);
 const pinnedMpvBuilder = readFileSync(
 	new URL("build-pinned-mpv.sh", import.meta.url),
 	"utf8",
@@ -171,6 +175,66 @@ test("main builds separate production artifacts and retains diagnostics", () => 
 test("main consumes committed generated clients and pins external actions", () => {
 	assert.doesNotMatch(mainWorkflow, /(?:mise run|pnpm) generate(?:\s|$)/);
 	for (const action of mainWorkflow.matchAll(/uses: [^@\n]+@([^\s]+)/g)) {
+		assert.match(action[1], /^[a-f0-9]{40}$/);
+	}
+});
+
+test("nightly verification is scheduled, manually runnable, and never cancelled", () => {
+	assert.match(nightlyWorkflow, /name: Nightly/);
+	assert.match(nightlyWorkflow, /schedule:\n\s+- cron: "0 3 \* \* \*"/);
+	assert.match(nightlyWorkflow, /workflow_dispatch:/);
+	assert.match(nightlyWorkflow, /cancel-in-progress: false/);
+	assert.doesNotMatch(nightlyWorkflow, /pull_request:|push:/);
+	assert.doesNotMatch(nightlyWorkflow, /runs-on: (?!ubuntu-24\.04)/);
+});
+
+test("nightly runs full production verification and builds a container", () => {
+	assert.match(mainWorkflow, /workflow_call:/);
+	assert.match(nightlyWorkflow, /uses: \.\/\.github\/workflows\/main\.yml/);
+	assert.match(nightlyWorkflow, /docker build/);
+	assert.match(nightlyWorkflow, /docker save/);
+	assert.match(nightlyWorkflow, /name: nightly-container/);
+});
+
+test("nightly follows trusted cache, summary, and artifact policy", () => {
+	for (const cacheName of [
+		"pnpm",
+		"Turbo",
+		"Go",
+		"golangci-lint",
+		"Cargo",
+		"Playwright browser",
+		"verified pinned mpv",
+	]) {
+		assert.match(
+			mainWorkflow,
+			new RegExp(`Restore ${cacheName}[^\\n]* cache`, "i"),
+		);
+		assert.match(
+			mainWorkflow,
+			new RegExp(`Publish ${cacheName}[^\\n]* cache`, "i"),
+		);
+	}
+
+	assert.match(nightlyWorkflow, /ARTIFACT_RETENTION_DAYS: 14/);
+	assert.match(nightlyWorkflow, /Duration:/);
+	assert.match(mainWorkflow, /workflow_call:\n\s+outputs:/);
+	assert.match(mainWorkflow, /cache_status:/);
+	assert.match(mainWorkflow, /retry_count:/);
+	assert.match(
+		nightlyWorkflow,
+		/needs\.full-production-verification\.outputs\.cache_status/,
+	);
+	assert.match(
+		nightlyWorkflow,
+		/needs\.full-production-verification\.outputs\.retry_count/,
+	);
+	assert.match(nightlyWorkflow, /gh api/);
+	assert.match(nightlyWorkflow, /archive_download_url/);
+	assert.match(nightlyWorkflow, /if ! artifact_links=/);
+	assert.match(nightlyWorkflow, /Artifact lookup failed for nightly run/);
+	assert.match(nightlyWorkflow, /Run and artifact links:/);
+	for (const action of nightlyWorkflow.matchAll(/uses: [^@\n]+@([^\s]+)/g)) {
 		assert.match(action[1], /^[a-f0-9]{40}$/);
 	}
 });
