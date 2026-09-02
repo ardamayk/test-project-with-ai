@@ -102,6 +102,29 @@ describe('createApiClient', () => {
     expect(new Headers(request?.headers).get('X-Migration-Preview')).toBe('1');
   });
 
+  it('stages accepted Legacy Library Migration copies explicitly', async () => {
+    const migrationStage = {
+      verifiedCount: 1,
+      rejectedCount: 0,
+      failedCount: 0,
+      files: [],
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(migrationStage));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    const result = await client.stageLibraryMigration();
+
+    expect(result).toEqual(migrationStage);
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/library-migrations/stage',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const request = transport.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get('X-Migration-Stage')).toBe('1');
+  });
+
   it('creates and confirms a multi-file Managed Import Batch', async () => {
     const createdBatch = {
       id: 'batch-1',

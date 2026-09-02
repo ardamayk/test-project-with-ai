@@ -41,6 +41,30 @@ type legacyMigrationSource struct {
 	FilePath string
 }
 
+type verifiedMigrationCopy struct {
+	Source         legacyMigrationSource
+	Identity       commitIdentity
+	Placement      placedFiles
+	SourceSHA256   string
+	PendingSHA256  string
+	ArtworkSHA256  string
+	InspectionJSON string
+}
+
+type migrationCopyRecord struct {
+	SourceTrackID        string
+	PendingTrackID       string
+	PendingAlbumID       string
+	PendingAlbumArtistID string
+	SourceFilePath       string
+	PendingAudioPath     string
+	PendingArtworkPath   string
+	SourceSHA256         string
+	PendingSHA256        string
+	ArtworkSHA256        string
+	Status               string
+}
+
 func NewStore(database *sql.DB) *Store {
 	return &Store{database: database}
 }
@@ -86,6 +110,119 @@ func (store *Store) FindManagedTrackByHash(ctx context.Context, contentSHA256 st
 		return "", fmt.Errorf("find Managed Track by content hash: %w", err)
 	}
 	return trackID, nil
+}
+
+func (store *Store) CreatePreparedMigrationCopy(ctx context.Context, copy verifiedMigrationCopy) error {
+	_, err := store.database.ExecContext(ctx, `
+		INSERT INTO legacy_migration_copies (
+			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, inspection_json, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared')`,
+		copy.Source.TrackID, copy.Identity.TrackID, copy.Identity.AlbumID, copy.Identity.AlbumArtistID,
+		copy.Source.FilePath, copy.Placement.AudioPath, copy.Placement.ArtworkPath, copy.SourceSHA256,
+		copy.PendingSHA256, copy.ArtworkSHA256, copy.InspectionJSON,
+	)
+	if err != nil {
+		return fmt.Errorf("prepare Library Migration copy record: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) FindMigrationCopy(ctx context.Context, sourceTrackID string) (migrationCopyRecord, bool, error) {
+	var copy migrationCopyRecord
+	err := store.database.QueryRowContext(ctx, `
+		SELECT source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, status
+		FROM legacy_migration_copies
+		WHERE source_track_id = ?`, sourceTrackID,
+	).Scan(
+		&copy.SourceTrackID, &copy.PendingTrackID, &copy.PendingAlbumID, &copy.PendingAlbumArtistID,
+		&copy.SourceFilePath, &copy.PendingAudioPath, &copy.PendingArtworkPath, &copy.SourceSHA256,
+		&copy.PendingSHA256, &copy.ArtworkSHA256, &copy.Status,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return migrationCopyRecord{}, false, nil
+	}
+	if err != nil {
+		return migrationCopyRecord{}, false, fmt.Errorf("find Library Migration copy: %w", err)
+	}
+	return copy, true, nil
+}
+
+func (store *Store) ListPreparedMigrationCopies(ctx context.Context) (copies []migrationCopyRecord, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, status
+		FROM legacy_migration_copies
+		WHERE status = 'prepared'
+		ORDER BY source_track_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list prepared Library Migration copies: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, rows.Close()) }()
+	for rows.Next() {
+		var copy migrationCopyRecord
+		if err := rows.Scan(
+			&copy.SourceTrackID, &copy.PendingTrackID, &copy.PendingAlbumID, &copy.PendingAlbumArtistID,
+			&copy.SourceFilePath, &copy.PendingAudioPath, &copy.PendingArtworkPath, &copy.SourceSHA256,
+			&copy.PendingSHA256, &copy.ArtworkSHA256, &copy.Status,
+		); err != nil {
+			return nil, fmt.Errorf("read prepared Library Migration copy: %w", err)
+		}
+		copies = append(copies, copy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate prepared Library Migration copies: %w", err)
+	}
+	return copies, nil
+}
+
+func (store *Store) IsMigrationArtworkExclusive(ctx context.Context, sourceTrackID, artworkPath string) (bool, error) {
+	var referenceCount int
+	err := store.database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM legacy_migration_copies
+		WHERE pending_artwork_path = ? AND source_track_id != ?`, artworkPath, sourceTrackID,
+	).Scan(&referenceCount)
+	if err != nil {
+		return false, fmt.Errorf("count Library Migration artwork references: %w", err)
+	}
+	return referenceCount == 0, nil
+}
+
+func (store *Store) DeleteRetryableMigrationCopy(ctx context.Context, sourceTrackID string) error {
+	result, err := store.database.ExecContext(ctx, `
+		DELETE FROM legacy_migration_copies
+		WHERE source_track_id = ? AND status IN ('prepared', 'failed')`, sourceTrackID)
+	if err != nil {
+		return fmt.Errorf("delete retryable Library Migration copy: %w", err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) MarkMigrationCopyVerified(ctx context.Context, sourceTrackID string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE legacy_migration_copies
+		SET status = 'verified', recovery_reason = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE source_track_id = ? AND status = 'prepared'`, sourceTrackID)
+	if err != nil {
+		return fmt.Errorf("mark Library Migration copy verified: %w", err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) MarkMigrationCopyFailed(ctx context.Context, sourceTrackID, recoveryReason string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE legacy_migration_copies
+		SET status = 'failed', recovery_reason = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE source_track_id = ? AND status = 'prepared'`, recoveryReason, sourceTrackID)
+	if err != nil {
+		return fmt.Errorf("record failed Library Migration copy: %w", err)
+	}
+	return requireMutation(result)
 }
 
 func (store *Store) FindAlbumArtworkHash(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {

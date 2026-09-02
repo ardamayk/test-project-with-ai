@@ -293,12 +293,37 @@ func (service *Service) CleanupRestart(ctx context.Context) error {
 	if recoveryErr != nil {
 		return recoveryErr
 	}
+	migrationRecoveryErr := service.recoverPreparedMigrationCopies(ctx)
 	stagingErr := service.storage.RemoveAllStaged()
 	reconcileErr := service.cleanupUncommitted(ctx, nil)
 	if stagingErr != nil {
 		stagingErr = fmt.Errorf("remove Managed Import restart staging: %w", stagingErr)
 	}
-	return errors.Join(stagingErr, reconcileErr)
+	return errors.Join(migrationRecoveryErr, stagingErr, reconcileErr)
+}
+
+func (service *Service) recoverPreparedMigrationCopies(ctx context.Context) error {
+	copies, err := service.store.ListPreparedMigrationCopies(ctx)
+	if err != nil {
+		return err
+	}
+	var recoveryErr error
+	for _, copy := range copies {
+		removeArtwork, exclusiveErr := service.store.IsMigrationArtworkExclusive(ctx, copy.SourceTrackID, copy.PendingArtworkPath)
+		cleanupErr := exclusiveErr
+		if cleanupErr == nil {
+			cleanupErr = service.storage.CleanupRecordedMigrationCopy(copy, removeArtwork)
+		}
+		reason := "server restarted before pending copy verification"
+		if cleanupErr != nil {
+			reason = cleanupErr.Error()
+		}
+		recordErr := service.store.MarkMigrationCopyFailed(ctx, copy.SourceTrackID, reason)
+		if err := errors.Join(cleanupErr, recordErr); err != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, err))
+		}
+	}
+	return recoveryErr
 }
 
 func (service *Service) RecoverCommits(ctx context.Context) error {

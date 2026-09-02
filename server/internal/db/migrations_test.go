@@ -17,15 +17,69 @@ import (
 )
 
 const (
-	LEGACY_MIGRATION_VERSION    = 13
-	STRICT_IDENTITY_VERSION     = 14
-	BACKFILL_MIGRATION_VERSION  = 15
-	MANAGED_IMPORT_VERSION      = 16
-	VALIDATION_PROGRESS_VERSION = 17
-	IMPORT_CLIENT_FILE_VERSION  = 19
-	COMMIT_JOURNAL_VERSION      = 20
-	IMPORT_HISTORY_VERSION      = 21
+	LEGACY_MIGRATION_VERSION      = 13
+	STRICT_IDENTITY_VERSION       = 14
+	BACKFILL_MIGRATION_VERSION    = 15
+	MANAGED_IMPORT_VERSION        = 16
+	VALIDATION_PROGRESS_VERSION   = 17
+	IMPORT_CLIENT_FILE_VERSION    = 19
+	COMMIT_JOURNAL_VERSION        = 20
+	IMPORT_HISTORY_VERSION        = 21
+	LEGACY_MIGRATION_COPY_VERSION = 22
 )
+
+func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, IMPORT_HISTORY_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), LEGACY_MIGRATION_COPY_VERSION); err != nil {
+		t.Fatalf("apply Legacy Migration copy migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_COPY_VERSION)
+	assertTableExists(t, sqlDB, "legacy_migration_copies")
+	_, err := sqlDB.Exec(`
+		INSERT INTO legacy_migration_copies (
+			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, inspection_json, status
+		) VALUES (
+			'track-1', 'pending-track', 'pending-album', 'pending-artist', '/music/track.flac',
+			'/managed/.migration/track.flac', '/managed/.migration/cover.png',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'1000000000000000000000000000000000000000000000000000000000000000',
+			'2000000000000000000000000000000000000000000000000000000000000000',
+			'{}', 'verified'
+		)`)
+	if err == nil {
+		t.Fatal("mismatched migration hashes were accepted")
+	}
+	_, err = sqlDB.Exec(`
+		INSERT INTO legacy_migration_copies (
+			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, inspection_json, status
+		) VALUES (
+			'track-1', 'pending-track', 'pending-album', 'pending-artist', '/music/track.flac',
+			'/managed/.migration/track.flac', '/managed/.migration/cover.png',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'2000000000000000000000000000000000000000000000000000000000000000',
+			'{}', 'prepared'
+		)`)
+	if err != nil {
+		t.Fatalf("store prepared Legacy Migration copy: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE legacy_migration_copies SET status = 'failed', recovery_reason = 'placement failed' WHERE source_track_id = 'track-1'`); err != nil {
+		t.Fatalf("record failed Legacy Migration copy: %v", err)
+	}
+	assertTextValue(t, sqlDB, `SELECT recovery_reason FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "placement failed")
+	assertExecFails(t, sqlDB, `UPDATE legacy_migration_copies SET status = 'unknown' WHERE source_track_id = 'track-1'`, "CHECK constraint failed")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Legacy Migration copy migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, IMPORT_HISTORY_VERSION)
+	assertTableMissing(t, sqlDB, "legacy_migration_copies")
+}
 
 func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, IMPORT_CLIENT_FILE_VERSION)
