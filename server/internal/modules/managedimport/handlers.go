@@ -121,6 +121,8 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 		respond.Error(writer, http.StatusConflict, ERROR_CODE_EXACT_DUPLICATE, "File bytes match an existing Track")
 	case errors.Is(err, ErrBatchTooLarge):
 		respond.Error(writer, http.StatusRequestEntityTooLarge, "batch_upload_too_large", "Managed Import batch exceeds the configured byte limit")
+	case errors.Is(err, ErrUploadInterrupted):
+		respond.Error(writer, http.StatusRequestTimeout, UPLOAD_INTERRUPTED_ERROR_CODE, "Managed Import upload was interrupted; retry this file")
 	case errors.Is(err, ErrInvalidState):
 		respond.Error(writer, http.StatusConflict, "import_state_conflict", "Managed Import Job is not awaiting this operation")
 	case errors.Is(err, ErrUploadTooLarge):

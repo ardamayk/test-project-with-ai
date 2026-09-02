@@ -1712,6 +1712,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            /** @description Upload stream was interrupted and this Import Job remains retryable */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             409: components["responses"]["Conflict"];
             /** @description File or batch exceeds the configured Managed Import byte limit */
             413: {

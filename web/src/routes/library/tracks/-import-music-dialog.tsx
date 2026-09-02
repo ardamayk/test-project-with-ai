@@ -4,6 +4,7 @@ import { Button } from "#/components/ui/button";
 import {
 	type ImportFileEntry,
 	type ImportState,
+	SUPPORTED_AUDIO_FILE_ACCEPT,
 	useManagedImportWorkflow,
 } from "./-managed-import-workflow";
 
@@ -88,15 +89,50 @@ function ImportFilePicker({
 	onFiles: (files: FileList) => Promise<void>;
 }) {
 	return (
+		<div className="grid gap-4 sm:grid-cols-2">
+			<ImportFileInput
+				id="managed-import-files"
+				label="Audio files"
+				isBusy={isBusy}
+				onFiles={onFiles}
+			/>
+			<ImportFileInput
+				id="managed-import-folder"
+				label="Audio folder"
+				isBusy={isBusy}
+				isDirectory
+				onFiles={onFiles}
+			/>
+		</div>
+	);
+}
+
+function ImportFileInput({
+	id,
+	label,
+	isBusy,
+	isDirectory = false,
+	onFiles,
+}: {
+	id: string;
+	label: string;
+	isBusy: boolean;
+	isDirectory?: boolean;
+	onFiles: (files: FileList) => Promise<void>;
+}) {
+	return (
 		<div className="grid gap-2">
-			<label htmlFor="managed-import-files" className="font-medium text-sm">
-				Audio files
+			<label htmlFor={id} className="font-medium text-sm">
+				{label}
 			</label>
 			<input
-				id="managed-import-files"
+				ref={(input) => {
+					if (isDirectory) input?.setAttribute("webkitdirectory", "");
+				}}
+				id={id}
 				type="file"
 				multiple
-				accept=".flac,.mp3,.m4a,.ogg,.opus,.wav"
+				accept={SUPPORTED_AUDIO_FILE_ACCEPT}
 				disabled={isBusy}
 				className="rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-secondary-foreground"
 				onChange={(event) =>

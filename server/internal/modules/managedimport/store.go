@@ -244,6 +244,7 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
 			content_sha256 = ?, preview_json = ?, upload_size_bytes = ?, error_code = NULL,
+			error_field = NULL, error_reason = NULL, outcome = NULL, selected = 1,
 			validation_progress = 100, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ? AND (
 			batch_id IS NULL OR ? + COALESCE((
@@ -274,6 +275,39 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 		return importJob{}, fmt.Errorf("commit Import Preview transition: %w", err)
 	}
 	return store.GetJob(ctx, jobID)
+}
+
+func (store *Store) MarkUploadInterrupted(ctx context.Context, jobID, originalFilename string) (returnErr error) {
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin interrupted Managed Import transition: %w", err)
+	}
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			returnErr = errors.Join(returnErr, fmt.Errorf("rollback interrupted Managed Import transition: %w", rollbackErr))
+		}
+	}()
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs
+		SET revision = revision + 1, original_filename = COALESCE(NULLIF(?, ''), original_filename),
+			error_code = ?, error_field = 'file', error_reason = 'upload stream was interrupted; retry this file',
+			outcome = NULL, selected = 0, staged_file_path = NULL, content_sha256 = NULL,
+			preview_json = NULL, upload_size_bytes = 0, validation_progress = 0, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = ? AND batch_id IS NOT NULL`, originalFilename, UPLOAD_INTERRUPTED_ERROR_CODE, jobID, STATUS_UPLOADING)
+	if err != nil {
+		return fmt.Errorf("mark Managed Import upload interrupted: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return fmt.Errorf("mark Managed Import upload interrupted: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?)`, jobID); err != nil {
+		return fmt.Errorf("revise interrupted Managed Import Batch file: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit interrupted Managed Import transition: %w", err)
+	}
+	return nil
 }
 
 func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, errorCode, errorField, errorReason string) (returnErr error) {

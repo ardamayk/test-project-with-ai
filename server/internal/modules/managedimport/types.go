@@ -22,6 +22,7 @@ const (
 	VALIDATION_CLEANUP_TIMEOUT                     = 5 * time.Second
 	ERROR_CODE_EXACT_DUPLICATE                     = "exact_duplicate"
 	ERROR_CODE_REVISION_CONFLICT                   = "import_revision_conflict"
+	UPLOAD_INTERRUPTED_ERROR_CODE                  = "upload_interrupted"
 )
 
 type BatchStatus string
@@ -60,6 +61,7 @@ var (
 	ErrExactDuplicate      = errors.New("managed import file exactly duplicates a committed Track")
 	ErrUploadTooLarge      = errors.New("managed import file exceeds upload limit")
 	ErrBatchTooLarge       = errors.New("managed import batch exceeds upload limit")
+	ErrUploadInterrupted   = errors.New("managed import upload was interrupted")
 	ErrInvalidUpload       = errors.New("managed import upload is invalid")
 	ErrInsufficientStorage = errors.New("managed storage capacity is insufficient")
 	ErrUnsafeStoragePath   = errors.New("managed storage path is unsafe")

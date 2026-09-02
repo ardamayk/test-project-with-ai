@@ -109,7 +109,7 @@ func (storage *Storage) StageUpload(source io.Reader, contentLength int64) (uplo
 	if err := ensureDirectory(root, storage.root, ".staging", 0o700); err != nil {
 		return stagedUpload{}, err
 	}
-	return storage.writeStagedUpload(root, source)
+	return storage.writeStagedUpload(root, source, contentLength)
 }
 
 func (storage *Storage) UploadReservationSize(contentLength int64) (int64, error) {
@@ -122,7 +122,7 @@ func (storage *Storage) UploadReservationSize(contentLength int64) (int64, error
 	return 0, nil
 }
 
-func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stagedUpload, error) {
+func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader, contentLength int64) (stagedUpload, error) {
 	relativePath := filepath.Join(".staging", ".import-"+uuid.NewString()+".upload")
 	file, err := root.OpenFile(relativePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -136,10 +136,14 @@ func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader) (stag
 	destination := io.MultiWriter(file, hash)
 	written, copyErr := io.Copy(&capacityWriter{storage: storage, destination: destination}, io.LimitReader(source, streamLimit+1))
 	closeErr := closeManagedStorageFile(file, "Managed Import staging file")
-	if copyErr != nil || closeErr != nil || written > streamLimit {
+	isShortUpload := contentLength >= 0 && written < contentLength
+	if copyErr != nil || closeErr != nil || written > streamLimit || isShortUpload {
 		removeErr := removeRootedFile(root, relativePath, "Managed Import staging file")
 		if written > streamLimit {
 			return stagedUpload{}, errors.Join(limitErr, removeErr)
+		}
+		if isShortUpload || errors.Is(copyErr, io.ErrUnexpectedEOF) {
+			return stagedUpload{}, errors.Join(ErrUploadInterrupted, io.ErrUnexpectedEOF, copyErr, closeErr, removeErr)
 		}
 		return stagedUpload{}, errors.Join(copyErr, closeErr, removeErr)
 	}

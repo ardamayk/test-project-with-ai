@@ -10,6 +10,20 @@ import { apiClient } from "#/lib/api";
 export type ImportState = "idle" | "uploading" | "confirming";
 
 const MAX_CONCURRENT_UPLOADS = 3;
+const SUPPORTED_AUDIO_EXTENSIONS = [
+	"flac",
+	"mp3",
+	"m4a",
+	"ogg",
+	"opus",
+	"wav",
+] as const;
+const SUPPORTED_AUDIO_EXTENSION_SET = new Set<string>(
+	SUPPORTED_AUDIO_EXTENSIONS,
+);
+export const SUPPORTED_AUDIO_FILE_ACCEPT = SUPPORTED_AUDIO_EXTENSIONS.map(
+	(extension) => `.${extension}`,
+).join(",");
 
 export type ImportFileEntry = {
 	key: string;
@@ -101,7 +115,7 @@ type WorkflowState = ReturnType<typeof useImportWorkflowState>;
 
 function createFileHandler(state: WorkflowState) {
 	return async (fileList: FileList | File[]) => {
-		const files = Array.from(fileList);
+		const files = Array.from(fileList).filter(isSupportedVisibleAudioFile);
 		if (files.length === 0) return;
 		state.setImportState("uploading");
 		state.setErrorMessage("");
@@ -129,6 +143,18 @@ function createFileHandler(state: WorkflowState) {
 			state.setImportState("idle");
 		}
 	};
+}
+
+function isSupportedVisibleAudioFile(file: File): boolean {
+	const clientPath = file.webkitRelativePath || file.name;
+	if (clientPath.split("/").some((segment) => segment.startsWith("."))) {
+		return false;
+	}
+	const extensionSeparator = file.name.lastIndexOf(".");
+	if (extensionSeparator < 0) return false;
+	return SUPPORTED_AUDIO_EXTENSION_SET.has(
+		file.name.slice(extensionSeparator + 1).toLowerCase(),
+	);
 }
 
 function createConfirmHandler(
@@ -397,9 +423,14 @@ async function retryUnresolvedUploads(
 		);
 		return entry.jobId && isUnresolved ? [{ entry, jobId: entry.jobId }] : [];
 	});
-	await runWithConcurrency(retryableEntries, ({ entry, jobId }) =>
-		uploadFile(jobId, entry, updateEntry),
-	);
+	await runWithConcurrency(retryableEntries, async ({ entry, jobId }) => {
+		updateEntry(entry.key, {
+			state: "unresolved",
+			progress: 0,
+			errorMessage: undefined,
+		});
+		await uploadFile(jobId, entry, updateEntry);
+	});
 }
 
 function importErrorMessage(error: unknown): string {

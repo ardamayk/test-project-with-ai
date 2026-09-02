@@ -672,32 +672,47 @@ func TestManagedImportBatchSerializesConcurrentConfirmation(t *testing.T) {
 	}
 }
 
-func TestManagedImportBatchPersistsCanceledUploadFailure(t *testing.T) {
+func TestManagedImportBatchRetriesInterruptedUploadInSameJob(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
-	storage := managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20})
-	service := managedimport.NewService(managedimport.NewStore(database), storage, library.NewMediaInspector())
-	batch, err := service.CreateBatch(context.Background())
-	if err != nil {
-		t.Fatalf("create canceled upload batch: %v", err)
+	managedStoragePath := t.TempDir()
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	router := chi.NewRouter()
+	managedimport.NewModule(database, configuration, library.NewMediaInspector()).RegisterRoutes(router)
+	batchID := testutil.CreateResourceID(t, router, "/api/v1/import-batches")
+	jobID := createBatchImportJob(t, router, batchID)
+	fixture := readStrictFLACFixture(t)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture[:128]))
+	request.ContentLength = int64(len(fixture))
+	request.Header.Set("Content-Type", "audio/flac")
+	request.Header.Set("X-Import-Filename", "interrupted.flac")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	testutil.AssertErrorCode(t, response, http.StatusRequestTimeout, "upload_interrupted")
+	batch := getImportBatch(t, router, batchID)
+	if len(batch.Files) != 1 || batch.Files[0].JobID != jobID || batch.Files[0].State != managedimport.BATCH_FILE_UNRESOLVED || batch.Files[0].Status != managedimport.STATUS_UPLOADING {
+		t.Fatalf("interrupted Import Batch file = %+v", batch.Files)
 	}
-	job, err := service.CreateJob(context.Background(), batch.ID, uuid.NewString())
-	if err != nil {
-		t.Fatalf("create canceled upload job: %v", err)
+	var uploadSize int64
+	if err := database.QueryRow(`SELECT upload_size_bytes FROM managed_import_jobs WHERE id = ?`, jobID).Scan(&uploadSize); err != nil || uploadSize != 0 {
+		t.Fatalf("interrupted upload reservation = %d, err = %v", uploadSize, err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	_, err = service.Upload(ctx, job.ID, "canceled.flac", &cancelingReader{cancel: cancel}, -1)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled upload error = %v", err)
+	stagedFiles, err := filepath.Glob(filepath.Join(managedStoragePath, ".staging", "*.upload"))
+	if err != nil || len(stagedFiles) != 0 {
+		t.Fatalf("interrupted staged files = %v, err = %v", stagedFiles, err)
 	}
-	persistedJob, err := service.GetJob(context.Background(), job.ID)
-	if err != nil {
-		t.Fatalf("get canceled upload job: %v", err)
+
+	retryResponse := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{
+		"Content-Type":      "audio/flac",
+		"X-Import-Filename": "interrupted.flac",
+	})
+	if retryResponse.Code != http.StatusOK {
+		t.Fatalf("retry interrupted upload status = %d, body = %s", retryResponse.Code, retryResponse.Body.String())
 	}
-	if persistedJob.Status != managedimport.STATUS_FAILED {
-		t.Fatalf("canceled upload job status = %q", persistedJob.Status)
-	}
-	if persistedJob.ErrorCode != "validation_cancelled" {
-		t.Fatalf("canceled upload error code = %q", persistedJob.ErrorCode)
+	batch = getImportBatch(t, router, batchID)
+	if len(batch.Files) != 1 || batch.Files[0].JobID != jobID || batch.Files[0].State != managedimport.BATCH_FILE_ACCEPTED || !batch.Files[0].Selected || batch.Files[0].ErrorCode != "" || batch.Files[0].ErrorReason != "" {
+		t.Fatalf("retried Import Batch file = %+v", batch.Files)
 	}
 }
 
@@ -1775,15 +1790,6 @@ func confirmImportBatch(t *testing.T, router http.Handler, batch managedimport.B
 	}
 	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%s]}`, batch.Revision, strings.Join(selectedJSON, ",")))
 	return testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batch.ID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
-}
-
-type cancelingReader struct {
-	cancel context.CancelFunc
-}
-
-func (reader *cancelingReader) Read(_ []byte) (int, error) {
-	reader.cancel()
-	return 0, context.Canceled
 }
 
 type cancelOnConfirmationInspector struct {

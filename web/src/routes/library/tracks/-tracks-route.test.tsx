@@ -92,6 +92,151 @@ function renderWithQuery(ui: React.ReactElement) {
 	);
 }
 
+async function openImportMusicDialog() {
+	renderWithQuery(<TracksPage />);
+	await screen.findByText("Anti-Hero");
+	fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+}
+
+function selectAudioFolder(files: File[]) {
+	fireEvent.change(screen.getByLabelText("Audio folder"), {
+		target: { files },
+	});
+}
+
+function createFolderFile(
+	contents: string,
+	name: string,
+	clientPath: string,
+	type = "audio/flac",
+) {
+	const file = new File([contents], name, { type });
+	Object.defineProperty(file, "webkitRelativePath", { value: clientPath });
+	return file;
+}
+
+function selectFolderWithIgnoredFiles() {
+	const track = createFolderFile(
+		"flac bytes",
+		"track.FLAC",
+		"Collection/Disc 1/track.FLAC",
+	);
+	const hiddenTrack = createFolderFile(
+		"hidden",
+		"hidden.mp3",
+		"Collection/.archive/hidden.mp3",
+		"audio/mpeg",
+	);
+	const sidecar = createFolderFile(
+		"cover",
+		"cover.jpg",
+		"Collection/Disc 1/cover.jpg",
+		"image/jpeg",
+	);
+	selectAudioFolder([track, hiddenTrack, sidecar]);
+	return track;
+}
+
+function createImportPreview(jobId: string) {
+	return {
+		jobId,
+		status: "awaiting_confirmation",
+		revision: 2,
+		file: {
+			originalFilename: `${jobId}.flac`,
+			title: jobId,
+			artists: ["Test Artist"],
+			album: "Strict Import Tests",
+		},
+	};
+}
+
+function createBatchFile(jobId: string, isAccepted: boolean) {
+	return {
+		jobId,
+		state: isAccepted ? "accepted" : "unresolved",
+		status: isAccepted ? "awaiting_confirmation" : "uploading",
+		revision: isAccepted ? 2 : 1,
+		validationProgress: isAccepted ? 100 : 0,
+		selected: isAccepted,
+	};
+}
+
+function mockClientFileJobs() {
+	mocks.createManagedImportJob
+		.mockReset()
+		.mockImplementation((_batchId, clientFileId) =>
+			Promise.resolve({ id: clientFileId, status: "uploading", revision: 1 }),
+		);
+}
+
+function mockDeferredUploads() {
+	const releases: Array<() => void> = [];
+	let activeUploads = 0;
+	let maximumActiveUploads = 0;
+	mocks.uploadManagedImportFile.mockImplementation(async (jobId) => {
+		activeUploads++;
+		maximumActiveUploads = Math.max(maximumActiveUploads, activeUploads);
+		await new Promise<void>((resolve) => releases.push(resolve));
+		activeUploads--;
+		return createImportPreview(jobId);
+	});
+	return {
+		releases,
+		getActiveUploads: () => activeUploads,
+		getMaximumActiveUploads: () => maximumActiveUploads,
+	};
+}
+
+function mockRetryableBatchResponses() {
+	mocks.getManagedImportBatch
+		.mockResolvedValueOnce({
+			id: "batch-1",
+			status: "uploading",
+			revision: 3,
+			files: [
+				createBatchFile("import-1", false),
+				createBatchFile("import-2", true),
+			],
+		})
+		.mockResolvedValueOnce({
+			id: "batch-1",
+			status: "uploading",
+			revision: 4,
+			files: [
+				createBatchFile("import-1", true),
+				createBatchFile("import-2", true),
+			],
+		});
+}
+
+function mockInterruptedFolderUpload() {
+	let interruptedAttempts = 0;
+	let finishRetry: (() => void) | undefined;
+	mocks.uploadManagedImportFile.mockImplementation(
+		(jobId, _filename, _file, onProgress) => {
+			if (jobId !== "import-1")
+				return Promise.resolve(createImportPreview(jobId));
+			interruptedAttempts++;
+			if (interruptedAttempts === 1)
+				return Promise.reject(new Error("upload interrupted"));
+			onProgress?.(45);
+			return new Promise((resolve) => {
+				finishRetry = () => resolve(createImportPreview(jobId));
+			});
+		},
+	);
+	return () => finishRetry?.();
+}
+
+function expectUploadAttempts(jobId: string, count: number) {
+	expect(
+		mocks.uploadManagedImportFile.mock.calls.filter(
+			([currentJobId]) => currentJobId === jobId,
+		),
+	).toHaveLength(count);
+}
+
 describe("tracks route", () => {
 	beforeEach(() => {
 		mocks.listTracks.mockReset();
@@ -307,6 +452,73 @@ describe("tracks route", () => {
 		expect(screen.getByText("Anti-Hero")).toBeTruthy();
 		expect(screen.queryByText("Bad Blood")).toBeNull();
 		expect(screen.queryByText("Failed to load tracks")).toBeNull();
+	});
+
+	it("imports supported folder audio without sending client paths", async () => {
+		await openImportMusicDialog();
+		const folderInput = screen.getByLabelText("Audio folder");
+		expect(folderInput.getAttribute("webkitdirectory")).toBe("");
+		const track = selectFolderWithIgnoredFiles();
+
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledOnce(),
+		);
+		expect(mocks.createManagedImportJob).toHaveBeenCalledOnce();
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledWith(
+			"import-1",
+			"track.FLAC",
+			track,
+			expect.any(Function),
+		);
+	});
+
+	it("limits recursive folder uploads to three concurrent files", async () => {
+		mockClientFileJobs();
+		const uploads = mockDeferredUploads();
+		await openImportMusicDialog();
+		selectAudioFolder(
+			["one", "two", "three", "four"].map(
+				(name) => new File([name], `${name}.flac`),
+			),
+		);
+
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3),
+		);
+		expect(uploads.getMaximumActiveUploads()).toBe(3);
+		uploads.releases.shift()?.();
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(4),
+		);
+		for (const release of uploads.releases) release();
+		await vi.waitFor(() => expect(uploads.getActiveUploads()).toBe(0));
+	});
+
+	it("retries only an interrupted folder file in its active job", async () => {
+		mockRetryableBatchResponses();
+		const finishRetry = mockInterruptedFolderUpload();
+		await openImportMusicDialog();
+		selectAudioFolder([
+			new File(["one"], "one.flac"),
+			new File(["two"], "two.flac"),
+		]);
+
+		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3),
+		);
+		const interruptedRow = screen.getByText("one.flac").closest("article");
+		expect(interruptedRow?.textContent).toContain("Unresolved");
+		expect(
+			interruptedRow
+				?.querySelector('[role="progressbar"]')
+				?.getAttribute("aria-valuenow"),
+		).toBe("45");
+		finishRetry();
+		await vi.waitFor(() =>
+			expect(interruptedRow?.textContent).toContain("Accepted"),
+		);
+		expectUploadAttempts("import-1", 2);
+		expectUploadAttempts("import-2", 1);
 	});
 
 	it("imports a selected file and reports a rejected sibling independently", async () => {
