@@ -8,14 +8,17 @@ export default defineConfig({
 	testMatch: "production-smoke.spec.ts",
 	fullyParallel: false,
 	forbidOnly: !!process.env.CI,
-	retries: 0,
 	workers: 1,
 	timeout: 15_000,
 	expect: { timeout: 5_000 },
-	reporter: "list",
+	// CI diagnostics for the Integration Gate: one retry, and on failure an
+	// HTML report plus traces, screenshots, and retry data (issue #79).
+	retries: process.env.CI ? 1 : 0,
+	reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
 	use: {
 		baseURL: "http://127.0.0.1:4173",
 		trace: "on-first-retry",
+		screenshot: "only-on-failure",
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 	webServer: [

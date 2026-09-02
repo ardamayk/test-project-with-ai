@@ -267,3 +267,28 @@ mise run generate:check
 mise run ci:integration
 mise run build
 """
+
+# Optional debugging aid only: smoke-tests that the selected Integration Gate
+# job still wires up under nektos/act. It is never authoritative (GitHub-hosted
+# runners produce the PR / Integration Gate result) and never required; see
+# docs/testing/act-smoke.md. It must not grow into a local reimplementation of
+# CI policy.
+[tasks."ci:act:smoke"]
+description = "Optionally smoke-test a selected Integration Gate job locally with act; a wiring-debug aid that is neither authoritative nor required"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+command -v act >/dev/null 2>&1 || {
+  echo "nektos/act is required for this optional smoke task; see docs/testing/act-smoke.md." >&2
+  exit 1
+}
+command -v docker >/dev/null 2>&1 || {
+  echo "Docker (or a compatible container engine) is required by act; see docs/testing/act-smoke.md." >&2
+  exit 1
+}
+# Defaults to the cheapest job; select another one with, for example:
+#   mise run ci:act:smoke -- --job web-e2e
+exec act pull_request \
+  --workflow .github/workflows/pr-integration-gate.yml \
+  "$@"
+"""

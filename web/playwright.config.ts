@@ -5,12 +5,15 @@ export default defineConfig({
 	testIgnore: ["radio-hls-proxy.spec.ts", "production-smoke.spec.ts"],
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
-	retries: process.env.CI ? 2 : 0,
+	// CI diagnostics for the Integration Gate: one retry, and on failure an
+	// HTML report plus traces, screenshots, and retry data (issue #79).
+	retries: process.env.CI ? 1 : 0,
 	workers: process.env.CI ? 1 : undefined,
-	reporter: "list",
+	reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
 	use: {
 		baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
 		trace: "on-first-retry",
+		screenshot: "only-on-failure",
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 	webServer: [
