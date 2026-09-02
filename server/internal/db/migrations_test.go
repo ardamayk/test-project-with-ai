@@ -22,7 +22,28 @@ const (
 	BACKFILL_MIGRATION_VERSION  = 15
 	MANAGED_IMPORT_VERSION      = 16
 	VALIDATION_PROGRESS_VERSION = 17
+	IMPORT_CLIENT_FILE_VERSION  = 19
+	COMMIT_JOURNAL_VERSION      = 20
 )
+
+func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, IMPORT_CLIENT_FILE_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), COMMIT_JOURNAL_VERSION); err != nil {
+		t.Fatalf("apply Managed Import commit journal migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, COMMIT_JOURNAL_VERSION)
+	assertTableExists(t, sqlDB, "managed_import_commit_journal")
+	assertColumnExists(t, sqlDB, "tracks", "is_pending_commit")
+	insertLegacyLibrary(t, sqlDB)
+	assertExecFails(t, sqlDB, `UPDATE tracks SET is_pending_commit = 2`, "CHECK constraint failed")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Managed Import commit journal migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, IMPORT_CLIENT_FILE_VERSION)
+	assertTableMissing(t, sqlDB, "managed_import_commit_journal")
+	assertColumnMissing(t, sqlDB, "tracks", "is_pending_commit")
+}
 
 func TestManagedImportValidationProgressMigrationAppliesAndRollsBack(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, MANAGED_IMPORT_VERSION)

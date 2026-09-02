@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,14 +17,16 @@ import (
 )
 
 type Service struct {
-	store           *Store
-	storage         *Storage
-	inspector       library.MediaInspector
-	uploadLocksMu   sync.Mutex
-	uploadLocks     map[string]*uploadLock
-	activeUploadsMu sync.Mutex
-	activeUploads   map[string]*activeUpload
-	cancelingJobs   map[string]bool
+	store            *Store
+	storage          *Storage
+	inspector        library.MediaInspector
+	uploadLocksMu    sync.Mutex
+	uploadLocks      map[string]*uploadLock
+	activeUploadsMu  sync.Mutex
+	activeUploads    map[string]*activeUpload
+	cancelingJobs    map[string]bool
+	commitPhaseHook  func(commitPhase) error
+	commitResultHook func() error
 }
 
 var managedImportCommitMu sync.Mutex
@@ -282,12 +285,96 @@ func (service *Service) CleanupInactive(ctx context.Context, now time.Time) erro
 }
 
 func (service *Service) CleanupRestart(ctx context.Context) error {
+	recoveryErr := service.RecoverCommits(ctx)
+	if recoveryErr != nil {
+		return recoveryErr
+	}
 	stagingErr := service.storage.RemoveAllStaged()
 	reconcileErr := service.cleanupUncommitted(ctx, nil)
 	if stagingErr != nil {
 		stagingErr = fmt.Errorf("remove Managed Import restart staging: %w", stagingErr)
 	}
 	return errors.Join(stagingErr, reconcileErr)
+}
+
+func (service *Service) RecoverCommits(ctx context.Context) error {
+	managedImportCommitMu.Lock()
+	defer managedImportCommitMu.Unlock()
+	journals, err := service.store.ListIncompleteCommitJournals(ctx)
+	if err != nil {
+		return err
+	}
+	var recoveryErr error
+	for _, journal := range journals {
+		if err := service.recoverCommit(ctx, journal); err != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Managed Import commit %q: %w", journal.ID, err))
+		}
+	}
+	return recoveryErr
+}
+
+func (service *Service) recoverCommit(ctx context.Context, journal commitJournal) error {
+	placement, err := service.storage.placementFromJournal(journal)
+	if err != nil {
+		reasonErr := service.store.RecordCommitRecoveryReason(ctx, journal.ID, "unsafe journaled storage path")
+		return errors.Join(err, reasonErr)
+	}
+	switch journal.Phase {
+	case COMMIT_PHASE_PREPARED, COMMIT_PHASE_PLACED, COMMIT_PHASE_VERIFIED:
+		return service.rollbackUncommittedJournal(ctx, journal, placement)
+	case COMMIT_PHASE_DATABASE_COMMITTED, COMMIT_PHASE_CLEANED:
+		return service.completePendingJournal(ctx, journal, placement)
+	default:
+		return fmt.Errorf("unsupported Managed Import commit phase %q", journal.Phase)
+	}
+}
+
+func (service *Service) rollbackUncommittedJournal(ctx context.Context, journal commitJournal, placement placedFiles) error {
+	reason := fmt.Sprintf("restart rolled back commit from %s phase", journal.Phase)
+	_, canonicalErr := os.Stat(journal.AudioFilePath)
+	if canonicalErr == nil {
+		if err := service.storage.Rollback(placement); err != nil {
+			reasonErr := service.store.RecordCommitRecoveryReason(ctx, journal.ID, reason+"; canonical rollback failed")
+			return errors.Join(err, reasonErr)
+		}
+	} else if !errors.Is(canonicalErr, os.ErrNotExist) {
+		reasonErr := service.store.RecordCommitRecoveryReason(ctx, journal.ID, reason+"; canonical state unreadable")
+		return errors.Join(canonicalErr, reasonErr)
+	} else if err := service.storage.CleanupPreparedPlacement(placement); err != nil {
+		reasonErr := service.store.RecordCommitRecoveryReason(ctx, journal.ID, reason+"; prepared placement cleanup failed")
+		return errors.Join(err, reasonErr)
+	}
+	return service.store.RollbackCommitJournal(ctx, journal.ID, reason)
+}
+
+func (service *Service) completePendingJournal(ctx context.Context, journal commitJournal, placement placedFiles) error {
+	if err := service.storage.VerifyPlacement(placement, journal.AudioSHA256, journal.ArtworkSHA256); err != nil {
+		reason := fmt.Sprintf("restart rolled back commit because canonical verification failed: %v", err)
+		databaseErr := service.store.RollbackPendingCommit(ctx, journal, reason)
+		if databaseErr != nil {
+			return databaseErr
+		}
+		storageErr := service.storage.Rollback(placement)
+		if storageErr != nil {
+			reasonErr := service.store.RecordCommitRecoveryReason(ctx, journal.ID, reason+"; filesystem rollback failed")
+			return errors.Join(storageErr, reasonErr)
+		}
+		return service.store.RollbackCommitJournal(ctx, journal.ID, reason)
+	}
+	if journal.Phase == COMMIT_PHASE_DATABASE_COMMITTED {
+		if err := service.storage.CleanupPlacement(placement); err != nil {
+			return err
+		}
+		if err := service.store.UpdateCommitPhase(ctx, journal.ID, COMMIT_PHASE_CLEANED); err != nil {
+			return err
+		}
+	}
+	job, err := service.store.GetJob(ctx, journal.JobID)
+	if err != nil {
+		return err
+	}
+	_, err = service.store.FinalizeCommit(ctx, job, journal.TrackID, journal.ID)
+	return err
 }
 
 func (service *Service) cleanupUncommitted(ctx context.Context, updatedBefore *time.Time) error {
@@ -597,6 +684,19 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if err != nil {
 		return Result{}, err
 	}
+	journal, hasJournal, err := service.store.FindIncompleteCommitJournal(ctx, job.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	if hasJournal {
+		if recoveryErr := service.recoverCommit(ctx, journal); recoveryErr != nil {
+			return Result{}, recoveryErr
+		}
+		job, err = service.store.GetJob(ctx, job.ID)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	if job.Status == STATUS_COMMITTED {
 		if revision != job.Revision-1 {
 			return Result{}, ErrRevisionConflict
@@ -750,6 +850,20 @@ func (service *Service) handleBatchConfirmationError(ctx context.Context, job im
 	if ctx.Err() != nil {
 		return errors.Join(confirmationErr, ctx.Err())
 	}
+	persistedJob, err := service.store.GetJob(ctx, job.ID)
+	if err != nil {
+		return errors.Join(confirmationErr, err)
+	}
+	if persistedJob.Status == STATUS_COMMITTED {
+		return nil
+	}
+	_, hasJournal, journalErr := service.store.FindIncompleteCommitJournal(ctx, job.ID)
+	if journalErr != nil {
+		return errors.Join(confirmationErr, journalErr)
+	}
+	if hasJournal {
+		return confirmationErr
+	}
 	errorCode, reason := failureDetails(confirmationErr)
 	finishErr := service.finishUncommittedBatchFile(ctx, job, OUTCOME_FAILED, errorCode, reason)
 	if finishErr != nil {
@@ -794,24 +908,120 @@ func (service *Service) preflightCommit(stagedBytes int64, inspection library.Me
 }
 
 func (service *Service) commit(ctx context.Context, job importJob, inspection library.MediaInspection) (Result, error) {
-	identity, err := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
+	identity, journal, err := service.prepareCommit(ctx, job, inspection)
 	if err != nil {
 		return Result{}, err
 	}
-	placement, err := service.storage.Place(job.StagedFilePath, inspection, identity)
+	placement, err := service.placeAndVerifyCommit(ctx, job, inspection, identity, journal)
 	if err != nil {
 		return Result{}, err
 	}
-	result, err := service.store.Commit(ctx, commitData{
+	return service.persistAndFinalizeCommit(ctx, job, inspection, identity, journal, placement)
+}
+
+func (service *Service) prepareCommit(ctx context.Context, job importJob, inspection library.MediaInspection) (commitIdentity, commitJournal, error) {
+	identity, resolveErr := service.store.ResolveCommitIdentity(ctx, inspection.Metadata)
+	if resolveErr != nil {
+		return commitIdentity{}, commitJournal{}, resolveErr
+	}
+	plannedPlacement, planErr := service.storage.planPlacement(job.StagedFilePath, inspection, identity)
+	if planErr != nil {
+		return commitIdentity{}, commitJournal{}, planErr
+	}
+	journal := commitJournal{
+		ID: uuid.NewString(), JobID: job.ID, TrackID: identity.TrackID, Phase: COMMIT_PHASE_PREPARED,
+		StagedFilePath: job.StagedFilePath, AudioFilePath: plannedPlacement.AudioPath,
+		ArtworkFilePath: plannedPlacement.ArtworkPath, AudioSHA256: inspection.FileSHA256,
+		ArtworkSHA256: inspection.AlbumArtwork.SHA256,
+	}
+	if err := service.store.CreateCommitJournal(ctx, journal); err != nil {
+		return commitIdentity{}, commitJournal{}, err
+	}
+	if err := service.afterCommitPhase(COMMIT_PHASE_PREPARED); err != nil {
+		return commitIdentity{}, commitJournal{}, err
+	}
+	return identity, journal, nil
+}
+
+func (service *Service) placeAndVerifyCommit(ctx context.Context, job importJob, inspection library.MediaInspection, identity commitIdentity, journal commitJournal) (placedFiles, error) {
+	placement, placementErr := service.storage.Place(job.StagedFilePath, inspection, identity, func() error {
+		journal.IsArtworkCreated = true
+		return service.store.MarkCommitArtworkCreated(ctx, journal.ID)
+	})
+	if placementErr != nil {
+		journalErr := service.store.RollbackCommitJournal(context.WithoutCancel(ctx), journal.ID, "canonical placement failed")
+		return placedFiles{}, errors.Join(placementErr, journalErr)
+	}
+	journal.IsArtworkCreated = placement.artworkCreated
+	if err := service.store.MarkCommitPlaced(ctx, journal.ID, placement.artworkCreated); err != nil {
+		return placedFiles{}, err
+	}
+	if err := service.afterCommitPhase(COMMIT_PHASE_PLACED); err != nil {
+		return placedFiles{}, err
+	}
+	if err := service.storage.VerifyPlacement(placement, journal.AudioSHA256, journal.ArtworkSHA256); err != nil {
+		return placedFiles{}, errors.Join(err, service.rollbackFilesystemCommit(ctx, journal, placement, "canonical verification failed"))
+	}
+	if err := service.store.UpdateCommitPhase(ctx, journal.ID, COMMIT_PHASE_VERIFIED); err != nil {
+		return placedFiles{}, err
+	}
+	if err := service.afterCommitPhase(COMMIT_PHASE_VERIFIED); err != nil {
+		return placedFiles{}, err
+	}
+	return placement, nil
+}
+
+func (service *Service) persistAndFinalizeCommit(ctx context.Context, job importJob, inspection library.MediaInspection, identity commitIdentity, journal commitJournal, placement placedFiles) (Result, error) {
+	data := commitData{
 		Job:        job,
 		Identity:   identity,
 		Placement:  placement,
 		Inspection: inspection,
-	})
-	if err == nil {
-		return result, nil
 	}
-	return Result{}, errors.Join(err, service.storage.Rollback(placement))
+	commitErr := service.store.CommitPending(ctx, data, journal.ID)
+	if commitErr == nil && service.commitResultHook != nil {
+		commitErr = service.commitResultHook()
+	}
+	if commitErr != nil {
+		persisted, journalErr := service.store.GetCommitJournal(context.WithoutCancel(ctx), journal.ID)
+		if journalErr != nil {
+			return Result{}, errors.Join(commitErr, journalErr)
+		}
+		if persisted.Phase == COMMIT_PHASE_VERIFIED {
+			return Result{}, errors.Join(commitErr, service.rollbackFilesystemCommit(ctx, persisted, placement, "database commit failed"))
+		}
+		return Result{}, commitErr
+	}
+	if err := service.afterCommitPhase(COMMIT_PHASE_DATABASE_COMMITTED); err != nil {
+		return Result{}, err
+	}
+	if err := service.storage.CleanupPlacement(placement); err != nil {
+		return Result{}, err
+	}
+	if err := service.store.UpdateCommitPhase(ctx, journal.ID, COMMIT_PHASE_CLEANED); err != nil {
+		return Result{}, err
+	}
+	if err := service.afterCommitPhase(COMMIT_PHASE_CLEANED); err != nil {
+		return Result{}, err
+	}
+	return service.store.FinalizeCommit(ctx, job, identity.TrackID, journal.ID)
+}
+
+func (service *Service) afterCommitPhase(phase commitPhase) error {
+	if service.commitPhaseHook == nil {
+		return nil
+	}
+	return service.commitPhaseHook(phase)
+}
+
+func (service *Service) rollbackFilesystemCommit(ctx context.Context, journal commitJournal, placement placedFiles, reason string) error {
+	rollbackErr := service.storage.Rollback(placement)
+	if rollbackErr != nil {
+		reasonErr := service.store.RecordCommitRecoveryReason(context.WithoutCancel(ctx), journal.ID, reason+"; filesystem rollback failed")
+		return errors.Join(rollbackErr, reasonErr)
+	}
+	journalErr := service.store.RollbackCommitJournal(context.WithoutCancel(ctx), journal.ID, reason)
+	return journalErr
 }
 
 func (service *Service) failUpload(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {

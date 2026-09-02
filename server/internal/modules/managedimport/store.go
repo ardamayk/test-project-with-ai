@@ -776,9 +776,9 @@ func (store *Store) resolveAlbumArtistID(ctx context.Context, name string) (stri
 }
 
 func (store *Store) Commit(ctx context.Context, data commitData) (result Result, returnErr error) {
-	transaction, err := store.database.BeginTx(ctx, nil)
-	if err != nil {
-		return Result{}, fmt.Errorf("begin Managed Import commit: %w", err)
+	transaction, beginErr := store.database.BeginTx(ctx, nil)
+	if beginErr != nil {
+		return Result{}, fmt.Errorf("begin Managed Import commit: %w", beginErr)
 	}
 	defer func() {
 		rollbackErr := transaction.Rollback()
@@ -786,34 +786,273 @@ func (store *Store) Commit(ctx context.Context, data commitData) (result Result,
 			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import transaction: %w", rollbackErr))
 		}
 	}()
-	artistIDs, err := upsertArtists(ctx, transaction, data.Inspection.Metadata, data.Identity)
-	if err != nil {
+	if err := writeCommitData(ctx, transaction, data); err != nil {
 		return Result{}, err
 	}
-	err = upsertAlbum(ctx, transaction, data, artistIDs)
-	if err != nil {
-		return Result{}, err
-	}
-	err = insertTrack(ctx, transaction, data)
-	if err != nil {
-		return Result{}, err
-	}
-	err = insertRelationships(ctx, transaction, data, artistIDs)
-	if err != nil {
-		return Result{}, err
-	}
-	err = insertArtwork(ctx, transaction, data)
-	if err != nil {
-		return Result{}, err
-	}
-	result, err = markCommitted(ctx, transaction, data.Job, data.Identity.TrackID)
-	if err != nil {
-		return Result{}, err
+	result, commitErr := markCommitted(ctx, transaction, data.Job, data.Identity.TrackID)
+	if commitErr != nil {
+		return Result{}, commitErr
 	}
 	if err := transaction.Commit(); err != nil {
 		return Result{}, fmt.Errorf("commit Managed Import database transaction: %w", err)
 	}
 	return result, nil
+}
+
+func writeCommitData(ctx context.Context, transaction *sql.Tx, data commitData) error {
+	artistIDs, err := upsertArtists(ctx, transaction, data.Inspection.Metadata, data.Identity)
+	if err != nil {
+		return err
+	}
+	if err := upsertAlbum(ctx, transaction, data, artistIDs); err != nil {
+		return err
+	}
+	if err := insertTrack(ctx, transaction, data); err != nil {
+		return err
+	}
+	if err := insertRelationships(ctx, transaction, data, artistIDs); err != nil {
+		return err
+	}
+	return insertArtwork(ctx, transaction, data)
+}
+
+func (store *Store) CreateCommitJournal(ctx context.Context, journal commitJournal) error {
+	_, err := store.database.ExecContext(ctx, `
+		INSERT INTO managed_import_commit_journal (
+			id, job_id, track_id, phase, staged_file_path, audio_file_path, artwork_file_path,
+			audio_sha256, artwork_sha256, artwork_created
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		journal.ID, journal.JobID, journal.TrackID, journal.Phase, journal.StagedFilePath,
+		journal.AudioFilePath, journal.ArtworkFilePath, journal.AudioSHA256,
+		journal.ArtworkSHA256, journal.IsArtworkCreated,
+	)
+	if err != nil {
+		return fmt.Errorf("create Managed Import commit journal: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) MarkCommitPlaced(ctx context.Context, journalID string, isArtworkCreated bool) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal
+		SET phase = ?, artwork_created = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase = ?`,
+		COMMIT_PHASE_PLACED, isArtworkCreated, journalID, COMMIT_PHASE_PREPARED)
+	if err != nil {
+		return fmt.Errorf("journal canonical Managed Import placement: %w", err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) MarkCommitArtworkCreated(ctx context.Context, journalID string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal
+		SET artwork_created = 1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase = ?`, journalID, COMMIT_PHASE_PREPARED)
+	if err != nil {
+		return fmt.Errorf("journal Canonical Album Artwork creation: %w", err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) UpdateCommitPhase(ctx context.Context, journalID string, phase commitPhase) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal SET phase = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase NOT IN (?, ?)`,
+		phase, journalID, COMMIT_PHASE_COMPLETED, COMMIT_PHASE_ROLLED_BACK)
+	if err != nil {
+		return fmt.Errorf("update Managed Import commit journal to %q: %w", phase, err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) RollbackCommitJournal(ctx context.Context, journalID, reason string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal
+		SET phase = ?, recovery_reason = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase NOT IN (?, ?)`,
+		COMMIT_PHASE_ROLLED_BACK, reason, journalID, COMMIT_PHASE_COMPLETED, COMMIT_PHASE_ROLLED_BACK)
+	if err != nil {
+		return fmt.Errorf("roll back Managed Import commit journal: %w", err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) RecordCommitRecoveryReason(ctx context.Context, journalID, reason string) error {
+	result, err := store.database.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal
+		SET recovery_reason = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase NOT IN (?, ?)`,
+		reason, journalID, COMMIT_PHASE_COMPLETED, COMMIT_PHASE_ROLLED_BACK)
+	if err != nil {
+		return fmt.Errorf("record Managed Import recovery reason: %w", err)
+	}
+	return requireMutation(result)
+}
+
+func (store *Store) ListIncompleteCommitJournals(ctx context.Context) (journals []commitJournal, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT id, job_id, track_id, phase, staged_file_path, audio_file_path,
+			artwork_file_path, audio_sha256, artwork_sha256, artwork_created,
+			COALESCE(recovery_reason, '')
+		FROM managed_import_commit_journal
+		WHERE phase NOT IN (?, ?)
+		ORDER BY created_at, id`, COMMIT_PHASE_COMPLETED, COMMIT_PHASE_ROLLED_BACK)
+	if err != nil {
+		return nil, fmt.Errorf("list incomplete Managed Import commits: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, rows.Close()) }()
+	for rows.Next() {
+		var journal commitJournal
+		if err := rows.Scan(
+			&journal.ID, &journal.JobID, &journal.TrackID, &journal.Phase,
+			&journal.StagedFilePath, &journal.AudioFilePath, &journal.ArtworkFilePath,
+			&journal.AudioSHA256, &journal.ArtworkSHA256, &journal.IsArtworkCreated,
+			&journal.RecoveryReason,
+		); err != nil {
+			return nil, fmt.Errorf("read Managed Import commit journal: %w", err)
+		}
+		journals = append(journals, journal)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Managed Import commit journals: %w", err)
+	}
+	return journals, nil
+}
+
+func (store *Store) GetCommitJournal(ctx context.Context, journalID string) (commitJournal, error) {
+	return store.readCommitJournal(ctx, `WHERE id = ?`, journalID)
+}
+
+func (store *Store) FindIncompleteCommitJournal(ctx context.Context, jobID string) (commitJournal, bool, error) {
+	journal, err := store.readCommitJournal(ctx, `WHERE job_id = ? AND phase NOT IN (?, ?)`, jobID, COMMIT_PHASE_COMPLETED, COMMIT_PHASE_ROLLED_BACK)
+	if errors.Is(err, ErrNotFound) {
+		return commitJournal{}, false, nil
+	}
+	return journal, err == nil, err
+}
+
+func (store *Store) readCommitJournal(ctx context.Context, where string, args ...any) (commitJournal, error) {
+	var journal commitJournal
+	err := store.database.QueryRowContext(ctx, `
+		SELECT id, job_id, track_id, phase, staged_file_path, audio_file_path,
+			artwork_file_path, audio_sha256, artwork_sha256, artwork_created,
+			COALESCE(recovery_reason, '')
+		FROM managed_import_commit_journal `+where, args...).Scan(
+		&journal.ID, &journal.JobID, &journal.TrackID, &journal.Phase,
+		&journal.StagedFilePath, &journal.AudioFilePath, &journal.ArtworkFilePath,
+		&journal.AudioSHA256, &journal.ArtworkSHA256, &journal.IsArtworkCreated,
+		&journal.RecoveryReason,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return commitJournal{}, ErrNotFound
+	}
+	if err != nil {
+		return commitJournal{}, fmt.Errorf("read Managed Import commit journal: %w", err)
+	}
+	return journal, nil
+}
+
+func (store *Store) CommitPending(ctx context.Context, data commitData, journalID string) (returnErr error) {
+	transaction, beginErr := store.database.BeginTx(ctx, nil)
+	if beginErr != nil {
+		return fmt.Errorf("begin pending Managed Import commit: %w", beginErr)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, rollbackTransaction(transaction, "pending Managed Import commit"))
+	}()
+	if err := writeCommitData(ctx, transaction, data); err != nil {
+		return err
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE tracks SET is_pending_commit = 1 WHERE id = ?`, data.Identity.TrackID); err != nil {
+		return fmt.Errorf("hide pending Managed Track: %w", err)
+	}
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal SET phase = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase = ?`, COMMIT_PHASE_DATABASE_COMMITTED, journalID, COMMIT_PHASE_VERIFIED)
+	if err != nil {
+		return fmt.Errorf("journal Managed Import database commit: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit pending Managed Import database transaction: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) FinalizeCommit(ctx context.Context, job importJob, trackID, journalID string) (result Result, returnErr error) {
+	transaction, beginErr := store.database.BeginTx(ctx, nil)
+	if beginErr != nil {
+		return Result{}, fmt.Errorf("begin Managed Import finalization: %w", beginErr)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, rollbackTransaction(transaction, "Managed Import finalization"))
+	}()
+	trackResult, publishErr := transaction.ExecContext(ctx, `UPDATE tracks SET is_pending_commit = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_pending_commit = 1`, trackID)
+	if publishErr != nil {
+		return Result{}, fmt.Errorf("publish committed Managed Track: %w", publishErr)
+	}
+	if err := requireMutation(trackResult); err != nil {
+		return Result{}, err
+	}
+	result, commitErr := markCommitted(ctx, transaction, job, trackID)
+	if commitErr != nil {
+		return Result{}, commitErr
+	}
+	journalResult, journalErr := transaction.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal
+		SET phase = ?, recovery_reason = COALESCE(recovery_reason, 'commit completed'), updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase = ?`, COMMIT_PHASE_COMPLETED, journalID, COMMIT_PHASE_CLEANED)
+	if journalErr != nil {
+		return Result{}, fmt.Errorf("complete Managed Import commit journal: %w", journalErr)
+	}
+	if err := requireMutation(journalResult); err != nil {
+		return Result{}, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return Result{}, fmt.Errorf("commit Managed Import finalization: %w", err)
+	}
+	return result, nil
+}
+
+func (store *Store) RollbackPendingCommit(ctx context.Context, journal commitJournal, reason string) (returnErr error) {
+	transaction, beginErr := store.database.BeginTx(ctx, nil)
+	if beginErr != nil {
+		return fmt.Errorf("begin pending Managed Import rollback: %w", beginErr)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, rollbackTransaction(transaction, "pending Managed Import rollback"))
+	}()
+	if _, err := transaction.ExecContext(ctx, `DELETE FROM album_artwork WHERE source_track_id = ?`, journal.TrackID); err != nil {
+		return fmt.Errorf("delete pending Album Artwork: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx, `DELETE FROM tracks WHERE id = ? AND is_pending_commit = 1`, journal.TrackID); err != nil {
+		return fmt.Errorf("delete pending Managed Track: %w", err)
+	}
+	result, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_commit_journal SET phase = ?, recovery_reason = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND phase NOT IN (?, ?)`,
+		COMMIT_PHASE_VERIFIED, reason, journal.ID, COMMIT_PHASE_COMPLETED, COMMIT_PHASE_ROLLED_BACK)
+	if err != nil {
+		return fmt.Errorf("journal pending Managed Import rollback: %w", err)
+	}
+	if err := requireMutation(result); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit pending Managed Import rollback: %w", err)
+	}
+	return nil
+}
+
+func rollbackTransaction(transaction *sql.Tx, operation string) error {
+	err := transaction.Rollback()
+	if err == nil || errors.Is(err, sql.ErrTxDone) {
+		return nil
+	}
+	return fmt.Errorf("rollback %s transaction: %w", operation, err)
 }
 
 func upsertArtists(ctx context.Context, transaction *sql.Tx, metadata library.NormalizedMediaMetadata, identity commitIdentity) (map[string]string, error) {

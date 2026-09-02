@@ -56,6 +56,18 @@ const (
 
 type ImportStatus string
 
+type commitPhase string
+
+const (
+	COMMIT_PHASE_PREPARED           commitPhase = "prepared"
+	COMMIT_PHASE_PLACED             commitPhase = "placed"
+	COMMIT_PHASE_VERIFIED           commitPhase = "verified"
+	COMMIT_PHASE_DATABASE_COMMITTED commitPhase = "database_committed"
+	COMMIT_PHASE_CLEANED            commitPhase = "cleaned"
+	COMMIT_PHASE_COMPLETED          commitPhase = "completed"
+	COMMIT_PHASE_ROLLED_BACK        commitPhase = "rolled_back"
+)
+
 var (
 	ErrNotFound            = errors.New("managed import job not found")
 	ErrInvalidState        = errors.New("managed import job is not awaiting this operation")
@@ -189,6 +201,20 @@ type importJob struct {
 	ErrorReason      string
 	Outcome          ImportOutcome
 	Selected         bool
+}
+
+type commitJournal struct {
+	ID               string
+	JobID            string
+	TrackID          string
+	Phase            commitPhase
+	StagedFilePath   string
+	AudioFilePath    string
+	ArtworkFilePath  string
+	AudioSHA256      string
+	ArtworkSHA256    string
+	IsArtworkCreated bool
+	RecoveryReason   string
 }
 
 type ValidationError struct {

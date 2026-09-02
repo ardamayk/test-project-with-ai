@@ -11,14 +11,13 @@ const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 	SELECT album_artists.artist_id, album_artists.album_id
 	FROM album_artists
 	WHERE EXISTS (
-		SELECT 1 FROM tracks
-		WHERE tracks.album_id = album_artists.album_id AND tracks.missing_at IS NULL
+		SELECT 1 FROM visible_tracks
+		WHERE visible_tracks.album_id = album_artists.album_id
 	)
 	UNION
 	SELECT track_artists.artist_id, tracks.album_id
 	FROM track_artists
-	INNER JOIN tracks ON tracks.id = track_artists.track_id
-	WHERE tracks.missing_at IS NULL
+	INNER JOIN visible_tracks ON visible_tracks.id = track_artists.track_id
 )
 `
 
@@ -30,7 +29,7 @@ const trackReadSelect = `SELECT
 	COALESCE(t.channel_count, 0), COALESCE(t.bitrate_bps, 0), t.codec, t.container,
 	t.sample_format, COALESCE(ts.file_path, t.file_path), t.replaygain_track_gain_db,
 	t.replaygain_track_peak, t.replaygain_album_gain_db, t.replaygain_album_peak
-FROM tracks t
+FROM visible_tracks t
 INNER JOIN albums al ON al.id = t.album_id
 LEFT JOIN track_sources ts ON ts.track_id = t.id
 `
@@ -178,10 +177,10 @@ func (s *Store) readTrackArtists(ctx context.Context, trackIDs []string) (map[st
 
 func (s *Store) readAlbumGenres(ctx context.Context, albumIDs []string) (map[string][]Genre, error) {
 	return readRelations(ctx, s, "read Album Genres", `SELECT tracks.album_id, genres.id, genres.name, MIN(relations.position)
-		FROM tracks
+		FROM visible_tracks tracks
 		INNER JOIN track_genres relations ON relations.track_id = tracks.id
 		INNER JOIN genres ON genres.id = relations.genre_id
-		WHERE tracks.missing_at IS NULL AND tracks.album_id IN (%s)
+		WHERE tracks.album_id IN (%s)
 		GROUP BY tracks.album_id, genres.id, genres.name
 		ORDER BY tracks.album_id, MIN(relations.position), genres.name`, albumIDs, func(rows *sql.Rows) (string, Genre, error) {
 		var albumID string
@@ -256,13 +255,13 @@ func (s *Store) readAlbumArtwork(ctx context.Context, albumIDs []string) (map[st
 	}
 	query := fmt.Sprintf(`SELECT album_id, source_track_id, content_sha256, media_type,
 		width, height, encoded_size_bytes
-		FROM album_artwork WHERE album_id IN (%s)
+		FROM visible_album_artwork WHERE album_id IN (%s)
 		UNION ALL
 		SELECT legacy.album_id, legacy.source_track_id, legacy.content_sha256, legacy.media_type,
 			legacy.width, legacy.height, legacy.encoded_size_bytes
 		FROM legacy_album_artwork_metadata legacy
 		WHERE legacy.album_id IN (%s) AND NOT EXISTS (
-			SELECT 1 FROM album_artwork current WHERE current.album_id = legacy.album_id
+			SELECT 1 FROM visible_album_artwork current WHERE current.album_id = legacy.album_id
 		)`, placeholders, placeholders)
 	args = append(args, args...)
 	rows, err := s.db.QueryContext(ctx, query, args...)

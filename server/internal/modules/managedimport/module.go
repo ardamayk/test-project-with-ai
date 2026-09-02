@@ -44,9 +44,11 @@ func (module *Module) Name() string {
 }
 
 func (module *Module) Start(ctx context.Context) error {
-	cleanupErr := module.service.CleanupRestart(ctx)
+	if err := module.service.CleanupRestart(ctx); err != nil {
+		return err
+	}
 	go module.cleanupInactive(ctx)
-	return cleanupErr
+	return nil
 }
 
 func (module *Module) cleanupInactive(ctx context.Context) {

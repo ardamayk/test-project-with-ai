@@ -95,8 +95,8 @@ func (s *Store) recomputeAlbumGenres(ctx context.Context, albumID string) error 
 
 func (s *Store) listTrackGenres(ctx context.Context, albumID string) (collected []string, err error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT genre FROM tracks
-		WHERE album_id = ? AND missing_at IS NULL AND genre IS NOT NULL AND genre != ''`, albumID)
+		SELECT genre FROM visible_tracks
+		WHERE album_id = ? AND genre IS NOT NULL AND genre != ''`, albumID)
 	if err != nil {
 		return nil, err
 	}
