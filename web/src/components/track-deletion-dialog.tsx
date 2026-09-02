@@ -1,0 +1,137 @@
+import type { Track, TrackDeletionPreview } from "@repo/api-client";
+import { Dialog as DialogPrimitive } from "radix-ui";
+
+export function TrackDeletionDialog({
+	track,
+	preview,
+	error,
+	isLoading,
+	isDeleting,
+	onCancel,
+	onConfirm,
+}: {
+	track: Track | null;
+	preview: TrackDeletionPreview | null;
+	error: string | null;
+	isLoading: boolean;
+	isDeleting: boolean;
+	onCancel: () => void;
+	onConfirm: () => void;
+}) {
+	return (
+		<DialogPrimitive.Root
+			open={Boolean(track)}
+			onOpenChange={(open) => !open && onCancel()}
+		>
+			<DialogPrimitive.Portal>
+				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70" />
+				<DialogPrimitive.Content className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none">
+					<DeletionHeading track={track} />
+					{isLoading ? (
+						<p className="mt-4 text-sm">Loading deletion details…</p>
+					) : null}
+					{preview ? <DeletionPreviewDetails preview={preview} /> : null}
+					{error ? (
+						<p role="alert" className="mt-4 text-destructive text-sm">
+							{error}
+						</p>
+					) : null}
+					<DeletionActions
+						isReady={Boolean(preview)}
+						isDeleting={isDeleting}
+						onCancel={onCancel}
+						onConfirm={onConfirm}
+					/>
+				</DialogPrimitive.Content>
+			</DialogPrimitive.Portal>
+		</DialogPrimitive.Root>
+	);
+}
+
+function DeletionHeading({ track }: { track: Track | null }) {
+	return (
+		<>
+			<DialogPrimitive.Title className="font-semibold text-heading text-xl">
+				Permanently delete {track?.title}?
+			</DialogPrimitive.Title>
+			<DialogPrimitive.Description className="mt-2 text-caption text-sm">
+				This cannot be undone. No trash or restore copy will be kept.
+			</DialogPrimitive.Description>
+		</>
+	);
+}
+
+function DeletionPreviewDetails({
+	preview,
+}: {
+	preview: TrackDeletionPreview;
+}) {
+	const queueCount = preview.queueReferences.reduce(
+		(total, queue) => total + queue.itemCount,
+		0,
+	);
+	const rows = [
+		["Track", preview.trackTitle],
+		["Managed file", preview.managedFile.path],
+		["File size", formatDeletionBytes(preview.managedFile.sizeBytes)],
+		[
+			"Playlists",
+			preview.playlistReferences.map((playlist) => playlist.name).join(", ") ||
+				"None",
+		],
+		[
+			"Queues",
+			queueCount === 0
+				? "None"
+				: `${queueCount} Queue item${queueCount === 1 ? "" : "s"}`,
+		],
+	];
+	return (
+		<dl className="mt-4 space-y-3 text-sm">
+			{rows.map(([label, value]) => (
+				<div key={label} className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
+					<dt className="text-caption">{label}</dt>
+					<dd className="break-all text-foreground">{value}</dd>
+				</div>
+			))}
+		</dl>
+	);
+}
+
+function DeletionActions({
+	isReady,
+	isDeleting,
+	onCancel,
+	onConfirm,
+}: {
+	isReady: boolean;
+	isDeleting: boolean;
+	onCancel: () => void;
+	onConfirm: () => void;
+}) {
+	return (
+		<div className="mt-6 flex justify-end gap-2">
+			<button
+				type="button"
+				className="rounded-md border border-border px-4 py-2 text-sm"
+				disabled={isDeleting}
+				onClick={onCancel}
+			>
+				Cancel
+			</button>
+			<button
+				type="button"
+				className="rounded-md bg-destructive px-4 py-2 text-destructive-foreground text-sm"
+				disabled={!isReady || isDeleting}
+				onClick={onConfirm}
+			>
+				{isDeleting ? "Deleting…" : "Delete permanently"}
+			</button>
+		</div>
+	);
+}
+
+function formatDeletionBytes(bytes: number): string {
+	if (bytes === 0) return "0 bytes";
+	return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+}

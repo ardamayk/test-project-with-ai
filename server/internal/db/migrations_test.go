@@ -26,6 +26,7 @@ const (
 	COMMIT_JOURNAL_VERSION        = 20
 	IMPORT_HISTORY_VERSION        = 21
 	LEGACY_MIGRATION_COPY_VERSION = 22
+	TRACK_DELETION_VERSION        = 23
 )
 
 func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
@@ -79,6 +80,21 @@ func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
 	}
 	assertMigrationVersion(t, sqlDB, IMPORT_HISTORY_VERSION)
 	assertTableMissing(t, sqlDB, "legacy_migration_copies")
+}
+
+func TestPermanentTrackDeletionMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_COPY_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), TRACK_DELETION_VERSION); err != nil {
+		t.Fatalf("apply Permanent Track Deletion migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, TRACK_DELETION_VERSION)
+	assertTableExists(t, sqlDB, "permanent_track_deletions")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Permanent Track Deletion migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_COPY_VERSION)
+	assertTableMissing(t, sqlDB, "permanent_track_deletions")
 }
 
 func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {

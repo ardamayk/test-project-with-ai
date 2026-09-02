@@ -187,8 +187,25 @@ export interface paths {
         get: operations["getTrack"];
         put?: never;
         post?: never;
-        /** Delete track and its music file */
+        /** Permanently delete a Managed Track after reviewing its deletion preview */
         delete: operations["deleteTrack"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/tracks/{trackId}/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review irreversible Managed Track deletion and all affected references */
+        get: operations["previewTrackDeletion"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1251,6 +1268,33 @@ export interface components {
         DeleteResult: {
             deletedFiles: number;
         };
+        TrackDeletionPreview: {
+            /** Format: uuid */
+            trackId: string;
+            trackTitle: string;
+            managedFile: components["schemas"]["TrackDeletionManagedFile"];
+            playlistReferences: components["schemas"]["TrackDeletionPlaylistReference"][];
+            queueReferences: components["schemas"]["TrackDeletionQueueReference"][];
+            /** @description Opaque token binding confirmation to the reviewed Track, managed file, and relationships */
+            confirmationToken: string;
+        };
+        TrackDeletionManagedFile: {
+            /** @description Managed Storage-relative canonical audio path */
+            path: string;
+            sizeBytes: number;
+        };
+        TrackDeletionPlaylistReference: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        TrackDeletionQueueReference: {
+            userId: string;
+            itemCount: number;
+        };
+        TrackDeletionConfirmation: {
+            confirmationToken: string;
+        };
         ScanStatus: {
             /** @enum {string} */
             status: "idle" | "running" | "completed" | "failed";
@@ -1687,6 +1731,39 @@ export interface operations {
     deleteTrack: {
         parameters: {
             query?: never;
+            header: {
+                /** @description Explicit application confirmation required for irreversible deletion */
+                "X-Permanent-Delete": "1";
+            };
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackDeletionConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Managed Track and its exact managed audio file permanently deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    previewTrackDeletion: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 trackId: components["parameters"]["trackId"];
@@ -1695,13 +1772,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Track deleted */
+            /** @description Current Permanent Track Deletion preview */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeleteResult"];
+                    "application/json": components["schemas"]["TrackDeletionPreview"];
                 };
             };
             404: components["responses"]["NotFound"];

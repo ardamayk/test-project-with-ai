@@ -610,6 +610,58 @@ func (storage *Storage) absolutePath(relativePath string) string {
 	return filepath.Join(storage.root, relativePath)
 }
 
+func (storage *Storage) ResolveManagedFile(path, expectedHash string) (relativePath string, sizeBytes int64, returnErr error) {
+	relativePath, err := storage.relativePath(path)
+	if err != nil {
+		return "", 0, err
+	}
+	root, err := storage.openRoot()
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	if symlinkErr := rejectSymlinks(root, relativePath); symlinkErr != nil {
+		return "", 0, fmt.Errorf("%w: cannot resolve managed Track source: %v", ErrUnsafeStoragePath, symlinkErr)
+	}
+	info, err := root.Stat(relativePath)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", 0, fmt.Errorf("%w: managed Track source is not a regular file", ErrUnsafeStoragePath)
+	}
+	if err := verifyRootedFileHash(root, relativePath, expectedHash); err != nil {
+		return "", 0, fmt.Errorf("%w: managed Track source identity changed: %v", ErrUnsafeStoragePath, err)
+	}
+	return relativePath, info.Size(), nil
+}
+
+func (storage *Storage) RemoveManagedFile(path, expectedHash string) (isRemoved bool, returnErr error) {
+	relativePath, err := storage.relativePath(path)
+	if err != nil {
+		return false, err
+	}
+	root, err := storage.openRoot()
+	if err != nil {
+		return false, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	if symlinkErr := rejectSymlinks(root, filepath.Dir(relativePath)); symlinkErr != nil {
+		return false, fmt.Errorf("%w: cannot resolve managed Track directory: %v", ErrUnsafeStoragePath, symlinkErr)
+	}
+	info, err := root.Lstat(relativePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("%w: managed Track source is not a regular file", ErrUnsafeStoragePath)
+	}
+	if err := verifyRootedFileHash(root, relativePath, expectedHash); err != nil {
+		return false, fmt.Errorf("%w: managed Track source identity changed: %v", ErrUnsafeStoragePath, err)
+	}
+	if err := root.Remove(relativePath); err != nil {
+		return false, fmt.Errorf("remove Managed Track source: %w", err)
+	}
+	return true, nil
+}
+
 func ensureDirectory(root *os.Root, absoluteRoot, path string, mode os.FileMode) error {
 	currentPath := ""
 	for _, component := range strings.Split(filepath.Clean(path), string(filepath.Separator)) {

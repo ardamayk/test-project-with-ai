@@ -44,6 +44,9 @@ func (module *Module) Name() string {
 }
 
 func (module *Module) Start(ctx context.Context) error {
+	if err := module.service.RecoverPendingTrackDeletions(ctx); err != nil {
+		return err
+	}
 	if err := module.service.CleanupRestart(ctx); err != nil {
 		return err
 	}
@@ -69,6 +72,8 @@ func (module *Module) cleanupInactive(ctx context.Context) {
 func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Post("/api/v1/library-migrations/preview", module.handlers.PreviewMigration)
 	router.Post("/api/v1/library-migrations/stage", module.handlers.StageMigration)
+	router.Get("/api/v1/library/tracks/{trackId}/deletion", module.handlers.PreviewTrackDeletion)
+	router.Delete("/api/v1/library/tracks/{trackId}", module.handlers.DeleteTrack)
 	router.Get("/api/v1/import-history", module.handlers.ListHistory)
 	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
 	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)

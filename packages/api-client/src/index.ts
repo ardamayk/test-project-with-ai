@@ -69,6 +69,7 @@ export type PlaylistCreate = Schemas['PlaylistCreate'];
 export type PlaylistTrackAdd = Schemas['PlaylistTrackAdd'];
 export type ScanStatus = Schemas['ScanStatus'];
 export type DeleteResult = Schemas['DeleteResult'];
+export type TrackDeletionPreview = Schemas['TrackDeletionPreview'];
 export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track };
 export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] };
 export type ErrorResponse = Schemas['ErrorResponse'];
@@ -403,9 +404,15 @@ export function createApiClient(config: ApiClientConfig) {
       request<WireTrack>(`/api/v1/library/tracks/${trackId}`).then(
         normalizeTrack,
       ),
-    deleteTrack: (trackId: string) =>
+    previewTrackDeletion: (trackId: string) =>
+      request<TrackDeletionPreview>(
+        `/api/v1/library/tracks/${trackId}/deletion`,
+      ),
+    deleteTrack: (trackId: string, confirmationToken: string) =>
       request<DeleteResult>(`/api/v1/library/tracks/${trackId}`, {
         method: 'DELETE',
+        headers: { 'X-Permanent-Delete': '1' },
+        body: JSON.stringify({ confirmationToken }),
       }),
     previewLibraryMigration: () =>
       request<LibraryMigrationPreview>('/api/v1/library-migrations/preview', {

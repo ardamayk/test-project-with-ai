@@ -91,6 +91,9 @@ var (
 	ErrInsufficientStorage = errors.New("managed storage capacity is insufficient")
 	ErrUnsafeStoragePath   = errors.New("managed storage path is unsafe")
 	ErrMigrationInProgress = errors.New("library migration preview is already in progress")
+	ErrTrackNotFound       = errors.New("track not found")
+	ErrNotManagedTrack     = errors.New("track is not managed")
+	ErrDeletionConflict    = errors.New("permanent track deletion preview changed")
 )
 
 type Job struct {
