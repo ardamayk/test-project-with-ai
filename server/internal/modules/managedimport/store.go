@@ -41,6 +41,16 @@ type legacyMigrationSource struct {
 	FilePath string
 }
 
+type verifiedMigrationCopy struct {
+	Source         legacyMigrationSource
+	Identity       commitIdentity
+	Placement      placedFiles
+	SourceSHA256   string
+	PendingSHA256  string
+	ArtworkSHA256  string
+	InspectionJSON string
+}
+
 func NewStore(database *sql.DB) *Store {
 	return &Store{database: database}
 }
@@ -86,6 +96,23 @@ func (store *Store) FindManagedTrackByHash(ctx context.Context, contentSHA256 st
 		return "", fmt.Errorf("find Managed Track by content hash: %w", err)
 	}
 	return trackID, nil
+}
+
+func (store *Store) StoreVerifiedMigrationCopy(ctx context.Context, copy verifiedMigrationCopy) error {
+	_, err := store.database.ExecContext(ctx, `
+		INSERT INTO legacy_migration_copies (
+			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, inspection_json, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified')`,
+		copy.Source.TrackID, copy.Identity.TrackID, copy.Identity.AlbumID, copy.Identity.AlbumArtistID,
+		copy.Source.FilePath, copy.Placement.AudioPath, copy.Placement.ArtworkPath, copy.SourceSHA256,
+		copy.PendingSHA256, copy.ArtworkSHA256, copy.InspectionJSON,
+	)
+	if err != nil {
+		return fmt.Errorf("store verified Library Migration copy: %w", err)
+	}
+	return nil
 }
 
 func (store *Store) FindAlbumArtworkHash(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {
