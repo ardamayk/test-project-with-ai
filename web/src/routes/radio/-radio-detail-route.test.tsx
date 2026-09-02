@@ -113,7 +113,9 @@ describe("radio station detail route", () => {
 		expect(
 			await screen.findByRole("heading", { name: "Radio Paradise" }),
 		).toBeTruthy();
-		expect(screen.getByDisplayValue("https://radioparadise.com")).toBeTruthy();
+		expect(
+			await screen.findByDisplayValue("https://radioparadise.com"),
+		).toBeTruthy();
 		expect(screen.getByDisplayValue("rock, eclectic")).toBeTruthy();
 		expect(screen.getByText("Artist - Title")).toBeTruthy();
 	});
@@ -121,7 +123,7 @@ describe("radio station detail route", () => {
 	it("saves advanced metadata edits", async () => {
 		renderWithQuery(<RadioStationDetailContent stationId="s1" />);
 
-		await screen.findByRole("heading", { name: "Radio Paradise" });
+		await screen.findByDisplayValue("rock, eclectic");
 
 		fireEvent.change(screen.getByLabelText("Tags"), {
 			target: { value: "rock, eclectic, listener-supported" },
