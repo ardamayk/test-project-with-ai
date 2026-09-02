@@ -75,7 +75,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	}
 	err = service.reserveBatchUpload(ctx, job, contentLength)
 	if err != nil {
-		return Preview{}, errors.Join(err, service.markRejected(ctx, job, originalFilename, err))
+		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, "", err)
 	}
 	body = service.batchUploadReader(ctx, job, body, contentLength)
 	upload, err := service.storage.StageUpload(body, contentLength)
@@ -85,7 +85,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if job.BatchID != "" {
 		err = service.store.ReserveBatchUpload(ctx, job.ID, upload.Size, service.storage.batchLimit)
 		if err != nil {
-			return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, err)
+			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 		}
 	}
 	inspection, err := service.validateStagedUpload(ctx, jobID, upload)
@@ -220,7 +220,7 @@ func (service *Service) persistPreview(ctx context.Context, job importJob, origi
 	preview := previewFromInspection(previewJob, inspection)
 	previewBytes, err := json.Marshal(preview)
 	if err != nil {
-		return Preview{}, service.failUpload(ctx, job, originalFilename, upload.Path, fmt.Errorf("encode Import Preview: %w", err))
+		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, fmt.Errorf("encode Import Preview: %w", err))
 	}
 	markedJob, err := service.store.MarkPreview(ctx, job.ID, originalFilename, upload.Path, upload.SHA256, string(previewBytes), upload.Size, service.storage.batchLimit)
 	if err != nil {
@@ -242,7 +242,7 @@ func (service *Service) recoverPreviewFailure(ctx context.Context, originalJob i
 	if ctx.Err() != nil {
 		transitionErr = validationCancellationError(ctx)
 	}
-	return Preview{}, service.failUpload(ctx, originalJob, originalFilename, stagedPath, errors.Join(transitionErr, getErr))
+	return Preview{}, service.handleUploadFailure(ctx, originalJob, originalFilename, stagedPath, errors.Join(transitionErr, getErr))
 }
 
 func validationCancellationError(ctx context.Context) error {

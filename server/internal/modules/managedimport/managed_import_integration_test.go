@@ -711,7 +711,7 @@ func TestManagedImportBatchRetriesInterruptedUploadInSameJob(t *testing.T) {
 		t.Fatalf("retry interrupted upload status = %d, body = %s", retryResponse.Code, retryResponse.Body.String())
 	}
 	batch = getImportBatch(t, router, batchID)
-	if len(batch.Files) != 1 || batch.Files[0].JobID != jobID || batch.Files[0].State != managedimport.BATCH_FILE_ACCEPTED || batch.Files[0].ErrorCode != "" || batch.Files[0].ErrorReason != "" {
+	if len(batch.Files) != 1 || batch.Files[0].JobID != jobID || batch.Files[0].State != managedimport.BATCH_FILE_ACCEPTED || !batch.Files[0].Selected || batch.Files[0].ErrorCode != "" || batch.Files[0].ErrorReason != "" {
 		t.Fatalf("retried Import Batch file = %+v", batch.Files)
 	}
 }

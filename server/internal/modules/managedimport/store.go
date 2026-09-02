@@ -244,7 +244,7 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
 			content_sha256 = ?, preview_json = ?, upload_size_bytes = ?, error_code = NULL,
-			error_field = NULL, error_reason = NULL, outcome = NULL,
+			error_field = NULL, error_reason = NULL, outcome = NULL, selected = 1,
 			validation_progress = 100, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ? AND (
 			batch_id IS NULL OR ? + COALESCE((

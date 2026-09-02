@@ -4,12 +4,27 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
+
+type cancelAtEOFReader struct {
+	source io.Reader
+	cancel context.CancelFunc
+}
+
+func (reader *cancelAtEOFReader) Read(buffer []byte) (int, error) {
+	read, err := reader.source.Read(buffer)
+	if errors.Is(err, io.EOF) {
+		reader.cancel()
+	}
+	return read, err
+}
 
 func TestFinishUncommittedBatchFileDoesNotCleanUpAfterCancellation(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
@@ -132,5 +147,56 @@ func TestRejectExactDuplicateRetainsStagingUntilFailureIsPersisted(t *testing.T)
 	}
 	if storedJob.Status != STATUS_FAILED || storedJob.ErrorCode != ERROR_CODE_EXACT_DUPLICATE || storedJob.StagedFilePath != "" {
 		t.Fatalf("persisted duplicate job = %+v", storedJob)
+	}
+}
+
+func TestUploadKeepsBatchJobRetryableWhenFinalReservationIsCanceled(t *testing.T) {
+	service, store, job := newBatchUploadService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &cancelAtEOFReader{source: bytes.NewReader([]byte("audio")), cancel: cancel}
+
+	_, err := service.Upload(ctx, job.ID, "track.flac", body, 5)
+	assertRetryableBatchJob(t, store, job.ID, err)
+}
+
+func TestRecoverPreviewFailureKeepsCanceledBatchJobRetryable(t *testing.T) {
+	service, store, job := newBatchUploadService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := service.recoverPreviewFailure(ctx, job, "track.flac", "", context.Canceled, library.MediaInspection{})
+	assertRetryableBatchJob(t, store, job.ID, err)
+}
+
+func newBatchUploadService(t *testing.T) (*Service, *Store, importJob) {
+	t.Helper()
+	store := NewStore(testutil.OpenMigratedDB(t))
+	batch, err := store.CreateBatch(context.Background())
+	if err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
+	createdJob, err := store.CreateJob(context.Background(), batch.ID, "00000000-0000-4000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	job, err := store.GetJob(context.Background(), createdJob.ID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
+	return NewService(store, storage, nil), store, job
+}
+
+func assertRetryableBatchJob(t *testing.T, store *Store, jobID string, uploadErr error) {
+	t.Helper()
+	if !errors.Is(uploadErr, ErrUploadInterrupted) {
+		t.Fatalf("upload error = %v", uploadErr)
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if job.Status != STATUS_UPLOADING || job.ErrorCode != UPLOAD_INTERRUPTED_ERROR_CODE {
+		t.Fatalf("batch job after interruption = %+v", job)
 	}
 }
