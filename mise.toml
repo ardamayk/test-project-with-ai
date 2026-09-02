@@ -83,9 +83,13 @@ depends = ["workspace:check", "workspace:typecheck", "server:check", "desktop:ch
 run = ":"
 
 [tasks.test]
-description = "Run workspace, Music Server, and Desktop Client unit tests"
-depends = ["workspace:test", "server:test", "desktop:test"]
+description = "Run workspace, Music Server, Desktop Client, and Git hook tests"
+depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test"]
 run = ":"
+
+[tasks."git-hooks:test"]
+description = "Test repository-managed Git hook behavior"
+run = "node --test scripts/test-git-hooks.mjs"
 
 [tasks."workspace:build"]
 description = "Build workspace production artifacts"

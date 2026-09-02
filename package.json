@@ -9,6 +9,7 @@
     "format": "mise run format",
     "format:check": "mise run format:check",
     "lint": "mise run lint",
+    "prepare": "node .husky/install.mjs",
     "typecheck": "mise run typecheck",
     "test": "mise run test",
     "test:unit": "mise run workspace:test",
@@ -16,6 +17,7 @@
     "test:desktop": "mise run desktop:test",
     "test:e2e": "mise run web:test:e2e",
     "test:e2e:hls": "mise run server:test:hls",
+    "test:git-hooks": "mise run git-hooks:test",
     "test:openapi-generation": "node --test scripts/test-openapi-generation.mjs",
     "test:workspace-tasks": "node --test scripts/test-workspace-tasks.mjs",
     "generate": "mise run generate",
@@ -25,6 +27,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.5",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.7",
     "turbo": "^2.5.4"
   },
   "packageManager": "pnpm@10.12.1",

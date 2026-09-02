@@ -48,6 +48,12 @@ mise run build
 
 Mise is the canonical interface for development and CI tasks. Run `mise run ci:fast` for static checks and unit tests, `mise run ci:integration` for integration tests, or `mise run ci:full` for the full local policy. Target one artifact or domain with commands such as `mise run web:build`, `mise run server:test`, and `mise run desktop:check`; root pnpm commands are compatibility proxies.
 
+### Git hooks
+
+`pnpm install` enables local Husky hooks. Pre-commit formats and checks staged JavaScript, TypeScript, JSON, Go, and Rust source while preserving partial staging. OpenAPI drift verification runs only when generation inputs are staged. Pre-push runs the complete `mise run ci:fast` policy.
+
+These hooks provide bypassable local feedback; CI is authoritative. Pass `--no-verify` to `git commit` or `git push` when needed. Hook installation is disabled in CI and production dependency installs. When `graphify-out/` exists, Graphify post-commit and branch-switch updates run if `graphify` is available on `PATH`; otherwise they intentionally do nothing.
+
 Single binary serves:
 
 - React SPA at `/`

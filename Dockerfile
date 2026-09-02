@@ -1,13 +1,13 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /src
 RUN apk add --no-cache git
-COPY go.work package.json pnpm-workspace.yaml turbo.json ./
+COPY go.work package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY server ./server
 COPY packages ./packages
 COPY web ./web
 COPY scripts ./scripts
 RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN pnpm install --frozen-lockfile --ignore-scripts || pnpm install --ignore-scripts
 RUN pnpm turbo run generate && pnpm turbo run build --filter=web --filter=@repo/docs \
     && chmod +x scripts/sync-static.sh && ./scripts/sync-static.sh
 WORKDIR /src/server

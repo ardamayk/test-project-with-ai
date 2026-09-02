@@ -33,6 +33,12 @@ mkdir -p \
 		../packages/contracts/openapi.yaml
 )
 
-pnpm --dir "$REPOSITORY_ROOT/packages/contracts" exec openapi-typescript \
-	"$CONTRACT_ROOT/openapi.yaml" \
-	-o "$OUTPUT_ROOT/packages/api-client/src/generated/schema.ts"
+if [[ -n "${OPENAPI_TYPESCRIPT_BIN:-}" ]]; then
+	"$OPENAPI_TYPESCRIPT_BIN" \
+		"$CONTRACT_ROOT/openapi.yaml" \
+		-o "$OUTPUT_ROOT/packages/api-client/src/generated/schema.ts"
+else
+	pnpm --dir "$REPOSITORY_ROOT/packages/contracts" exec openapi-typescript \
+		"$CONTRACT_ROOT/openapi.yaml" \
+		-o "$OUTPUT_ROOT/packages/api-client/src/generated/schema.ts"
+fi
