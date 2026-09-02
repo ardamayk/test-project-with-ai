@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -715,6 +716,10 @@ func (service *Service) ConfirmWithDecision(ctx context.Context, jobID string, r
 }
 
 func (service *Service) confirmJob(ctx context.Context, job importJob, revision int, decision DuplicateAction) (Result, error) {
+	return service.confirmJobWithEdition(ctx, job, revision, decision, decision == DUPLICATE_ACTION_IMPORT_SEPARATELY)
+}
+
+func (service *Service) confirmJobWithEdition(ctx context.Context, job importJob, revision int, decision DuplicateAction, isSeparateEdition bool) (Result, error) {
 	managedImportCommitMu.Lock()
 	defer managedImportCommitMu.Unlock()
 	job, err := service.store.GetJob(ctx, job.ID)
@@ -744,6 +749,9 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 		if revision != job.Revision {
 			return Result{}, ErrRevisionConflict
 		}
+		if job.StagedFilePath != "" {
+			return Result{}, service.finishExactDuplicateCleanup(ctx, job)
+		}
 		return Result{}, ErrExactDuplicate
 	}
 	if job.Status != STATUS_AWAITING_CONFIRMATION {
@@ -752,10 +760,10 @@ func (service *Service) confirmJob(ctx context.Context, job importJob, revision 
 	if revision != job.Revision {
 		return Result{}, ErrRevisionConflict
 	}
-	return service.confirmAwaitingJob(ctx, job, decision)
+	return service.confirmAwaitingJob(ctx, job, decision, isSeparateEdition)
 }
 
-func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, decision DuplicateAction) (Result, error) {
+func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, decision DuplicateAction, isSeparateEdition bool) (Result, error) {
 	stagedBytes, err := service.storage.StagedFileSize(job.StagedFilePath)
 	if err != nil {
 		return Result{}, err
@@ -794,7 +802,7 @@ func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, d
 		return Result{}, preflightErr
 	}
 	albumKey := albumIdentityKey(inspection.Metadata)
-	if isPossibleDuplicate {
+	if isSeparateEdition {
 		albumKey = separateAlbumIdentityKey(job, inspection.Metadata)
 	}
 	return service.commit(ctx, job, inspection, albumKey)
@@ -833,10 +841,14 @@ func (service *Service) rejectExactDuplicate(ctx context.Context, job importJob)
 	if err := service.store.MarkConfirmationExactDuplicate(cleanupCtx, job.ID); err != nil {
 		return errors.Join(ErrExactDuplicate, err)
 	}
+	return service.finishExactDuplicateCleanup(cleanupCtx, job)
+}
+
+func (service *Service) finishExactDuplicateCleanup(ctx context.Context, job importJob) error {
 	if err := service.storage.RemoveStaged(job.StagedFilePath); err != nil {
 		return errors.Join(ErrExactDuplicate, err)
 	}
-	if err := service.store.ClearStagedFile(cleanupCtx, job.ID); err != nil {
+	if err := service.store.ClearStagedFile(ctx, job.ID); err != nil {
 		return errors.Join(ErrExactDuplicate, err)
 	}
 	return ErrExactDuplicate
@@ -892,20 +904,22 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 
 func (service *Service) refreshLateDuplicatePreviews(ctx context.Context, jobs []importJob, selectedIDs map[string]bool) (bool, error) {
 	isRefreshed := false
+	priorJobs := make([]importJob, 0, len(jobs))
 	for _, job := range jobs {
 		if !selectedIDs[job.ID] || job.Status != STATUS_AWAITING_CONFIRMATION {
 			continue
 		}
-		refreshed, err := service.refreshLateDuplicatePreview(ctx, job)
+		refreshed, err := service.refreshLateDuplicatePreview(ctx, job, priorJobs)
 		if err != nil {
 			return false, err
 		}
 		isRefreshed = isRefreshed || refreshed
+		priorJobs = append(priorJobs, job)
 	}
 	return isRefreshed, nil
 }
 
-func (service *Service) refreshLateDuplicatePreview(ctx context.Context, job importJob) (bool, error) {
+func (service *Service) refreshLateDuplicatePreview(ctx context.Context, job importJob, priorJobs []importJob) (bool, error) {
 	classification, err := storedDuplicateClassification(job)
 	if err != nil || classification != DUPLICATE_NONE {
 		return false, err
@@ -915,14 +929,86 @@ func (service *Service) refreshLateDuplicatePreview(ctx context.Context, job imp
 		return false, validationError(err)
 	}
 	classification, candidates, err := service.store.ClassifyDuplicate(ctx, inspection)
-	if err != nil || classification != DUPLICATE_POSSIBLE {
+	if err != nil {
 		return false, err
+	}
+	if classification == DUPLICATE_EXACT {
+		return false, nil
+	}
+	stagedCandidates, err := stagedDuplicateCandidates(job, priorJobs)
+	if err != nil {
+		return false, err
+	}
+	candidates = append(candidates, stagedCandidates...)
+	if len(candidates) == 0 {
+		return false, nil
 	}
 	previewJSON, err := refreshedDuplicatePreviewJSON(job, candidates)
 	if err != nil {
 		return false, err
 	}
 	return true, service.store.RefreshDuplicatePreview(ctx, job.ID, previewJSON)
+}
+
+func stagedDuplicateCandidates(job importJob, priorJobs []importJob) ([]DuplicateCandidate, error) {
+	preview, err := decodeStoredPreview(job)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]DuplicateCandidate, 0, len(priorJobs))
+	for _, priorJob := range priorJobs {
+		if job.ContentSHA256 == priorJob.ContentSHA256 {
+			continue
+		}
+		priorPreview, decodeErr := decodeStoredPreview(priorJob)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if previewFilesMayDuplicate(preview.File, priorPreview.File) {
+			candidates = append(candidates, duplicateCandidateFromPreview(priorJob.ID, priorPreview.File))
+		}
+	}
+	return candidates, nil
+}
+
+func decodeStoredPreview(job importJob) (Preview, error) {
+	var preview Preview
+	if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
+		return Preview{}, fmt.Errorf("decode duplicate preview for job %q: %w", job.ID, err)
+	}
+	return preview, nil
+}
+
+func previewFilesMayDuplicate(first, second PreviewFile) bool {
+	if previewAlbumKey(first) != previewAlbumKey(second) {
+		return false
+	}
+	if first.DiscNo == second.DiscNo && first.TrackNo == second.TrackNo {
+		return true
+	}
+	return normalizeIdentity(first.Title) == normalizeIdentity(second.Title) && normalizedCreditsEqual(first.Artists, second.Artists)
+}
+
+func previewAlbumKey(file PreviewFile) string {
+	credits := normalizeCredits(file.AlbumArtists)
+	return strings.Join(credits, "\x1e") + "\x1f" + normalizeIdentity(file.Album) + "\x1f" + fmt.Sprint(file.Year)
+}
+
+func normalizedCreditsEqual(first, second []string) bool {
+	return slices.Equal(normalizeCredits(first), normalizeCredits(second))
+}
+
+func normalizeCredits(credits []string) []string {
+	normalized := make([]string, len(credits))
+	for index, credit := range credits {
+		normalized[index] = normalizeIdentity(credit)
+	}
+	return normalized
+}
+
+func duplicateCandidateFromPreview(trackID string, file PreviewFile) DuplicateCandidate {
+	return DuplicateCandidate{TrackID: trackID, Title: file.Title, Artists: file.Artists, Album: file.Album,
+		DiscNo: file.DiscNo, TrackNo: file.TrackNo, Format: file.Format, DurationMs: file.DurationMs}
 }
 
 func refreshedDuplicatePreviewJSON(job importJob, candidates []DuplicateCandidate) (string, error) {
@@ -1018,6 +1104,10 @@ func (service *Service) startOrResumeBatch(ctx context.Context, batch Batch, rev
 }
 
 func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob, decisions map[string]DuplicateAction) error {
+	separateAlbumKeys, err := selectedSeparateAlbumKeys(jobs, decisions)
+	if err != nil {
+		return err
+	}
 	for _, job := range jobs {
 		if job.Outcome != "" {
 			continue
@@ -1028,13 +1118,40 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob, 
 			}
 			continue
 		}
-		if _, err := service.confirmJob(ctx, job, job.Revision, decisions[job.ID]); err != nil {
+		albumKey, keyErr := storedPreviewAlbumKey(job)
+		if keyErr != nil {
+			return keyErr
+		}
+		if _, err := service.confirmJobWithEdition(ctx, job, job.Revision, decisions[job.ID], separateAlbumKeys[albumKey]); err != nil {
 			if handleErr := service.handleBatchConfirmationError(ctx, job, err); handleErr != nil {
 				return handleErr
 			}
 		}
 	}
 	return nil
+}
+
+func selectedSeparateAlbumKeys(jobs []importJob, decisions map[string]DuplicateAction) (map[string]bool, error) {
+	keys := make(map[string]bool)
+	for _, job := range jobs {
+		if decisions[job.ID] != DUPLICATE_ACTION_IMPORT_SEPARATELY {
+			continue
+		}
+		key, err := storedPreviewAlbumKey(job)
+		if err != nil {
+			return nil, err
+		}
+		keys[key] = true
+	}
+	return keys, nil
+}
+
+func storedPreviewAlbumKey(job importJob) (string, error) {
+	preview, err := decodeStoredPreview(job)
+	if err != nil {
+		return "", err
+	}
+	return previewAlbumKey(preview.File), nil
 }
 
 func (service *Service) handleBatchConfirmationError(ctx context.Context, job importJob, confirmationErr error) error {

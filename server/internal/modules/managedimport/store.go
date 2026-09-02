@@ -657,8 +657,12 @@ func (store *Store) ClearStagedFile(ctx context.Context, jobID string) error {
 	defer func() { _ = transaction.Rollback() }()
 	result, err := transaction.ExecContext(ctx, `
 		UPDATE managed_import_jobs SET staged_file_path = NULL, upload_size_bytes = 0,
+			status = CASE WHEN error_code = ? THEN ? ELSE status END,
+			outcome = CASE WHEN error_code = ? AND batch_id IS NOT NULL THEN ? ELSE outcome END,
+			selected = CASE WHEN error_code = ? THEN 0 ELSE selected END,
 			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND staged_file_path IS NOT NULL`, jobID)
+		WHERE id = ? AND staged_file_path IS NOT NULL`, ERROR_CODE_EXACT_DUPLICATE, STATUS_FAILED,
+		ERROR_CODE_EXACT_DUPLICATE, OUTCOME_REJECTED, ERROR_CODE_EXACT_DUPLICATE, jobID)
 	if err != nil {
 		return fmt.Errorf("clear Managed Import staging path: %w", err)
 	}
@@ -679,10 +683,9 @@ func (store *Store) MarkConfirmationExactDuplicate(ctx context.Context, jobID st
 		UPDATE managed_import_jobs
 		SET status = ?, error_code = ?, error_field = 'file',
 			error_reason = 'file bytes match an existing Track',
-			outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END, selected = 0,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ?`, STATUS_FAILED, ERROR_CODE_EXACT_DUPLICATE,
-		OUTCOME_REJECTED, jobID, STATUS_AWAITING_CONFIRMATION)
+		jobID, STATUS_AWAITING_CONFIRMATION)
 	if err != nil {
 		return fmt.Errorf("mark confirmation Exact Duplicate: %w", err)
 	}
@@ -1215,7 +1218,7 @@ func (store *Store) FindExactDuplicateTrackID(ctx context.Context, contentSHA256
 		SELECT tracks.id
 		FROM track_sources
 		JOIN tracks ON tracks.id = track_sources.track_id
-		WHERE track_sources.content_sha256 = ? AND tracks.missing_at IS NULL`, contentSHA256,
+		WHERE track_sources.content_sha256 = ?`, contentSHA256,
 	).Scan(&trackID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -1341,7 +1344,7 @@ func (store *Store) readDuplicateCandidate(ctx context.Context, trackID string) 
 		SELECT tracks.id, tracks.title, albums.title, COALESCE(tracks.disc_no, 1),
 			tracks.track_no, tracks.format, tracks.duration_ms
 		FROM tracks JOIN albums ON albums.id = tracks.album_id
-		WHERE tracks.id = ? AND tracks.missing_at IS NULL`, trackID,
+		WHERE tracks.id = ?`, trackID,
 	).Scan(&candidate.TrackID, &candidate.Title, &candidate.Album, &candidate.DiscNo,
 		&candidate.TrackNo, &candidate.Format, &candidate.DurationMs)
 	if err != nil {

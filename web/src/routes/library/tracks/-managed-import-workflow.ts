@@ -1,8 +1,9 @@
-import type {
-	ManagedImportBatch,
-	ManagedImportBatchFile,
-	ManagedImportDuplicateDecision,
-	ManagedImportPreview,
+import {
+	ApiError,
+	type ManagedImportBatch,
+	type ManagedImportBatchFile,
+	type ManagedImportDuplicateDecision,
+	type ManagedImportPreview,
 } from "@repo/api-client";
 import { useRef, useState } from "react";
 import { isDesktopClient } from "#/desktop/bridge";
@@ -218,16 +219,57 @@ function createConfirmHandler(
 			if (currentBatch.files.some((file) => file.state === "unresolved")) {
 				throw new Error("Some files are still unresolved. Retry confirmation.");
 			}
+			if (hasUndecidedPossibleDuplicate(reconciledEntries)) {
+				state.setErrorMessage("Review the newly detected Possible Duplicate.");
+				return;
+			}
 			const report = await confirmImportBatch(currentBatch, reconciledEntries);
 			state.setBatch(report);
 			state.setEntries((current) => mergeBatchFiles(current, report.files));
 			if (hasLibraryMutation(report)) await onCommitted();
 		} catch (error) {
-			state.setErrorMessage(importErrorMessage(error));
+			if (
+				!(error instanceof ApiError) ||
+				error.body.code !== "import_revision_conflict"
+			) {
+				state.setErrorMessage(importErrorMessage(error));
+				return;
+			}
+			try {
+				const isReconciled = await reconcileAfterConfirmationError(state);
+				state.setErrorMessage(
+					isReconciled
+						? "Review the newly detected Possible Duplicate."
+						: importErrorMessage(error),
+				);
+			} catch (refreshError) {
+				state.setErrorMessage(
+					`${importErrorMessage(error)} Refresh failed: ${importErrorMessage(refreshError)}`,
+				);
+			}
 		} finally {
 			state.setImportState("idle");
 		}
 	};
+}
+
+function hasUndecidedPossibleDuplicate(entries: ImportFileEntry[]): boolean {
+	return entries.some(
+		(entry) =>
+			entry.preview?.duplicateClassification === "possible_duplicate" &&
+			!entry.duplicateDecision,
+	);
+}
+
+async function reconcileAfterConfirmationError(
+	state: WorkflowState,
+): Promise<boolean> {
+	if (!state.batch) return false;
+	const batch = await apiClient.getManagedImportBatch(state.batch.id);
+	const entries = mergeBatchFiles(state.entries, batch.files);
+	state.setBatch(batch);
+	state.setEntries(entries);
+	return hasUndecidedPossibleDuplicate(entries);
 }
 
 function createOpenHandler(
