@@ -997,7 +997,10 @@ func (store *Store) RollbackPendingCommit(ctx context.Context, journal commitJou
 	if err := requireMutation(result); err != nil {
 		return err
 	}
-	return transaction.Commit()
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit pending Managed Import rollback: %w", err)
+	}
+	return nil
 }
 
 func rollbackTransaction(transaction *sql.Tx, operation string) error {

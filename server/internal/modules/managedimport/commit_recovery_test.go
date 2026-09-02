@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	internaldb "github.com/ardam/navidrome-replacement/server/internal/db"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 )
@@ -35,7 +36,8 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 	}
 	for _, phase := range phases {
 		t.Run(string(phase), func(t *testing.T) {
-			database := testutil.OpenMigratedDB(t)
+			databasePath := filepath.Join(t.TempDir(), "recovery.db")
+			database := openCommitRecoveryDatabase(t, databasePath)
 			storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
 			service, job, inspection := prepareCommitRecoveryJob(t, database, storage)
 			service.commitPhaseHook = func(reached commitPhase) error {
@@ -63,10 +65,19 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 				t.Fatalf("pending Track listed at phase %q: tracks = %+v, error = %v", phase, tracks, listErr)
 			}
 
+			if err := database.Close(); err != nil {
+				t.Fatalf("close database before recovery: %v", err)
+			}
+			database = openCommitRecoveryDatabase(t, databasePath)
 			restarted := NewService(NewStore(database), storage, recoveryInspector{inspection: inspection})
 			if err := restarted.RecoverCommits(context.Background()); err != nil {
 				t.Fatalf("recover phase %q: %v", phase, err)
 			}
+			if err := database.Close(); err != nil {
+				t.Fatalf("close database after recovery: %v", err)
+			}
+			database = openCommitRecoveryDatabase(t, databasePath)
+			restarted = NewService(NewStore(database), storage, recoveryInspector{inspection: inspection})
 			if err := restarted.RecoverCommits(context.Background()); err != nil {
 				t.Fatalf("repeat recovery phase %q: %v", phase, err)
 			}
@@ -79,7 +90,7 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 				if storedJob.Status != STATUS_COMMITTED {
 					t.Fatalf("job status after completing recovery = %q", storedJob.Status)
 				}
-				track, err := libraryStore.GetTrack(context.Background(), storedJob.TrackID)
+				track, err := library.NewStore(database).GetTrack(context.Background(), storedJob.TrackID)
 				if err != nil {
 					t.Fatalf("get recovered Track: %v", err)
 				}
@@ -96,6 +107,16 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 			}
 		})
 	}
+}
+
+func openCommitRecoveryDatabase(t *testing.T, databasePath string) *sql.DB {
+	t.Helper()
+	database, err := internaldb.OpenAndMigrate(context.Background(), databasePath, filepath.Join("..", "..", "..", "migrations"))
+	if err != nil {
+		t.Fatalf("open recovery database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	return database
 }
 
 func TestRecoverPreparedJournalAfterPlacementGapRemovesCanonicalOrphans(t *testing.T) {
