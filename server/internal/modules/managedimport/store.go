@@ -223,6 +223,78 @@ func (store *Store) GetBatchStatus(ctx context.Context, batchID string) (BatchSt
 	return status, nil
 }
 
+func (store *Store) ListHistory(ctx context.Context) (_ HistoryList, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT import_id, started_at, completed_at, result_code, total_count, imported_count,
+			rejected_count, failed_count, replaced_count, not_attempted_count, canceled_count
+		FROM managed_import_history
+		ORDER BY completed_at DESC, rowid DESC
+		LIMIT ?`, IMPORT_HISTORY_LIMIT)
+	if err != nil {
+		return HistoryList{}, fmt.Errorf("list Import History: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close Import History: %w", closeErr))
+		}
+	}()
+	history := HistoryList{Items: []HistoryItem{}}
+	for rows.Next() {
+		var item HistoryItem
+		err := rows.Scan(&item.ImportID, &item.StartedAt, &item.CompletedAt, &item.ResultCode,
+			&item.Counts.Total, &item.Counts.Imported, &item.Counts.Rejected, &item.Counts.Failed,
+			&item.Counts.Replaced, &item.Counts.NotAttempted, &item.Counts.Canceled)
+		if err != nil {
+			return HistoryList{}, fmt.Errorf("read Import History: %w", err)
+		}
+		history.Items = append(history.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return HistoryList{}, fmt.Errorf("iterate Import History: %w", err)
+	}
+	for index := range history.Items {
+		files, err := store.listHistoryFiles(ctx, history.Items[index].ImportID)
+		if err != nil {
+			return HistoryList{}, err
+		}
+		history.Items[index].Files = files
+	}
+	return history, nil
+}
+
+func (store *Store) listHistoryFiles(ctx context.Context, importID string) (_ []HistoryFile, returnErr error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256,
+			result_code, created_track_id, replaced_track_id
+		FROM managed_import_history_files WHERE import_id = ? ORDER BY position`, importID)
+	if err != nil {
+		return nil, fmt.Errorf("list Import History files for %q: %w", importID, err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close Import History files: %w", closeErr))
+		}
+	}()
+	files := []HistoryFile{}
+	for rows.Next() {
+		var file HistoryFile
+		var safeFilename, contentSHA256, createdTrackID, replacedTrackID sql.NullString
+		if err := rows.Scan(&file.FileID, &file.JobID, &safeFilename, &file.StartedAt, &file.CompletedAt,
+			&contentSHA256, &file.ResultCode, &createdTrackID, &replacedTrackID); err != nil {
+			return nil, fmt.Errorf("read Import History file: %w", err)
+		}
+		file.SafeFilename = safeFilename.String
+		file.ContentSHA256 = contentSHA256.String
+		file.CreatedTrackID = createdTrackID.String
+		file.ReplacedTrackID = replacedTrackID.String
+		files = append(files, file)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Import History files: %w", err)
+	}
+	return files, nil
+}
+
 func (store *Store) DeleteBatch(ctx context.Context, batchID string) (returnErr error) {
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
@@ -234,6 +306,9 @@ func (store *Store) DeleteBatch(ctx context.Context, batchID string) (returnErr 
 			returnErr = errors.Join(returnErr, fmt.Errorf("rollback Managed Import Batch cancellation: %w", rollbackErr))
 		}
 	}()
+	if archiveErr := archiveBatchHistory(ctx, transaction, batchID, "canceled"); archiveErr != nil {
+		return archiveErr
+	}
 	if _, deleteJobsErr := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE batch_id = ?`, batchID); deleteJobsErr != nil {
 		return fmt.Errorf("delete canceled Managed Import Batch files: %w", deleteJobsErr)
 	}
@@ -274,13 +349,28 @@ func (store *Store) DeleteJob(ctx context.Context, jobID string) (returnErr erro
 	} else if err != nil {
 		return fmt.Errorf("resolve canceled Managed Import Job: %w", err)
 	}
-	if _, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE id = ?`, jobID); err != nil {
-		return fmt.Errorf("delete canceled Managed Import Job: %w", err)
+	if !batchID.Valid {
+		if err := archiveStandaloneHistory(ctx, transaction, jobID, "canceled"); err != nil {
+			return err
+		}
 	}
 	if batchID.Valid {
+		_, err := transaction.ExecContext(ctx, `
+			INSERT INTO managed_import_canceled_files (
+				batch_id, file_id, job_id, safe_filename, started_at, content_sha256, position
+			)
+			SELECT batch_id, COALESCE(NULLIF(client_file_id, ''), id), id, original_filename,
+				created_at, content_sha256, batch_position
+			FROM managed_import_jobs WHERE id = ?`, jobID)
+		if err != nil {
+			return fmt.Errorf("retain canceled Managed Import Batch file: %w", err)
+		}
 		if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, batchID.String); err != nil {
 			return fmt.Errorf("revise canceled Managed Import Batch file: %w", err)
 		}
+	}
+	if _, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE id = ?`, jobID); err != nil {
+		return fmt.Errorf("delete canceled Managed Import Job: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("commit Managed Import Job cancellation: %w", err)
@@ -529,6 +619,9 @@ func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, err
 		WHERE id = (SELECT batch_id FROM managed_import_jobs WHERE id = ?) AND status = ?`, jobID, BATCH_STATUS_UPLOADING); err != nil {
 		return fmt.Errorf("revise rejected Managed Import Batch file: %w", err)
 	}
+	if err := archiveStandaloneHistory(ctx, transaction, jobID, "failed"); err != nil {
+		return err
+	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("commit failed Managed Import transition: %w", err)
 	}
@@ -632,12 +725,236 @@ func (store *Store) MarkBatchFileOutcome(ctx context.Context, jobID string, outc
 }
 
 func (store *Store) CompleteBatch(ctx context.Context, batchID string) error {
-	result, err := store.database.ExecContext(ctx, `UPDATE managed_import_batches SET status = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+	transaction, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Managed Import Batch completion: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	result, err := transaction.ExecContext(ctx, `UPDATE managed_import_batches SET status = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
 		BATCH_STATUS_COMPLETED, batchID, BATCH_STATUS_CONFIRMING)
 	if err != nil {
 		return fmt.Errorf("complete Managed Import Batch: %w", err)
 	}
-	return requireMutation(result)
+	if err := requireMutation(result); err != nil {
+		return err
+	}
+	if err := archiveBatchHistory(ctx, transaction, batchID, ""); err != nil {
+		return err
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_jobs SET preview_json = NULL WHERE batch_id = ?`, batchID); err != nil {
+		return fmt.Errorf("clear completed Import Preview payloads: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Managed Import Batch completion: %w", err)
+	}
+	return nil
+}
+
+func archiveBatchHistory(ctx context.Context, transaction *sql.Tx, batchID, terminalCode string) error {
+	var item HistoryItem
+	item.ImportID = batchID
+	item.CompletedAt = time.Now().UTC()
+	if err := transaction.QueryRowContext(ctx, `SELECT created_at FROM managed_import_batches WHERE id = ?`, batchID).Scan(&item.StartedAt); err != nil {
+		return fmt.Errorf("read terminal Managed Import Batch %q: %w", batchID, err)
+	}
+	files, counts, err := readBatchHistoryFiles(ctx, transaction, batchID, terminalCode, item.CompletedAt)
+	if err != nil {
+		return err
+	}
+	item.Files = files
+	item.Counts = counts
+	item.ResultCode = historyResultCode(counts, terminalCode)
+	return insertHistory(ctx, transaction, item)
+}
+
+func archiveStandaloneHistory(ctx context.Context, transaction *sql.Tx, jobID, terminalCode string) error {
+	item, exists, err := readStandaloneHistory(ctx, transaction, jobID, terminalCode)
+	if err != nil || !exists {
+		return err
+	}
+	if err := insertHistory(ctx, transaction, item); err != nil {
+		return err
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_jobs SET preview_json = NULL, staged_file_path = NULL WHERE id = ? AND batch_id IS NULL`, jobID); err != nil {
+		return fmt.Errorf("clear terminal standalone Import payloads: %w", err)
+	}
+	return nil
+}
+
+func readBatchHistoryFiles(ctx context.Context, transaction *sql.Tx, batchID, terminalCode string, completedAt time.Time) (_ []HistoryFile, counts HistoryCounts, returnErr error) {
+	rows, err := transaction.QueryContext(ctx, `
+		SELECT COALESCE(NULLIF(client_file_id, ''), id), id, original_filename, created_at,
+			content_sha256, status, outcome, error_code, track_id, batch_position
+		FROM managed_import_jobs WHERE batch_id = ?
+		UNION ALL
+		SELECT file_id, job_id, safe_filename, started_at, content_sha256, ?, ?, ?, NULL, position
+		FROM managed_import_canceled_files WHERE batch_id = ?
+		ORDER BY batch_position`, batchID, STATUS_FAILED, OUTCOME_NOT_ATTEMPTED, IMPORT_CANCELED_RESULT_CODE, batchID)
+	if err != nil {
+		return nil, counts, fmt.Errorf("read terminal Managed Import Batch files: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, rows.Close()) }()
+	files := []HistoryFile{}
+	for rows.Next() {
+		file, outcome, status, errorCode, trackID, err := scanHistorySourceFile(rows, completedAt, true)
+		if err != nil {
+			return nil, counts, err
+		}
+		applyHistoryFileResult(&file, outcome, status, errorCode, trackID, terminalCode)
+		incrementHistoryCounts(&counts, outcome, status, errorCode, terminalCode)
+		files = append(files, file)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, counts, fmt.Errorf("iterate terminal Managed Import Batch files: %w", err)
+	}
+	return files, counts, nil
+}
+
+type historyFileScanner interface {
+	Scan(...any) error
+}
+
+func scanHistorySourceFile(scanner historyFileScanner, completedAt time.Time, hasPosition bool) (HistoryFile, ImportOutcome, ImportStatus, string, string, error) {
+	var file HistoryFile
+	var safeFilename, contentSHA256, outcome, errorCode, trackID sql.NullString
+	var status ImportStatus
+	destinations := []any{&file.FileID, &file.JobID, &safeFilename, &file.StartedAt,
+		&contentSHA256, &status, &outcome, &errorCode, &trackID}
+	var position int
+	if hasPosition {
+		destinations = append(destinations, &position)
+	}
+	err := scanner.Scan(destinations...)
+	if err != nil {
+		return HistoryFile{}, "", "", "", "", fmt.Errorf("read terminal Managed Import file: %w", err)
+	}
+	file.SafeFilename = safeFilename.String
+	file.ContentSHA256 = contentSHA256.String
+	file.CompletedAt = completedAt
+	return file, ImportOutcome(outcome.String), status, errorCode.String, trackID.String, nil
+}
+
+func readStandaloneHistory(ctx context.Context, transaction *sql.Tx, jobID, terminalCode string) (HistoryItem, bool, error) {
+	completedAt := time.Now().UTC()
+	row := transaction.QueryRowContext(ctx, `
+		SELECT COALESCE(NULLIF(client_file_id, ''), id), id, original_filename, created_at,
+			content_sha256, status, outcome, error_code, track_id
+		FROM managed_import_jobs WHERE id = ? AND batch_id IS NULL`, jobID)
+	file, outcome, status, errorCode, trackID, err := scanHistorySourceFile(row, completedAt, false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HistoryItem{}, false, nil
+	}
+	if err != nil {
+		return HistoryItem{}, false, err
+	}
+	applyHistoryFileResult(&file, outcome, status, errorCode, trackID, terminalCode)
+	counts := HistoryCounts{}
+	incrementHistoryCounts(&counts, outcome, status, errorCode, terminalCode)
+	return HistoryItem{
+		ImportID: jobID, StartedAt: file.StartedAt, CompletedAt: file.CompletedAt,
+		ResultCode: historyResultCode(counts, terminalCode), Counts: counts, Files: []HistoryFile{file},
+	}, true, nil
+}
+
+func applyHistoryFileResult(file *HistoryFile, outcome ImportOutcome, status ImportStatus, errorCode, trackID, terminalCode string) {
+	if terminalCode == "canceled" {
+		file.ResultCode = terminalCode
+		return
+	}
+	file.ResultCode = string(outcome)
+	if status == STATUS_COMMITTED && file.ResultCode == "" {
+		file.ResultCode = string(OUTCOME_IMPORTED)
+	} else if file.ResultCode == "" {
+		file.ResultCode = string(status)
+	}
+	if errorCode != "" && outcome != OUTCOME_IMPORTED && outcome != OUTCOME_REPLACED {
+		file.ResultCode = errorCode
+	}
+	if outcome == OUTCOME_REPLACED {
+		file.ReplacedTrackID = trackID
+	} else if status == STATUS_COMMITTED {
+		file.CreatedTrackID = trackID
+	}
+}
+
+func incrementHistoryCounts(counts *HistoryCounts, outcome ImportOutcome, status ImportStatus, errorCode, terminalCode string) {
+	counts.Total++
+	if terminalCode == IMPORT_CANCELED_RESULT_CODE || errorCode == IMPORT_CANCELED_RESULT_CODE {
+		counts.Canceled++
+		return
+	}
+	switch {
+	case outcome == OUTCOME_IMPORTED || outcome == "" && status == STATUS_COMMITTED:
+		counts.Imported++
+	case outcome == OUTCOME_REJECTED:
+		counts.Rejected++
+	case outcome == OUTCOME_REPLACED:
+		counts.Replaced++
+	case outcome == OUTCOME_NOT_ATTEMPTED:
+		counts.NotAttempted++
+	default:
+		counts.Failed++
+	}
+}
+
+func historyResultCode(counts HistoryCounts, terminalCode string) string {
+	if terminalCode == "canceled" {
+		return terminalCode
+	}
+	succeeded := counts.Imported + counts.Replaced
+	if succeeded == counts.Total {
+		return "completed"
+	}
+	if succeeded > 0 {
+		return "partially_completed"
+	}
+	return "failed"
+}
+
+func insertHistory(ctx context.Context, transaction *sql.Tx, item HistoryItem) error {
+	result, err := transaction.ExecContext(ctx, `
+		INSERT OR IGNORE INTO managed_import_history (
+			import_id, started_at, completed_at, result_code, total_count, imported_count,
+			rejected_count, failed_count, replaced_count, not_attempted_count, canceled_count
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ImportID, item.StartedAt, item.CompletedAt,
+		item.ResultCode, item.Counts.Total, item.Counts.Imported, item.Counts.Rejected, item.Counts.Failed,
+		item.Counts.Replaced, item.Counts.NotAttempted, item.Counts.Canceled)
+	if err != nil {
+		return fmt.Errorf("store Import History %q: %w", item.ImportID, err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect Import History insert %q: %w", item.ImportID, err)
+	}
+	if inserted == 0 {
+		return nil
+	}
+	for position, file := range item.Files {
+		if insertErr := insertHistoryFile(ctx, transaction, item.ImportID, position, file); insertErr != nil {
+			return insertErr
+		}
+	}
+	_, err = transaction.ExecContext(ctx, `DELETE FROM managed_import_history WHERE import_id IN (
+		SELECT import_id FROM managed_import_history ORDER BY completed_at DESC, rowid DESC LIMIT -1 OFFSET ?
+	)`, IMPORT_HISTORY_LIMIT)
+	if err != nil {
+		return fmt.Errorf("prune Import History: %w", err)
+	}
+	return nil
+}
+
+func insertHistoryFile(ctx context.Context, transaction *sql.Tx, importID string, position int, file HistoryFile) error {
+	_, err := transaction.ExecContext(ctx, `
+		INSERT INTO managed_import_history_files (
+			import_id, file_id, job_id, safe_filename, started_at, completed_at, content_sha256,
+			result_code, created_track_id, replaced_track_id, position
+		) VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?)`,
+		importID, file.FileID, file.JobID, file.SafeFilename, file.StartedAt, file.CompletedAt,
+		file.ContentSHA256, file.ResultCode, file.CreatedTrackID, file.ReplacedTrackID, position)
+	if err != nil {
+		return fmt.Errorf("store Import History file %q: %w", file.FileID, err)
+	}
+	return nil
 }
 
 func (store *Store) AlbumRequiresDiscNumber(ctx context.Context, metadata library.NormalizedMediaMetadata) (bool, error) {
@@ -792,6 +1109,9 @@ func (store *Store) Commit(ctx context.Context, data commitData) (result Result,
 	result, commitErr := markCommitted(ctx, transaction, data.Job, data.Identity.TrackID)
 	if commitErr != nil {
 		return Result{}, commitErr
+	}
+	if err := archiveStandaloneHistory(ctx, transaction, data.Job.ID, "completed"); err != nil {
+		return Result{}, err
 	}
 	if err := transaction.Commit(); err != nil {
 		return Result{}, fmt.Errorf("commit Managed Import database transaction: %w", err)

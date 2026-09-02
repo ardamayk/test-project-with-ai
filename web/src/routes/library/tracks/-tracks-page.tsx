@@ -12,6 +12,7 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
 import { filterTracksByText } from "#/lib/filter-tracks";
+import { ImportHistory } from "./-import-history";
 import { ImportMusicDialog } from "./-import-music-dialog";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
@@ -37,6 +38,10 @@ export function TracksPage() {
 			apiClient.listTracks({ limit: 200, q: debouncedSearch || undefined }),
 		placeholderData: (previous) => previous,
 	});
+	const importHistory = useQuery({
+		queryKey: ["managed-import", "history"],
+		queryFn: () => apiClient.listImportHistory(),
+	});
 	const sourceTracks = tracks.data?.items ?? lastTracks;
 	const visibleTracks = useMemo(
 		() => filterTracksByText(sourceTracks, search),
@@ -49,8 +54,22 @@ export function TracksPage() {
 		}
 	}, [tracks.data?.items]);
 
-	async function refreshTracks() {
-		await queryClient.invalidateQueries({ queryKey: ["library", "tracks"] });
+	async function refreshImports() {
+		await Promise.all([
+			queryClient.invalidateQueries({ queryKey: ["library", "tracks"] }),
+			queryClient.invalidateQueries({
+				queryKey: ["managed-import", "history"],
+			}),
+		]);
+	}
+
+	function handleImportOpenChange(isOpen: boolean) {
+		setIsImportOpen(isOpen);
+		if (!isOpen) {
+			void queryClient.invalidateQueries({
+				queryKey: ["managed-import", "history"],
+			});
+		}
 	}
 
 	return (
@@ -87,7 +106,7 @@ export function TracksPage() {
 				/>
 			}
 		>
-			<CollectionPageContainer>
+			<CollectionPageContainer className="space-y-6">
 				{tracks.isLoading && sourceTracks.length === 0 ? (
 					<p className="text-foreground text-sm">Loading tracks…</p>
 				) : tracks.isError && sourceTracks.length === 0 ? (
@@ -105,11 +124,17 @@ export function TracksPage() {
 						numbering="list"
 					/>
 				)}
+				<ImportHistory
+					items={importHistory.data?.items ?? []}
+					isLoading={importHistory.isLoading}
+					isError={importHistory.isError}
+					onRetry={() => setIsImportOpen(true)}
+				/>
 			</CollectionPageContainer>
 			<ImportMusicDialog
 				isOpen={isImportOpen}
-				onOpenChange={setIsImportOpen}
-				onCommitted={refreshTracks}
+				onOpenChange={handleImportOpenChange}
+				onCommitted={refreshImports}
 			/>
 		</PageShell>
 	);

@@ -24,6 +24,7 @@ const (
 	VALIDATION_PROGRESS_VERSION = 17
 	IMPORT_CLIENT_FILE_VERSION  = 19
 	COMMIT_JOURNAL_VERSION      = 20
+	IMPORT_HISTORY_VERSION      = 21
 )
 
 func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {
@@ -43,6 +44,37 @@ func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {
 	assertMigrationVersion(t, sqlDB, IMPORT_CLIENT_FILE_VERSION)
 	assertTableMissing(t, sqlDB, "managed_import_commit_journal")
 	assertColumnMissing(t, sqlDB, "tracks", "is_pending_commit")
+}
+
+func TestManagedImportHistoryMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, COMMIT_JOURNAL_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), IMPORT_HISTORY_VERSION); err != nil {
+		t.Fatalf("apply Import History migration: %v", err)
+	}
+	_, err := sqlDB.Exec(`
+		INSERT INTO managed_import_history (
+			import_id, started_at, completed_at, result_code, total_count, imported_count,
+			rejected_count, failed_count, replaced_count, not_attempted_count, canceled_count
+		) VALUES ('import-1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'completed', 1, 1, 0, 0, 0, 0, 0);
+		INSERT INTO managed_import_history_files (
+			import_id, file_id, job_id, started_at, completed_at, content_sha256, result_code, position
+		) VALUES ('import-1', 'file-1', 'job-1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+			'0000000000000000000000000000000000000000000000000000000000000000', 'imported', 0);
+	`)
+	if err != nil {
+		t.Fatalf("store Import History fixture: %v", err)
+	}
+	assertRowCount(t, sqlDB, "managed_import_history", 1)
+	assertRowCount(t, sqlDB, "managed_import_history_files", 1)
+	assertExecFails(t, sqlDB, `UPDATE managed_import_history SET total_count = 2 WHERE import_id = 'import-1'`, "CHECK constraint failed")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Import History migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, COMMIT_JOURNAL_VERSION)
+	assertTableMissing(t, sqlDB, "managed_import_history")
+	assertTableMissing(t, sqlDB, "managed_import_history_files")
+	assertTableMissing(t, sqlDB, "managed_import_canceled_files")
 }
 
 func TestManagedImportValidationProgressMigrationAppliesAndRollsBack(t *testing.T) {

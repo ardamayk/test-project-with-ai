@@ -91,6 +91,10 @@ func (service *Service) GetBatch(ctx context.Context, batchID string) (Batch, er
 	return service.store.GetBatch(ctx, batchID)
 }
 
+func (service *Service) ListHistory(ctx context.Context) (HistoryList, error) {
+	return service.store.ListHistory(ctx)
+}
+
 func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
 	job, err := service.store.GetJob(ctx, jobID)
 	if err != nil {

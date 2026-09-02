@@ -23,8 +23,10 @@ const (
 	ERROR_CODE_EXACT_DUPLICATE                     = "exact_duplicate"
 	ERROR_CODE_REVISION_CONFLICT                   = "import_revision_conflict"
 	UPLOAD_INTERRUPTED_ERROR_CODE                  = "upload_interrupted"
+	IMPORT_CANCELED_RESULT_CODE                    = "canceled"
 	IMPORT_INACTIVITY_TIMEOUT                      = 15 * time.Minute
 	IMPORT_CLEANUP_INTERVAL                        = time.Minute
+	IMPORT_HISTORY_LIMIT                           = 20
 )
 
 type BatchStatus string
@@ -187,6 +189,41 @@ type Result struct {
 	Status   ImportStatus `json:"status"`
 	Revision int          `json:"revision"`
 	TrackID  string       `json:"trackId"`
+}
+
+type HistoryList struct {
+	Items []HistoryItem `json:"items"`
+}
+
+type HistoryItem struct {
+	ImportID    string        `json:"importId"`
+	StartedAt   time.Time     `json:"startedAt"`
+	CompletedAt time.Time     `json:"completedAt"`
+	ResultCode  string        `json:"resultCode"`
+	Counts      HistoryCounts `json:"counts"`
+	Files       []HistoryFile `json:"files"`
+}
+
+type HistoryCounts struct {
+	Total        int `json:"total"`
+	Imported     int `json:"imported"`
+	Rejected     int `json:"rejected"`
+	Failed       int `json:"failed"`
+	Replaced     int `json:"replaced"`
+	NotAttempted int `json:"notAttempted"`
+	Canceled     int `json:"canceled"`
+}
+
+type HistoryFile struct {
+	FileID          string    `json:"fileId"`
+	JobID           string    `json:"jobId"`
+	SafeFilename    string    `json:"safeFilename,omitempty"`
+	StartedAt       time.Time `json:"startedAt"`
+	CompletedAt     time.Time `json:"completedAt"`
+	ContentSHA256   string    `json:"contentSha256,omitempty"`
+	ResultCode      string    `json:"resultCode"`
+	CreatedTrackID  string    `json:"createdTrackId,omitempty"`
+	ReplacedTrackID string    `json:"replacedTrackId,omitempty"`
 }
 
 type importJob struct {

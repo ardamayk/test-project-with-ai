@@ -68,6 +68,7 @@ func (module *Module) cleanupInactive(ctx context.Context) {
 
 func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Post("/api/v1/library-migrations/preview", module.handlers.PreviewMigration)
+	router.Get("/api/v1/import-history", module.handlers.ListHistory)
 	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
 	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)
 	router.Delete("/api/v1/import-batches/{batchId}", module.handlers.CancelBatch)

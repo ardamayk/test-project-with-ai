@@ -11,6 +11,7 @@ import { TracksPage } from "./-tracks-page";
 
 const mocks = vi.hoisted(() => ({
 	listTracks: vi.fn(),
+	listImportHistory: vi.fn(),
 	listPlaylists: vi.fn(),
 	getPlaylist: vi.fn(),
 	addPlaylistTrack: vi.fn(),
@@ -48,6 +49,7 @@ const libraryTracks = [
 vi.mock("#/lib/api", () => ({
 	apiClient: {
 		listTracks: mocks.listTracks,
+		listImportHistory: mocks.listImportHistory,
 		listPlaylists: mocks.listPlaylists,
 		getPlaylist: mocks.getPlaylist,
 		addPlaylistTrack: mocks.addPlaylistTrack,
@@ -242,6 +244,7 @@ function expectUploadAttempts(jobId: string, count: number) {
 describe("tracks route", () => {
 	beforeEach(() => {
 		mocks.listTracks.mockReset();
+		mocks.listImportHistory.mockReset();
 		mocks.createManagedImportJob.mockReset();
 		mocks.createManagedImportBatch.mockReset();
 		mocks.getManagedImportBatch.mockReset();
@@ -252,6 +255,7 @@ describe("tracks route", () => {
 		mocks.listTracks.mockResolvedValue({
 			items: libraryTracks,
 		});
+		mocks.listImportHistory.mockResolvedValue({ items: [] });
 		mocks.listPlaylists.mockResolvedValue({
 			items: [{ id: "favorites", name: "Favorites", isDefault: true }],
 		});
@@ -433,6 +437,53 @@ describe("tracks route", () => {
 		expect(screen.getByText("Anti-Hero")).toBeTruthy();
 		expect(screen.queryByText("Bad Blood")).toBeNull();
 		expect(mocks.listTracks).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows terminal Import History and starts a fresh workflow on retry", async () => {
+		mocks.listImportHistory.mockResolvedValueOnce({
+			items: [
+				{
+					importId: "00000000-0000-4000-8000-000000000010",
+					startedAt: "2026-09-02T10:00:00Z",
+					completedAt: "2026-09-02T10:01:00Z",
+					resultCode: "partially_completed",
+					counts: {
+						total: 2,
+						imported: 1,
+						rejected: 1,
+						failed: 0,
+						replaced: 0,
+						notAttempted: 0,
+						canceled: 0,
+					},
+					files: [
+						{
+							fileId: "00000000-0000-4000-8000-000000000011",
+							jobId: "00000000-0000-4000-8000-000000000012",
+							safeFilename: "strict-import.flac",
+							startedAt: "2026-09-02T10:00:00Z",
+							completedAt: "2026-09-02T10:01:00Z",
+							contentSha256: "0".repeat(64),
+							resultCode: "imported",
+							createdTrackId: "00000000-0000-4000-8000-000000000013",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithQuery(<TracksPage />);
+
+		await screen.findByRole("heading", { name: "Import History" });
+		await screen.findByText("Partially completed");
+		expect(screen.getByText("1 imported · 1 rejected")).toBeTruthy();
+		expect(screen.getByText("strict-import.flac")).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "Retry import" }));
+
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
+		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
 	});
 
 	it("keeps filtered local results visible if the debounced search request fails", async () => {

@@ -295,6 +295,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ManagedImportBatch"
+  /api/v1/import-history:
+    get:
+      tags: [imports]
+      operationId: listImportHistory
+      summary: List up to 20 most recent terminal Managed Import results
+      responses:
+        "200":
+          description: Recent terminal Import History without staged audio or raw metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportHistoryList"
   /api/v1/import-batches/{batchId}:
     get:
       tags: [imports]
@@ -1397,6 +1409,93 @@ components:
           type: string
           enum: [imported, rejected, failed, replaced, not_attempted]
         trackId:
+          type: string
+          format: uuid
+    ManagedImportHistoryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/ManagedImportHistoryItem"
+    ManagedImportHistoryItem:
+      type: object
+      required: [importId, startedAt, completedAt, resultCode, counts, files]
+      properties:
+        importId:
+          type: string
+          format: uuid
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        resultCode:
+          type: string
+          enum: [completed, partially_completed, failed, canceled]
+        counts:
+          $ref: "#/components/schemas/ManagedImportHistoryCounts"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportHistoryFile"
+    ManagedImportHistoryCounts:
+      type: object
+      required: [total, imported, rejected, failed, replaced, notAttempted, canceled]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        imported:
+          type: integer
+          minimum: 0
+        rejected:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        replaced:
+          type: integer
+          minimum: 0
+        notAttempted:
+          type: integer
+          minimum: 0
+        canceled:
+          type: integer
+          minimum: 0
+    ManagedImportHistoryFile:
+      type: object
+      required: [fileId, jobId, startedAt, completedAt, resultCode]
+      properties:
+        fileId:
+          type: string
+          format: uuid
+        jobId:
+          type: string
+          format: uuid
+        safeFilename:
+          type: string
+          maxLength: 255
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        contentSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        resultCode:
+          type: string
+          minLength: 1
+        createdTrackId:
+          type: string
+          format: uuid
+        replacedTrackId:
           type: string
           format: uuid
     ManagedImportBatchConfirmation:
