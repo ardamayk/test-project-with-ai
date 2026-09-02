@@ -3,8 +3,15 @@ import type {
 	ManagedImportBatchFile,
 	ManagedImportPreview,
 } from "@repo/api-client";
+import { ApiError } from "@repo/api-client";
 import { useRef, useState } from "react";
-import { isDesktopClient } from "#/desktop/bridge";
+import {
+	type DesktopImportSelection,
+	desktopUploadImportFile,
+	isDesktopClient,
+	selectDesktopImportFiles,
+	selectDesktopImportFolder,
+} from "#/desktop/bridge";
 import { apiClient } from "#/lib/api";
 
 export type ImportState = "idle" | "uploading" | "confirming";
@@ -27,7 +34,7 @@ export const SUPPORTED_AUDIO_FILE_ACCEPT = SUPPORTED_AUDIO_EXTENSIONS.map(
 
 export type ImportFileEntry = {
 	key: string;
-	file: File;
+	file: File | DesktopImportSelection;
 	jobId?: string;
 	progress: number;
 	state: "accepted" | "rejected" | "unresolved" | "completed";
@@ -76,6 +83,7 @@ export function useManagedImportWorkflow({
 		isCompleted,
 		canConfirm,
 		handleFiles: createFileHandler(state),
+		handleDesktopSelection: createDesktopSelectionHandler(state),
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
 		handleSelectionChange: (key: string, selected: boolean) =>
 			state.updateEntry(key, { selected, hasSelectionOverride: true }),
@@ -119,7 +127,7 @@ function useImportWorkflowState() {
 type WorkflowState = ReturnType<typeof useImportWorkflowState>;
 
 function createFileHandler(state: WorkflowState) {
-	return async (fileList: FileList | File[]) => {
+	return async (fileList: FileList | Array<File | DesktopImportSelection>) => {
 		const files = Array.from(fileList).filter(isSupportedVisibleAudioFile);
 		if (files.length === 0) return;
 		state.setImportState("uploading");
@@ -157,7 +165,24 @@ function createFileHandler(state: WorkflowState) {
 	};
 }
 
-function isSupportedVisibleAudioFile(file: File): boolean {
+function createDesktopSelectionHandler(state: WorkflowState) {
+	const handleFiles = createFileHandler(state);
+	return async (isDirectory: boolean) => {
+		try {
+			const files = await (isDirectory
+				? selectDesktopImportFolder()
+				: selectDesktopImportFiles());
+			await handleFiles(files);
+		} catch (error) {
+			state.setErrorMessage(importErrorMessage(error));
+		}
+	};
+}
+
+function isSupportedVisibleAudioFile(
+	file: File | DesktopImportSelection,
+): boolean {
+	if (isDesktopImportSelection(file)) return true;
 	const clientPath = file.webkitRelativePath || file.name;
 	if (clientPath.split("/").some((segment) => segment.startsWith("."))) {
 		return false;
@@ -263,7 +288,12 @@ async function uploadImportBatch(
 	let reconciledEntries = attachCreatedJobs(entries, preparedEntries);
 	reconciledEntries = attachServerJobs(reconciledEntries, batch.files);
 	if (hasRetryableUploads(reconciledEntries, batch.files)) {
-		await retryUnresolvedUploads(reconciledEntries, batch.files, updateEntry);
+		await retryUnresolvedUploads(
+			reconciledEntries,
+			batch.files,
+			updateEntry,
+			signal,
+		);
 		batch = await apiClient.getManagedImportBatch(batchId);
 	}
 	return { batch, entries: reconciledEntries };
@@ -299,13 +329,17 @@ async function uploadFile(
 	signal?: AbortSignal,
 ) {
 	try {
-		const preview = await apiClient.uploadManagedImportFile(
-			jobId,
-			entry.file.name,
-			entry.file,
-			(progress) => updateEntry(entry.key, { progress }),
-			signal,
-		);
+		const onProgress = (progress: number) =>
+			updateEntry(entry.key, { progress });
+		const preview = isDesktopImportSelection(entry.file)
+			? await uploadDesktopFile(entry.file, jobId, onProgress, signal)
+			: await apiClient.uploadManagedImportFile(
+					jobId,
+					entry.file.name,
+					entry.file,
+					onProgress,
+					signal,
+				);
 		updateEntry(entry.key, {
 			state: "accepted",
 			selected: true,
@@ -320,6 +354,23 @@ async function uploadFile(
 			errorMessage: importErrorMessage(error),
 		});
 	}
+}
+
+async function uploadDesktopFile(
+	file: DesktopImportSelection,
+	jobId: string,
+	onProgress: (progress: number) => void,
+	signal?: AbortSignal,
+): Promise<ManagedImportPreview> {
+	const response = await desktopUploadImportFile(
+		file.id,
+		jobId,
+		onProgress,
+		signal,
+	);
+	const body = await response.json();
+	if (!response.ok) throw new ApiError(response.status, body);
+	return body as ManagedImportPreview;
 }
 
 function confirmImportBatch(
@@ -359,7 +410,9 @@ async function runWithConcurrency<T>(
 	await Promise.all(Array.from({ length: workerCount }, runWorker));
 }
 
-function createImportFileEntry(file: File): ImportFileEntry {
+function createImportFileEntry(
+	file: File | DesktopImportSelection,
+): ImportFileEntry {
 	return {
 		key: crypto.randomUUID(),
 		file,
@@ -368,6 +421,12 @@ function createImportFileEntry(file: File): ImportFileEntry {
 		selected: false,
 		hasSelectionOverride: false,
 	};
+}
+
+function isDesktopImportSelection(
+	file: File | DesktopImportSelection,
+): file is DesktopImportSelection {
+	return !(file instanceof File);
 }
 
 function mergeBatchFiles(
@@ -457,6 +516,7 @@ async function retryUnresolvedUploads(
 	entries: ImportFileEntry[],
 	files: ManagedImportBatchFile[],
 	updateEntry: (key: string, patch: Partial<ImportFileEntry>) => void,
+	signal?: AbortSignal,
 ) {
 	const retryableEntries = entries.flatMap((entry) => {
 		const isUnresolved = files.some(
@@ -470,11 +530,20 @@ async function retryUnresolvedUploads(
 			progress: 0,
 			errorMessage: undefined,
 		});
-		await uploadFile(jobId, entry, updateEntry);
+		await uploadFile(jobId, entry, updateEntry, signal);
 	});
 }
 
 function importErrorMessage(error: unknown): string {
 	if (error instanceof Error && error.message.trim()) return error.message;
+	if (
+		typeof error === "object" &&
+		error !== null &&
+		"message" in error &&
+		typeof error.message === "string" &&
+		error.message.trim()
+	) {
+		return error.message;
+	}
 	return "Managed Import failed. Please try again.";
 }

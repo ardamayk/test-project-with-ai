@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { Button } from "#/components/ui/button";
+import { isDesktopClient } from "#/desktop/bridge";
 import {
 	type ImportFileEntry,
 	type ImportState,
@@ -34,6 +35,7 @@ export function ImportMusicDialog({
 					<ImportFilePicker
 						isBusy={workflow.isSelectionLocked}
 						onFiles={workflow.handleFiles}
+						onDesktopSelection={workflow.handleDesktopSelection}
 					/>
 					<ImportActivity
 						importState={workflow.importState}
@@ -84,10 +86,34 @@ function ImportDialogHeader({ isBusy }: { isBusy: boolean }) {
 function ImportFilePicker({
 	isBusy,
 	onFiles,
+	onDesktopSelection,
 }: {
 	isBusy: boolean;
 	onFiles: (files: FileList) => Promise<void>;
+	onDesktopSelection: (isDirectory: boolean) => Promise<void>;
 }) {
+	if (isDesktopClient()) {
+		return (
+			<div className="grid gap-4 sm:grid-cols-2">
+				<Button
+					type="button"
+					variant="outline"
+					disabled={isBusy}
+					onClick={() => void onDesktopSelection(false)}
+				>
+					Select audio files
+				</Button>
+				<Button
+					type="button"
+					variant="outline"
+					disabled={isBusy}
+					onClick={() => void onDesktopSelection(true)}
+				>
+					Select audio folder
+				</Button>
+			</div>
+		);
+	}
 	return (
 		<div className="grid gap-4 sm:grid-cols-2">
 			<ImportFileInput

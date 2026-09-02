@@ -1,5 +1,5 @@
 import type { QueueEvent } from "@repo/api-client";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const CONNECTION_CHANGED_EVENT = "server-connection-changed";
@@ -23,6 +23,17 @@ type BridgeHttpResponse = {
 	body: number[];
 };
 
+export type DesktopImportSelection = {
+	id: string;
+	name: string;
+	size: number;
+};
+
+type DesktopImportProgress = {
+	sentBytes: number;
+	totalBytes: number;
+};
+
 export function isDesktopClient(): boolean {
 	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -37,6 +48,61 @@ export function testServerConnection(origin: string): Promise<ConnectionCheck> {
 
 export function saveServerConnection(origin: string): Promise<ConnectionCheck> {
 	return invoke("save_server_connection", { origin });
+}
+
+export function selectDesktopImportFiles(): Promise<DesktopImportSelection[]> {
+	return invoke("desktop_select_import_files");
+}
+
+export function selectDesktopImportFolder(): Promise<DesktopImportSelection[]> {
+	return invoke("desktop_select_import_folder");
+}
+
+export function cancelDesktopImportUpload(uploadId: string): Promise<void> {
+	return invoke("desktop_cancel_import_upload", { uploadId });
+}
+
+export async function desktopUploadImportFile(
+	selectionId: string,
+	jobId: string,
+	onProgress?: (progress: number) => void,
+	signal?: AbortSignal,
+): Promise<Response> {
+	if (signal?.aborted) {
+		throw new DOMException("Managed Import upload canceled", "AbortError");
+	}
+	const uploadId = crypto.randomUUID();
+	const progressChannel = new Channel<DesktopImportProgress>();
+	progressChannel.onmessage = ({ sentBytes, totalBytes }) => {
+		if (totalBytes > 0) {
+			onProgress?.(Math.round((sentBytes / totalBytes) * 100));
+		}
+	};
+	const handleAbort = () => {
+		cancelDesktopImportUpload(uploadId).catch((error) => {
+			console.error("Desktop Managed Import cancellation failed", error);
+		});
+	};
+	signal?.addEventListener("abort", handleAbort, { once: true });
+	onProgress?.(0);
+	try {
+		const response = await invoke<BridgeHttpResponse>(
+			"desktop_upload_import_file",
+			{
+				selectionId,
+				uploadId,
+				jobId,
+				onProgress: progressChannel,
+			},
+		);
+		if (signal?.aborted) {
+			throw new DOMException("Managed Import upload canceled", "AbortError");
+		}
+		onProgress?.(100);
+		return bridgeResponse(response);
+	} finally {
+		signal?.removeEventListener("abort", handleAbort);
+	}
 }
 
 export async function initializeMediaProxy(): Promise<string> {
@@ -124,6 +190,10 @@ export async function desktopFetch(
 		},
 	});
 
+	return bridgeResponse(response);
+}
+
+function bridgeResponse(response: BridgeHttpResponse): Response {
 	const isBodyless = [204, 205, 304].includes(response.status);
 	return new Response(isBodyless ? null : new Uint8Array(response.body), {
 		status: response.status,
