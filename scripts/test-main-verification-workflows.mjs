@@ -71,6 +71,8 @@ test("main verification runs every public static, unit, and integration task", (
 	]) {
 		assert.match(getJob(mainWorkflow, jobName), /GITHUB_STEP_SUMMARY/);
 	}
+	assert.match(mainWorkflow, /mise run clean-room:test/);
+	assert.match(fastWorkflow, /mise run clean-room:test/);
 });
 
 test("trusted main restores and publishes every agreed cache", () => {

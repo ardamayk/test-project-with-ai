@@ -110,6 +110,7 @@ jobs:
           mise run git-hooks:test 2>&1 | tee "$RUNNER_TEMP/main-workspace-logs/git-hooks.log" || result=1
           mise run classifier:test 2>&1 | tee "$RUNNER_TEMP/main-workspace-logs/classifier.log" || result=1
           mise run main-workflows:test 2>&1 | tee "$RUNNER_TEMP/main-workspace-logs/main-workflows.log" || result=1
+          mise run clean-room:test 2>&1 | tee "$RUNNER_TEMP/main-workspace-logs/clean-room.log" || result=1
           exit "$result"
 
       - name: Web E2E verification

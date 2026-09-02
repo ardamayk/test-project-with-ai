@@ -14,6 +14,8 @@ import test from "node:test";
 
 const repositoryRoot = new URL("..", import.meta.url);
 const runnerPath = new URL("run-clean-room-verification.sh", import.meta.url);
+const runner = readFileSync(runnerPath, "utf8");
+const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 const cleanRoomWorkflow = readFileSync(
 	new URL("../.github/workflows/clean-room.yml", import.meta.url),
 	"utf8",
@@ -51,6 +53,7 @@ function createFixture() {
 	mkdirSync(tempParent);
 	mkdirSync(developerCache);
 	writeFileSync(join(developerCache, "sentinel"), "preserve");
+	writeFileSync(join(testDirectory, "mpv"), "fixture");
 
 	for (const commandName of ["pnpm", "mise", "docker"]) {
 		createCommandShim(binDirectory, commandName);
@@ -86,6 +89,7 @@ function runCleanRoom({ failCommand } = {}) {
 			MISE_DATA_DIR: fixture.developerCache,
 			MISE_STATE_DIR: fixture.developerCache,
 			BUILDX_CONFIG: fixture.developerCache,
+			EARTHLY_AUDIO_MPV_PATH: join(fixture.testDirectory, "mpv"),
 		},
 	});
 
@@ -198,11 +202,43 @@ test("weekly workflow runs same clean-room contract without GitHub caches", () =
 	assert.match(cleanRoomWorkflow, /if: always\(\)[\s\S]*GITHUB_STEP_SUMMARY/);
 });
 
+test("local entry isolates Mise before preparing tools and provides pinned mpv", () => {
+	assert.match(readme, /mise run --skip-tools ci:clean-room/);
+	assert.match(runner, /bash scripts\/build-pinned-mpv\.sh/);
+	assert.match(runner, /export EARTHLY_AUDIO_MPV_PATH=/);
+});
+
+test("documented local entry skips outer Mise tool installation", () => {
+	const miseDirectory = mkdtempSync(join(tmpdir(), "clean-room-mise-test-"));
+	try {
+		const result = spawnSync(
+			"mise",
+			["run", "--skip-tools", "--dry-run", "ci:clean-room"],
+			{
+				cwd: repositoryRoot,
+				encoding: "utf8",
+				env: {
+					...process.env,
+					MISE_CACHE_DIR: join(miseDirectory, "cache"),
+					MISE_DATA_DIR: join(miseDirectory, "data"),
+					MISE_STATE_DIR: join(miseDirectory, "state"),
+				},
+			},
+		);
+		assert.equal(result.status, 0, `${result.stderr}${result.stdout}`);
+		assert.doesNotMatch(`${result.stderr}${result.stdout}`, /would install/);
+	} finally {
+		rmSync(miseDirectory, { force: true, recursive: true });
+	}
+});
+
 test("container build consumes committed clients without regeneration", () => {
 	const dockerfile = readFileSync(
 		new URL("../Dockerfile", import.meta.url),
 		"utf8",
 	);
 	assert.doesNotMatch(dockerfile, /turbo run generate|generate-openapi/);
+	assert.match(dockerfile, /^FROM node:24\.13\.1-alpine AS frontend-builder/m);
+	assert.match(dockerfile, /^FROM golang:1\.26\.6-alpine AS builder/m);
 	assert.match(dockerfile, /turbo run build --filter=web --filter=@repo\/docs/);
 });

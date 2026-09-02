@@ -69,6 +69,16 @@ pnpm install \
   --ignore-scripts \
   --store-dir "${CLEAN_ROOM_ROOT}/cache/pnpm-store"
 pnpm --filter web exec playwright install chromium --with-deps
+
+if [[ -z "${EARTHLY_AUDIO_MPV_PATH:-}" ]]; then
+  mkdir -p "${CLEAN_ROOM_ROOT}/build/mpv"
+  MPV_OUTPUT_DIRECTORY="${CLEAN_ROOM_ROOT}/tools/mpv" \
+    MPV_BUILD_LOG="${CLEAN_ROOM_ROOT}/logs/mpv-build.log" \
+    RUNNER_TEMP="${CLEAN_ROOM_ROOT}/build/mpv" \
+    bash scripts/build-pinned-mpv.sh
+  export EARTHLY_AUDIO_MPV_PATH="${CLEAN_ROOM_ROOT}/tools/mpv/mpv"
+fi
+
 mise run --force --task-cache=off ci:full
 docker buildx create \
   --name "${CONTAINER_BUILDER_NAME}" \
