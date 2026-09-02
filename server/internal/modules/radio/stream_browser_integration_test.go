@@ -59,7 +59,10 @@ func TestBrowserHLSProxyIntegration(t *testing.T) {
 	musicServer := httptest.NewServer(router)
 	defer musicServer.Close()
 
-	commandContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// CI runs Playwright with one retry, so the deadline must cover two
+	// attempts plus browser startup and report flushing before diagnostics
+	// are written.
+	commandContext, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	command := exec.CommandContext(commandContext, "pnpm", "exec", "playwright", "test", "e2e/radio-hls-proxy.spec.ts", "--config=playwright.hls.config.ts")
 	command.Dir = filepath.Clean(filepath.Join("..", "..", "..", "..", "web"))
