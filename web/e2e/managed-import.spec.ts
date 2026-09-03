@@ -21,9 +21,9 @@ import {
 // unique run identifier so accumulated e2e state from earlier runs never
 // collides with duplicate classification.
 //
-// Library Migration and Legacy Source Cleanup have no Web surface yet, so
-// those steps drive the versioned HTTP contract directly and verify the
-// user-visible result in the rendered Tracks page.
+// Library Migration and Legacy Source Cleanup are driven through the Settings
+// page; the versioned HTTP contract is only used to verify the resulting
+// library state, streams, and files on disk.
 
 test.describe.configure({ mode: "serial" });
 
@@ -596,95 +596,86 @@ test("Library Migration and optional Legacy Source Cleanup", async ({
 	).toHaveCount(0);
 	await page.keyboard.press("Escape");
 
-	const preview = await request.post("/api/v1/library-migrations/preview", {
-		headers: { "X-Migration-Preview": "1" },
-	});
-	expect(preview.status()).toBe(200);
-	const previewBody = (await preview.json()) as {
-		files: Array<{ trackId: string; state: string; errorReason?: string }>;
-	};
-	const previewFile = previewBody.files.find(
-		(file) => file.trackId === legacyTrackId,
+	// The Tracks page points at the Settings section that owns the migration.
+	await expect(page.getByTestId("legacy-migration-banner")).toBeVisible();
+	await page.getByRole("link", { name: "Open Library Migration" }).click();
+	const migration = page.getByRole("region", { name: "Library Migration" });
+	await expect(migration).toBeVisible({ timeout: 15_000 });
+	await expect(migration.getByTestId("legacy-track-count")).toContainText(
+		"Legacy Track",
 	);
-	expect(previewFile?.state, previewFile?.errorReason).toBe("accepted");
-	await expect(trackRow(page, LEGACY)).toBeVisible();
 
-	const stage = await request.post("/api/v1/library-migrations/stage", {
-		headers: { "X-Migration-Stage": "1" },
-	});
-	expect(stage.status()).toBe(200);
-	const stageBody = (await stage.json()) as {
-		files: Array<{
-			trackId: string;
-			state: string;
-			sourceSha256?: string;
-			pendingSha256?: string;
-		}>;
-	};
-	const staged = stageBody.files.find((file) => file.trackId === legacyTrackId);
-	expect(staged?.state).toBe("verified");
-	expect(staged?.sourceSha256).toBe(legacy.sha256);
-	expect(staged?.pendingSha256).toBe(legacy.sha256);
+	await migration.getByRole("button", { name: "Analyze library" }).click();
+	const analysis = migration.getByRole("table", { name: /^Analysis:/ });
+	await expect(analysis).toBeVisible({ timeout: 30_000 });
+	const legacyRow = analysis
+		.getByRole("row")
+		.filter({ has: page.getByText("legacy.mp3", { exact: true }) });
+	await expect(legacyRow).toContainText("Accepted");
+	await expect(
+		page.getByRole("button", { name: "Activate migrated Tracks…" }),
+	).toBeDisabled();
 
-	const cutover = await request.post("/api/v1/library-migrations/cutover", {
-		headers: { "X-Migration-Cutover": "1" },
+	await migration.getByRole("button", { name: "Copy and verify" }).click();
+	const copies = migration.getByRole("table", { name: /^Copies:/ });
+	await expect(copies).toBeVisible({ timeout: 30_000 });
+	await expect(
+		copies
+			.getByRole("row")
+			.filter({ has: page.getByText("legacy.mp3", { exact: true }) }),
+	).toContainText("Verified");
+	expect(existsSync(legacy.path)).toBe(true);
+
+	// Cutover needs its own confirmation that states the reference cleanup.
+	await migration
+		.getByRole("button", { name: "Activate migrated Tracks…" })
+		.click();
+	const cutoverDialog = page.getByRole("dialog", {
+		name: "Activate migrated Tracks?",
 	});
-	expect(cutover.status()).toBe(200);
-	const cutoverBody = (await cutover.json()) as {
-		files: Array<{
-			trackId: string;
-			state: string;
-			createdTrackId?: string;
-			contentSha256?: string;
-		}>;
-	};
-	const migrated = cutoverBody.files.find(
-		(file) => file.trackId === legacyTrackId,
+	await expect(cutoverDialog).toContainText(
+		"old Playlist, Queue, and snapshot references are dropped",
 	);
-	expect(migrated?.state).toBe("migrated");
-	expect(migrated?.contentSha256).toBe(legacy.sha256);
-	const migratedTrackId = migrated?.createdTrackId as string;
+	await cutoverDialog
+		.getByRole("button", { name: "Activate migrated Tracks" })
+		.click();
+	const cutoverTable = migration.getByRole("table", { name: /^Cutover:/ });
+	await expect(cutoverTable).toBeVisible({ timeout: 30_000 });
+	await expect(cutoverDialog).toHaveCount(0);
+	const migratedRow = cutoverTable
+		.getByRole("row")
+		.filter({ has: page.getByText("legacy.mp3", { exact: true }) });
+	await expect(migratedRow).toContainText("Migrated");
+	const migratedTrackId = ((await migratedRow.textContent()) ?? "").match(
+		/New Track ID ([0-9a-f-]{36})/,
+	)?.[1] as string;
 	expect(migratedTrackId).toMatch(/^[0-9a-f-]{36}$/);
 	expect(migratedTrackId).not.toBe(legacyTrackId);
+	const stream = await request.get(`/api/v1/tracks/${migratedTrackId}/stream`);
+	expect(stream.status()).toBe(200);
+	expect(sha256(await stream.body())).toBe(legacy.sha256);
 
-	// The rendered library shows the migrated Track exactly once, now managed.
+	// The rendered library shows the migrated Track exactly once, now managed,
+	// and the migration notice is gone.
 	await gotoTracks(page);
 	await expect(trackRow(page, LEGACY)).toHaveCount(1);
+	await expect(page.getByTestId("legacy-migration-banner")).toHaveCount(0);
 	const migratedTrack = await findTrack(request, LEGACY);
 	expect(migratedTrack.id).toBe(migratedTrackId);
 	expect(migratedTrack.sourceKind).toBe("managed");
 	expect(
 		(await request.get(`/api/v1/tracks/${legacyTrackId}/stream`)).status(),
 	).toBe(404);
-	const stream = await request.get(`/api/v1/tracks/${migratedTrackId}/stream`);
-	expect(stream.status()).toBe(200);
-	expect(sha256(await stream.body())).toBe(legacy.sha256);
 	await trackRow(page, LEGACY).click({ button: "right" });
 	await expect(
 		page.getByRole("menuitem", { name: "Delete track" }),
 	).toBeVisible();
 	await page.keyboard.press("Escape");
 
-	// Migration never deletes the source; cleanup is a separate confirmation.
+	// Migration never deletes the source; cleanup is a separate destructive
+	// confirmation on the Settings page whose count and size the server
+	// re-verifies. A stale confirmation is refused without touching files.
 	expect(existsSync(legacy.path)).toBe(true);
-	const cleanupPreview = await request.get(
-		"/api/v1/library-migrations/cleanup",
-	);
-	expect(cleanupPreview.status()).toBe(200);
-	const cleanupBody = (await cleanupPreview.json()) as {
-		files: Array<{
-			trackId: string;
-			state: string;
-			sizeBytes?: number;
-			contentSha256?: string;
-		}>;
-	};
-	const eligible = cleanupBody.files.find(
-		(file) => file.trackId === migratedTrackId,
-	);
-	expect(eligible?.state).toBe("eligible");
-	expect(eligible?.contentSha256).toBe(legacy.sha256);
-
 	const mismatch = await request.post("/api/v1/library-migrations/cleanup", {
 		headers: { "X-Migration-Cleanup": "1" },
 		data: { trackIds: [migratedTrackId], fileCount: 1, totalSizeBytes: 1 },
@@ -692,15 +683,27 @@ test("Library Migration and optional Legacy Source Cleanup", async ({
 	expect(mismatch.status()).toBe(409);
 	expect(existsSync(legacy.path)).toBe(true);
 
-	const cleanup = await request.post("/api/v1/library-migrations/cleanup", {
-		headers: { "X-Migration-Cleanup": "1" },
-		data: {
-			trackIds: [migratedTrackId],
-			fileCount: 1,
-			totalSizeBytes: eligible?.sizeBytes,
-		},
+	await page.goto("/settings");
+	await expect(migration).toBeVisible({ timeout: 15_000 });
+	await migration
+		.getByRole("button", { name: "Clean up legacy sources…" })
+		.click();
+	const cleanupDialog = page.getByRole("dialog", {
+		name: "Permanently delete legacy source files?",
 	});
-	expect(cleanup.status()).toBe(200);
+	await expect(cleanupDialog).toContainText("This cannot be undone");
+	await expect(cleanupDialog).toContainText("Files to delete");
+	await cleanupDialog
+		.getByRole("button", { name: "Delete legacy sources permanently" })
+		.click();
+	const cleanupTable = migration.getByRole("table", { name: /^Cleanup:/ });
+	await expect(cleanupTable).toBeVisible({ timeout: 30_000 });
+	await expect(
+		cleanupTable
+			.getByRole("row")
+			.filter({ has: page.getByText("legacy.mp3", { exact: true }) }),
+	).toContainText("Deleted");
+	await expect(cleanupDialog).toHaveCount(0);
 	expect(existsSync(legacy.path)).toBe(false);
 	expect(existsSync(legacyDirectory)).toBe(false);
 	expect(

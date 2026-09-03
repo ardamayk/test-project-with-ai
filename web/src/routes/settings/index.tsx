@@ -6,6 +6,7 @@ import { Button } from "#/components/ui/button";
 import { apiClient } from "#/lib/api";
 import { cn } from "#/lib/utils";
 import { themePresetOptions } from "#/themes/presets";
+import { LibraryMigrationSection } from "./-library-migration-section";
 
 const themeModes: ThemePreferences["mode"][] = ["light", "dark", "system"];
 
@@ -72,7 +73,7 @@ function SettingsPage() {
 				</div>
 			</section>
 
-			<section className="flex flex-col gap-4">
+			<section className="mb-8 flex flex-col gap-4">
 				<h2 className="font-medium text-sm">Appearance</h2>
 				<div className="flex flex-wrap gap-2">
 					{themeModes.map((mode) => (
@@ -90,6 +91,8 @@ function SettingsPage() {
 					))}
 				</div>
 			</section>
+
+			<LibraryMigrationSection />
 		</div>
 	);
 }

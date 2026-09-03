@@ -22,10 +22,14 @@ job; no extra CI wiring is needed.
    details.
 6. Permanent Track Deletion requires the destructive confirmation dialog;
    cancelling leaves the Track playable.
-7. Library Migration and optional Legacy Source Cleanup. These have no Web
-   surface yet, so the spec seeds an Indexed Legacy Track, drives the
-   versioned migration endpoints directly, and verifies the rendered Tracks
-   page before and after each step.
+7. Library Migration and optional Legacy Source Cleanup through the Settings
+   page (issue #128). The spec seeds an Indexed Legacy Track, follows the
+   Tracks-page notice to the Library Migration section, runs Analyze library,
+   Copy and verify, and the cutover confirmation dialog, and then the separate
+   destructive Legacy Source Cleanup dialog. The rendered Tracks page, the
+   migrated stream, and the files on disk are verified after each step; a
+   stale cleanup confirmation is sent directly to the endpoint to prove the
+   server refuses it.
 8. Keyboard access: Enter opens the modal, Tab stays trapped inside, Escape
    closes and returns focus to the opener, closing an uncommitted batch asks
    `window.confirm`, and accepting it deletes the batch and its staging files.
