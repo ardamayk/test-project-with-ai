@@ -19,6 +19,8 @@ import (
 )
 
 const MAX_SLUG_BYTES = 80
+const CANONICAL_LIBRARY_ROOT = "library"
+const MIGRATION_STORAGE_ROOT = ".migration"
 
 var slugSeparators = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -331,7 +333,7 @@ func (storage *Storage) VerifyPlacement(placement placedFiles, audioSHA256, artw
 
 func (storage *Storage) VerifyMigrationPlacement(placement placedFiles, identity commitIdentity, audioSHA256, artworkSHA256 string) (returnErr error) {
 	parts := strings.Split(filepath.Clean(placement.audioRelative), string(filepath.Separator))
-	if len(parts) != 4 || parts[0] != ".migration" ||
+	if len(parts) != 4 || parts[0] != MIGRATION_STORAGE_ROOT ||
 		!strings.HasSuffix(parts[1], "-"+identity.AlbumArtistID) ||
 		!strings.HasSuffix(parts[2], "-"+identity.AlbumID) ||
 		!strings.Contains(parts[3], "-"+identity.TrackID+".") {
@@ -384,8 +386,133 @@ func (storage *Storage) CleanupRecordedMigrationCopy(copy migrationCopyRecord, r
 			artworkErr = nil
 		}
 	}
-	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	directoryErr := removeEmptyDirectoriesUnder(root, filepath.Dir(placement.audioRelative), MIGRATION_STORAGE_ROOT)
 	return errors.Join(audioErr, artworkErr, directoryErr)
+}
+
+// PromoteMigrationCopy moves one verified Library Migration copy from its hidden
+// pending location to the Canonical Library Path. The move is restart-safe: a
+// copy that already reached the canonical location is verified in place instead
+// of renamed again, so a server restart between the move and the database
+// cutover cannot lose or duplicate managed bytes.
+func (storage *Storage) PromoteMigrationCopy(copy migrationCopyRecord, existingArtworkPath string) (_ placedFiles, returnErr error) {
+	recorded, recordedErr := storage.recordedMigrationPlacement(copy)
+	if recordedErr != nil {
+		return placedFiles{}, recordedErr
+	}
+	canonicalAudio := migrationCanonicalPath(recorded.audioRelative)
+	canonicalArtwork := migrationCanonicalPath(recorded.artworkRelative)
+	if existingArtworkPath != "" {
+		existingArtworkRelative, existingArtworkErr := storage.relativePath(existingArtworkPath)
+		if existingArtworkErr != nil {
+			return placedFiles{}, existingArtworkErr
+		}
+		canonicalArtwork = existingArtworkRelative
+	}
+	albumDirectory := filepath.Dir(canonicalAudio)
+	root, openErr := storage.openRoot()
+	if openErr != nil {
+		return placedFiles{}, openErr
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	if ensureErr := ensureDirectory(root, storage.root, albumDirectory, 0o750); ensureErr != nil {
+		return placedFiles{}, ensureErr
+	}
+	audioRelative, audioErr := storage.promoteMigrationFile(root, recorded.audioRelative, canonicalAudio, copy.PendingSHA256, "pending Library Migration audio")
+	if audioErr != nil {
+		return placedFiles{}, errors.Join(audioErr, storage.cleanupFailedMigrationPromotion(root, albumDirectory, recorded.audioRelative))
+	}
+	artworkRelative := canonicalArtwork
+	if existingArtworkPath == "" {
+		promotedArtwork, artworkErr := storage.promoteMigrationFile(root, recorded.artworkRelative, canonicalArtwork, copy.ArtworkSHA256, "pending Library Migration artwork")
+		if artworkErr != nil {
+			return placedFiles{}, errors.Join(artworkErr, storage.cleanupFailedMigrationPromotion(root, albumDirectory, recorded.audioRelative))
+		}
+		artworkRelative = promotedArtwork
+	}
+	if verifyErr := verifyRootedFileHash(root, audioRelative, copy.PendingSHA256); verifyErr != nil {
+		return placedFiles{}, fmt.Errorf("verify canonical Library Migration Track: %w", verifyErr)
+	}
+	if verifyErr := verifyRootedFileHash(root, artworkRelative, copy.ArtworkSHA256); verifyErr != nil {
+		return placedFiles{}, fmt.Errorf("verify canonical Library Migration Album Artwork: %w", verifyErr)
+	}
+	directoryErr := removeEmptyDirectoriesUnder(root, filepath.Dir(recorded.audioRelative), MIGRATION_STORAGE_ROOT)
+	if directoryErr != nil {
+		return placedFiles{}, directoryErr
+	}
+	return placedFiles{
+		AudioPath:       storage.absolutePath(audioRelative),
+		ArtworkPath:     storage.absolutePath(artworkRelative),
+		audioRelative:   audioRelative,
+		artworkRelative: artworkRelative,
+	}, nil
+}
+
+// RemovePendingMigrationArtwork deletes the redundant pending artwork of a cut
+// over copy whose Album Artwork was already registered at the canonical
+// location. It runs only after the copy row is gone, once no other verified
+// copy references the file, and tolerates an artwork that earlier siblings
+// already consumed.
+func (storage *Storage) RemovePendingMigrationArtwork(copy migrationCopyRecord) (returnErr error) {
+	recorded, err := storage.recordedMigrationPlacement(copy)
+	if err != nil {
+		return err
+	}
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	artworkErr := removeRootedFile(root, recorded.artworkRelative, "pending Library Migration artwork")
+	if errors.Is(artworkErr, os.ErrNotExist) {
+		artworkErr = nil
+	}
+	directoryErr := removeEmptyDirectoriesUnder(root, filepath.Dir(recorded.audioRelative), MIGRATION_STORAGE_ROOT)
+	return errors.Join(artworkErr, directoryErr)
+}
+
+// cleanupFailedMigrationPromotion removes directories left empty by a failed
+// promotion. Files that already reached the canonical location are restored to
+// the pending location or adopted by a later cutover run.
+func (storage *Storage) cleanupFailedMigrationPromotion(root *os.Root, albumDirectory, pendingAudioRelative string) error {
+	canonicalAudioRelative := filepath.Join(albumDirectory, filepath.Base(pendingAudioRelative))
+	var restoreErr error
+	if _, statErr := root.Stat(canonicalAudioRelative); statErr == nil {
+		restoreErr = restoreRootedFile(root, canonicalAudioRelative, pendingAudioRelative)
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		restoreErr = fmt.Errorf("inspect canonical Library Migration audio: %w", statErr)
+	}
+	canonicalErr := removeEmptyDirectoriesUnder(root, albumDirectory, CANONICAL_LIBRARY_ROOT)
+	pendingErr := removeEmptyDirectoriesUnder(root, filepath.Dir(pendingAudioRelative), MIGRATION_STORAGE_ROOT)
+	return errors.Join(restoreErr, canonicalErr, pendingErr)
+}
+
+// promoteMigrationFile renames one pending Library Migration file to its
+// canonical location, tolerating a file that a previous attempt already moved.
+func (storage *Storage) promoteMigrationFile(root *os.Root, pendingRelative, canonicalRelative, expectedHash, description string) (string, error) {
+	if _, err := root.Stat(canonicalRelative); err == nil {
+		if verifyErr := verifyRootedFileHash(root, canonicalRelative, expectedHash); verifyErr != nil {
+			return "", fmt.Errorf("%w: canonical %s already exists with different bytes", ErrUnsafeStoragePath, description)
+		}
+		return canonicalRelative, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect canonical %s: %w", description, err)
+	}
+	if err := rejectSymlinks(root, filepath.Dir(pendingRelative)); err != nil {
+		return "", fmt.Errorf("%w: cannot resolve %s: %v", ErrUnsafeStoragePath, description, err)
+	}
+	if err := root.Rename(pendingRelative, canonicalRelative); err != nil {
+		return "", fmt.Errorf("move %s to the Canonical Library Path: %w", description, err)
+	}
+	return canonicalRelative, nil
+}
+
+// migrationCanonicalPath converts a validated pending Library Migration path
+// into its Canonical Library Path by swapping the hidden root segment.
+func migrationCanonicalPath(pendingRelative string) string {
+	parts := strings.Split(filepath.Clean(pendingRelative), string(filepath.Separator))
+	parts[0] = CANONICAL_LIBRARY_ROOT
+	return filepath.Join(parts...)
 }
 
 func (storage *Storage) recordedMigrationPlacement(copy migrationCopyRecord) (placedFiles, error) {
@@ -398,7 +525,7 @@ func (storage *Storage) recordedMigrationPlacement(copy migrationCopyRecord) (pl
 		return placedFiles{}, err
 	}
 	audioParts := strings.Split(filepath.Clean(audioRelative), string(filepath.Separator))
-	if len(audioParts) != 4 || audioParts[0] != ".migration" ||
+	if len(audioParts) != 4 || audioParts[0] != MIGRATION_STORAGE_ROOT ||
 		!strings.HasSuffix(audioParts[1], "-"+copy.PendingAlbumArtistID) ||
 		!strings.HasSuffix(audioParts[2], "-"+copy.PendingAlbumID) ||
 		!strings.Contains(audioParts[3], "-"+copy.PendingTrackID+".") ||
@@ -439,7 +566,7 @@ func (storage *Storage) placementFromJournal(journal commitJournal) (placedFiles
 func (storage *Storage) planPlacement(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placedFiles, error) {
 	metadata := inspection.Metadata
 	albumRelative := filepath.Join(
-		"library",
+		CANONICAL_LIBRARY_ROOT,
 		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
 		slug(metadata.Album)+"-"+identity.AlbumID,
 	)
@@ -457,7 +584,7 @@ func (storage *Storage) planPlacement(stagedPath string, inspection library.Medi
 func (storage *Storage) planMigrationPlacement(stagedPath string, inspection library.MediaInspection, identity commitIdentity) (placedFiles, error) {
 	metadata := inspection.Metadata
 	albumRelative := filepath.Join(
-		".migration",
+		MIGRATION_STORAGE_ROOT,
 		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
 		slug(metadata.Album)+"-"+identity.AlbumID,
 	)
@@ -490,7 +617,7 @@ func (storage *Storage) existingCanonicalAlbum(identity commitIdentity, inspecti
 	}
 	albumRelative := filepath.Dir(artworkRelative)
 	parts := strings.Split(filepath.Clean(albumRelative), string(filepath.Separator))
-	isCanonical := len(parts) == 3 && parts[0] == "library" &&
+	isCanonical := len(parts) == 3 && parts[0] == CANONICAL_LIBRARY_ROOT &&
 		strings.HasSuffix(parts[1], "-"+identity.AlbumArtistID) &&
 		strings.HasSuffix(parts[2], "-"+identity.AlbumID) &&
 		filepath.Base(artworkRelative) == "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType)
@@ -541,7 +668,7 @@ func (storage *Storage) Rollback(placement placedFiles) (returnErr error) {
 		}
 	}
 	restoreErr := restoreRootedFile(root, placement.audioRelative, placement.stagedRelative)
-	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	directoryErr := removeEmptyDirectoriesUnder(root, filepath.Dir(placement.audioRelative), CANONICAL_LIBRARY_ROOT)
 	return errors.Join(removeArtworkErr, restoreErr, directoryErr)
 }
 
@@ -558,7 +685,7 @@ func (storage *Storage) CleanupPreparedPlacement(placement placedFiles) (returnE
 			artworkErr = nil
 		}
 	}
-	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	directoryErr := removeEmptyDirectoriesUnder(root, filepath.Dir(placement.audioRelative), CANONICAL_LIBRARY_ROOT)
 	return errors.Join(artworkErr, directoryErr)
 }
 
@@ -796,20 +923,22 @@ func writeRootedArtwork(root *os.Root, absoluteRoot, path string, data []byte, e
 	return true, nil
 }
 
-func removeEmptyCanonicalDirectories(root *os.Root, directoryPath string) (returnErr error) {
-	for directoryPath != "." && directoryPath != "library" {
+// removeEmptyDirectoriesUnder removes every empty directory from
+// directoryPath upwards, stopping at the storage root or at boundary.
+func removeEmptyDirectoriesUnder(root *os.Root, directoryPath, boundary string) (returnErr error) {
+	for directoryPath != "." && directoryPath != boundary {
 		directory, err := root.Open(directoryPath)
 		if errors.Is(err, os.ErrNotExist) {
 			directoryPath = filepath.Dir(directoryPath)
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("open canonical directory for rollback: %w", err)
+			return fmt.Errorf("open Managed Storage directory %q for cleanup: %w", directoryPath, err)
 		}
 		entries, readErr := directory.ReadDir(1)
-		closeErr := closeManagedStorageFile(directory, "canonical rollback directory")
+		closeErr := closeManagedStorageFile(directory, "Managed Storage cleanup directory")
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return errors.Join(fmt.Errorf("inspect canonical directory for rollback: %w", readErr), closeErr)
+			return errors.Join(fmt.Errorf("inspect Managed Storage directory %q for cleanup: %w", directoryPath, readErr), closeErr)
 		}
 		if closeErr != nil {
 			return closeErr
@@ -818,7 +947,7 @@ func removeEmptyCanonicalDirectories(root *os.Root, directoryPath string) (retur
 			return nil
 		}
 		if err := root.Remove(directoryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove empty canonical directory: %w", err)
+			return fmt.Errorf("remove empty Managed Storage directory %q: %w", directoryPath, err)
 		}
 		directoryPath = filepath.Dir(directoryPath)
 	}

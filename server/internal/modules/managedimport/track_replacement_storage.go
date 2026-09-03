@@ -298,7 +298,7 @@ func (storage *Storage) RollbackReplacement(placement replacementPlacement) (ret
 		}
 		artworkErr = removeRootedFile(root, createdRelative, "uncommitted replacement Album Artwork")
 	}
-	directoryErr := removeEmptyCanonicalDirectories(root, filepath.Dir(placement.audioRelative))
+	directoryErr := removeEmptyDirectoriesUnder(root, filepath.Dir(placement.audioRelative), CANONICAL_LIBRARY_ROOT)
 	return errors.Join(swapErr, pendingErr, artworkErr, directoryErr)
 }
 
@@ -359,5 +359,5 @@ func (storage *Storage) CompleteReplacementFiles(ctx context.Context, journal re
 		return deletedFiles, errors.Join(audioErr, err)
 	}
 	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
-	return deletedFiles, errors.Join(audioErr, removeEmptyCanonicalDirectories(root, filepath.Dir(placement.previousAudioRelative)))
+	return deletedFiles, errors.Join(audioErr, removeEmptyDirectoriesUnder(root, filepath.Dir(placement.previousAudioRelative), CANONICAL_LIBRARY_ROOT))
 }

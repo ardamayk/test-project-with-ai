@@ -369,6 +369,36 @@ paths:
           $ref: "#/components/responses/Conflict"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/library-migrations/cutover:
+    post:
+      tags: [imports]
+      operationId: cutoverLibraryMigration
+      summary: Activate verified migration copies as Managed Tracks and remove the migrated Legacy Tracks
+      description: >-
+        Re-runs the migration preview and staging, then activates every verified
+        copy under a new stable Track ID. The corresponding Legacy Track is removed
+        only after managed activation succeeds, and its old Playlist, Queue, and
+        snapshot references are dropped rather than remapped. The final report
+        distinguishes migrated, rejected, failed, and not-attempted files.
+      parameters:
+        - name: X-Migration-Cutover
+          in: header
+          required: true
+          description: Non-simple application header required to confirm explicit migration cutover
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: Per-file result of cutting over the verified Library Migration copies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryMigrationCutover"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/import-batches:
     post:
       tags: [imports]
@@ -1794,6 +1824,54 @@ components:
         pendingSha256:
           type: string
           pattern: "^[0-9a-f]{64}$"
+        errorCode:
+          type: string
+        errorField:
+          type: string
+        errorReason:
+          type: string
+    LibraryMigrationCutover:
+      type: object
+      required: [migratedCount, rejectedCount, failedCount, notAttemptedCount, files]
+      properties:
+        migratedCount:
+          type: integer
+          minimum: 0
+        rejectedCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        notAttemptedCount:
+          type: integer
+          minimum: 0
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryMigrationCutoverFile"
+    LibraryMigrationCutoverFile:
+      type: object
+      required: [trackId, originalFilename, state]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+          description: Legacy Track that the migration source was seeded from.
+        originalFilename:
+          type: string
+          description: Display-only basename of the existing Legacy Track source.
+        state:
+          type: string
+          enum: [migrated, rejected, failed, not_attempted]
+        createdTrackId:
+          type: string
+          format: uuid
+          description: New stable Managed Track ID active after the cutover.
+        contentSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Verified full-file hash of the activated Managed Track.
         errorCode:
           type: string
         errorField:

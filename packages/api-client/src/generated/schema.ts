@@ -265,6 +265,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library-migrations/cutover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate verified migration copies as Managed Tracks and remove the migrated Legacy Tracks
+         * @description Re-runs the migration preview and staging, then activates every verified copy under a new stable Track ID. The corresponding Legacy Track is removed only after managed activation succeeds, and its old Playlist, Queue, and snapshot references are dropped rather than remapped. The final report distinguishes migrated, rejected, failed, and not-attempted files.
+         */
+        post: operations["cutoverLibraryMigration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches": {
         parameters: {
             query?: never;
@@ -966,6 +986,34 @@ export interface components {
             pendingTrackId?: string;
             sourceSha256?: string;
             pendingSha256?: string;
+            errorCode?: string;
+            errorField?: string;
+            errorReason?: string;
+        };
+        LibraryMigrationCutover: {
+            migratedCount: number;
+            rejectedCount: number;
+            failedCount: number;
+            notAttemptedCount: number;
+            files: components["schemas"]["LibraryMigrationCutoverFile"][];
+        };
+        LibraryMigrationCutoverFile: {
+            /**
+             * Format: uuid
+             * @description Legacy Track that the migration source was seeded from.
+             */
+            trackId: string;
+            /** @description Display-only basename of the existing Legacy Track source. */
+            originalFilename: string;
+            /** @enum {string} */
+            state: "migrated" | "rejected" | "failed" | "not_attempted";
+            /**
+             * Format: uuid
+             * @description New stable Managed Track ID active after the cutover.
+             */
+            createdTrackId?: string;
+            /** @description Verified full-file hash of the activated Managed Track. */
+            contentSha256?: string;
             errorCode?: string;
             errorField?: string;
             errorReason?: string;
@@ -1994,6 +2042,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryMigrationStage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    cutoverLibraryMigration: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Non-simple application header required to confirm explicit migration cutover */
+                "X-Migration-Cutover": "1";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-file result of cutting over the verified Library Migration copies */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMigrationCutover"];
                 };
             };
             403: components["responses"]["Forbidden"];
