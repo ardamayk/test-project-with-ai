@@ -17,17 +17,18 @@ import (
 )
 
 const (
-	LEGACY_MIGRATION_VERSION      = 13
-	STRICT_IDENTITY_VERSION       = 14
-	BACKFILL_MIGRATION_VERSION    = 15
-	MANAGED_IMPORT_VERSION        = 16
-	VALIDATION_PROGRESS_VERSION   = 17
-	IMPORT_CLIENT_FILE_VERSION    = 19
-	COMMIT_JOURNAL_VERSION        = 20
-	IMPORT_HISTORY_VERSION        = 21
-	LEGACY_MIGRATION_COPY_VERSION = 22
-	TRACK_DELETION_VERSION        = 23
-	TRACK_REPLACEMENT_VERSION     = 24
+	LEGACY_MIGRATION_VERSION           = 13
+	STRICT_IDENTITY_VERSION            = 14
+	BACKFILL_MIGRATION_VERSION         = 15
+	MANAGED_IMPORT_VERSION             = 16
+	VALIDATION_PROGRESS_VERSION        = 17
+	IMPORT_CLIENT_FILE_VERSION         = 19
+	COMMIT_JOURNAL_VERSION             = 20
+	IMPORT_HISTORY_VERSION             = 21
+	LEGACY_MIGRATION_COPY_VERSION      = 22
+	TRACK_DELETION_VERSION             = 23
+	TRACK_REPLACEMENT_VERSION          = 24
+	MIGRATION_CUTOVER_RECOVERY_VERSION = 25
 )
 
 func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
@@ -114,6 +115,41 @@ func TestTrackReplacementMigrationAppliesAndRollsBack(t *testing.T) {
 	}
 	assertMigrationVersion(t, sqlDB, TRACK_DELETION_VERSION)
 	assertTableMissing(t, sqlDB, "managed_track_replacements")
+}
+
+func TestLegacyMigrationCutoverRecoveryMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, TRACK_REPLACEMENT_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	if _, err := sqlDB.Exec(`
+		INSERT INTO legacy_migration_copies (
+			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
+			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
+			pending_sha256, artwork_sha256, inspection_json, status
+		) VALUES (
+			'track-1', 'pending-track', 'pending-album', 'pending-artist', '/music/track.flac',
+			'/managed/.migration/track.flac', '/managed/.migration/cover.png',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'0000000000000000000000000000000000000000000000000000000000000000',
+			'2000000000000000000000000000000000000000000000000000000000000000',
+			'{}', 'verified'
+		)`); err != nil {
+		t.Fatalf("store verified Legacy Migration copy: %v", err)
+	}
+	if err := goose.UpTo(sqlDB, migrationsDir(t), MIGRATION_CUTOVER_RECOVERY_VERSION); err != nil {
+		t.Fatalf("apply Legacy Migration cutover recovery migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, MIGRATION_CUTOVER_RECOVERY_VERSION)
+	assertTextValue(t, sqlDB, `SELECT phase FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "verified")
+	if _, err := sqlDB.Exec(`UPDATE legacy_migration_copies SET phase = 'promoted' WHERE source_track_id = 'track-1'`); err != nil {
+		t.Fatalf("promote Legacy Migration copy phase: %v", err)
+	}
+	assertExecFails(t, sqlDB, `UPDATE legacy_migration_copies SET phase = 'unknown' WHERE source_track_id = 'track-1'`, "CHECK constraint failed")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Legacy Migration cutover recovery migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, TRACK_REPLACEMENT_VERSION)
+	assertExecFails(t, sqlDB, `SELECT phase FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "no such column: phase")
 }
 
 func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {

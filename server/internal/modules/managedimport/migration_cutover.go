@@ -160,13 +160,25 @@ func (service *Service) activateMigrationCandidate(ctx context.Context, source l
 		}
 		removePendingArtwork = exclusive
 	}
+	// Record the promotion before any file moves so a restart can restore an
+	// interrupted cutover deterministically, mirroring the Managed Import
+	// commit journal.
+	if err := service.store.MarkMigrationCopyPromoted(ctx, copy.SourceTrackID); err != nil {
+		return file, err
+	}
 	placement, err := service.storage.PromoteMigrationCopy(copy, existingArtworkPath)
 	if err != nil {
-		return file, err
+		return file, service.rollbackPromotedMigrationCopy(ctx, copy, existingArtworkPath == "", err)
+	}
+	if hookErr := service.afterMigrationPhase(MIGRATION_PHASE_PROMOTED); hookErr != nil {
+		return file, hookErr
 	}
 	invalidations, err := service.store.ActivateMigrationCopy(ctx, copy, inspection, placement, existingArtworkPath)
 	if err != nil {
-		return file, err
+		return file, service.rollbackPromotedMigrationCopy(ctx, copy, existingArtworkPath == "", err)
+	}
+	if hookErr := service.afterMigrationPhase(MIGRATION_PHASE_DATABASE_COMMITTED); hookErr != nil {
+		return file, hookErr
 	}
 	if removePendingArtwork {
 		if cleanupErr := service.storage.RemovePendingMigrationArtwork(copy); cleanupErr != nil {
@@ -178,6 +190,23 @@ func (service *Service) activateMigrationCandidate(ctx context.Context, source l
 	file.CreatedTrackID = copy.PendingTrackID
 	file.ContentSHA256 = copy.PendingSHA256
 	return file, nil
+}
+
+// rollbackPromotedMigrationCopy undoes a promotion whose cutover transaction
+// did not commit: the canonical bytes return to the pending location and the
+// copy is restored to the verified phase so a later run can promote it again
+// without duplicating files or Tracks.
+func (service *Service) rollbackPromotedMigrationCopy(ctx context.Context, copy migrationCopyRecord, restoreArtwork bool, cause error) error {
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
+	defer cancel()
+	restoreErr := service.storage.RestorePromotedMigrationCopy(copy, restoreArtwork)
+	reason := fmt.Sprintf("Library Migration cutover rolled back: %v", cause)
+	if restoreErr != nil {
+		reason = restoreErr.Error()
+		restoreErr = errors.Join(restoreErr, service.storage.CleanupRecordedMigrationCopy(copy, false))
+	}
+	recordErr := service.store.RestorePromotedMigrationCopyRecord(recoveryCtx, copy.SourceTrackID, reason)
+	return errors.Join(cause, restoreErr, recordErr)
 }
 
 func migrationAlbumArtworkConflict() *ValidationError {
