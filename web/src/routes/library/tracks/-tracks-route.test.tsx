@@ -5,11 +5,13 @@ import {
 	fireEvent,
 	render,
 	screen,
+	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TracksPage } from "./-tracks-page";
 
 const mocks = vi.hoisted(() => ({
+	getHealth: vi.fn(),
 	listTracks: vi.fn(),
 	listImportHistory: vi.fn(),
 	listPlaylists: vi.fn(),
@@ -53,6 +55,7 @@ const libraryTracks = [
 
 vi.mock("#/lib/api", () => ({
 	apiClient: {
+		getHealth: mocks.getHealth,
 		listTracks: mocks.listTracks,
 		listImportHistory: mocks.listImportHistory,
 		listPlaylists: mocks.listPlaylists,
@@ -256,6 +259,16 @@ function expectUploadAttempts(jobId: string, count: number) {
 
 describe("tracks route", () => {
 	beforeEach(() => {
+		mocks.getHealth.mockReset();
+		mocks.getHealth.mockResolvedValue({
+			status: "ok",
+			version: "test",
+			capabilities: [
+				"api.v1",
+				"managed-import.v1",
+				"managed-import-batches.v1",
+			],
+		});
 		mocks.listTracks.mockReset();
 		mocks.listImportHistory.mockReset();
 		mocks.createManagedImportJob.mockReset();
@@ -384,6 +397,45 @@ describe("tracks route", () => {
 		Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 		vi.useRealTimers();
 		cleanup();
+	});
+
+	it("disables Import Music when the Music Server lacks the Managed Import capability", async () => {
+		mocks.getHealth.mockResolvedValue({
+			status: "ok",
+			version: "legacy",
+			capabilities: ["api.v1", "future.unknown-feature.v2"],
+		});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+
+		const importButton = screen.getByRole("button", { name: "Import Music" });
+		await waitFor(() =>
+			expect(importButton.hasAttribute("disabled")).toBe(true),
+		);
+		expect(importButton.getAttribute("title")).toContain("Managed Import");
+		fireEvent.click(importButton);
+		expect(screen.queryByRole("heading", { name: "Import Music" })).toBeNull();
+		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
+	});
+
+	it("keeps Import Music available when the Music Server advertises extra unknown capabilities", async () => {
+		mocks.getHealth.mockResolvedValue({
+			status: "ok",
+			version: "newer",
+			capabilities: [
+				"api.v1",
+				"managed-import.v1",
+				"future.unknown-feature.v2",
+			],
+		});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		await waitFor(() => expect(mocks.getHealth).toHaveBeenCalled());
+
+		const importButton = screen.getByRole("button", { name: "Import Music" });
+		expect(importButton.hasAttribute("disabled")).toBe(false);
+		fireEvent.click(importButton);
+		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
 	});
 
 	it("keeps track search in the header and debounces API queries", async () => {

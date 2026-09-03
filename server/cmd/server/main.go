@@ -11,19 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ardam/navidrome-replacement/server/internal/api"
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/db"
-	"github.com/ardam/navidrome-replacement/server/internal/modules"
-	docsmodule "github.com/ardam/navidrome-replacement/server/internal/modules/docs"
-	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
-	"github.com/ardam/navidrome-replacement/server/internal/modules/managedimport"
-	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
-	"github.com/ardam/navidrome-replacement/server/internal/modules/playlists"
-	"github.com/ardam/navidrome-replacement/server/internal/modules/preferences"
-	"github.com/ardam/navidrome-replacement/server/internal/modules/radio"
-	"github.com/ardam/navidrome-replacement/server/internal/staticassets"
-	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 )
@@ -68,36 +57,12 @@ func main() {
 		}
 	}()
 
-	prefStore := preferences.NewStore(sqlDB)
-	prefModule := preferences.NewModule(prefStore)
-	libModule := library.NewModule(sqlDB, cfg)
-	trackAccess := libModule.TrackAccess()
-	queueEvents := playback.NewQueueEventBroker()
-	importModule := managedimport.NewModule(sqlDB, cfg, library.NewMediaInspector(), queueEvents)
-	playModule := playback.NewModule(sqlDB, trackAccess, queueEvents)
-	playlistModule := playlists.NewModule(sqlDB, trackAccess)
-	radioModule := radio.NewModule(sqlDB, cfg)
-	docsModule := docsmodule.NewModule()
-	apiHandler := api.NewHandler(cfg)
+	assembled := newAssembledServer(cfg, sqlDB)
+	registry := assembled.registry
 
-	registry := modules.NewRegistry(libModule, importModule, playModule, playlistModule, radioModule, prefModule, docsModule)
+	server := newHTTPServer(cfg.Addr, assembled.router)
 
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.ClientIPFromRemoteAddr)
-	r.Use(middleware.Recoverer)
-	r.Use(streamAwareTimeout(60 * time.Second))
-	r.Use(corsHandler(cfg.CORSOrigins))
-
-	r.Get("/api/v1/health", apiHandler.GetHealth)
-	r.Get("/api/v1/me", apiHandler.GetMe)
-	registry.RegisterAll(r)
-
-	r.Mount("/", staticassets.WebHandler())
-
-	server := newHTTPServer(cfg.Addr, r)
-
-	if err := importModule.Start(ctx); err != nil {
+	if err := assembled.importModule.Start(ctx); err != nil {
 		slog.Error("Managed Import startup cleanup failed", "error", err)
 	}
 
@@ -122,7 +87,7 @@ func corsHandler(allowedOrigins []string) func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete", "X-Track-Replacement"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Cleanup", "X-Migration-Cutover", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete", "X-Track-Replacement"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})

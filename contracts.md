@@ -35,7 +35,9 @@ All error responses use:
 }
 ```
 
-HTTP status codes follow standard semantics (400, 401, 404, 500).
+`code` is the stable machine-readable identifier clients branch on; `message` is for people and may change. `error` duplicates `code` for older clients. Strict Import Profile rejections add `field` (the offending tag or stream, such as `TITLE` or `artwork`) and `reason` (the actionable repair hint) so a Playback Client can render precise per-file feedback.
+
+HTTP status codes follow standard semantics (400, 401, 403, 404, 408, 409, 410, 413, 422, 500, 507).
 
 ## Auth (v1 stub)
 
@@ -91,14 +93,30 @@ mise run generate
 
 `packages/api-client/src/index.ts` may define convenience wrappers, but exported domain types should alias generated schemas rather than re-declaring fields.
 
-## CI drift check
+## Server Capabilities
 
-Generated files are committed. CI runs:
+`GET /api/v1/health` advertises named behaviors (ADR 0006). Clients gate optional features on the exact name and ignore unknown entries; the Desktop Client refuses to connect when a required capability is absent.
 
-```bash
-mise run generate
-git diff --exit-code
-```
+| Capability | Behavior |
+| --- | --- |
+| `api.v1` | The versioned `/api/v1` surface |
+| `playback.queue-events.v1` | Shared Queue server-sent events |
+| `managed-import.v1` | Single-file Managed Import (upload, Import Preview, confirm) |
+| `managed-import-batches.v1` | Multi-file Import Batches with per-file status and duplicate decisions |
+| `managed-track-deletion.v1` | Permanent Track Deletion preview and confirmation |
+| `managed-track-replacement.v1` | Explicit Track Replacement |
+| `library-migration.v1` | Library Migration preview, stage, cutover, and Legacy Source Cleanup |
+
+`@repo/api-client` exports one constant per capability plus `hasServerCapability` and `missingServerCapabilities`; the Web Client's `useServerCapabilityState` hook wraps them.
+
+## Contract verification
+
+Generated files are committed (ADR 0013). `mise run generate:check` regenerates into a temporary directory and fails when either committed output is stale. Go tests additionally verify the contract without UI journeys:
+
+- `server/internal/api/contract_test.go` proves the spec embedded in the binary matches `packages/contracts/openapi.yaml` and that every operation has a unique `operationId`.
+- `server/cmd/server/contract_test.go` walks the assembled router: every documented operation is mounted, every mounted `/api/v1` route is documented, every advertised capability is described in `HealthResponse`, every documented request header passes CORS preflight, and the deprecated scan routes keep their compatibility behavior.
+- `testutil.ServeContractRequest` validates responses against the embedded spec; the Managed Import, Track Replacement, Permanent Track Deletion, and Library Migration contract tests exercise binary uploads and structured errors at the HTTP seam.
+- `packages/api-client/src/contract.test.ts` pins the generated schemas, upload media types, structured errors, and capability negotiation on the client side.
 
 ## Swagger UI
 

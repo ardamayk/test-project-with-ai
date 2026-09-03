@@ -5,7 +5,9 @@ import {
   subscribeQueueEvents,
 } from './queue-events';
 
+export * from './capabilities';
 export type { QueueEvent, QueueEventSource } from './queue-events';
+export { QUEUE_EVENTS_CAPABILITY } from './queue-events';
 
 export type ApiClientConfig = {
   baseUrl: string;
