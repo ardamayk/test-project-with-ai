@@ -604,6 +604,20 @@ paths:
           schema:
             type: string
           description: Display-only client filename; never used as a storage path.
+        - name: X-Import-Filename-Encoding
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [url]
+          description: >-
+            Set to url when X-Import-Filename is percent-encoded so non-ASCII
+            filenames survive HTTP header transport. Absent means the header is
+            sent verbatim.
+      description: >-
+        The request media type is advisory only. The Music Server detects the
+        Source Audio Format from the uploaded bytes and never trusts the
+        declared Content-Type or the client filename extension.
       requestBody:
         required: true
         content:
@@ -616,6 +630,22 @@ paths:
               type: string
               format: binary
           audio/wav:
+            schema:
+              type: string
+              format: binary
+          audio/mpeg:
+            schema:
+              type: string
+              format: binary
+          audio/mp4:
+            schema:
+              type: string
+              format: binary
+          audio/ogg:
+            schema:
+              type: string
+              format: binary
+          audio/opus:
             schema:
               type: string
               format: binary
@@ -1181,6 +1211,57 @@ paths:
                 $ref: "#/components/schemas/RadioStation"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /api/v1/radio/preview:
+    post:
+      tags: [radio]
+      operationId: previewRadioStation
+      summary: Stream a Radio Browser search result before importing it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RadioImportRequest"
+      responses:
+        "200":
+          description: Radio preview stream
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+            application/x-mpegurl:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "415":
+          description: DRM-protected HLS is unsupported
+        "502":
+          description: Upstream radio resource failed
+        "503":
+          description: Radio streaming is unavailable on this Music Server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/radio/preview/{stationUuid}/stream:
     get:
       tags: [radio]
@@ -1456,12 +1537,17 @@ components:
           items:
             type: string
           description: >-
-            Named server behaviors supported by this release. Queue event streaming
+            Named server behaviors supported by this release. The versioned
+            /api/v1 surface itself is advertised as api.v1. Queue event streaming
             is advertised as playback.queue-events.v1 and the first strict FLAC
             Managed Import tracer bullet as managed-import.v1. Multi-file Managed
             Import Batches are advertised as managed-import-batches.v1, Permanent
-            Track Deletion as managed-track-deletion.v1, and explicit Track
-            Replacement as managed-track-replacement.v1.
+            Track Deletion as managed-track-deletion.v1, explicit Track
+            Replacement as managed-track-replacement.v1, and the explicit
+            Library Migration workflow (preview, stage, cutover, and Legacy
+            Source Cleanup) as library-migration.v1. Clients gate optional
+            behavior on the exact capability name and must ignore unknown
+            entries so newer servers stay compatible with older clients.
     User:
       type: object
       required: [id, username]
@@ -2160,13 +2246,13 @@ components:
           properties:
             format:
               type: string
-              const: flac
+              enum: [flac]
             container:
               type: string
-              const: flac
+              enum: [flac]
             codec:
               type: string
-              const: flac
+              enum: [flac]
             bitDepth:
               type: integer
               minimum: 1
@@ -2178,10 +2264,10 @@ components:
           properties:
             format:
               type: string
-              const: wav
+              enum: [wav]
             container:
               type: string
-              const: wav
+              enum: [wav]
             codec:
               type: string
               enum: ["pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le"]
@@ -2192,21 +2278,23 @@ components:
       allOf:
         - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
         - type: object
-          required: [format, container, codec, bitDepth]
+          required: [format, container, codec]
           properties:
             format:
               type: string
-              const: m4a
+              enum: [m4a]
             container:
               type: string
-              const: m4a
+              enum: [m4a]
             codec:
               type: string
               enum: [aac, alac]
             bitDepth:
               type: integer
-              minimum: 0
-              description: Source bit depth for ALAC; 0 for AAC.
+              minimum: 1
+              description: >-
+                Source bit depth, present only for lossless ALAC. Lossy AAC
+                previews omit the field because no source bit depth exists.
     ManagedImportMp3PreviewFile:
       allOf:
         - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
@@ -2215,13 +2303,13 @@ components:
           properties:
             format:
               type: string
-              const: mp3
+              enum: [mp3]
             container:
               type: string
-              const: mp3
+              enum: [mp3]
             codec:
               type: string
-              const: mp3
+              enum: [mp3]
     ManagedImportOggPreviewFile:
       allOf:
         - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
@@ -2230,13 +2318,13 @@ components:
           properties:
             format:
               type: string
-              const: ogg
+              enum: [ogg]
             container:
               type: string
-              const: ogg
+              enum: [ogg]
             codec:
               type: string
-              const: vorbis
+              enum: [vorbis]
     ManagedImportOpusPreviewFile:
       allOf:
         - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
@@ -2245,13 +2333,13 @@ components:
           properties:
             format:
               type: string
-              const: opus
+              enum: [opus]
             container:
               type: string
-              const: ogg
+              enum: [ogg]
             codec:
               type: string
-              const: opus
+              enum: [opus]
     ManagedImportConfirmation:
       type: object
       required: [revision]

@@ -22,7 +22,23 @@ type healthResponse struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-var serverCapabilities = []string{"api.v1", "playback.queue-events.v1", "managed-import.v1", "managed-import-batches.v1", "managed-track-deletion.v1", "managed-track-replacement.v1"}
+// serverCapabilities are the named behaviors this release advertises to
+// separately released Playback Clients (ADR 0006). Every entry must be
+// documented in the HealthResponse contract; clients ignore unknown entries.
+var serverCapabilities = []string{
+	"api.v1",
+	"playback.queue-events.v1",
+	"managed-import.v1",
+	"managed-import-batches.v1",
+	"managed-track-deletion.v1",
+	"managed-track-replacement.v1",
+	"library-migration.v1",
+}
+
+// ServerCapabilities returns a copy of the advertised Server Capabilities.
+func ServerCapabilities() []string {
+	return append([]string(nil), serverCapabilities...)
+}
 
 type userResponse struct {
 	ID          string `json:"id"`

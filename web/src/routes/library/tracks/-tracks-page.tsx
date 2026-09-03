@@ -1,4 +1,4 @@
-import type { Track } from "@repo/api-client";
+import { MANAGED_IMPORT_CAPABILITY, type Track } from "@repo/api-client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -10,6 +10,10 @@ import { PageHeader, PageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
+import {
+	type ServerCapabilityState,
+	useServerCapabilityState,
+} from "#/hooks/use-server-capability";
 import { apiClient } from "#/lib/api";
 import { filterTracksByText } from "#/lib/filter-tracks";
 import { ImportHistory } from "./-import-history";
@@ -29,6 +33,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 export function TracksPage() {
 	const tracks = useTrackSearch();
 	const managedImport = useManagedImport();
+	const importCapability = useServerCapabilityState(MANAGED_IMPORT_CAPABILITY);
 
 	return (
 		<PageShell
@@ -39,6 +44,7 @@ export function TracksPage() {
 					search={tracks.search}
 					onSearchChange={tracks.setSearch}
 					onImport={managedImport.open}
+					importCapability={importCapability}
 				/>
 			}
 		>
@@ -79,15 +85,24 @@ function useTrackSearch() {
 	return { search, setSearch, tracks, sourceTracks, visibleTracks };
 }
 
+const IMPORT_UNSUPPORTED_TITLE =
+	"This Music Server does not support Managed Import. Update the Music Server to import music.";
+
 function TracksHeader({
 	search,
 	onSearchChange,
 	onImport,
+	importCapability,
 }: {
 	search: string;
 	onSearchChange: (search: string) => void;
 	onImport: () => void;
+	importCapability: ServerCapabilityState;
 }) {
+	// Gate on the advertised Server Capability (ADR 0006). The control stays
+	// usable while the health response is unknown so a slow answer never hides
+	// the Import Music action from a compatible Music Server.
+	const importUnsupported = importCapability === "missing";
 	return (
 		<PageHeader
 			title="Tracks"
@@ -110,6 +125,8 @@ function TracksHeader({
 						size="icon"
 						className="size-10 rounded-xl"
 						onClick={onImport}
+						disabled={importUnsupported}
+						title={importUnsupported ? IMPORT_UNSUPPORTED_TITLE : undefined}
 					>
 						<Plus className="size-5" />
 					</Button>

@@ -429,7 +429,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Stream one audio file into a Managed Import Job and detect its actual format */
+        /**
+         * Stream one audio file into a Managed Import Job and detect its actual format
+         * @description The request media type is advisory only. The Music Server detects the Source Audio Format from the uploaded bytes and never trusts the declared Content-Type or the client filename extension.
+         */
         put: operations["uploadManagedImportFile"];
         post?: never;
         delete?: never;
@@ -739,6 +742,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/radio/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stream a Radio Browser search result before importing it */
+        post: operations["previewRadioStation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/radio/preview/{stationUuid}/stream": {
         parameters: {
             query?: never;
@@ -798,7 +818,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, and explicit Track Replacement as managed-track-replacement.v1. */
+            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, and the explicit Library Migration workflow (preview, stage, cutover, and Legacy Source Cleanup) as library-migration.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
             capabilities: string[];
         };
         User: {
@@ -1138,11 +1158,11 @@ export interface components {
             artworkMediaType: "image/jpeg" | "image/png" | "image/webp";
         };
         ManagedImportFlacPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
-            /** @constant */
+            /** @enum {string} */
             format: "flac";
-            /** @constant */
+            /** @enum {string} */
             container: "flac";
-            /** @constant */
+            /** @enum {string} */
             codec: "flac";
             bitDepth: number;
         } & {
@@ -1153,9 +1173,9 @@ export interface components {
             format: "flac";
         };
         ManagedImportWavPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
-            /** @constant */
+            /** @enum {string} */
             format: "wav";
-            /** @constant */
+            /** @enum {string} */
             container: "wav";
             /** @enum {string} */
             codec: "pcm_u8" | "pcm_s16le" | "pcm_s24le" | "pcm_s32le";
@@ -1169,14 +1189,14 @@ export interface components {
             format: "wav";
         };
         ManagedImportM4aPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
-            /** @constant */
+            /** @enum {string} */
             format: "m4a";
-            /** @constant */
+            /** @enum {string} */
             container: "m4a";
             /** @enum {string} */
             codec: "aac" | "alac";
-            /** @description Source bit depth for ALAC; 0 for AAC. */
-            bitDepth: number;
+            /** @description Source bit depth, present only for lossless ALAC. Lossy AAC previews omit the field because no source bit depth exists. */
+            bitDepth?: number;
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -1185,11 +1205,11 @@ export interface components {
             format: "m4a";
         };
         ManagedImportMp3PreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
-            /** @constant */
+            /** @enum {string} */
             format: "mp3";
-            /** @constant */
+            /** @enum {string} */
             container: "mp3";
-            /** @constant */
+            /** @enum {string} */
             codec: "mp3";
         } & {
             /**
@@ -1199,11 +1219,11 @@ export interface components {
             format: "mp3";
         };
         ManagedImportOggPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
-            /** @constant */
+            /** @enum {string} */
             format: "ogg";
-            /** @constant */
+            /** @enum {string} */
             container: "ogg";
-            /** @constant */
+            /** @enum {string} */
             codec: "vorbis";
         } & {
             /**
@@ -1213,11 +1233,11 @@ export interface components {
             format: "ogg";
         };
         ManagedImportOpusPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
-            /** @constant */
+            /** @enum {string} */
             format: "opus";
-            /** @constant */
+            /** @enum {string} */
             container: "ogg";
-            /** @constant */
+            /** @enum {string} */
             codec: "opus";
         } & {
             /**
@@ -2415,6 +2435,8 @@ export interface operations {
             header: {
                 /** @description Display-only client filename; never used as a storage path. */
                 "X-Import-Filename": string;
+                /** @description Set to url when X-Import-Filename is percent-encoded so non-ASCII filenames survive HTTP header transport. Absent means the header is sent verbatim. */
+                "X-Import-Filename-Encoding"?: "url";
             };
             path: {
                 importId: components["parameters"]["importId"];
@@ -2426,6 +2448,10 @@ export interface operations {
                 "application/octet-stream": string;
                 "audio/flac": string;
                 "audio/wav": string;
+                "audio/mpeg": string;
+                "audio/mp4": string;
+                "audio/ogg": string;
+                "audio/opus": string;
             };
         };
         responses: {
@@ -3092,6 +3118,59 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    previewRadioStation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RadioImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Radio preview stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                    "audio/*": string;
+                    "application/vnd.apple.mpegurl": string;
+                    "application/x-mpegurl": string;
+                    "video/*": string;
+                    "application/octet-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description DRM-protected HLS is unsupported */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream radio resource failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Radio streaming is unavailable on this Music Server */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     streamRadioPreview: {
