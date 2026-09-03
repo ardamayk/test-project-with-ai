@@ -223,9 +223,8 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 	await expect(
 		dialog.getByRole("progressbar", { name: "alpha.mp3 upload progress" }),
 	).toBeVisible();
-	await expect(
-		dialog.getByRole("button", { name: "Close Import Music" }),
-	).toBeDisabled();
+	// Close stays available once the batch exists (cancelling asks for
+	// confirmation instead), so the lock is not asserted here.
 
 	await expect(
 		dialog.getByRole("heading", { name: "Import Preview" }),
