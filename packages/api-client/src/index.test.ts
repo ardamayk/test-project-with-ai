@@ -194,6 +194,86 @@ describe('createApiClient', () => {
     expect(new Headers(request?.headers).get('X-Migration-Cutover')).toBe('1');
   });
 
+  it('previews legacy source cleanup without confirmation headers', async () => {
+    const cleanupPreview = {
+      eligibleCount: 1,
+      ineligibleCount: 1,
+      totalSizeBytes: 4096,
+      files: [
+        {
+          trackId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+          sourceTrackId: '0e8a2d64-6b0d-4a3f-9a55-cc1ef6a26e21',
+          originalFilename: 'one.flac',
+          state: 'eligible',
+          sizeBytes: 4096,
+        },
+        {
+          trackId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+          originalFilename: 'rejected.flac',
+          state: 'ineligible',
+          errorCode: 'legacy_source_not_migrated',
+        },
+      ],
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(cleanupPreview));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    const result = await client.previewLibraryMigrationCleanup();
+
+    expect(result).toEqual(cleanupPreview);
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/library-migrations/cleanup',
+      expect.not.objectContaining({ method: 'POST' }),
+    );
+    const request = transport.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get('X-Migration-Cleanup')).toBeNull();
+  });
+
+  it('deletes confirmed legacy sources with the exact count and size', async () => {
+    const cleanup = {
+      deletedCount: 1,
+      failedCount: 0,
+      deletedBytes: 4096,
+      prunedDirectoryCount: 2,
+      files: [
+        {
+          trackId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+          sourceTrackId: '0e8a2d64-6b0d-4a3f-9a55-cc1ef6a26e21',
+          originalFilename: 'one.flac',
+          state: 'deleted',
+          sizeBytes: 4096,
+        },
+      ],
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(cleanup));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    const result = await client.cleanupLibraryMigrationSources({
+      trackIds: ['3f2504e0-4f89-11d3-9a0c-0305e82c3301'],
+      fileCount: 1,
+      totalSizeBytes: 4096,
+    });
+
+    expect(result).toEqual(cleanup);
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/library-migrations/cleanup',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          trackIds: ['3f2504e0-4f89-11d3-9a0c-0305e82c3301'],
+          fileCount: 1,
+          totalSizeBytes: 4096,
+        }),
+      }),
+    );
+    const request = transport.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get('X-Migration-Cleanup')).toBe('1');
+  });
+
   it('creates and confirms a multi-file Managed Import Batch', async () => {
     const createdBatch = {
       id: 'batch-1',

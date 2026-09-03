@@ -33,6 +33,15 @@ type cutoverFixtureConfig struct {
 	queueEvent *playback.QueueEventBroker
 	capacity   storageCapacity
 	reserve    int64
+	musicPaths []string
+}
+
+// withMusicPaths configures the legacy music paths that bound Legacy Source
+// Cleanup.
+func withMusicPaths(paths ...string) cutoverFixtureOption {
+	return func(config *cutoverFixtureConfig) {
+		config.musicPaths = paths
+	}
 }
 
 type cutoverFixtureOption func(*cutoverFixtureConfig)
@@ -121,6 +130,7 @@ func newCutoverFixture(t *testing.T, options ...cutoverFixtureOption) *cutoverFi
 	importModule := newModule(database, config.Config{
 		ManagedStoragePath:         storage,
 		ManagedStorageReserveBytes: fixtureConfig.reserve,
+		MusicPaths:                 fixtureConfig.musicPaths,
 	}, inspector, capacity, queueEvents...)
 	libraryModule := library.NewModule(database, libraryConfig)
 	playbackModule := playback.NewModule(database, libraryModule.TrackAccess())
@@ -207,7 +217,15 @@ func (fixture *cutoverFixture) pendingAudioPath(t *testing.T, sourceTrackID stri
 
 func (fixture *cutoverFixture) seedLegacyTrack(t *testing.T, filename, title string, contents []byte, trackNumber int) (string, string, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), filename)
+	return fixture.seedLegacyTrackIn(t, t.TempDir(), filename, title, contents, trackNumber)
+}
+
+func (fixture *cutoverFixture) seedLegacyTrackIn(t *testing.T, directory, filename, title string, contents []byte, trackNumber int) (string, string, string) {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		t.Fatalf("create legacy source directory: %v", err)
+	}
+	path := filepath.Join(directory, filename)
 	if err := os.WriteFile(path, contents, 0o640); err != nil {
 		t.Fatalf("write legacy source: %v", err)
 	}

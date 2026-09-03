@@ -17,6 +17,8 @@ import (
 const MIGRATION_PREVIEW_REQUEST_HEADER = "X-Migration-Preview"
 const MIGRATION_STAGE_REQUEST_HEADER = "X-Migration-Stage"
 const MIGRATION_CUTOVER_REQUEST_HEADER = "X-Migration-Cutover"
+const MIGRATION_CLEANUP_REQUEST_HEADER = "X-Migration-Cleanup"
+const MAX_MIGRATION_CLEANUP_BODY_BYTES = 1 << 20
 const IMPORT_FILENAME_HEADER = "X-Import-Filename"
 const IMPORT_FILENAME_ENCODING_HEADER = "X-Import-Filename-Encoding"
 const URL_FILENAME_ENCODING = "url"
@@ -145,6 +147,35 @@ func (handlers *Handlers) CutoverMigration(writer http.ResponseWriter, request *
 	respond.JSON(writer, http.StatusOK, cutover)
 }
 
+func (handlers *Handlers) PreviewMigrationCleanup(writer http.ResponseWriter, request *http.Request) {
+	preview, err := handlers.service.PreviewMigrationCleanup(request.Context())
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, preview)
+}
+
+func (handlers *Handlers) CleanupMigrationSources(writer http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(MIGRATION_CLEANUP_REQUEST_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "migration_cleanup_forbidden", "Legacy source cleanup requires explicit confirmation")
+		return
+	}
+	var confirmation MigrationCleanupConfirmation
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_MIGRATION_CLEANUP_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&confirmation); err != nil || len(confirmation.TrackIDs) == 0 || confirmation.FileCount < 1 || confirmation.TotalSizeBytes < 0 {
+		respond.Error(writer, http.StatusBadRequest, "invalid_cleanup_confirmation", "Legacy source cleanup requires the selected Track IDs with the confirmed file count and total size")
+		return
+	}
+	cleanup, err := handlers.service.CleanupMigratedSources(request.Context(), confirmation)
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, cleanup)
+}
+
 func (handlers *Handlers) PreviewTrackDeletion(writer http.ResponseWriter, request *http.Request) {
 	preview, err := handlers.service.PreviewTrackDeletion(request.Context(), chi.URLParam(request, "trackId"))
 	if err != nil {
@@ -268,6 +299,8 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 		respond.Error(writer, http.StatusNotFound, "track_not_found", "Track not found")
 	case errors.Is(err, ErrNotManagedTrack):
 		respond.Error(writer, http.StatusConflict, "not_managed_track", "Only Managed Tracks can be permanently deleted or replaced")
+	case errors.Is(err, ErrCleanupConflict):
+		respond.Error(writer, http.StatusConflict, "cleanup_preview_changed", "Legacy source cleanup selection no longer matches the preview; review the cleanup preview again")
 	case errors.Is(err, ErrDeletionConflict):
 		respond.Error(writer, http.StatusConflict, "deletion_preview_changed", "Track or its references changed; review Permanent Track Deletion again")
 	case errors.Is(err, ErrReplacementConflict):

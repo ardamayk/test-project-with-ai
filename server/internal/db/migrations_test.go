@@ -29,6 +29,7 @@ const (
 	TRACK_DELETION_VERSION             = 23
 	TRACK_REPLACEMENT_VERSION          = 24
 	MIGRATION_CUTOVER_RECOVERY_VERSION = 25
+	LEGACY_MIGRATION_SOURCES_VERSION   = 26
 )
 
 func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
@@ -150,6 +151,42 @@ func TestLegacyMigrationCutoverRecoveryMigrationAppliesAndRollsBack(t *testing.T
 	}
 	assertMigrationVersion(t, sqlDB, TRACK_REPLACEMENT_VERSION)
 	assertExecFails(t, sqlDB, `SELECT phase FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "no such column: phase")
+}
+
+func TestLegacyMigrationSourcesMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, MIGRATION_CUTOVER_RECOVERY_VERSION)
+	insertLegacyLibrary(t, sqlDB)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), LEGACY_MIGRATION_SOURCES_VERSION); err != nil {
+		t.Fatalf("apply Legacy Migration sources migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_SOURCES_VERSION)
+	assertTableExists(t, sqlDB, "legacy_migration_sources")
+	if _, err := sqlDB.Exec(`
+		INSERT INTO legacy_migration_sources (track_id, source_track_id, source_file_path, source_sha256)
+		VALUES ('track-1', 'legacy-track', '/music/track.flac',
+			'0000000000000000000000000000000000000000000000000000000000000000')`); err != nil {
+		t.Fatalf("record migrated legacy source: %v", err)
+	}
+	assertExecFails(t, sqlDB, `
+		INSERT INTO legacy_migration_sources (track_id, source_track_id, source_file_path, source_sha256)
+		VALUES ('missing-track', 'legacy-track-2', '/music/other.flac',
+			'0000000000000000000000000000000000000000000000000000000000000000')`, "FOREIGN KEY constraint failed")
+	assertExecFails(t, sqlDB, `UPDATE legacy_migration_sources SET source_sha256 = 'short'`, "CHECK constraint failed")
+	// Removing the migrated Managed Track removes the proof, so the legacy
+	// source can no longer be offered for cleanup.
+	if _, err := sqlDB.Exec(`DELETE FROM tracks WHERE id = 'track-1'`); err != nil {
+		t.Fatalf("delete migrated Track: %v", err)
+	}
+	var remaining int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM legacy_migration_sources`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("migrated legacy source count after Track deletion = %d, error = %v", remaining, err)
+	}
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Legacy Migration sources migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, MIGRATION_CUTOVER_RECOVERY_VERSION)
+	assertTableMissing(t, sqlDB, "legacy_migration_sources")
 }
 
 func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {

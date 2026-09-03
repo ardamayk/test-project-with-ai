@@ -399,6 +399,67 @@ paths:
           $ref: "#/components/responses/Conflict"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/library-migrations/cleanup:
+    get:
+      tags: [imports]
+      operationId: previewLibraryMigrationCleanup
+      summary: List legacy source files eligible for cleanup after a verified migration
+      description: >-
+        Lists every legacy source file. Only sources proven to correspond to an
+        active migrated Managed Track (recorded by a completed cutover, with the
+        managed bytes and the source bytes still hashing to the migrated
+        content) are eligible. Rejected, failed, pending, unverified, changed,
+        or unsafe sources are reported as ineligible and can never be selected.
+        The preview reports the exact eligible file count and total size and
+        changes nothing.
+      responses:
+        "200":
+          description: Legacy source cleanup preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryMigrationCleanupPreview"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    post:
+      tags: [imports]
+      operationId: cleanupLibraryMigrationSources
+      summary: Irreversibly delete the confirmed legacy source files of migrated Managed Tracks
+      description: >-
+        Deletes exactly the legacy source files named by the selected Managed
+        Track IDs. Every target is resolved and verified again before any file
+        is removed; if the selection, the confirmed file count, or the confirmed
+        total size no longer match the eligible set, nothing is deleted and the
+        request is rejected with a conflict. Empty parent directories are pruned
+        upward to the configured music path without recursing into siblings.
+        Migration success never triggers this cleanup automatically.
+      parameters:
+        - name: X-Migration-Cleanup
+          in: header
+          required: true
+          description: Explicit application confirmation required for irreversible legacy source deletion
+          schema:
+            type: string
+            enum: ["1"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LibraryMigrationCleanupConfirmation"
+      responses:
+        "200":
+          description: Per-file result of deleting the confirmed legacy source files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryMigrationCleanup"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/import-batches:
     post:
       tags: [imports]
@@ -1872,6 +1933,124 @@ components:
           type: string
           pattern: "^[0-9a-f]{64}$"
           description: Verified full-file hash of the activated Managed Track.
+        errorCode:
+          type: string
+        errorField:
+          type: string
+        errorReason:
+          type: string
+    LibraryMigrationCleanupPreview:
+      type: object
+      required: [eligibleCount, ineligibleCount, totalSizeBytes, files]
+      properties:
+        eligibleCount:
+          type: integer
+          minimum: 0
+          description: Exact number of legacy source files that may be deleted.
+        ineligibleCount:
+          type: integer
+          minimum: 0
+        totalSizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Exact total size of the eligible legacy source files.
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryMigrationCleanupPreviewFile"
+    LibraryMigrationCleanupPreviewFile:
+      type: object
+      required: [trackId, originalFilename, state]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+          description: Migrated Managed Track for eligible files; the Legacy Track for unmigrated sources.
+        sourceTrackId:
+          type: string
+          format: uuid
+          description: Legacy Track that the migrated source was seeded from.
+        originalFilename:
+          type: string
+          description: Display-only basename of the legacy source file.
+        state:
+          type: string
+          enum: [eligible, ineligible]
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        contentSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Verified hash shared by the legacy source and the migrated Managed Track.
+        errorCode:
+          type: string
+        errorField:
+          type: string
+        errorReason:
+          type: string
+    LibraryMigrationCleanupConfirmation:
+      type: object
+      required: [trackIds, fileCount, totalSizeBytes]
+      properties:
+        trackIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+          description: Migrated Managed Tracks whose legacy source files are to be deleted.
+        fileCount:
+          type: integer
+          minimum: 1
+          description: Exact file count shown in the confirmation; must equal the number of selected Tracks.
+        totalSizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Exact total size shown in the confirmation; must equal the current size of the selected files.
+    LibraryMigrationCleanup:
+      type: object
+      required: [deletedCount, failedCount, deletedBytes, prunedDirectoryCount, files]
+      properties:
+        deletedCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        deletedBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        prunedDirectoryCount:
+          type: integer
+          minimum: 0
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryMigrationCleanupFile"
+    LibraryMigrationCleanupFile:
+      type: object
+      required: [trackId, sourceTrackId, originalFilename, state]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        sourceTrackId:
+          type: string
+          format: uuid
+        originalFilename:
+          type: string
+        state:
+          type: string
+          enum: [deleted, failed]
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
         errorCode:
           type: string
         errorField:
