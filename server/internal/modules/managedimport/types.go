@@ -78,6 +78,18 @@ const (
 	COMMIT_PHASE_ROLLED_BACK        commitPhase = "rolled_back"
 )
 
+// migrationPhase marks the durable progress of a Library Migration copy. The
+// database_committed phase only exists in memory: the copy row is deleted by
+// the cutover transaction that reaches it.
+type migrationPhase string
+
+const (
+	MIGRATION_PHASE_PREPARED           migrationPhase = "prepared"
+	MIGRATION_PHASE_VERIFIED           migrationPhase = "verified"
+	MIGRATION_PHASE_PROMOTED           migrationPhase = "promoted"
+	MIGRATION_PHASE_DATABASE_COMMITTED migrationPhase = "database_committed"
+)
+
 type HistoryResultCode string
 
 const (

@@ -180,6 +180,9 @@ func (service *Service) placeAndStoreMigrationCopy(ctx context.Context, candidat
 	if prepareErr != nil {
 		return placedFiles{}, errors.Join(prepareErr, service.storage.RemoveStaged(upload.Path))
 	}
+	if hookErr := service.afterMigrationPhase(MIGRATION_PHASE_PREPARED); hookErr != nil {
+		return placedFiles{}, hookErr
+	}
 	placement, err := service.storage.PlaceMigration(plannedPlacement, inspection)
 	if err != nil {
 		return placedFiles{}, service.failPreparedMigrationCopy(ctx, candidate.source.TrackID, err, service.storage.RemoveStaged(upload.Path))
@@ -190,6 +193,9 @@ func (service *Service) placeAndStoreMigrationCopy(ctx context.Context, candidat
 	}
 	if err := service.store.MarkMigrationCopyVerified(ctx, candidate.source.TrackID); err != nil {
 		return placedFiles{}, service.failPreparedMigrationCopy(ctx, candidate.source.TrackID, err, service.storage.CleanupMigrationPlacement(placement))
+	}
+	if hookErr := service.afterMigrationPhase(MIGRATION_PHASE_VERIFIED); hookErr != nil {
+		return placedFiles{}, hookErr
 	}
 	return placement, nil
 }

@@ -515,6 +515,140 @@ func migrationCanonicalPath(pendingRelative string) string {
 	return filepath.Join(parts...)
 }
 
+// RestorePromotedMigrationCopy moves a copy that already reached the
+// Canonical Library Path back to its pending location, pruning the canonical
+// directories the promotion created. Canonical bytes that no longer match the
+// recorded hash are removed instead of restored so a later run cannot adopt
+// corrupt content. The pending paths are re-validated through the same
+// containment and shape checks as every other recorded migration operation.
+func (storage *Storage) RestorePromotedMigrationCopy(copy migrationCopyRecord, restoreArtwork bool) (returnErr error) {
+	recorded, recordedErr := storage.recordedMigrationPlacement(copy)
+	if recordedErr != nil {
+		return recordedErr
+	}
+	root, openErr := storage.openRoot()
+	if openErr != nil {
+		return openErr
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	canonicalAudio := migrationCanonicalPath(recorded.audioRelative)
+	if restoreErr := storage.restorePromotedMigrationFile(root, storage.root, canonicalAudio, recorded.audioRelative, copy.PendingSHA256, "Library Migration audio"); restoreErr != nil {
+		return restoreErr
+	}
+	if restoreArtwork {
+		canonicalArtwork := migrationCanonicalPath(recorded.artworkRelative)
+		if restoreErr := storage.restorePromotedMigrationFile(root, storage.root, canonicalArtwork, recorded.artworkRelative, copy.ArtworkSHA256, "Library Migration artwork"); restoreErr != nil {
+			return restoreErr
+		}
+	}
+	return removeEmptyDirectoriesUnder(root, filepath.Dir(canonicalAudio), CANONICAL_LIBRARY_ROOT)
+}
+
+func (storage *Storage) restorePromotedMigrationFile(root *os.Root, absoluteRoot, canonicalRelative, pendingRelative, expectedHash, description string) error {
+	if _, statErr := root.Stat(canonicalRelative); errors.Is(statErr, os.ErrNotExist) {
+		return nil
+	} else if statErr != nil {
+		return fmt.Errorf("inspect canonical %s before restore: %w", description, statErr)
+	}
+	if verifyErr := verifyRootedFileHash(root, canonicalRelative, expectedHash); verifyErr != nil {
+		return errors.Join(verifyErr, removeRootedFile(root, canonicalRelative, "corrupt canonical "+description))
+	}
+	if err := ensureDirectory(root, absoluteRoot, filepath.Dir(pendingRelative), 0o700); err != nil {
+		return err
+	}
+	if err := root.Rename(canonicalRelative, pendingRelative); err != nil {
+		return fmt.Errorf("restore pending %s from the Canonical Library Path: %w", description, err)
+	}
+	return nil
+}
+
+// PendingMigrationAudioPresent reports whether the recorded pending audio of
+// a copy still exists, validating the recorded path first so unsafe records
+// are never touched on the filesystem.
+func (storage *Storage) PendingMigrationAudioPresent(copy migrationCopyRecord) (present bool, returnErr error) {
+	recorded, recordedErr := storage.recordedMigrationPlacement(copy)
+	if recordedErr != nil {
+		return false, recordedErr
+	}
+	root, openErr := storage.openRoot()
+	if openErr != nil {
+		return false, openErr
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	if _, statErr := root.Stat(recorded.audioRelative); statErr == nil {
+		return true, nil
+	} else if errors.Is(statErr, os.ErrNotExist) {
+		return false, nil
+	} else {
+		return false, fmt.Errorf("inspect pending Library Migration audio: %w", statErr)
+	}
+}
+
+// SweepOrphanMigrationFiles removes every file under the hidden pending
+// migration root that no recorded copy references, then prunes the
+// directories the removals emptied. Recorded paths are absolute database
+// values; deletions stay rooted under the pending migration root.
+func (storage *Storage) SweepOrphanMigrationFiles(recordedPaths map[string]bool) (returnErr error) {
+	root, openErr := storage.openRoot()
+	if openErr != nil {
+		return openErr
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	pendingRoot, openErr := root.Open(MIGRATION_STORAGE_ROOT)
+	if errors.Is(openErr, os.ErrNotExist) {
+		return nil
+	}
+	if openErr != nil {
+		return fmt.Errorf("open pending Library Migration root: %w", openErr)
+	}
+	entries, readErr := pendingRoot.ReadDir(-1)
+	closeErr := closeManagedStorageFile(pendingRoot, "pending Library Migration root")
+	if readErr != nil {
+		return fmt.Errorf("list pending Library Migration artists: %w", readErr)
+	}
+	var sweepErr error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			sweepErr = errors.Join(sweepErr, storage.sweepOrphanMigrationEntry(root, filepath.Join(MIGRATION_STORAGE_ROOT, entry.Name()), recordedPaths))
+			continue
+		}
+		sweepErr = errors.Join(sweepErr, storage.sweepOrphanMigrationDirectory(root, filepath.Join(MIGRATION_STORAGE_ROOT, entry.Name()), recordedPaths))
+	}
+	return errors.Join(sweepErr, closeErr, removeEmptyDirectoriesUnder(root, MIGRATION_STORAGE_ROOT, MIGRATION_STORAGE_ROOT))
+}
+
+func (storage *Storage) sweepOrphanMigrationDirectory(root *os.Root, directoryRelative string, recordedPaths map[string]bool) error {
+	directory, openErr := root.Open(directoryRelative)
+	if openErr != nil {
+		return fmt.Errorf("open pending Library Migration directory %q: %w", directoryRelative, openErr)
+	}
+	entries, readErr := directory.ReadDir(-1)
+	closeErr := closeManagedStorageFile(directory, "pending Library Migration directory")
+	if readErr != nil {
+		return errors.Join(fmt.Errorf("list pending Library Migration directory %q: %w", directoryRelative, readErr), closeErr)
+	}
+	var sweepErr error
+	for _, entry := range entries {
+		entryRelative := filepath.Join(directoryRelative, entry.Name())
+		if entry.IsDir() {
+			sweepErr = errors.Join(sweepErr, storage.sweepOrphanMigrationDirectory(root, entryRelative, recordedPaths))
+			continue
+		}
+		sweepErr = errors.Join(sweepErr, storage.sweepOrphanMigrationEntry(root, entryRelative, recordedPaths))
+	}
+	return errors.Join(sweepErr, closeErr, removeEmptyDirectoriesUnder(root, directoryRelative, MIGRATION_STORAGE_ROOT))
+}
+
+func (storage *Storage) sweepOrphanMigrationEntry(root *os.Root, entryRelative string, recordedPaths map[string]bool) error {
+	if recordedPaths[storage.absolutePath(entryRelative)] {
+		return nil
+	}
+	if err := removeRootedFile(root, entryRelative, "orphan pending Library Migration file"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (storage *Storage) recordedMigrationPlacement(copy migrationCopyRecord) (placedFiles, error) {
 	audioRelative, err := storage.relativePath(copy.PendingAudioPath)
 	if err != nil {
