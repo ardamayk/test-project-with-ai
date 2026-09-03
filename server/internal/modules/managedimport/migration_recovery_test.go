@@ -192,7 +192,7 @@ func TestCleanupRestartFailsVerifiedMigrationCopyWhenPendingAudioDisappeared(t *
 	if err := service.CleanupRestart(context.Background()); err != nil {
 		t.Fatalf("cleanup restart: %v", err)
 	}
-	assertMigrationCopyState(t, database, copy.SourceTrackID, "failed", "verified", "disappeared")
+	assertMigrationCopyState(t, database, copy.SourceTrackID, "failed", "prepared", "disappeared")
 	if _, err := os.Stat(copy.PendingArtworkPath); !os.IsNotExist(err) {
 		t.Fatalf("exclusive pending artwork survived the failed copy: %v", err)
 	}
@@ -231,6 +231,42 @@ func TestCleanupRestartSweepsOrphanedMigrationFiles(t *testing.T) {
 		}
 	}
 	assertMigrationCopyState(t, database, copy.SourceTrackID, "verified", "verified", "")
+}
+
+// TestCleanupRestartRestoresPromotedCopyInterruptedMidPromotion simulates a
+// crash between the audio and artwork renames of a promotion: the row is
+// promoted, the audio already reached the Canonical Library Path, and the
+// artwork is still pending. Recovery must return both to the pending location.
+func TestCleanupRestartRestoresPromotedCopyInterruptedMidPromotion(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	storageRoot := t.TempDir()
+	copy := seedRecordedMigrationCopy(t, database, storageRoot, "midpromote", "verified", "promoted")
+	canonicalDirectory := filepath.Join(storageRoot, CANONICAL_LIBRARY_ROOT, "artist-"+copy.PendingAlbumArtistID, "album-"+copy.PendingAlbumID)
+	canonicalAudio := filepath.Join(canonicalDirectory, filepath.Base(copy.PendingAudioPath))
+	if err := os.MkdirAll(canonicalDirectory, 0o750); err != nil {
+		t.Fatalf("create canonical directory: %v", err)
+	}
+	if err := os.Rename(copy.PendingAudioPath, canonicalAudio); err != nil {
+		t.Fatalf("move pending audio to the Canonical Library Path: %v", err)
+	}
+	service := NewService(NewStore(database), newStorage(storageRoot, StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity), nil)
+
+	if err := service.CleanupRestart(context.Background()); err != nil {
+		t.Fatalf("cleanup restart: %v", err)
+	}
+	if err := service.CleanupRestart(context.Background()); err != nil {
+		t.Fatalf("repeat cleanup restart: %v", err)
+	}
+	assertMigrationCopyState(t, database, copy.SourceTrackID, "verified", "verified", "cutover")
+	for _, restored := range []string{copy.PendingAudioPath, copy.PendingArtworkPath} {
+		if _, err := os.Stat(restored); err != nil {
+			t.Fatalf("mid-promotion recovery did not restore %q: %v", restored, err)
+		}
+	}
+	if count := countStorageFiles(t, storageRoot, CANONICAL_LIBRARY_ROOT); count != 0 {
+		t.Fatalf("mid-promotion recovery left %d canonical files", count)
+	}
+	assertActiveLegacySource(t, database, copy.SourceTrackID)
 }
 
 // TestLibraryMigrationCutoverActivationFailureRestoresPromotedCopy fails the

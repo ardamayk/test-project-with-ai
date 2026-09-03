@@ -346,19 +346,25 @@ func (service *Service) recoverPromotedMigrationCopies(ctx context.Context) erro
 			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, artworkErr))
 			continue
 		}
-		restoreErr := service.storage.RestorePromotedMigrationCopy(copy, registeredArtworkPath == "")
-		if restoreErr == nil {
-			restoreErr = service.store.RestorePromotedMigrationCopyRecord(ctx, copy.SourceTrackID, "server restarted during the Library Migration cutover")
-		} else {
-			cleanupErr := service.storage.CleanupRecordedMigrationCopy(copy, false)
-			recordErr := service.store.MarkVerifiedMigrationCopyFailed(ctx, copy.SourceTrackID, restoreErr.Error())
-			restoreErr = errors.Join(restoreErr, cleanupErr, recordErr)
-		}
+		restoreErr := service.restorePromotedMigration(ctx, copy, registeredArtworkPath == "", "server restarted during the Library Migration cutover")
 		if restoreErr != nil {
 			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, restoreErr))
 		}
 	}
 	return recoveryErr
+}
+
+// restorePromotedMigration rolls a promoted copy back to its pending location
+// and restores the verified phase, or fails the copy outright when the
+// restore itself cannot complete.
+func (service *Service) restorePromotedMigration(ctx context.Context, copy migrationCopyRecord, restoreArtwork bool, reason string) error {
+	restoreErr := service.storage.RestorePromotedMigrationCopy(copy, restoreArtwork)
+	if restoreErr == nil {
+		return service.store.RestorePromotedMigrationCopyRecord(ctx, copy.SourceTrackID, reason)
+	}
+	cleanupErr := service.storage.CleanupRecordedMigrationCopy(copy, false)
+	recordErr := service.store.MarkVerifiedMigrationCopyFailed(ctx, copy.SourceTrackID, restoreErr.Error())
+	return errors.Join(restoreErr, cleanupErr, recordErr)
 }
 
 // verifyRecoveredMigrationCopies retains verified copies whose pending audio

@@ -199,14 +199,8 @@ func (service *Service) activateMigrationCandidate(ctx context.Context, source l
 func (service *Service) rollbackPromotedMigrationCopy(ctx context.Context, copy migrationCopyRecord, restoreArtwork bool, cause error) error {
 	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	restoreErr := service.storage.RestorePromotedMigrationCopy(copy, restoreArtwork)
-	reason := fmt.Sprintf("Library Migration cutover rolled back: %v", cause)
-	if restoreErr != nil {
-		reason = restoreErr.Error()
-		restoreErr = errors.Join(restoreErr, service.storage.CleanupRecordedMigrationCopy(copy, false))
-	}
-	recordErr := service.store.RestorePromotedMigrationCopyRecord(recoveryCtx, copy.SourceTrackID, reason)
-	return errors.Join(cause, restoreErr, recordErr)
+	restoreErr := service.restorePromotedMigration(recoveryCtx, copy, restoreArtwork, fmt.Sprintf("Library Migration cutover rolled back: %v", cause))
+	return errors.Join(cause, restoreErr)
 }
 
 func migrationAlbumArtworkConflict() *ValidationError {
