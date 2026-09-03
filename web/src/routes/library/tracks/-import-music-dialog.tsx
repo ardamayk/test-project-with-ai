@@ -14,10 +14,13 @@ export function ImportMusicDialog({
 	isOpen,
 	onOpenChange,
 	onCommitted,
+	onCloseAutoFocus,
 }: {
 	isOpen: boolean;
 	onOpenChange: (isOpen: boolean) => void;
 	onCommitted: () => Promise<void>;
+	/** Restores focus to the opener; the dialog has no DialogTrigger. */
+	onCloseAutoFocus?: (event: Event) => void;
 }) {
 	const workflow = useManagedImportWorkflow({ onOpenChange, onCommitted });
 
@@ -30,6 +33,7 @@ export function ImportMusicDialog({
 				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
 				<DialogPrimitive.Content
 					aria-describedby="import-music-description"
+					onCloseAutoFocus={onCloseAutoFocus}
 					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 grid max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl gap-5 overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl outline-none"
 				>
 					<ImportDialogHeader isBusy={workflow.isCloseLocked} />

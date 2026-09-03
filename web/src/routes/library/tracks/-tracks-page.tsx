@@ -10,6 +10,7 @@ import { PageHeader, PageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
+import { useReturnFocus } from "#/hooks/use-return-focus";
 import {
 	type ServerCapabilityState,
 	useServerCapabilityState,
@@ -56,6 +57,7 @@ export function TracksPage() {
 				isOpen={managedImport.isOpen}
 				onOpenChange={managedImport.handleOpenChange}
 				onCommitted={managedImport.refresh}
+				onCloseAutoFocus={managedImport.restoreFocus}
 			/>
 		</PageShell>
 	);
@@ -163,6 +165,9 @@ function TrackResults({
 function useManagedImport() {
 	const [isOpen, setIsOpen] = useState(false);
 	const queryClient = useQueryClient();
+	// The dialog has no DialogTrigger (it opens from the plus action or the
+	// Import History retry), so remember the opener to restore focus on close.
+	const returnFocus = useReturnFocus();
 	async function refresh() {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["library", "tracks"] }),
@@ -178,5 +183,14 @@ function useManagedImport() {
 				queryKey: ["managed-import", "history"],
 			});
 	}
-	return { isOpen, open: () => setIsOpen(true), handleOpenChange, refresh };
+	return {
+		isOpen,
+		open: () => {
+			returnFocus.capture();
+			setIsOpen(true);
+		},
+		handleOpenChange,
+		refresh,
+		restoreFocus: returnFocus.restore,
+	};
 }

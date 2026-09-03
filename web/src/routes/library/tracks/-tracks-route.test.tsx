@@ -399,6 +399,25 @@ describe("tracks route", () => {
 		cleanup();
 	});
 
+	it("restores focus to the Import Music action when the dialog closes", async () => {
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		const importButton = screen.getByRole("button", { name: "Import Music" });
+		importButton.focus();
+		fireEvent.click(importButton);
+
+		const dialog = screen.getByRole("dialog", { name: "Import Music" });
+		await waitFor(() =>
+			expect(dialog.contains(document.activeElement)).toBe(true),
+		);
+		fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Escape" });
+
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog", { name: "Import Music" })).toBeNull(),
+		);
+		await waitFor(() => expect(document.activeElement).toBe(importButton));
+	});
+
 	it("disables Import Music when the Music Server lacks the Managed Import capability", async () => {
 		mocks.getHealth.mockResolvedValue({
 			status: "ok",

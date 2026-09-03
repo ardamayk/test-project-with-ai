@@ -10,7 +10,7 @@ import {
 	X,
 } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -18,6 +18,7 @@ import {
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
+import { useReturnFocus } from "#/hooks/use-return-focus";
 import { useServerCapability } from "#/hooks/use-server-capability";
 import { useTrackDeletionFlow } from "#/hooks/use-track-deletion-flow";
 import { useTrackReplacementFlow } from "#/hooks/use-track-replacement-flow";
@@ -96,6 +97,15 @@ export function TrackList({
 		MANAGED_TRACK_REPLACEMENT_CAPABILITY,
 	);
 	const [detailsTrack, setDetailsTrack] = useState<Track | null>(null);
+	// Context menu items unmount with the menu, so dialogs opened from them
+	// return focus to the originating row (or the table once a row is gone).
+	const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+	const tableRef = useRef<HTMLTableElement>(null);
+	const returnFocus = useReturnFocus();
+	const captureRowFocus = (trackId: string) =>
+		returnFocus.capture(rowRefs.current.get(trackId));
+	const restoreRowFocus = (event: Event) =>
+		returnFocus.restore(event, tableRef.current);
 
 	const handlePlay = (track: Track) => {
 		const queueTrackIds = (contextTracks ?? tracks).map((t) => t.id);
@@ -110,7 +120,11 @@ export function TrackList({
 
 	return (
 		<>
-			<table className={cn("w-full", compact ? "text-xs" : "text-sm")}>
+			<table
+				ref={tableRef}
+				tabIndex={-1}
+				className={cn("w-full outline-none", compact ? "text-xs" : "text-sm")}
+			>
 				<thead>
 					<tr className="border-border border-b text-left text-caption text-[11px]">
 						<th className={cn("w-10 font-medium", rowPadding)}>#</th>
@@ -145,6 +159,10 @@ export function TrackList({
 							<ContextMenu key={track.id}>
 								<ContextMenuTrigger asChild>
 									<tr
+										ref={(row) => {
+											if (row) rowRefs.current.set(track.id, row);
+											else rowRefs.current.delete(track.id);
+										}}
 										className={cn(
 											"group cursor-pointer border-border/40 border-b transition hover:bg-muted/50",
 											isPlaying && "bg-primary/5",
@@ -226,7 +244,12 @@ export function TrackList({
 									</tr>
 								</ContextMenuTrigger>
 								<ContextMenuContent>
-									<ContextMenuItem onSelect={() => setDetailsTrack(track)}>
+									<ContextMenuItem
+										onSelect={() => {
+											captureRowFocus(track.id);
+											setDetailsTrack(track);
+										}}
+									>
 										<Info className="size-4" />
 										Details
 									</ContextMenuItem>
@@ -241,7 +264,10 @@ export function TrackList({
 									hasReplacementCapability ? (
 										<ContextMenuItem
 											disabled={trackReplacement.isBusy}
-											onSelect={() => trackReplacement.open(track)}
+											onSelect={() => {
+												captureRowFocus(track.id);
+												trackReplacement.open(track);
+											}}
 										>
 											<Replace className="size-4" />
 											Replace file
@@ -253,7 +279,10 @@ export function TrackList({
 										<ContextMenuItem
 											variant="destructive"
 											disabled={trackDeletion.isDeleting}
-											onSelect={() => trackDeletion.open(track)}
+											onSelect={() => {
+												captureRowFocus(track.id);
+												trackDeletion.open(track);
+											}}
 										>
 											<Trash2 className="size-4" />
 											Delete track
@@ -270,9 +299,11 @@ export function TrackList({
 				onOpenChange={(isOpen) => {
 					if (!isOpen) setDetailsTrack(null);
 				}}
+				onCloseAutoFocus={restoreRowFocus}
 			/>
 			<TrackDeletionDialog
 				track={trackDeletion.track}
+				onCloseAutoFocus={restoreRowFocus}
 				preview={trackDeletion.preview}
 				error={trackDeletion.error}
 				isLoading={trackDeletion.isLoading}
@@ -282,6 +313,7 @@ export function TrackList({
 			/>
 			<TrackReplacementDialog
 				track={trackReplacement.track}
+				onCloseAutoFocus={restoreRowFocus}
 				step={trackReplacement.step}
 				preview={trackReplacement.preview}
 				progress={trackReplacement.progress}
@@ -301,9 +333,11 @@ export function TrackList({
 function TrackDetailsDialog({
 	track,
 	onOpenChange,
+	onCloseAutoFocus,
 }: {
 	track: Track | null;
 	onOpenChange: (isOpen: boolean) => void;
+	onCloseAutoFocus?: (event: Event) => void;
 }) {
 	const rows = track
 		? [
@@ -340,7 +374,10 @@ function TrackDetailsDialog({
 		<DialogPrimitive.Root open={Boolean(track)} onOpenChange={onOpenChange}>
 			<DialogPrimitive.Portal>
 				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70" />
-				<DialogPrimitive.Content className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 max-h-[80vh] w-[calc(100vw-2rem)] max-w-2xl overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl outline-none">
+				<DialogPrimitive.Content
+					onCloseAutoFocus={onCloseAutoFocus}
+					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 max-h-[80vh] w-[calc(100vw-2rem)] max-w-2xl overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl outline-none"
+				>
 					<div className="flex items-center justify-between gap-3 border-border border-b p-4">
 						<DialogPrimitive.Title className="truncate font-semibold text-heading text-xl">
 							{track?.title}

@@ -4,6 +4,7 @@ import {
 	fireEvent,
 	render,
 	screen,
+	waitFor,
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -479,6 +480,48 @@ describe("TrackList", () => {
 		expect(deleteTrack).toHaveBeenCalledWith(
 			{ trackId: "t1", confirmationToken: "confirm-token" },
 			expect.any(Object),
+		);
+	});
+
+	it("returns focus to the Track row after the deletion dialog closes", async () => {
+		render(<TrackList tracks={[sampleTrack]} />);
+		const row = screen.getByRole("row", { name: /Welcome to New York/ });
+		row.focus();
+
+		fireEvent.contextMenu(row);
+		fireEvent.click(screen.getByText("Delete track"));
+		const dialog = await screen.findByRole("dialog", {
+			name: "Permanently delete Welcome to New York?",
+		});
+		await waitFor(() =>
+			expect(dialog.contains(document.activeElement)).toBe(true),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", {
+					name: "Permanently delete Welcome to New York?",
+				}),
+			).toBeNull(),
+		);
+		await waitFor(() => expect(document.activeElement).toBe(row));
+	});
+
+	it("falls back to the table when the deleted row is gone", async () => {
+		const { rerender } = render(<TrackList tracks={[sampleTrack]} />);
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(screen.getByText("Delete track"));
+		await screen.findByRole("dialog", {
+			name: "Permanently delete Welcome to New York?",
+		});
+
+		rerender(<TrackList tracks={[]} />);
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+		await waitFor(() =>
+			expect(document.activeElement).toBe(screen.getByRole("table")),
 		);
 	});
 

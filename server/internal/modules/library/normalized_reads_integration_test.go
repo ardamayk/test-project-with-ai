@@ -103,12 +103,20 @@ func TestHandlersListArtistsCountsDistinctArtistsAndPreservesLegacyAlbumGenres(t
 	artistsRequest := httptest.NewRequest(http.MethodGet, "/", nil)
 	artistsResponse := httptest.NewRecorder()
 	handlers.ListArtists(artistsResponse, artistsRequest)
+	// An error body also decodes into an empty ArtistList, so the status and
+	// the seeded Artist must be asserted explicitly.
+	if artistsResponse.Code != http.StatusOK {
+		t.Fatalf("list Artists status = %d, body = %s", artistsResponse.Code, artistsResponse.Body.String())
+	}
 	var artists ArtistList
 	if err := json.NewDecoder(artistsResponse.Body).Decode(&artists); err != nil {
 		t.Fatal(err)
 	}
 	if artists.Total != len(artists.Items) {
 		t.Fatalf("Artist total = %d, items = %d", artists.Total, len(artists.Items))
+	}
+	if artists.Total == 0 {
+		t.Fatal("list Artists returned no Artists for the seeded library")
 	}
 
 	albumsRequest := httptest.NewRequest(http.MethodGet, "/", nil)

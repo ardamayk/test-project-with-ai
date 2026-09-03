@@ -20,6 +20,7 @@ export function TrackReplacementDialog({
 	onFile,
 	onSelectDesktopFile,
 	onConfirm,
+	onCloseAutoFocus,
 }: {
 	track: Track | null;
 	step: TrackReplacementStep;
@@ -33,6 +34,7 @@ export function TrackReplacementDialog({
 	onFile: (file: File) => void;
 	onSelectDesktopFile: () => void;
 	onConfirm: () => void;
+	onCloseAutoFocus?: (event: Event) => void;
 }) {
 	return (
 		<DialogPrimitive.Root
@@ -47,6 +49,7 @@ export function TrackReplacementDialog({
 				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70" />
 				<DialogPrimitive.Content
 					aria-describedby="track-replacement-description"
+					onCloseAutoFocus={onCloseAutoFocus}
 					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl overflow-y-auto rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none"
 				>
 					<DialogPrimitive.Title className="font-semibold text-heading text-xl">

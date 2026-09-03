@@ -15,7 +15,7 @@ const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 		WHERE visible_tracks.album_id = album_artists.album_id
 	)
 	UNION
-	SELECT track_artists.artist_id, tracks.album_id
+	SELECT track_artists.artist_id, visible_tracks.album_id
 	FROM track_artists
 	INNER JOIN visible_tracks ON visible_tracks.id = track_artists.track_id
 )
