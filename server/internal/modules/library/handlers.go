@@ -17,31 +17,33 @@ func NewHandlers(service *Service) *Handlers {
 	return &Handlers{service: service}
 }
 
-func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
-	if !h.service.MusicPathsConfigured() {
-		respond.Error(w, http.StatusBadRequest, "bad_request", "MUSIC_PATHS is not configured")
-		return
-	}
+// LEGACY_SCAN_RETIRED_CODE is returned by the deprecated scan trigger so older
+// Playback Clients fail clearly instead of waiting for a scan that never runs.
+const LEGACY_SCAN_RETIRED_CODE = "legacy_scan_retired"
 
-	st, err := h.service.TriggerScan(r.Context())
-	if errors.Is(err, ErrScanRunning) {
-		respond.Error(w, http.StatusConflict, "conflict", "scan already running")
-		return
-	}
-	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
-	respond.JSON(w, http.StatusAccepted, st)
+// ScanStatus is the deprecated API v1 scan status shape. The scanner is
+// retired, so the status is always idle.
+type ScanStatus struct {
+	Status  string `json:"status"`
+	Scanned int    `json:"scanned"`
+	Added   int    `json:"added"`
+	Updated int    `json:"updated"`
+	Removed int    `json:"removed"`
 }
 
-func (h *Handlers) GetScanStatus(w http.ResponseWriter, r *http.Request) {
-	st, err := h.service.GetScanStatus(r.Context())
-	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
-	respond.JSON(w, http.StatusOK, st)
+// TriggerScan answers the deprecated legacy scan trigger. It never discovers
+// or ingests files: Managed Import is the authoritative ingestion path.
+func (h *Handlers) TriggerScan(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Deprecation", "true")
+	respond.Error(w, http.StatusGone, LEGACY_SCAN_RETIRED_CODE,
+		"legacy library scanning is retired; add music through Managed Import or an explicit Library Migration")
+}
+
+// GetScanStatus answers the deprecated legacy scan status poll with a
+// permanently idle status so older clients stop polling gracefully.
+func (h *Handlers) GetScanStatus(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Deprecation", "true")
+	respond.JSON(w, http.StatusOK, ScanStatus{Status: "idle"})
 }
 
 func (h *Handlers) ListArtists(w http.ResponseWriter, r *http.Request) {

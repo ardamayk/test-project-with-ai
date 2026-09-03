@@ -32,10 +32,6 @@ vi.mock("#/components/album-grid", () => ({
 	),
 }));
 
-vi.mock("#/components/scan-library-button", () => ({
-	ScanLibraryButton: () => <button type="button">Scan library</button>,
-}));
-
 function renderWithQuery(ui: React.ReactElement) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false } },

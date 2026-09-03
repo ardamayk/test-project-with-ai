@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import {
-	Folder,
 	ListMusic,
 	Music2,
 	Radio,
@@ -19,7 +18,6 @@ const libraryNav = [
 	{ to: "/library/albums", label: "Albums", icon: SquareLibrary },
 	{ to: "/library/artists", label: "Artists", icon: Users },
 	{ to: "/library/genres", label: "Genres", icon: Tags },
-	{ to: "/folders", label: "Folders", icon: Folder },
 	{ to: "/radio", label: "Radio Stations", icon: Radio },
 	{ to: "/library/tracks", label: "Tracks", icon: Music2 },
 	{ to: "/playlists", label: "Playlists", icon: ListMusic },

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestUpsertFromScanCreatesExpandedLegacyTrack(t *testing.T) {
+func TestSeedLegacyTrackCreatesExpandedLegacyTrack(t *testing.T) {
 	database := openMemoryDB(t)
 	store := NewStore(database)
 	metadata := legacyFileMetadata(filepath.Join(t.TempDir(), "track.flac"))
@@ -23,7 +23,7 @@ func TestUpsertFromScanCreatesExpandedLegacyTrack(t *testing.T) {
 	metadata.Year = 2026
 	metadata.Genre = "Rock; Pop"
 
-	added, updated, err := store.UpsertFromScan(context.Background(), metadata)
+	added, updated, err := store.SeedLegacyTrack(context.Background(), metadata)
 	if err != nil {
 		t.Fatalf("upsert scanned Track: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestUpsertFromScanCreatesExpandedLegacyTrack(t *testing.T) {
 	assertAlbumPersistenceAgreement(t, database, albumID)
 }
 
-func TestUpsertFromScanUpdatesExpandedLegacyTrack(t *testing.T) {
+func TestSeedLegacyTrackUpdatesExpandedLegacyTrack(t *testing.T) {
 	database := openMemoryDB(t)
 	store := NewStore(database)
 	metadata := legacyFileMetadata(filepath.Join(t.TempDir(), "track.flac"))
@@ -56,7 +56,7 @@ func TestUpsertFromScanUpdatesExpandedLegacyTrack(t *testing.T) {
 	metadata.AlbumArtist = "Original Album Artist"
 	metadata.Album = "Original Album"
 	metadata.Genre = "Rock"
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("create scanned Track: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestUpsertFromScanUpdatesExpandedLegacyTrack(t *testing.T) {
 	metadata.Album = "Updated Album"
 	metadata.Genre = "Jazz"
 
-	added, updated, err := store.UpsertFromScan(context.Background(), metadata)
+	added, updated, err := store.SeedLegacyTrack(context.Background(), metadata)
 	if err != nil {
 		t.Fatalf("update scanned Track: %v", err)
 	}
@@ -90,49 +90,14 @@ func TestUpsertFromScanUpdatesExpandedLegacyTrack(t *testing.T) {
 	assertTrackPersistenceAgreement(t, database, trackID)
 }
 
-func TestMissingAndPresentReconciliationUpdatesExpandedLegacyTrack(t *testing.T) {
-	database := openMemoryDB(t)
-	store := NewStore(database)
-	musicRoot := t.TempDir()
-	first := legacyFileMetadata(filepath.Join(musicRoot, "first.flac"))
-	first.Title = "First"
-	first.Genre = "Rock"
-	second := first
-	second.Path = filepath.Join(musicRoot, "second.flac")
-	second.Title = "Second"
-	second.Genre = "Jazz"
-	for _, metadata := range []FileMetadata{first, second} {
-		if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
-			t.Fatalf("create scanned Track: %v", err)
-		}
-	}
-	assertIntegerQuery(t, database, `SELECT COUNT(*) FROM tracks WHERE identity_key IS NOT NULL`, 0)
-
-	removed, err := store.MarkSeenPaths(context.Background(), map[string]struct{}{first.Path: {}})
-	if err != nil {
-		t.Fatalf("mark missing Track: %v", err)
-	}
-	if removed != 1 {
-		t.Fatalf("removed = %d, want 1", removed)
-	}
-	assertIntegerQuery(t, database, `SELECT COUNT(*) FROM tracks WHERE identity_key IS NOT NULL`, 2)
-	assertIntegerQuery(t, database, `SELECT COUNT(*) FROM legacy_album_genres`, 1)
-
-	if _, err := store.BeginScan(context.Background()); err != nil {
-		t.Fatalf("reset Track presence: %v", err)
-	}
-	assertIntegerQuery(t, database, `SELECT COUNT(*) FROM tracks WHERE identity_key IS NOT NULL`, 0)
-	assertIntegerQuery(t, database, `SELECT COUNT(*) FROM legacy_album_genres`, 2)
-}
-
-func TestUpsertFromScanReconcilesExpandedAlbumAndGenreWithoutMtimeChange(t *testing.T) {
+func TestSeedLegacyTrackReconcilesExpandedAlbumAndGenreWithoutMtimeChange(t *testing.T) {
 	database := openMemoryDB(t)
 	store := NewStore(database)
 	metadata := legacyFileMetadata(filepath.Join(t.TempDir(), "track.flac"))
 	metadata.AlbumArtist = "Original Artist"
 	metadata.Album = "Original Album"
 	metadata.Genre = "Rock"
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("create scanned Track: %v", err)
 	}
 	var originalAlbumID string
@@ -143,7 +108,7 @@ func TestUpsertFromScanReconcilesExpandedAlbumAndGenreWithoutMtimeChange(t *test
 	metadata.AlbumArtist = "Moved Artist"
 	metadata.Album = "Moved Album"
 	metadata.Genre = "Electronic"
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("reconcile scanned Track: %v", err)
 	}
 
@@ -167,11 +132,11 @@ func TestUpsertFromScanReconcilesExpandedAlbumAndGenreWithoutMtimeChange(t *test
 	assertSingleGenrePersistenceAgreement(t, database, trackID)
 }
 
-func TestUpsertFromScanUpdatesExpandedAlbumArtwork(t *testing.T) {
+func TestSeedLegacyTrackUpdatesExpandedAlbumArtwork(t *testing.T) {
 	database := openMemoryDB(t)
 	store := NewStore(database)
 	metadata := legacyFileMetadata(filepath.Join(t.TempDir(), "track.flac"))
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("create scanned Track: %v", err)
 	}
 	coverData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
@@ -180,7 +145,7 @@ func TestUpsertFromScanUpdatesExpandedAlbumArtwork(t *testing.T) {
 	}
 	metadata.CoverMime = "image/png"
 	metadata.CoverData = coverData
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("update scanned Album Artwork: %v", err)
 	}
 
@@ -208,7 +173,7 @@ func TestDeleteTrackUpdatesExpandedLegacyAlbum(t *testing.T) {
 	second.TrackNo = 2
 	second.Genre = "Jazz"
 	for _, metadata := range []FileMetadata{first, second} {
-		if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+		if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 			t.Fatalf("create scanned Track: %v", err)
 		}
 	}
@@ -231,7 +196,7 @@ func TestDeleteTrackUpdatesExpandedLegacyAlbum(t *testing.T) {
 	assertIntegerQuery(t, database, `SELECT COUNT(*) FROM genres WHERE name = 'Jazz'`, 0)
 }
 
-func TestUpsertFromScanRollsBackWhenExpandedWriteFails(t *testing.T) {
+func TestSeedLegacyTrackRollsBackWhenExpandedWriteFails(t *testing.T) {
 	database := openMemoryDB(t)
 	if _, err := database.Exec(`DROP TABLE track_sources`); err != nil {
 		t.Fatalf("remove expanded Track source table: %v", err)
@@ -239,7 +204,7 @@ func TestUpsertFromScanRollsBackWhenExpandedWriteFails(t *testing.T) {
 	store := NewStore(database)
 	metadata := legacyFileMetadata(filepath.Join(t.TempDir(), "track.flac"))
 
-	_, _, err := store.UpsertFromScan(context.Background(), metadata)
+	_, _, err := store.SeedLegacyTrack(context.Background(), metadata)
 	if err == nil {
 		t.Fatal("upsert scanned Track succeeded without expanded Track source storage")
 	}
@@ -289,7 +254,7 @@ func TestMoveLikeReconciliationPromotesSurvivingExpandedAlbumIdentity(t *testing
 	metadata := legacyFileMetadata(filepath.Join(t.TempDir(), "track.flac"))
 	metadata.AlbumArtist = "Original Artist"
 	metadata.Album = "Original Album"
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("create scanned Track: %v", err)
 	}
 	var originalAlbumID string
@@ -309,7 +274,7 @@ func TestMoveLikeReconciliationPromotesSurvivingExpandedAlbumIdentity(t *testing
 	}
 
 	metadata.Album = "Moved Album"
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("move scanned Track: %v", err)
 	}
 

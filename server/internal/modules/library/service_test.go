@@ -26,25 +26,6 @@ func setupServiceDB(t *testing.T) (*Service, *Store, *sql.DB, string) {
 	return svc, store, db, musicRoot
 }
 
-func TestServiceMusicPathsConfigured(t *testing.T) {
-	db := openMemoryDB(t)
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
-
-	withPaths := NewService(NewStore(db), config.Config{MusicPaths: []string{"/music"}})
-	if !withPaths.MusicPathsConfigured() {
-		t.Fatal("expected music paths configured")
-	}
-
-	withoutPaths := NewService(NewStore(db), config.Config{})
-	if withoutPaths.MusicPathsConfigured() {
-		t.Fatal("expected no music paths")
-	}
-}
-
 func TestServiceDeleteTrackRespectsMusicRoots(t *testing.T) {
 	svc, store, db, musicRoot := setupServiceDB(t)
 	trackPath := filepath.Join(musicRoot, "keep.flac")
@@ -63,7 +44,7 @@ func TestServiceDeleteTrackRespectsMusicRoots(t *testing.T) {
 		TrackNo:     1,
 		DurationMs:  1000,
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 	var trackID string
@@ -116,7 +97,7 @@ func TestServiceListTracksSearchesAlbumAndGenre(t *testing.T) {
 		},
 	}
 	for _, meta := range metas {
-		if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+		if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 			t.Fatal(err)
 		}
 	}

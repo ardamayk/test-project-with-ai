@@ -68,7 +68,7 @@ func seedPlaylistTrack(t *testing.T, db *sql.DB, libStore *library.Store, musicR
 		TrackNo:     1,
 		DurationMs:  1000,
 	}
-	if _, _, err := libStore.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := libStore.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 	var trackID string

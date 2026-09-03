@@ -87,26 +87,31 @@ paths:
     post:
       tags: [library]
       operationId: triggerLibraryScan
-      summary: Trigger library scan
+      summary: Deprecated legacy scan trigger (retired)
+      deprecated: true
+      description: >-
+        Legacy server-side library scanning is retired. Managed Import is the
+        authoritative ingestion path and Legacy Tracks change only through an
+        explicit Library Migration. This route stays mounted for API v1
+        compatibility and always answers 410 with error code
+        legacy_scan_retired; it never discovers or ingests files. New clients
+        must not call it.
       responses:
-        "202":
-          description: Scan started
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScanStatus"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/Gone"
   /api/v1/library/scan/status:
     get:
       tags: [library]
       operationId: getLibraryScanStatus
-      summary: Get current or latest scan status
+      summary: Deprecated legacy scan status (always idle)
+      deprecated: true
+      description: >-
+        Retained for API v1 compatibility so older clients that poll after a
+        scan trigger stop gracefully. The scanner never runs, so the status is
+        permanently idle with zero counts. New clients must not call it.
       responses:
         "200":
-          description: Scan status
+          description: Permanently idle scan status
           content:
             application/json:
               schema:
@@ -1349,6 +1354,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Conflict:
       description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Gone:
+      description: The requested legacy behavior is retired and will not run
       content:
         application/json:
           schema:
@@ -2967,6 +2978,10 @@ components:
           minimum: 0
     ScanStatus:
       type: object
+      deprecated: true
+      description: >-
+        Legacy scan status retained for API v1 compatibility. The scanner is
+        retired, so the Music Server always reports idle with zero counts.
       required: [status, scanned, added, updated, removed]
       properties:
         status:

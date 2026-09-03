@@ -54,7 +54,7 @@ func seedTrack(t *testing.T, db *sql.DB, store *Store, musicRoot string) (albumI
 			AlbumPeak:   float64Pointer(1.01),
 		},
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(`SELECT album_id, id FROM tracks`).Scan(&albumID, &trackID); err != nil {
@@ -165,7 +165,7 @@ func TestHandlersGetAlbumKeepsMatchingTrackNumbersOnDifferentDiscs(t *testing.T)
 		SampleRateHz: 96000,
 		BitDepth:     24,
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`UPDATE tracks SET disc_no = CASE WHEN file_path = ? THEN 2 ELSE 1 END WHERE album_id = ?`, duplicatePath, albumID); err != nil {
@@ -234,24 +234,5 @@ func TestHandlersDeleteTrackNotFound(t *testing.T) {
 	h.DeleteTrack(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
-	}
-}
-
-func TestHandlersTriggerScanWithoutMusicPaths(t *testing.T) {
-	db := openMemoryDB(t)
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
-
-	store := NewStore(db)
-	svc := NewService(store, config.Config{})
-	h := NewHandlers(svc)
-
-	rec := httptest.NewRecorder()
-	h.TriggerScan(rec, httptest.NewRequest(http.MethodPost, "/", nil))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }

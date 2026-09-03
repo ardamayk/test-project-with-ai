@@ -15,7 +15,6 @@ import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as RadioIndexRouteImport } from './routes/radio/index'
 import { Route as PlaylistsIndexRouteImport } from './routes/playlists/index'
 import { Route as LibraryIndexRouteImport } from './routes/library/index'
-import { Route as FoldersIndexRouteImport } from './routes/folders/index'
 import { Route as FavoritesIndexRouteImport } from './routes/favorites/index'
 import { Route as RadioDiscoverRouteImport } from './routes/radio/discover'
 import { Route as RadioStationIdRouteImport } from './routes/radio/$stationId'
@@ -55,11 +54,6 @@ const PlaylistsIndexRoute = PlaylistsIndexRouteImport.update({
 const LibraryIndexRoute = LibraryIndexRouteImport.update({
   id: '/library/',
   path: '/library/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FoldersIndexRoute = FoldersIndexRouteImport.update({
-  id: '/folders/',
-  path: '/folders/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FavoritesIndexRoute = FavoritesIndexRouteImport.update({
@@ -121,7 +115,6 @@ export interface FileRoutesByFullPath {
   '/radio/$stationId': typeof RadioStationIdRoute
   '/radio/discover': typeof RadioDiscoverRoute
   '/favorites/': typeof FavoritesIndexRoute
-  '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/playlists/': typeof PlaylistsIndexRoute
   '/radio/': typeof RadioIndexRoute
@@ -140,7 +133,6 @@ export interface FileRoutesByTo {
   '/radio/$stationId': typeof RadioStationIdRoute
   '/radio/discover': typeof RadioDiscoverRoute
   '/favorites': typeof FavoritesIndexRoute
-  '/folders': typeof FoldersIndexRoute
   '/library': typeof LibraryIndexRoute
   '/playlists': typeof PlaylistsIndexRoute
   '/radio': typeof RadioIndexRoute
@@ -160,7 +152,6 @@ export interface FileRoutesById {
   '/radio/$stationId': typeof RadioStationIdRoute
   '/radio/discover': typeof RadioDiscoverRoute
   '/favorites/': typeof FavoritesIndexRoute
-  '/folders/': typeof FoldersIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/playlists/': typeof PlaylistsIndexRoute
   '/radio/': typeof RadioIndexRoute
@@ -181,7 +172,6 @@ export interface FileRouteTypes {
     | '/radio/$stationId'
     | '/radio/discover'
     | '/favorites/'
-    | '/folders/'
     | '/library/'
     | '/playlists/'
     | '/radio/'
@@ -200,7 +190,6 @@ export interface FileRouteTypes {
     | '/radio/$stationId'
     | '/radio/discover'
     | '/favorites'
-    | '/folders'
     | '/library'
     | '/playlists'
     | '/radio'
@@ -219,7 +208,6 @@ export interface FileRouteTypes {
     | '/radio/$stationId'
     | '/radio/discover'
     | '/favorites/'
-    | '/folders/'
     | '/library/'
     | '/playlists/'
     | '/radio/'
@@ -239,7 +227,6 @@ export interface RootRouteChildren {
   RadioStationIdRoute: typeof RadioStationIdRoute
   RadioDiscoverRoute: typeof RadioDiscoverRoute
   FavoritesIndexRoute: typeof FavoritesIndexRoute
-  FoldersIndexRoute: typeof FoldersIndexRoute
   LibraryIndexRoute: typeof LibraryIndexRoute
   PlaylistsIndexRoute: typeof PlaylistsIndexRoute
   RadioIndexRoute: typeof RadioIndexRoute
@@ -293,13 +280,6 @@ declare module '@tanstack/react-router' {
       path: '/library'
       fullPath: '/library/'
       preLoaderRoute: typeof LibraryIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/folders/': {
-      id: '/folders/'
-      path: '/folders'
-      fullPath: '/folders/'
-      preLoaderRoute: typeof FoldersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/favorites/': {
@@ -383,7 +363,6 @@ const rootRouteChildren: RootRouteChildren = {
   RadioStationIdRoute: RadioStationIdRoute,
   RadioDiscoverRoute: RadioDiscoverRoute,
   FavoritesIndexRoute: FavoritesIndexRoute,
-  FoldersIndexRoute: FoldersIndexRoute,
   LibraryIndexRoute: LibraryIndexRoute,
   PlaylistsIndexRoute: PlaylistsIndexRoute,
   RadioIndexRoute: RadioIndexRoute,

@@ -29,7 +29,7 @@ func TestStorePreservesAndRefreshesReplayGainMetadata(t *testing.T) {
 		},
 	}
 
-	added, updated, err := store.UpsertFromScan(ctx, meta)
+	added, updated, err := store.SeedLegacyTrack(ctx, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestStorePreservesAndRefreshesReplayGainMetadata(t *testing.T) {
 	meta.ModTime = modTime.Add(time.Second)
 	meta.Genre = ""
 	meta.ReplayGain = ReplayGainMetadata{TrackGainDB: float64Pointer(-5.75)}
-	added, updated, err = store.UpsertFromScan(ctx, meta)
+	added, updated, err = store.SeedLegacyTrack(ctx, meta)
 	if err != nil {
 		t.Fatal(err)
 	}

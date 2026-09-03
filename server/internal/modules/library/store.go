@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	internaldb "github.com/ardam/navidrome-replacement/server/internal/db"
 	"github.com/google/uuid"
@@ -105,19 +104,6 @@ type TrackList struct {
 	Items []Track `json:"items"`
 	Total int     `json:"total"`
 }
-
-type ScanStatus struct {
-	Status     string     `json:"status"`
-	Scanned    int        `json:"scanned"`
-	Added      int        `json:"added"`
-	Updated    int        `json:"updated"`
-	Removed    int        `json:"removed"`
-	Error      string     `json:"error,omitempty"`
-	StartedAt  *time.Time `json:"startedAt,omitempty"`
-	FinishedAt *time.Time `json:"finishedAt,omitempty"`
-}
-
-const INTERRUPTED_SCAN_ERROR = "scan interrupted by server restart"
 
 type Store struct {
 	db      storeDatabase
@@ -412,13 +398,18 @@ func (s *Store) GetTrackFilePath(ctx context.Context, trackID string) (string, e
 	return path, err
 }
 
-func (s *Store) UpsertFromScan(ctx context.Context, meta FileMetadata) (added, updated bool, err error) {
+// SeedLegacyTrack writes one Legacy Track and mirrors it into the expanded
+// model. The automatic startup scanner that used to feed this path is retired;
+// no runtime caller remains. It is kept so tests can construct Legacy Tracks
+// that behave exactly like rows indexed before Managed Import became
+// authoritative, and so pre-migration playback compatibility stays covered.
+func (s *Store) SeedLegacyTrack(ctx context.Context, meta FileMetadata) (added, updated bool, err error) {
 	result, err := runStoreMutation(ctx, s, "scanned Track upsert", func(store *Store, tx *sql.Tx) (upsertResult, error) {
 		previousAlbumID, lookupErr := store.findAlbumByTrackPath(ctx, meta.Path)
 		if lookupErr != nil {
 			return upsertResult{}, lookupErr
 		}
-		added, updated, upsertErr := store.upsertFromScan(ctx, meta)
+		added, updated, upsertErr := store.seedLegacyTrack(ctx, meta)
 		if upsertErr != nil {
 			return upsertResult{}, upsertErr
 		}
@@ -460,7 +451,7 @@ func (s *Store) findAlbumByTrackPath(ctx context.Context, path string) (string, 
 	return albumID, err
 }
 
-func (s *Store) upsertFromScan(ctx context.Context, meta FileMetadata) (added, updated bool, err error) {
+func (s *Store) seedLegacyTrack(ctx context.Context, meta FileMetadata) (added, updated bool, err error) {
 	existingID, existingMtime, err := s.findTrackByPath(ctx, meta.Path)
 	if err != nil {
 		return false, false, err
@@ -783,198 +774,9 @@ func (s *Store) GetAlbumCover(ctx context.Context, albumID string) (mime string,
 	return mime, data, nil
 }
 
-func (s *Store) BeginScan(ctx context.Context) (string, error) {
-	return runStoreMutation(ctx, s, "scan presence reset", func(store *Store, tx *sql.Tx) (string, error) {
-		jobID, err := store.beginScan(ctx)
-		if err != nil {
-			return "", err
-		}
-		albumIDs, err := store.listAlbumIDs(ctx)
-		if err != nil {
-			return "", fmt.Errorf("list reset Track Albums: %w", err)
-		}
-		if err := store.synchronizeLegacyAlbums(ctx, tx, albumIDs); err != nil {
-			return "", err
-		}
-		return jobID, nil
-	})
-}
-
-func (s *Store) beginScan(ctx context.Context) (string, error) {
-	var running int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM scan_jobs WHERE status = 'running'`,
-	).Scan(&running); err != nil {
-		return "", err
-	}
-	if running > 0 {
-		return "", ErrScanRunning
-	}
-
-	id := uuid.NewString()
-	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO scan_jobs (id, status, started_at, scanned, added, updated, removed)
-		VALUES (?, 'running', ?, 0, 0, 0, 0)`, id, now)
-	if err != nil {
-		return "", err
-	}
-	if err := s.resetScanPresence(ctx); err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
-func (s *Store) RecoverInterruptedScans(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE scan_jobs
-		SET status = 'failed', finished_at = ?, error_message = ?
-		WHERE status = 'running'`, time.Now().UTC(), INTERRUPTED_SCAN_ERROR)
-	if err != nil {
-		return fmt.Errorf("recover interrupted scans: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) resetScanPresence(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET identity_key = NULL, missing_at = NULL WHERE missing_at IS NOT NULL`)
-	return err
-}
-
 func (s *Store) markTrackPresent(ctx context.Context, trackID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET identity_key = NULL, missing_at = NULL WHERE id = ?`, trackID)
 	return err
-}
-
-func (s *Store) MarkSeenPaths(ctx context.Context, paths map[string]struct{}) (removed int, err error) {
-	return runStoreMutation(ctx, s, "missing Track reconciliation", func(store *Store, tx *sql.Tx) (int, error) {
-		missingTrackIDs, listErr := store.listMissingTrackIDs(ctx, paths)
-		if listErr != nil {
-			return 0, listErr
-		}
-		albumIDs, listErr := store.listTrackAlbumIDs(ctx, missingTrackIDs)
-		if listErr != nil {
-			return 0, listErr
-		}
-		removed, markErr := store.markTracksMissing(ctx, missingTrackIDs)
-		if markErr != nil {
-			return removed, markErr
-		}
-		if syncErr := store.synchronizeLegacyAlbums(ctx, tx, albumIDs); syncErr != nil {
-			return removed, syncErr
-		}
-		return removed, nil
-	})
-}
-
-func (s *Store) synchronizeLegacyAlbums(ctx context.Context, tx *sql.Tx, albumIDs []string) error {
-	for _, albumID := range albumIDs {
-		if err := s.recomputeAlbumGenres(ctx, albumID); err != nil {
-			return fmt.Errorf("recompute legacy Album %q Genres: %w", albumID, err)
-		}
-		if err := internaldb.SynchronizeLegacyAlbum(ctx, tx, albumID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Store) listTrackAlbumIDs(ctx context.Context, trackIDs []string) ([]string, error) {
-	albumIDs := make([]string, 0, len(trackIDs))
-	seenAlbumIDs := make(map[string]struct{}, len(trackIDs))
-	for _, trackID := range trackIDs {
-		var albumID string
-		if err := s.db.QueryRowContext(ctx, `SELECT album_id FROM tracks WHERE id = ?`, trackID).Scan(&albumID); err != nil {
-			return nil, fmt.Errorf("lookup Track %q Album: %w", trackID, err)
-		}
-		if _, exists := seenAlbumIDs[albumID]; exists {
-			continue
-		}
-		seenAlbumIDs[albumID] = struct{}{}
-		albumIDs = append(albumIDs, albumID)
-	}
-	return albumIDs, nil
-}
-
-func (s *Store) listMissingTrackIDs(ctx context.Context, paths map[string]struct{}) (trackIDs []string, err error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT tracks.id, COALESCE(track_sources.file_path, tracks.file_path)
-		FROM visible_tracks tracks
-		LEFT JOIN track_sources ON track_sources.track_id = tracks.id
-		WHERE COALESCE(track_sources.source_kind, 'legacy') = 'legacy'`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
-
-	for rows.Next() {
-		var id, path string
-		if err := rows.Scan(&id, &path); err != nil {
-			return nil, err
-		}
-		if _, ok := paths[path]; !ok {
-			trackIDs = append(trackIDs, id)
-		}
-	}
-	return trackIDs, rows.Err()
-}
-
-func (s *Store) markTracksMissing(ctx context.Context, trackIDs []string) (removed int, err error) {
-	for _, trackID := range trackIDs {
-		if _, err := s.db.ExecContext(ctx, `UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, trackID); err != nil {
-			return removed, fmt.Errorf("mark track %q missing: %w", trackID, err)
-		}
-		removed++
-	}
-	return removed, nil
-}
-
-func (s *Store) UpdateScanProgress(ctx context.Context, jobID string, scanned, added, updated, removed int) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE scan_jobs SET scanned = ?, added = ?, updated = ?, removed = ?
-		WHERE id = ?`, scanned, added, updated, removed, jobID)
-	return err
-}
-
-func (s *Store) FinishScan(ctx context.Context, jobID, status, errMsg string, scanned, added, updated, removed int) error {
-	now := time.Now().UTC()
-	var errVal any
-	if errMsg != "" {
-		errVal = errMsg
-	}
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE scan_jobs SET status = ?, finished_at = ?, scanned = ?, added = ?, updated = ?, removed = ?, error_message = ?
-		WHERE id = ?`, status, now, scanned, added, updated, removed, errVal, jobID)
-	return err
-}
-
-func (s *Store) GetScanStatus(ctx context.Context) (ScanStatus, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT status, scanned, added, updated, removed, error_message, started_at, finished_at
-		FROM scan_jobs ORDER BY started_at DESC LIMIT 1`)
-
-	var st ScanStatus
-	var errMsg sql.NullString
-	var started, finished sql.NullTime
-	err := row.Scan(&st.Status, &st.Scanned, &st.Added, &st.Updated, &st.Removed, &errMsg, &started, &finished)
-	if err == sql.ErrNoRows {
-		return ScanStatus{Status: "idle"}, nil
-	}
-	if err != nil {
-		return ScanStatus{}, err
-	}
-	if errMsg.Valid {
-		st.Error = errMsg.String
-	}
-	if started.Valid {
-		t := started.Time
-		st.StartedAt = &t
-	}
-	if finished.Valid {
-		t := finished.Time
-		st.FinishedAt = &t
-	}
-	return st, nil
 }
 
 func nullableInt(v int) any {

@@ -931,7 +931,7 @@ func seedLegacyMigrationTrack(t *testing.T, database *sql.DB, filename string, c
 		SampleRateHz: 44100,
 		BitDepth:     16,
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatalf("seed legacy Track: %v", err)
 	}
 	var trackID string

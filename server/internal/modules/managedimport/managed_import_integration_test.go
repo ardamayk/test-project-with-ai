@@ -172,9 +172,9 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	wrongRevisionResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":1}`), map[string]string{"Content-Type": "application/json"})
 	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	assertNormalizedAlbum(t, router, committedTrack.AlbumID, result.TrackID)
-	runLibraryScan(t, router)
+	invokeDeprecatedLibraryScan(t, router)
 	if len(listTracks(t, router).Items) != 1 {
-		t.Fatal("legacy library reconciliation hid the committed Managed Track")
+		t.Fatal("deprecated legacy scan trigger changed the committed Managed Track")
 	}
 	streamResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/tracks/"+result.TrackID+"/stream", nil, nil)
 	if streamResponse.Code != http.StatusOK {
@@ -1210,28 +1210,20 @@ func assertCanonicalSource(t *testing.T, managedStoragePath, extension string, f
 	}
 }
 
-func runLibraryScan(t *testing.T, router http.Handler) {
+func invokeDeprecatedLibraryScan(t *testing.T, router http.Handler) {
 	t.Helper()
 	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library/scan", nil, nil)
-	if response.Code != http.StatusAccepted {
-		t.Fatalf("trigger library scan status = %d, body = %s", response.Code, response.Body.String())
+	if response.Code != http.StatusGone {
+		t.Fatalf("deprecated library scan status = %d, body = %s", response.Code, response.Body.String())
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		statusResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/scan/status", nil, nil)
-		var status struct {
-			Status string `json:"status"`
-		}
-		testutil.DecodeJSON(t, statusResponse, &status)
-		if status.Status == "completed" {
-			return
-		}
-		if status.Status == "failed" {
-			t.Fatalf("library scan failed: %s", statusResponse.Body.String())
-		}
-		time.Sleep(10 * time.Millisecond)
+	statusResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/scan/status", nil, nil)
+	var status struct {
+		Status string `json:"status"`
 	}
-	t.Fatal("library scan did not complete")
+	testutil.DecodeJSON(t, statusResponse, &status)
+	if status.Status != "idle" {
+		t.Fatalf("deprecated library scan status = %q, want idle", status.Status)
+	}
 }
 
 func TestManagedImportStreamsUploadIntoServerOwnedStaging(t *testing.T) {
