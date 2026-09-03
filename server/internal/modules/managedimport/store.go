@@ -1248,7 +1248,11 @@ func archiveStandaloneHistory(ctx context.Context, transaction *sql.Tx, jobID st
 	if err := insertHistory(ctx, transaction, item); err != nil {
 		return err
 	}
-	if _, err := transaction.ExecContext(ctx, `UPDATE managed_import_jobs SET preview_json = NULL, staged_file_path = NULL WHERE id = ? AND batch_id IS NULL`, jobID); err != nil {
+	// A canceled standalone job is deleted by the caller in the same transaction; clearing its staged path
+	// here would violate the awaiting_confirmation CHECK constraint, so only terminal rows are cleared.
+	if _, err := transaction.ExecContext(ctx, `
+		UPDATE managed_import_jobs SET preview_json = NULL, staged_file_path = NULL
+		WHERE id = ? AND batch_id IS NULL AND status IN (?, ?)`, jobID, STATUS_COMMITTED, STATUS_FAILED); err != nil {
 		return fmt.Errorf("clear terminal standalone Import payloads: %w", err)
 	}
 	return nil
