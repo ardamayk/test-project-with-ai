@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/google/uuid"
@@ -177,12 +176,17 @@ func replacementToken(state replacementState) (string, error) {
 		Playlists                                                                    []TrackDeletionPlaylistReference
 		Queues                                                                       []TrackDeletionQueueReference
 		ReplacementSHA256, ReplacementAlbumKey, ArtworkMode                          string
+		IsSoleTrack                                                                  bool
+		Library                                                                      TrackReplacementLibraryChange
+		PreviousArtworkPath, RetiredArtworkPath                                      string
 	}{
 		TrackID: target.TrackID, Title: target.Title, AlbumID: target.AlbumID, FilePath: target.FilePath,
 		ContentSHA256: target.ContentSHA256, ArtworkPath: target.ArtworkPath, ArtworkSHA256: target.ArtworkSHA256,
 		SizeBytes: target.SizeBytes, TrackRevision: target.TrackRevision, SourceRevision: target.SourceRevision,
 		Playlists: target.Playlists, Queues: target.Queues, ReplacementSHA256: state.Inspection.FileSHA256,
 		ReplacementAlbumKey: state.AlbumKey, ArtworkMode: state.Placement.ArtworkMode,
+		IsSoleTrack: target.IsSoleTrack, Library: state.Preview.Library,
+		PreviousArtworkPath: state.Placement.previousArtworkRelative, RetiredArtworkPath: state.Placement.retiredArtworkRelative,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -405,9 +409,10 @@ func (service *Service) rollbackReplacementFiles(ctx context.Context, journal re
 	return service.store.RollbackReplacementJournal(recoveryCtx, journal.ID, reason)
 }
 
+// completeReplacement runs without the request deadline: the database already made the replacement authoritative,
+// and hashing a retired file up to the configured upload limit must be allowed to finish before it is deleted.
 func (service *Service) completeReplacement(ctx context.Context, job importJob, journal replacementJournal, placement replacementPlacement) (TrackReplacementResult, error) {
-	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), REPLACEMENT_COMPLETION_TIMEOUT_SECONDS*time.Second)
-	defer cancel()
+	completionCtx := context.WithoutCancel(ctx)
 	deletedFiles, removeErr := service.storage.CompleteReplacementFiles(completionCtx, journal, placement)
 	if removeErr != nil {
 		reasonErr := service.store.RecordReplacementRecoveryReason(completionCtx, journal.ID, "previous file cleanup failed: "+removeErr.Error())

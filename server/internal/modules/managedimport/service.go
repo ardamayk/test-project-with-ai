@@ -471,7 +471,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 		}
 	}
-	inspection, err := service.validateStagedUpload(ctx, jobID, upload)
+	inspection, err := service.validateStagedUpload(ctx, job, upload)
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 	}
@@ -575,8 +575,8 @@ func (service *Service) getUploadingJob(ctx context.Context, jobID string) (impo
 	return job, nil
 }
 
-func (service *Service) validateStagedUpload(ctx context.Context, jobID string, upload stagedUpload) (library.MediaInspection, error) {
-	inspection, err := service.inspector.Inspect(ctx, upload.Path, service.validationProgressReporter(ctx, jobID))
+func (service *Service) validateStagedUpload(ctx context.Context, job importJob, upload stagedUpload) (library.MediaInspection, error) {
+	inspection, err := service.inspector.Inspect(ctx, upload.Path, service.validationProgressReporter(ctx, job.ID))
 	if err != nil {
 		if ctx.Err() != nil {
 			return library.MediaInspection{}, validationCancellationError(ctx)
@@ -586,7 +586,7 @@ func (service *Service) validateStagedUpload(ctx context.Context, jobID string, 
 	if inspection.FileSHA256 != upload.SHA256 {
 		return library.MediaInspection{}, &ValidationError{Code: "staged_file_changed", Field: "file", Reason: "staged file differs from uploaded bytes", Err: errors.New("staged file hash differs from uploaded bytes")}
 	}
-	if err := service.validateAlbumPositions(ctx, jobID, inspection.Metadata); err != nil {
+	if err := service.validateAlbumPositionsExcluding(ctx, job.ID, inspection.Metadata, job.ReplaceTrackID); err != nil {
 		if ctx.Err() != nil {
 			err = validationCancellationError(ctx)
 		}

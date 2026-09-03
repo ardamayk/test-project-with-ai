@@ -165,6 +165,53 @@ func TestTrackReplacementRejectsExactDuplicateAndOccupiedPosition(t *testing.T) 
 	assertCanonicalFileCounts(t, managedStoragePath, 2, 1)
 }
 
+func TestTrackReplacementAcceptsCorrectedPositionTotalsForTheTargetTrack(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	router := newTrackReplacementRouter(t, database, managedStoragePath)
+	original := readStrictFLACFixture(t)
+	trackID := importOneFLAC(t, router, original, "original.flac")
+	replacement := replaceFixtureTag(t, original, "TRACKNUMBER=3/9", "TRACKNUMBER=3/8")
+
+	job := createTrackReplacementJob(t, router, trackID)
+	preview := uploadFLACToJob(t, router, job.ID, replacement, "corrected.flac")
+	if preview.Status != managedimport.STATUS_AWAITING_CONFIRMATION || preview.Replacement == nil {
+		t.Fatalf("corrected totals preview = %+v", preview)
+	}
+	trackTotal := findFieldDiff(t, preview.Replacement.Metadata, "trackTotal")
+	if !trackTotal.IsChanged || trackTotal.Current != "9" || trackTotal.Replacement != "8" {
+		t.Fatalf("trackTotal diff = %+v", trackTotal)
+	}
+	confirmed := serveReplacementConfirmation(router, job.ID, preview.Revision, preview.Replacement.ConfirmationToken, true)
+	if confirmed.Code != http.StatusOK {
+		t.Fatalf("replacement confirm status = %d, body = %s", confirmed.Code, confirmed.Body.String())
+	}
+}
+
+func TestTrackReplacementRejectsPreviewWhenSiblingRemovalChangesCleanup(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	managedStoragePath := t.TempDir()
+	router := newTrackReplacementRouter(t, database, managedStoragePath)
+	original := readStrictFLACFixture(t)
+	trackID := importOneFLAC(t, router, original, "original.flac")
+	siblingID := importOneFLAC(t, router, secondTrackFixture(original), "second.flac")
+	replacement := replaceFixtureTag(t, original, "ALBUM=Strict Import Tests", "ALBUM=Other Import Tests")
+
+	job := createTrackReplacementJob(t, router, trackID)
+	preview := uploadFLACToJob(t, router, job.ID, replacement, "moved.flac")
+	if preview.Replacement == nil || preview.Replacement.Library.RemovesEmptyAlbum {
+		t.Fatalf("preview with a sibling should keep the Album: %+v", preview.Replacement)
+	}
+	if _, err := database.Exec(`UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ?`, siblingID); err != nil {
+		t.Fatal(err)
+	}
+
+	conflict := serveReplacementConfirmation(router, job.ID, preview.Revision, preview.Replacement.ConfirmationToken, true)
+	testutil.AssertErrorCode(t, conflict, http.StatusConflict, "replacement_preview_changed")
+	assertStreamedBytes(t, router, trackID, original)
+	assertCanonicalFileCounts(t, managedStoragePath, 2, 1)
+}
+
 func TestTrackReplacementRollsBackDatabaseFailureWithoutTouchingOldTrack(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()

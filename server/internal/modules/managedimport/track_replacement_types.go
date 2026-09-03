@@ -1,14 +1,13 @@
 package managedimport
 
 const (
-	TRACK_REPLACEMENT_CONFIRMATION_HEADER  = "X-Track-Replacement"
-	MAX_TRACK_REPLACEMENT_BODY_BYTES       = 4 * 1024
-	ERROR_CODE_ALBUM_POSITION_CONFLICT     = "album_position_conflict"
-	ERROR_CODE_ALBUM_ARTWORK_CONFLICT      = "album_artwork_conflict"
-	REPLACEMENT_ARTWORK_MODE_EXISTING      = "existing"
-	REPLACEMENT_ARTWORK_MODE_CREATE        = "create"
-	REPLACEMENT_ARTWORK_MODE_REPLACE       = "replace"
-	REPLACEMENT_COMPLETION_TIMEOUT_SECONDS = 60
+	TRACK_REPLACEMENT_CONFIRMATION_HEADER = "X-Track-Replacement"
+	MAX_TRACK_REPLACEMENT_BODY_BYTES      = 4 * 1024
+	ERROR_CODE_ALBUM_POSITION_CONFLICT    = "album_position_conflict"
+	ERROR_CODE_ALBUM_ARTWORK_CONFLICT     = "album_artwork_conflict"
+	REPLACEMENT_ARTWORK_MODE_EXISTING     = "existing"
+	REPLACEMENT_ARTWORK_MODE_CREATE       = "create"
+	REPLACEMENT_ARTWORK_MODE_REPLACE      = "replace"
 )
 
 type replacementPhase string

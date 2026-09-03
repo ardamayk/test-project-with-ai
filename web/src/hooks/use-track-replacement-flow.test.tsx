@@ -37,11 +37,18 @@ vi.mock("@repo/ui", () => ({
 	}),
 }));
 
+const selectDesktopImportFiles = vi.fn();
+const releaseDesktopImportSelections = vi.fn();
+const desktopUploadImportFile = vi.fn();
+
 vi.mock("#/desktop/bridge", () => ({
 	isDesktopClient: () => false,
-	selectDesktopImportFiles: vi.fn(),
-	releaseDesktopImportSelections: vi.fn(),
-	desktopUploadImportFile: vi.fn(),
+	selectDesktopImportFiles: (...args: unknown[]) =>
+		selectDesktopImportFiles(...args),
+	releaseDesktopImportSelections: (...args: unknown[]) =>
+		releaseDesktopImportSelections(...args),
+	desktopUploadImportFile: (...args: unknown[]) =>
+		desktopUploadImportFile(...args),
 }));
 
 const track = {
@@ -163,6 +170,55 @@ describe("useTrackReplacementFlow", () => {
 		});
 		cancelManagedImport.mockResolvedValue(undefined);
 		refreshQueue.mockResolvedValue(undefined);
+		releaseDesktopImportSelections.mockResolvedValue(undefined);
+	});
+
+	it("keeps a committed replacement completed when cache refresh fails", async () => {
+		refreshQueue.mockRejectedValue(new Error("offline"));
+		const onReplaced = vi.fn();
+		const { result } = renderHook(() => useTrackReplacementFlow(onReplaced), {
+			wrapper,
+		});
+
+		act(() => result.current.open(track));
+		await act(() =>
+			result.current.replaceWith(new File(["bytes"], "better.flac")),
+		);
+		await act(() => result.current.confirm());
+
+		expect(result.current.step).toBe("completed");
+		expect(result.current.error).toBeNull();
+		expect(onReplaced).toHaveBeenCalledWith(track);
+	});
+
+	it("releases every unused native selection from the desktop picker", async () => {
+		selectDesktopImportFiles.mockResolvedValue([
+			{ id: "sel-1", name: "better.flac", size: 10 },
+			{ id: "sel-2", name: "extra.flac", size: 10 },
+			{ id: "sel-3", name: "extra-2.flac", size: 10 },
+		]);
+		desktopUploadImportFile.mockResolvedValue(
+			new Response(JSON.stringify(awaitingPreview()), { status: 200 }),
+		);
+		const { result } = renderHook(() => useTrackReplacementFlow(), {
+			wrapper,
+		});
+
+		act(() => result.current.open(track));
+		await act(() => result.current.selectDesktopFile());
+
+		expect(desktopUploadImportFile).toHaveBeenCalledWith(
+			"sel-1",
+			"job-1",
+			expect.any(Function),
+			expect.any(AbortSignal),
+		);
+		expect(releaseDesktopImportSelections).toHaveBeenCalledWith([
+			"sel-2",
+			"sel-3",
+		]);
+		expect(releaseDesktopImportSelections).toHaveBeenCalledWith(["sel-1"]);
+		expect(result.current.step).toBe("review");
 	});
 
 	it("uploads, reviews, confirms, and stops the active Player without autoplay", async () => {

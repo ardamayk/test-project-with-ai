@@ -114,8 +114,14 @@ export function useTrackReplacementFlow(onReplaced?: (track: Track) => void) {
 	}
 
 	async function selectDesktopFile(): Promise<void> {
-		const selections = await selectDesktopImportFiles();
-		const selection = selections[0];
+		const [selection, ...unused] = await selectDesktopImportFiles();
+		if (unused.length > 0) {
+			void releaseDesktopImportSelections(
+				unused.map((extra) => extra.id),
+			).catch((cause) => {
+				console.error("Desktop import selection release failed", cause);
+			});
+		}
 		if (!selection) return;
 		await replaceWith(selection);
 	}
@@ -130,17 +136,23 @@ export function useTrackReplacementFlow(onReplaced?: (track: Track) => void) {
 				upload.preview.revision,
 				upload.replacement.confirmationToken,
 			);
-			if (playback.currentTrack?.id === track.id) {
-				playback.stopPlayback();
-			}
-			await playback.refreshQueue();
-			await invalidateLibraryCache(queryClient, {});
-			await invalidatePlaylistCache(queryClient);
-			onReplaced?.(track);
-			setStep("completed");
 		} catch (cause) {
 			setError(replacementErrorMessage(cause));
 			setStep("review");
+			return;
+		}
+		// The server has committed the replacement; nothing below may report it as failed.
+		if (playback.currentTrack?.id === track.id) {
+			playback.stopPlayback();
+		}
+		setStep("completed");
+		onReplaced?.(track);
+		try {
+			await playback.refreshQueue();
+			await invalidateLibraryCache(queryClient, {});
+			await invalidatePlaylistCache(queryClient);
+		} catch (cause) {
+			console.error("Refresh after Track Replacement failed", cause);
 		}
 	}
 
