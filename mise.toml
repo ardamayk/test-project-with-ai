@@ -251,6 +251,10 @@ run = "cd server && RUN_HLS_BROWSER_INTEGRATION=1 go test ./internal/modules/rad
 description = "Run Desktop Client tests against pinned mpv"
 run = "pnpm --filter @repo/desktop prepare:mpv && pnpm --filter @repo/desktop test:mpv"
 
+[tasks."desktop:test:import-parity"]
+description = "Run Desktop Client Managed Import parity against a real Music Server"
+run = "pnpm --filter @repo/desktop test:import-parity"
+
 [tasks."ci:fast"]
 description = "Run the local fast CI policy"
 depends = ["check", "test"]
@@ -262,7 +266,7 @@ run = "node scripts/classify-pr-changes.mjs"
 
 [tasks."ci:integration"]
 description = "Run all browser, HLS, and pinned-mpv integration tests"
-depends = ["web:test:e2e", "server:test:hls", "desktop:test:mpv"]
+depends = ["web:test:e2e", "server:test:hls", "desktop:test:mpv", "desktop:test:import-parity"]
 run = ":"
 
 [tasks."ci:full"]

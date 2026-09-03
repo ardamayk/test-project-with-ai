@@ -228,6 +228,7 @@ test("CI policy tasks reuse public task compositions", () => {
 	assert.match(integrationDryRun, /\[web:test:e2e\]/);
 	assert.match(integrationDryRun, /\[server:test:hls\]/);
 	assert.match(integrationDryRun, /\[desktop:test:mpv\]/);
+	assert.match(integrationDryRun, /\[desktop:test:import-parity\]/);
 
 	const fullDryRun = runMiseTaskDryRun("ci:full");
 	assert.match(fullDryRun, /\[ci:fast\]/);

@@ -14,6 +14,8 @@ use tokio::sync::oneshot;
 
 const PROXY_TOKEN_BYTES: usize = 32;
 const MEDIA_PROXY_PORT: u16 = 43129;
+#[cfg(not(test))]
+const MEDIA_PROXY_PORT_ENV: &str = "EARTHLY_AUDIO_MEDIA_PROXY_PORT";
 const MAX_HLS_MANIFEST_BYTES: usize = 1024 * 1024;
 const MEDIA_REQUEST_HEADERS: &[&str] = &["accept", "authorization", "content-type", "range"];
 const MEDIA_RESPONSE_HEADERS: &[&str] = &[
@@ -292,7 +294,12 @@ fn invalid_hls_error(reason: &str) -> ConnectionError {
 
 #[cfg(not(test))]
 fn media_proxy_port() -> u16 {
-    MEDIA_PROXY_PORT
+    // Integration tests run the non-test build of this crate and must not
+    // collide with a running Desktop Client on the fixed CSP port.
+    std::env::var(MEDIA_PROXY_PORT_ENV)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(MEDIA_PROXY_PORT)
 }
 
 #[cfg(test)]

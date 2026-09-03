@@ -62,6 +62,7 @@ test("main verification runs every public static, unit, and integration task", (
 		"desktop:lint",
 		"desktop:test",
 		"desktop:test:mpv",
+		"desktop:test:import-parity",
 		"generate:check",
 	]) {
 		assert.match(mainWorkflow, new RegExp(`mise run ${task}`));
