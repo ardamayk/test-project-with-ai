@@ -1,8 +1,8 @@
 pub mod adaptive_system_rate;
-mod connection;
-mod desktop_import;
+pub mod connection;
+pub mod desktop_import;
 mod exclusive_output;
-mod media_proxy;
+pub mod media_proxy;
 pub mod output_device;
 mod playback;
 mod playback_app_actions;

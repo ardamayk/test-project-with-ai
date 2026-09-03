@@ -2,7 +2,7 @@ use crate::connection::{ConnectionError, HttpBridge, HttpResponse, ServerOrigin}
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::Dir;
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
@@ -143,7 +143,7 @@ impl ImportSelectionStore {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportUploadProgress {
     pub sent_bytes: u64,
@@ -855,6 +855,247 @@ mod tests {
         assert_eq!(error.code, "canceled");
         release_sender.send(()).expect("release server");
         fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    /// Binds a listener that must never be connected to and reports whether a
+    /// connection arrived within a short grace period.
+    fn unexpected_connection_probe() -> (ServerOrigin, mpsc::Receiver<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        let origin = ServerOrigin::parse(&format!(
+            "http://{}",
+            listener.local_addr().expect("probe address")
+        ))
+        .expect("parse origin");
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            if listener.accept().is_ok() {
+                let _ = sender.send(());
+            }
+        });
+        (origin, receiver)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_selection_id_never_opens_a_connection() {
+        let store = ImportSelectionStore::default();
+        let (origin, connected) = unexpected_connection_probe();
+
+        let error = upload_selection(
+            &store,
+            &HttpBridge::new().expect("create bridge"),
+            &origin,
+            "not-a-registered-selection",
+            "upload-1",
+            "job-1",
+            Channel::<ImportUploadProgress>::new(|_| Ok(())),
+        )
+        .await
+        .expect_err("unknown selection fails");
+
+        assert_eq!(error.code, "invalid_selection");
+        assert!(
+            connected.recv_timeout(Duration::from_millis(200)).is_err(),
+            "a forged selection ID must not reach the network"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hostile_job_id_never_opens_a_connection() {
+        let fixture = temporary_fixture_path("flac");
+        fs::write(&fixture, b"audio bytes").expect("write fixture");
+        let store = ImportSelectionStore::default();
+        let selection = store
+            .register_paths([fixture.clone()])
+            .expect("register file")
+            .remove(0);
+        let (origin, connected) = unexpected_connection_probe();
+
+        let error = upload_selection(
+            &store,
+            &HttpBridge::new().expect("create bridge"),
+            &origin,
+            &selection.id,
+            "upload-1",
+            "../../attacker.example/collect",
+            Channel::<ImportUploadProgress>::new(|_| Ok(())),
+        )
+        .await
+        .expect_err("hostile job id fails");
+
+        assert_eq!(error.code, "invalid_request");
+        assert!(
+            connected.recv_timeout(Duration::from_millis(200)).is_err(),
+            "an invalid job ID must not reach the network"
+        );
+        fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    #[test]
+    fn explicit_file_selection_skips_unsupported_and_missing_extensions() {
+        let root = temporary_fixture_path("files");
+        fs::create_dir_all(&root).expect("create root");
+        let track = root.join("Track One.flac");
+        let sidecar = root.join("cover.jpg");
+        let bare = root.join("README");
+        fs::write(&track, b"flac").expect("write track");
+        fs::write(&sidecar, b"jpeg").expect("write sidecar");
+        fs::write(&bare, b"text").expect("write bare");
+        let store = ImportSelectionStore::default();
+
+        let selections = store
+            .register_paths([track.clone(), sidecar, bare])
+            .expect("register explicit files");
+
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].name, "Track One.flac");
+        assert!(selections[0].id.parse::<uuid::Uuid>().is_ok());
+        assert!(!selections[0].id.contains("Track"));
+        fs::remove_dir_all(root).expect("remove root");
+    }
+
+    /// Captures one PUT request in full (headers and exact body) and answers
+    /// with an empty JSON object.
+    fn capture_upload() -> (ServerOrigin, mpsc::Receiver<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind capture server");
+        let origin = ServerOrigin::parse(&format!(
+            "http://{}",
+            listener.local_addr().expect("capture address")
+        ))
+        .expect("parse origin");
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept upload");
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            let mut expected_total = None;
+            loop {
+                let read = stream.read(&mut chunk).expect("read upload");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                if expected_total.is_none()
+                    && let Some(header_end) =
+                        request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    let headers =
+                        String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .expect("content-length header");
+                    expected_total = Some(header_end + 4 + content_length);
+                }
+                if expected_total.is_some_and(|total| request.len() >= total) {
+                    break;
+                }
+            }
+            std::io::Write::write_all(
+                &mut stream,
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            )
+            .expect("write response");
+            sender.send(request).expect("deliver request");
+        });
+        (origin, receiver)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn every_supported_format_uploads_byte_for_byte_without_client_metadata() {
+        for extension in super::SUPPORTED_EXTENSIONS {
+            let fixture = temporary_fixture_path(extension);
+            let payload = (0..=255_u8)
+                .cycle()
+                .take(3 * 4096 + 17)
+                .collect::<Vec<u8>>();
+            fs::write(&fixture, &payload).expect("write fixture");
+            let store = ImportSelectionStore::default();
+            let selection = store
+                .register_paths([fixture.clone()])
+                .expect("register file")
+                .remove(0);
+            let (origin, captured) = capture_upload();
+            let progress = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let recorded = progress.clone();
+            let channel = Channel::<ImportUploadProgress>::new(move |body| {
+                if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                    let update: ImportUploadProgress =
+                        serde_json::from_str(&json).expect("progress JSON");
+                    recorded.lock().expect("progress lock").push(update);
+                }
+                Ok(())
+            });
+
+            let response = upload_selection(
+                &store,
+                &HttpBridge::new().expect("create bridge"),
+                &origin,
+                &selection.id,
+                "upload-1",
+                "job-1",
+                channel,
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{extension}: {}", error.message));
+            assert_eq!(response.status, 200, "{extension}");
+
+            let request = captured.recv().expect("captured request");
+            let header_end = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .expect("header terminator");
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let body = &request[header_end + 4..];
+            assert_eq!(
+                body,
+                payload.as_slice(),
+                "{extension} body must be untouched"
+            );
+            assert!(
+                headers.starts_with("put /api/v1/imports/job-1/file http/1.1"),
+                "{headers}"
+            );
+            assert!(
+                headers.contains(&format!("content-length: {}", payload.len())),
+                "{headers}"
+            );
+            assert!(
+                headers.contains(&format!(
+                    "x-import-filename: {}",
+                    selection.name.to_ascii_lowercase()
+                )),
+                "{headers}"
+            );
+            let header_names = headers
+                .lines()
+                .skip(1)
+                .filter_map(|line| line.split_once(':').map(|(name, _)| name.trim().to_owned()))
+                .collect::<Vec<_>>();
+            for name in &header_names {
+                assert!(
+                    [
+                        "accept",
+                        "content-type",
+                        "content-length",
+                        "x-import-filename",
+                        "x-import-filename-encoding",
+                        "host",
+                        "user-agent",
+                        "accept-encoding",
+                    ]
+                    .contains(&name.as_str()),
+                    "{extension}: unexpected header {name} (native code must not send metadata)"
+                );
+            }
+            let progress = progress.lock().expect("progress lock").clone();
+            assert_eq!(
+                progress.last().map(|update| update.sent_bytes),
+                Some(payload.len() as u64),
+                "{extension} progress reaches the full size"
+            );
+            fs::remove_file(fixture).expect("remove fixture");
+        }
     }
 
     #[test]

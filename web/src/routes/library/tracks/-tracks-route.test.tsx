@@ -764,6 +764,216 @@ describe("tracks route", () => {
 		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
 	});
 
+	it("renders native progress, structured rejections, duplicate decisions, and terminal results like Web", async () => {
+		// Desktop parity for issue #55: the shared Import Music dialog drives
+		// the native transport through the same states the Web journey shows.
+		mocks.isDesktopClient.mockReturnValue(true);
+		// Native uploads run one at a time, so server jobs are created in
+		// selection order.
+		mocks.createManagedImportJob.mockReset();
+		for (const jobId of [
+			"accepted-selection",
+			"broken-selection",
+			"remaster-selection",
+		]) {
+			mocks.createManagedImportJob.mockResolvedValueOnce({
+				id: jobId,
+				status: "uploading",
+				revision: 1,
+			});
+		}
+		mocks.selectDesktopImportFolder.mockResolvedValue([
+			{ id: "accepted-selection", name: "track.flac", size: 42 },
+			{ id: "broken-selection", name: "broken.flac", size: 7 },
+			{ id: "remaster-selection", name: "remaster.opus", size: 84 },
+		]);
+		const acceptedPreview = {
+			...createImportPreview("accepted-selection"),
+			file: {
+				...createImportPreview("accepted-selection").file,
+				originalFilename: "track.flac",
+			},
+		};
+		const remasterPreview = {
+			...createImportPreview("remaster-selection"),
+			file: {
+				originalFilename: "remaster.opus",
+				title: "Remaster",
+				artists: ["Test Artist"],
+				album: "Strict Import Tests",
+				format: "opus",
+			},
+			duplicateClassification: "possible_duplicate",
+			duplicateCandidates: [
+				{
+					trackId: "existing-track",
+					title: "Original",
+					artists: ["Test Artist"],
+					album: "Strict Import Tests",
+					discNo: 1,
+					trackNo: 3,
+					format: "ogg",
+					durationMs: 245,
+				},
+			],
+		};
+		let releaseAcceptedUpload: (() => void) | undefined;
+		mocks.desktopUploadImportFile.mockImplementation(
+			(
+				selectionId: string,
+				_jobId: string,
+				onProgress: (p: number) => void,
+			) => {
+				if (selectionId === "accepted-selection") {
+					onProgress(45);
+					return new Promise((resolve) => {
+						releaseAcceptedUpload = () =>
+							resolve(
+								new Response(JSON.stringify(acceptedPreview), {
+									status: 200,
+									headers: { "content-type": "application/json" },
+								}),
+							);
+					});
+				}
+				if (selectionId === "broken-selection") {
+					return Promise.resolve(
+						new Response(
+							JSON.stringify({
+								code: "invalid_metadata",
+								message: "TITLE is required",
+							}),
+							{ status: 422, headers: { "content-type": "application/json" } },
+						),
+					);
+				}
+				return Promise.resolve(
+					new Response(JSON.stringify(remasterPreview), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					}),
+				);
+			},
+		);
+		mocks.getManagedImportBatch.mockResolvedValue({
+			id: "batch-1",
+			status: "uploading",
+			revision: 3,
+			files: [
+				createBatchFile("accepted-selection", true),
+				{
+					jobId: "broken-selection",
+					state: "rejected",
+					status: "failed",
+					revision: 1,
+					validationProgress: 100,
+					originalFilename: "broken.flac",
+					selected: false,
+					errorCode: "invalid_metadata",
+					errorReason: "TITLE is required",
+				},
+				{
+					...createBatchFile("remaster-selection", true),
+					selected: false,
+					preview: remasterPreview,
+				},
+			],
+		});
+		mocks.confirmManagedImportBatch.mockResolvedValue({
+			id: "batch-1",
+			status: "completed",
+			revision: 5,
+			files: [
+				{
+					jobId: "accepted-selection",
+					state: "completed",
+					status: "committed",
+					revision: 3,
+					validationProgress: 100,
+					selected: true,
+					outcome: "imported",
+					trackId: "imported-track",
+				},
+				{
+					jobId: "broken-selection",
+					state: "rejected",
+					status: "failed",
+					revision: 1,
+					validationProgress: 100,
+					selected: false,
+					outcome: "rejected",
+					errorCode: "invalid_metadata",
+					errorReason: "TITLE is required",
+				},
+				{
+					jobId: "remaster-selection",
+					state: "completed",
+					status: "committed",
+					revision: 3,
+					validationProgress: 100,
+					selected: true,
+					outcome: "imported",
+					trackId: "remaster-track",
+				},
+			],
+		});
+
+		await openImportMusicDialog();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Select audio folder" }),
+		);
+
+		// Native progress drives the same progress bar the Web upload uses.
+		const progressbar = await screen.findByRole("progressbar", {
+			name: "track.flac upload progress",
+		});
+		await vi.waitFor(() =>
+			expect(progressbar.getAttribute("aria-valuenow")).toBe("45"),
+		);
+		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalled();
+		// Native uploads run one at a time, so the sibling files wait.
+		expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(1);
+		releaseAcceptedUpload?.();
+
+		// Structured server rejections render as Web does.
+		expect(await screen.findByText("TITLE is required")).toBeTruthy();
+		expect(
+			screen.getByRole("checkbox", { name: "Select broken.flac" }),
+		).toHaveProperty("disabled", true);
+		expect(
+			screen.getByRole("checkbox", { name: "Select track.flac" }),
+		).toHaveProperty("checked", true);
+
+		// A Possible Duplicate requires an explicit decision before confirming.
+		await screen.findByText("Possible Duplicate");
+		expect(
+			screen.getByRole("button", { name: "Confirm Import" }),
+		).toHaveProperty("disabled", true);
+		fireEvent.click(screen.getByRole("radio", { name: "Import separately" }));
+		expect(
+			screen.getByRole("button", { name: "Confirm Import" }),
+		).toHaveProperty("disabled", false);
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+
+		await vi.waitFor(() =>
+			expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+				"batch-1",
+				3,
+				["accepted-selection", "remaster-selection"],
+				[{ jobId: "remaster-selection", action: "import_separately" }],
+			),
+		);
+		expect(await screen.findAllByText("Imported")).toHaveLength(2);
+		expect(screen.getByText("Rejected")).toBeTruthy();
+		await vi.waitFor(() =>
+			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
+				"accepted-selection",
+				"broken-selection",
+				"remaster-selection",
+			]),
+		);
+	});
+
 	it("limits recursive folder uploads to three concurrent files", async () => {
 		mockClientFileJobs();
 		const uploads = mockDeferredUploads();

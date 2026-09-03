@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -42,6 +43,12 @@ func WAVAPICFrame(pictureType int, mimeType, description string, data []byte) WA
 
 func EncodeWAV(t testing.TB, fixture WAVFixture) []byte {
 	t.Helper()
+	return BuildWAV(fixture)
+}
+
+// BuildWAV encodes a WAV fixture without a testing.TB so non-test tooling such
+// as cmd/desktop-parity-fixtures can produce the same bytes the Go tests use.
+func BuildWAV(fixture WAVFixture) []byte {
 	format := encodeWAVFormat(fixture)
 	blockAlign := int(fixture.ChannelCount) * int(fixture.BitDepth) / 8
 	pcm := make([]byte, fixture.PCMFrames*blockAlign)
@@ -50,11 +57,11 @@ func EncodeWAV(t testing.TB, fixture WAVFixture) []byte {
 	}
 
 	var body bytes.Buffer
-	appendWAVChunk(t, &body, "fmt ", format)
+	appendWAVChunk(&body, "fmt ", format)
 	if !fixture.OmitID3 {
-		appendWAVChunk(t, &body, "ID3 ", encodeWAVID3(t, fixture.ID3Frames))
+		appendWAVChunk(&body, "ID3 ", encodeWAVID3(fixture.ID3Frames))
 	}
-	appendWAVChunk(t, &body, "data", pcm)
+	appendWAVChunk(&body, "data", pcm)
 
 	riffSize := uint32(4 + body.Len())
 	if fixture.RIFFSizeFix != nil {
@@ -62,7 +69,7 @@ func EncodeWAV(t testing.TB, fixture WAVFixture) []byte {
 	}
 	var output bytes.Buffer
 	output.WriteString("RIFF")
-	writeWAVBinary(t, &output, binary.LittleEndian, riffSize)
+	writeWAVBinary(&output, binary.LittleEndian, riffSize)
 	output.WriteString("WAVE")
 	output.Write(body.Bytes())
 	return output.Bytes()
@@ -104,24 +111,22 @@ func encodeWAVFormat(fixture WAVFixture) []byte {
 	return format
 }
 
-func appendWAVChunk(t testing.TB, output *bytes.Buffer, id string, body []byte) {
-	t.Helper()
+func appendWAVChunk(output *bytes.Buffer, id string, body []byte) {
 	output.WriteString(id)
-	writeWAVBinary(t, output, binary.LittleEndian, uint32(len(body)))
+	writeWAVBinary(output, binary.LittleEndian, uint32(len(body)))
 	output.Write(body)
 	if len(body)%2 == 1 {
 		output.WriteByte(0x00)
 	}
 }
 
-func encodeWAVID3(t testing.TB, frames []WAVID3Frame) []byte {
-	t.Helper()
+func encodeWAVID3(frames []WAVID3Frame) []byte {
 	var frameBytes bytes.Buffer
 	for _, frame := range frames {
 		frameBytes.WriteString(frame.ID)
 		size := len(frame.Body)
 		frameBytes.Write([]byte{byte(size >> 21 & 0x7f), byte(size >> 14 & 0x7f), byte(size >> 7 & 0x7f), byte(size & 0x7f)})
-		writeWAVBinary(t, &frameBytes, binary.BigEndian, uint16(0))
+		writeWAVBinary(&frameBytes, binary.BigEndian, uint16(0))
 		frameBytes.Write(frame.Body)
 	}
 	tagSize := frameBytes.Len()
@@ -133,9 +138,10 @@ func encodeWAVID3(t testing.TB, frames []WAVID3Frame) []byte {
 	return output.Bytes()
 }
 
-func writeWAVBinary(t testing.TB, output *bytes.Buffer, byteOrder binary.ByteOrder, value any) {
-	t.Helper()
+func writeWAVBinary(output *bytes.Buffer, byteOrder binary.ByteOrder, value any) {
+	// bytes.Buffer never fails and every value is a fixed-size integer, so an
+	// error here is a programming mistake rather than a runtime condition.
 	if err := binary.Write(output, byteOrder, value); err != nil {
-		t.Fatalf("encode WAV fixture: %v", err)
+		panic(fmt.Sprintf("encode WAV fixture: %v", err))
 	}
 }

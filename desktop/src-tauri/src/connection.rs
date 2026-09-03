@@ -705,6 +705,12 @@ mod tests {
             "http://127.0.0.1:8090/api",
             "http://user:secret@127.0.0.1:8090",
             "file:///tmp/server",
+            "http://127.0.0.1.attacker.example:8090",
+            "http://localhost.attacker.example:8090",
+            "http://127.0.0.1:8090?redirect=1",
+            "http://127.0.0.1:8090#fragment",
+            "ws://127.0.0.1:8090",
+            "http://attacker.example@127.0.0.1:8090",
         ] {
             let error = ServerOrigin::parse(value).expect_err("origin should fail");
             assert_eq!(error.code, ConnectionErrorCode::InvalidOrigin, "{value}");
@@ -844,6 +850,155 @@ mod tests {
             .expect_err("foreign origin should fail");
 
         assert_eq!(error.code, ConnectionErrorCode::InvalidOrigin);
+    }
+
+    #[tokio::test]
+    async fn http_bridge_rejects_lookalike_destinations_for_exact_origin() {
+        let configured = ServerOrigin::parse("http://127.0.0.1:8090").expect("valid origin");
+        for url in [
+            "https://127.0.0.1:8090/api/v1/health",
+            "http://localhost:8090/api/v1/health",
+            "http://127.0.0.1.attacker.example:8090/api/v1/health",
+            "//attacker.example/api/v1/health",
+            "http://127.0.0.1:8090/api/v1/health#fragment",
+            "http://user:secret@127.0.0.1:8090/api/v1/health",
+            "file:///etc/passwd",
+        ] {
+            let request = HttpRequest {
+                method: "GET".to_owned(),
+                url: url.to_owned(),
+                headers: Default::default(),
+                body: None,
+            };
+            let error = HttpBridge::new()
+                .expect("create bridge")
+                .send(&configured, request)
+                .await
+                .expect_err(url);
+            assert_eq!(error.code, ConnectionErrorCode::InvalidOrigin, "{url}");
+        }
+
+        // Dot segments normalize inside the configured origin instead of
+        // escaping it.
+        let normalized = HttpBridge::new()
+            .expect("create bridge")
+            .restricted_url(&configured, "/api/v1/../../attacker")
+            .expect("normalized path stays on origin");
+        assert_eq!(normalized.as_str(), "http://127.0.0.1:8090/attacker");
+    }
+
+    #[tokio::test]
+    async fn http_bridge_rejects_headers_that_could_redirect_uploads() {
+        let configured = ServerOrigin::parse("http://127.0.0.1:8090").expect("valid origin");
+        for (name, value) in [
+            ("host", "attacker.example"),
+            ("cookie", "session=stolen"),
+            ("x-forwarded-host", "attacker.example"),
+            ("proxy-authorization", "Basic xyz"),
+        ] {
+            let request = HttpRequest {
+                method: "GET".to_owned(),
+                url: "/api/v1/health".to_owned(),
+                headers: BTreeMap::from([(name.to_owned(), value.to_owned())]),
+                body: None,
+            };
+            let error = HttpBridge::new()
+                .expect("create bridge")
+                .send(&configured, request)
+                .await
+                .expect_err(name);
+            assert_eq!(error.code, ConnectionErrorCode::InvalidRequest, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn import_bridge_refuses_to_follow_redirects_off_the_configured_origin() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let (accepted_sender, accepted_receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).expect("read request");
+            write!(
+                stream,
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://attacker.example/collect\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write redirect");
+            accepted_sender.send(1_u8).expect("count request");
+            // A second connection would mean the client followed the redirect
+            // to a different socket on this host; none is expected.
+            if listener.accept().is_ok() {
+                accepted_sender.send(2_u8).expect("count request");
+            }
+        });
+        let origin = ServerOrigin::parse(&format!("http://{address}")).expect("origin");
+
+        let error = HttpBridge::new()
+            .expect("create bridge")
+            .send_import(
+                &origin,
+                "/api/v1/imports/job-1/file",
+                "song.flac",
+                "audio/flac",
+                5,
+                reqwest::Body::from("audio"),
+            )
+            .await
+            .expect_err("redirect must be refused");
+
+        assert_eq!(error.code, ConnectionErrorCode::InvalidResponse);
+        assert!(error.message.contains("redirect"), "{}", error.message);
+        assert_eq!(accepted_receiver.recv().expect("first request"), 1);
+        assert!(
+            accepted_receiver
+                .recv_timeout(Duration::from_millis(200))
+                .is_err(),
+            "the bridge must not follow the redirect"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_bridge_refuses_redirects_and_non_get_methods() {
+        let configured = ServerOrigin::parse("http://127.0.0.1:8090").expect("valid origin");
+        let request = HttpRequest {
+            method: "POST".to_owned(),
+            url: "/api/v1/tracks/track-1/stream".to_owned(),
+            headers: Default::default(),
+            body: None,
+        };
+        let error = HttpBridge::new()
+            .expect("create bridge")
+            .send_media(&configured, request)
+            .await
+            .expect_err("POST media request must fail");
+        assert_eq!(error.code, ConnectionErrorCode::InvalidRequest);
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).expect("read request");
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: http://attacker.example/track.flac\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write redirect");
+        });
+        let origin = ServerOrigin::parse(&format!("http://{address}")).expect("origin");
+        let request = HttpRequest {
+            method: "GET".to_owned(),
+            url: "/api/v1/tracks/track-1/stream".to_owned(),
+            headers: Default::default(),
+            body: None,
+        };
+        let error = HttpBridge::new()
+            .expect("create bridge")
+            .send_media(&origin, request)
+            .await
+            .expect_err("media redirect must be refused");
+        assert_eq!(error.code, ConnectionErrorCode::InvalidResponse);
     }
 
     #[tokio::test]

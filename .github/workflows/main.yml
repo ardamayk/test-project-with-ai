@@ -621,6 +621,14 @@ jobs:
           EARTHLY_AUDIO_MPV_PATH: ${{ runner.temp }}/earthly-audio-mpv/mpv
         run: mise run desktop:test:mpv 2>&1 | tee "$RUNNER_TEMP/main-desktop-logs/desktop-mpv.log"
 
+      # Drives real Managed Imports for every supported format through the
+      # native selection, upload, and media-proxy transport against a Music
+      # Server built from this checkout (issue #55).
+      - name: Desktop Managed Import parity against a real Music Server
+        id: import_parity
+        if: ${{ !cancelled() }}
+        run: mise run desktop:test:import-parity 2>&1 | tee "$RUNNER_TEMP/main-desktop-logs/desktop-import-parity.log"
+
       - name: Build Desktop Client production artifact
         id: build
         if: ${{ !cancelled() }}
@@ -683,6 +691,7 @@ jobs:
           UNIT_OUTCOME: ${{ steps.unit.outcome }}
           MPV_BUILD_OUTCOME: ${{ steps.mpv_build.outcome }}
           MPV_TEST_OUTCOME: ${{ steps.mpv_test.outcome }}
+          IMPORT_PARITY_OUTCOME: ${{ steps.import_parity.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
           TURBO_CACHE_HIT: ${{ steps.turbo_cache.outputs.cache-hit }}
@@ -693,7 +702,7 @@ jobs:
           {
             echo "### Main — Desktop Client, real mpv, and Desktop build"
             echo
-            echo "Checks: format=${FORMAT_OUTCOME:-not run}, lint=${LINT_OUTCOME:-not run}, unit=${UNIT_OUTCOME:-not run} (no retries), mpv build=${MPV_BUILD_OUTCOME:-cache hit}, real mpv=${MPV_TEST_OUTCOME:-not run}, build=${BUILD_OUTCOME:-not run}."
+            echo "Checks: format=${FORMAT_OUTCOME:-not run}, lint=${LINT_OUTCOME:-not run}, unit=${UNIT_OUTCOME:-not run} (no retries), mpv build=${MPV_BUILD_OUTCOME:-cache hit}, real mpv=${MPV_TEST_OUTCOME:-not run}, import parity=${IMPORT_PARITY_OUTCOME:-not run}, build=${BUILD_OUTCOME:-not run}."
             echo
             echo "Caches: pnpm=${PNPM_CACHE_HIT:-miss}, Turbo=${TURBO_CACHE_HIT:-miss}, Cargo=${CARGO_CACHE_HIT:-miss}, verified mpv=${MPV_CACHE_HIT:-miss}."
             echo

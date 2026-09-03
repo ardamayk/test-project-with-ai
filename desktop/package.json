@@ -16,7 +16,8 @@
     "test": "pnpm test:unit",
     "test:unit": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:mpv": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests -- --ignored --test-threads=1 --skip playback::tests::real_pinned_mpv_returns_from_exclusive_to_system_output",
-    "test:mpv:hardware": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests::real_pinned_mpv_returns_from_exclusive_to_system_output -- --ignored --test-threads=1"
+    "test:mpv:hardware": "cargo test --manifest-path src-tauri/Cargo.toml playback::tests::real_pinned_mpv_returns_from_exclusive_to_system_output -- --ignored --test-threads=1",
+    "test:import-parity": "EARTHLY_AUDIO_MEDIA_PROXY_PORT=0 cargo test --manifest-path src-tauri/Cargo.toml --test managed_import_parity -- --ignored --test-threads=1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",
