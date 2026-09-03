@@ -67,7 +67,6 @@ export type PlaylistDetail = Omit<WirePlaylistDetail, 'tracks'> & {
 };
 export type PlaylistCreate = Schemas['PlaylistCreate'];
 export type PlaylistTrackAdd = Schemas['PlaylistTrackAdd'];
-export type ScanStatus = Schemas['ScanStatus'];
 export type DeleteResult = Schemas['DeleteResult'];
 export type TrackDeletionPreview = Schemas['TrackDeletionPreview'];
 export type TrackReplacementPreview = Schemas['TrackReplacementPreview'];
@@ -395,10 +394,6 @@ export function createApiClient(config: ApiClientConfig) {
         body: JSON.stringify(body),
       }),
 
-    triggerLibraryScan: () =>
-      request<ScanStatus>('/api/v1/library/scan', { method: 'POST' }),
-    getLibraryScanStatus: () =>
-      request<ScanStatus>('/api/v1/library/scan/status'),
     listArtists: (params?: ListParams) =>
       request<ArtistList>(`/api/v1/library/artists${buildQuery(params)}`),
     listAlbums: (params?: ListParams) =>

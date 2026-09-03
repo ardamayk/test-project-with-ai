@@ -2,12 +2,9 @@ package library
 
 import "testing"
 
-func TestFallbackTitle(t *testing.T) {
-	if got := fallbackTitle(`/music/Artist - Song_Name.flac`); got != "Artist - Song Name" {
-		t.Fatalf("fallbackTitle = %q", got)
-	}
-	if got := fallbackTitle(""); got != "" {
-		t.Fatalf("empty path = %q", got)
+func TestSortKey(t *testing.T) {
+	if sortKey("  Hello ") != "hello" {
+		t.Fatal("sortKey normalization failed")
 	}
 }
 

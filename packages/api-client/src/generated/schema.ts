@@ -65,7 +65,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Trigger library scan */
+        /**
+         * Deprecated legacy scan trigger (retired)
+         * @deprecated
+         * @description Legacy server-side library scanning is retired. Managed Import is the authoritative ingestion path and Legacy Tracks change only through an explicit Library Migration. This route stays mounted for API v1 compatibility and always answers 410 with error code legacy_scan_retired; it never discovers or ingests files. New clients must not call it.
+         */
         post: operations["triggerLibraryScan"];
         delete?: never;
         options?: never;
@@ -80,7 +84,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get current or latest scan status */
+        /**
+         * Deprecated legacy scan status (always idle)
+         * @deprecated
+         * @description Retained for API v1 compatibility so older clients that poll after a scan trigger stop gracefully. The scanner never runs, so the status is permanently idle with zero counts. New clients must not call it.
+         */
         get: operations["getLibraryScanStatus"];
         put?: never;
         post?: never;
@@ -1575,6 +1583,10 @@ export interface components {
             trackId: string;
             deletedFiles: number;
         };
+        /**
+         * @deprecated
+         * @description Legacy scan status retained for API v1 compatibility. The scanner is retired, so the Music Server always reports idle with zero counts.
+         */
         ScanStatus: {
             /** @enum {string} */
             status: "idle" | "running" | "completed" | "failed";
@@ -1665,6 +1677,15 @@ export interface components {
         };
         /** @description Conflict */
         Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description The requested legacy behavior is retired and will not run */
+        Gone: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1805,17 +1826,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Scan started */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScanStatus"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            409: components["responses"]["Conflict"];
+            410: components["responses"]["Gone"];
         };
     };
     getLibraryScanStatus: {
@@ -1827,7 +1838,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Scan status */
+            /** @description Permanently idle scan status */
             200: {
                 headers: {
                     [name: string]: unknown;

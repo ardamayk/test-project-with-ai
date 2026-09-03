@@ -112,36 +112,6 @@ func (s *Store) listTrackGenres(ctx context.Context, albumID string) (collected 
 	return collected, rows.Err()
 }
 
-func (s *Store) RecomputeAllAlbumGenres(ctx context.Context) error {
-	albumIDs, err := s.listAlbumIDs(ctx)
-	if err != nil {
-		return err
-	}
-	for _, albumID := range albumIDs {
-		if err := s.recomputeAlbumGenres(ctx, albumID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Store) listAlbumIDs(ctx context.Context) (albumIDs []string, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM albums`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
-
-	for rows.Next() {
-		var albumID string
-		if err := rows.Scan(&albumID); err != nil {
-			return nil, err
-		}
-		albumIDs = append(albumIDs, albumID)
-	}
-	return albumIDs, rows.Err()
-}
-
 func (s *Store) setTrackGenre(ctx context.Context, trackID, genre string) error {
 	if genre == "" {
 		return nil

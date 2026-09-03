@@ -12,7 +12,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 import { ThemeSync } from "#/components/theme-sync";
 import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
-import { useLibraryScanSync } from "#/hooks/use-library-scan-sync";
 import { apiClient } from "#/lib/api";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
 import { getSharedPlaybackEngine } from "#/playback/shared-playback-engine";
@@ -73,7 +72,6 @@ function RootLayout() {
 function ConnectedRootLayout() {
 	const queryClient = useQueryClient();
 	const playbackEngine = getSharedPlaybackEngine();
-	useLibraryScanSync();
 	const preferences = useQuery({
 		queryKey: ["preferences"],
 		queryFn: () => apiClient.getPreferences(),

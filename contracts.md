@@ -45,11 +45,11 @@ HTTP status codes follow standard semantics (400, 401, 404, 500).
 
 ## Library (v1)
 
-- Source: local filesystem paths from `MUSIC_PATHS` env (comma-separated)
-- Scan: `POST /api/v1/library/scan` (async; poll `GET /api/v1/library/scan/status`)
+- Ingestion: Managed Import only (`/api/v1/imports/...`); Legacy Tracks move through the explicit Library Migration (`/api/v1/library-migrations/...`)
+- `MUSIC_PATHS` (comma-separated) only locates existing Legacy Tracks; the server never scans it
+- Deprecated: `POST /api/v1/library/scan` answers `410 legacy_scan_retired`; `GET /api/v1/library/scan/status` is permanently `idle`. Both stay mounted for API v1 compatibility (ADR 0006, ADR 0015) and new clients must not call them
 - Browse: artists, albums, tracks list/detail endpoints under `/api/v1/library/`
 - Supported formats: mp3, flac, ogg, m4a, opus, wav
-- Missing files after scan are soft-deleted (`missing_at` flag)
 
 ## Playback (v1)
 

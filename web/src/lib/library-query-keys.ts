@@ -1,6 +1,5 @@
 export const libraryQueryKeys = {
 	root: ["library"] as const,
-	scanStatus: ["library", "scan-status"] as const,
 	artists: (search = "") => ["library", "artists", search] as const,
 	artistsAll: ["library", "artists", "all"] as const,
 	albums: (search = "", artistId = "") =>

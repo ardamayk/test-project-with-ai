@@ -44,10 +44,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// MUSIC_PATHS only locates existing Legacy Tracks for playback, deletion,
+	// and explicit Library Migration. The server never scans these paths.
 	if len(cfg.MusicPaths) == 0 {
-		slog.Warn("MUSIC_PATHS is empty; library scan will fail until configured")
+		slog.Warn("MUSIC_PATHS is empty; Legacy Track playback and Library Migration are unavailable until configured")
 	} else {
-		slog.Info("music paths configured", "paths", cfg.MusicPaths)
+		slog.Info("legacy music paths configured (not scanned)", "paths", cfg.MusicPaths)
 	}
 
 	migrationsDir := filepath.Join("migrations")
@@ -97,8 +99,6 @@ func main() {
 
 	if err := importModule.Start(ctx); err != nil {
 		slog.Error("Managed Import startup cleanup failed", "error", err)
-	} else if err := libModule.Start(ctx); err != nil {
-		slog.Error("library startup failed", "error", err)
 	}
 
 	go func() {

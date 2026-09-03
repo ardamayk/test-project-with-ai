@@ -30,6 +30,7 @@ const (
 	TRACK_REPLACEMENT_VERSION          = 24
 	MIGRATION_CUTOVER_RECOVERY_VERSION = 25
 	LEGACY_MIGRATION_SOURCES_VERSION   = 26
+	RETIRE_LEGACY_SCAN_JOBS_VERSION    = 27
 )
 
 func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
@@ -1129,4 +1130,27 @@ func registerDatabaseCleanup(t *testing.T, sqlDB *sql.DB) {
 			t.Errorf("close database: %v", err)
 		}
 	})
+}
+
+func TestRetireLegacyScanJobsMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_SOURCES_VERSION)
+	assertTableExists(t, sqlDB, "scan_jobs")
+	if _, err := sqlDB.Exec(`INSERT INTO scan_jobs (id, status, started_at) VALUES ('job-1', 'completed', '2026-01-01 00:00:00')`); err != nil {
+		t.Fatalf("record legacy scan job: %v", err)
+	}
+
+	if err := goose.UpTo(sqlDB, migrationsDir(t), RETIRE_LEGACY_SCAN_JOBS_VERSION); err != nil {
+		t.Fatalf("apply retire legacy scan jobs migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, RETIRE_LEGACY_SCAN_JOBS_VERSION)
+	assertTableMissing(t, sqlDB, "scan_jobs")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back retire legacy scan jobs migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_SOURCES_VERSION)
+	assertTableExists(t, sqlDB, "scan_jobs")
+	if _, err := sqlDB.Exec(`INSERT INTO scan_jobs (id, status, started_at) VALUES ('job-2', 'completed', '2026-01-01 00:00:00')`); err != nil {
+		t.Fatalf("restored scan_jobs table rejects legacy rows: %v", err)
+	}
 }

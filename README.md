@@ -6,7 +6,8 @@ Not a Navidrome fork — modern OpenAPI backend (Go), React SPA, modular monolit
 
 ## What it does today (v1)
 
-- Scan local music folders (`MUSIC_PATHS`)
+- Import music through Managed Import (Web and Desktop Clients upload files or a local folder; the server validates strictly and keeps bit-preserving managed copies)
+- Keep previously indexed Legacy Tracks (`MUSIC_PATHS`) playable until an explicit Library Migration; the server never scans these folders
 - Browse albums and tracks
 - Play with queue, seek, and volume (HTTP Range streaming)
 - Customizable layout: left/right panels, widgets (now playing, queue)
@@ -34,11 +35,12 @@ For **Figma**, **Google Stitch**, or visual design work, start here:
 mise install
 pnpm install
 mise run generate   # OpenAPI codegen
-export MUSIC_PATHS=./music   # your music folder(s), comma-separated
 mise run dev    # Go :8090 + Vite :3000
 ```
 
-The Music Server scans `MUSIC_PATHS` once at startup. Open http://localhost:3000/library and use **Scan library** whenever you want an additional rescan.
+Open http://localhost:3000/library/tracks and use **Import Music** to upload files or a local folder. The Music Server validates every file, shows an Import Preview, and stores accepted files in Managed Storage only after you confirm.
+
+`MUSIC_PATHS` (comma-separated) only locates Legacy Tracks that were indexed before Managed Import became authoritative. The server never scans these folders; copying a file into them does not add a Track. Move Legacy Tracks into Managed Storage with the explicit Library Migration API.
 
 ## Build
 

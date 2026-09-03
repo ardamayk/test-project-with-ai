@@ -45,7 +45,7 @@ func TestAlbumArtistGroupsFeaturedTrackUnderAlbumArtist(t *testing.T) {
 	if err := os.WriteFile(meta.Path, []byte("fake"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +99,7 @@ func TestDeleteTrackRemovesDatabaseRowsAndFile(t *testing.T) {
 		DurationMs:  1000,
 		Genre:       "Pop",
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +156,7 @@ func TestDeleteBlocksTracksAndAlbumsWithPendingMigrationCopies(t *testing.T) {
 				Artist: "Legacy Artist", AlbumArtist: "Legacy Artist", Album: "Legacy Album", TrackNo: 1,
 				DurationMs: 1000, SampleRateHz: 44100, BitDepth: 16,
 			}
-			if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+			if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 				t.Fatalf("seed Legacy Track: %v", err)
 			}
 			var trackID, albumID string
@@ -224,7 +224,7 @@ func TestDeleteAlbumRemovesTracksAndFiles(t *testing.T) {
 		BitDepth:     16,
 		Genre:        "Pop",
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -262,7 +262,7 @@ func TestDeleteAlbumRejectsManagedTracksWithoutMutation(t *testing.T) {
 		Title: "Managed", Artist: "Artist", AlbumArtist: "Artist", Album: "Album",
 		TrackNo: 1, DurationMs: 1000,
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), metadata); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), metadata); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Exec(`UPDATE track_sources SET source_kind = 'managed', content_sha256 = ?`, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
@@ -312,7 +312,7 @@ func TestDeleteTrackRemovesQueueAndEmptyAlbum(t *testing.T) {
 		DurationMs:  1000,
 		Genre:       "Indie",
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -372,7 +372,7 @@ func TestDeleteTrackRemovesEmptyUserPlaylist(t *testing.T) {
 		DurationMs:  1000,
 		Genre:       "Indie",
 	}
-	if _, _, err := store.UpsertFromScan(context.Background(), meta); err != nil {
+	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
 		t.Fatal(err)
 	}
 

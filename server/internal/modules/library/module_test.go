@@ -1,91 +1,99 @@
 package library
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/go-chi/chi/v5"
 )
 
-func TestModuleStartScansConfiguredMusicPaths(t *testing.T) {
-	musicRoot := t.TempDir()
-	trackPath := filepath.Join(musicRoot, "Artist - Album - Startup Track.mp3")
-	if err := os.WriteFile(trackPath, []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
+func newTestLibraryRouter(t *testing.T, musicRoot string) http.Handler {
+	t.Helper()
 	module := NewModule(openMemoryDB(t), config.Config{MusicPaths: []string{musicRoot}})
 	router := chi.NewRouter()
 	module.RegisterRoutes(router)
+	return router
+}
 
-	if err := module.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	waitForCompletedScan(t, router)
-
+func listLibraryTracks(t *testing.T, handler http.Handler) TrackList {
+	t.Helper()
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/library/tracks", nil)
-	router.ServeHTTP(response, request)
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/library/tracks", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("list tracks status = %d, want %d", response.Code, http.StatusOK)
 	}
-
 	var tracks TrackList
 	if err := json.Unmarshal(response.Body.Bytes(), &tracks); err != nil {
 		t.Fatal(err)
 	}
-	if len(tracks.Items) != 1 || tracks.Items[0].Title != "Artist - Album - Startup Track" {
-		t.Fatalf("tracks = %#v, want indexed startup track", tracks.Items)
-	}
+	return tracks
 }
 
-func TestModuleStartRecoversInterruptedScan(t *testing.T) {
+func TestModuleNeverIndexesFilesFromMusicPaths(t *testing.T) {
 	musicRoot := t.TempDir()
-	trackPath := filepath.Join(musicRoot, "Recovered Startup Track.mp3")
-	if err := os.WriteFile(trackPath, []byte("fake"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(musicRoot, "Artist - Album - Startup Track.mp3"), []byte("fake"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	db := openMemoryDB(t)
-	if _, err := NewStore(db).BeginScan(context.Background()); err != nil {
-		t.Fatal(err)
+	router := newTestLibraryRouter(t, musicRoot)
+	if tracks := listLibraryTracks(t, router); len(tracks.Items) != 0 || tracks.Total != 0 {
+		t.Fatalf("tracks = %#v, want no Tracks discovered from MUSIC_PATHS at startup", tracks.Items)
 	}
-	module := NewModule(db, config.Config{MusicPaths: []string{musicRoot}})
-	router := chi.NewRouter()
-	module.RegisterRoutes(router)
 
-	if err := module.Start(context.Background()); err != nil {
+	// Copying a new file into the former server music directory must not add a Track,
+	// even after a client invokes the deprecated scan trigger.
+	if err := os.WriteFile(filepath.Join(musicRoot, "Copied Later.flac"), []byte("fake"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	waitForCompletedScan(t, router)
+	trigger := httptest.NewRecorder()
+	router.ServeHTTP(trigger, httptest.NewRequest(http.MethodPost, "/api/v1/library/scan", nil))
+	if trigger.Code != http.StatusGone {
+		t.Fatalf("deprecated scan trigger status = %d, want %d", trigger.Code, http.StatusGone)
+	}
+	if tracks := listLibraryTracks(t, router); len(tracks.Items) != 0 {
+		t.Fatalf("tracks = %#v, want no Tracks after copying a file into the music directory", tracks.Items)
+	}
 }
 
-func waitForCompletedScan(t *testing.T, handler http.Handler) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		response := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/library/scan/status", nil)
-		handler.ServeHTTP(response, request)
+func TestDeprecatedScanRoutesStayCompatible(t *testing.T) {
+	router := newTestLibraryRouter(t, t.TempDir())
 
-		var status ScanStatus
-		if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
-			t.Fatal(err)
-		}
-		if status.Status == "completed" {
-			return
-		}
-		if status.Status == "failed" {
-			t.Fatalf("startup scan failed: %s", status.Error)
-		}
-		time.Sleep(10 * time.Millisecond)
+	trigger := httptest.NewRecorder()
+	router.ServeHTTP(trigger, httptest.NewRequest(http.MethodPost, "/api/v1/library/scan", nil))
+	if trigger.Code != http.StatusGone {
+		t.Fatalf("scan trigger status = %d, want %d", trigger.Code, http.StatusGone)
 	}
-	t.Fatal("startup scan did not complete")
+	if trigger.Header().Get("Deprecation") != "true" {
+		t.Fatal("scan trigger response should carry the Deprecation header")
+	}
+	var problem struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(trigger.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != LEGACY_SCAN_RETIRED_CODE {
+		t.Fatalf("scan trigger code = %q, want %q", problem.Code, LEGACY_SCAN_RETIRED_CODE)
+	}
+
+	status := httptest.NewRecorder()
+	router.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/v1/library/scan/status", nil))
+	if status.Code != http.StatusOK {
+		t.Fatalf("scan status status = %d, want %d", status.Code, http.StatusOK)
+	}
+	if status.Header().Get("Deprecation") != "true" {
+		t.Fatal("scan status response should carry the Deprecation header")
+	}
+	var scanStatus ScanStatus
+	if err := json.Unmarshal(status.Body.Bytes(), &scanStatus); err != nil {
+		t.Fatal(err)
+	}
+	if scanStatus.Status != "idle" || scanStatus.Scanned != 0 || scanStatus.Added != 0 {
+		t.Fatalf("scan status = %#v, want permanently idle", scanStatus)
+	}
 }
