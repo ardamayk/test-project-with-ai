@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +29,49 @@ type cutoverFixture struct {
 	queueEvent *playback.QueueEventBroker
 }
 
+type cutoverFixtureConfig struct {
+	queueEvent *playback.QueueEventBroker
+	capacity   storageCapacity
+	reserve    int64
+}
+
+type cutoverFixtureOption func(*cutoverFixtureConfig)
+
+func withQueueBroker() cutoverFixtureOption {
+	return func(config *cutoverFixtureConfig) {
+		config.queueEvent = playback.NewQueueEventBroker()
+	}
+}
+
+// withSimulatedCapacity reports available bytes as a fixed ceiling minus the
+// bytes already stored, so staging consumes the simulated free space exactly
+// like a real filesystem.
+func withSimulatedCapacity(ceiling int64) cutoverFixtureOption {
+	return func(config *cutoverFixtureConfig) {
+		config.capacity = func(root string) (int64, error) {
+			var used int64
+			walkErr := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if entry.Type().IsRegular() {
+					info, err := entry.Info()
+					if err != nil {
+						return err
+					}
+					used += info.Size()
+				}
+				return nil
+			})
+			if walkErr != nil {
+				return 0, walkErr
+			}
+			return ceiling - used, nil
+		}
+		config.reserve = 0
+	}
+}
+
 // cutoverInspector resolves inspections by file contents so the source and its
 // staged copy inspect identically.
 type cutoverInspector struct {
@@ -50,7 +94,7 @@ func (inspector *cutoverInspector) Inspect(_ context.Context, path string, _ lib
 	return inspection, nil
 }
 
-func newCutoverFixture(t *testing.T, queueEvents ...QueueInvalidationPublisher) *cutoverFixture {
+func newCutoverFixture(t *testing.T, options ...cutoverFixtureOption) *cutoverFixture {
 	t.Helper()
 	database := testutil.OpenMigratedDB(t)
 	t.Cleanup(func() {
@@ -58,20 +102,32 @@ func newCutoverFixture(t *testing.T, queueEvents ...QueueInvalidationPublisher) 
 			t.Errorf("close cutover test database: %v", err)
 		}
 	})
+	fixtureConfig := cutoverFixtureConfig{}
+	for _, option := range options {
+		option(&fixtureConfig)
+	}
 	storage := t.TempDir()
 	inspector := &cutoverInspector{inspectionsByContents: make(map[string]library.MediaInspection), errorsByPath: make(map[string]error)}
 	router := chi.NewRouter()
-	importModule := newModule(database, config.Config{ManagedStoragePath: storage}, inspector, unlimitedStorageCapacity, queueEvents...)
-	libraryModule := library.NewModule(database, config.Config{ManagedStoragePath: storage})
+	capacity := fixtureConfig.capacity
+	if capacity == nil {
+		capacity = unlimitedStorageCapacity
+	}
+	libraryConfig := config.Config{ManagedStoragePath: storage}
+	var queueEvents []QueueInvalidationPublisher
+	if fixtureConfig.queueEvent != nil {
+		queueEvents = append(queueEvents, fixtureConfig.queueEvent)
+	}
+	importModule := newModule(database, config.Config{
+		ManagedStoragePath:         storage,
+		ManagedStorageReserveBytes: fixtureConfig.reserve,
+	}, inspector, capacity, queueEvents...)
+	libraryModule := library.NewModule(database, libraryConfig)
 	playbackModule := playback.NewModule(database, libraryModule.TrackAccess())
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)
 	playbackModule.RegisterRoutes(router)
-	var broker *playback.QueueEventBroker
-	if len(queueEvents) > 0 {
-		broker, _ = queueEvents[0].(*playback.QueueEventBroker)
-	}
-	return &cutoverFixture{database: database, router: router, storage: storage, inspector: inspector, queueEvent: broker}
+	return &cutoverFixture{database: database, router: router, storage: storage, inspector: inspector, queueEvent: fixtureConfig.queueEvent}
 }
 
 func (fixture *cutoverFixture) rejectInspection(path string, err error) {
@@ -374,7 +430,7 @@ func TestLibraryMigrationCutoverActivatesVerifiedCopiesAndDropsLegacyReferences(
 
 func TestLibraryMigrationCutoverPublishesAffectedQueueInvalidation(t *testing.T) {
 	contents := []byte("cutover legacy audio queue")
-	fixture := newCutoverFixture(t, playback.NewQueueEventBroker())
+	fixture := newCutoverFixture(t, withQueueBroker())
 	_, queueTrackID, _ := fixture.seedLegacyTrack(t, "queue.flac", "Cutover Queue", contents, 1)
 	fixture.inspect(contents, "Cutover Queue", 1)
 	seedCutoverReferences(t, fixture.database, queueTrackID, queueTrackID)
@@ -559,4 +615,107 @@ func TestLibraryMigrationCutoverRequiresApplicationHeader(t *testing.T) {
 		t.Fatalf("migration cutover status without header = %d, body = %s", response.Code, response.Body.String())
 	}
 	assertNoMigrationMutation(t, fixture.database, fixture.storage)
+}
+
+func TestLibraryMigrationCutoverActivatesVerifiedCopiesWithinTightCapacity(t *testing.T) {
+	firstContents := []byte("cutover tight capacity one")
+	secondContents := []byte("cutover tight capacity two")
+	totalAudioBytes := int64(len(firstContents) + len(secondContents))
+	artworkBytes := int64(len(cutoverArtworkData))
+	// The ceiling fits exactly one staged copy of the whole set; counting the
+	// already staged bytes again must not reject the cutover.
+	fixture := newCutoverFixture(t, withSimulatedCapacity(totalAudioBytes*2+artworkBytes*2))
+	_, firstTrackID, _ := fixture.seedLegacyTrack(t, "tight-one.flac", "Cutover Tight One", firstContents, 1)
+	_, secondTrackID, _ := fixture.seedLegacyTrack(t, "tight-two.flac", "Cutover Tight Two", secondContents, 2)
+	fixture.inspect(firstContents, "Cutover Tight One", 1)
+	fixture.inspect(secondContents, "Cutover Tight Two", 2)
+
+	stage := fixture.stage(t)
+	if stage.VerifiedCount != 2 {
+		t.Fatalf("migration stage = %+v", stage)
+	}
+	cutover := fixture.cutover(t)
+	if cutover.MigratedCount != 2 || cutover.RejectedCount != 0 || cutover.FailedCount != 0 {
+		t.Fatalf("migration cutover under tight capacity = %+v", cutover)
+	}
+	if count := fixture.count(t, `SELECT COUNT(*) FROM tracks WHERE id IN (?, ?)`, firstTrackID, secondTrackID); count != 0 {
+		t.Fatalf("legacy Track rows survived the tight-capacity cutover: %d", count)
+	}
+	fixture.requireNoForeignKeyViolations(t)
+}
+
+func TestLibraryMigrationCutoverActivatesFromTheStagedInspection(t *testing.T) {
+	contents := []byte("cutover staged inspection audio")
+	fixture := newCutoverFixture(t)
+	path, trackID, _ := fixture.seedLegacyTrack(t, "inspection.flac", "Original Title", contents, 1)
+	fixture.inspect(contents, "Original Title", 1)
+	fixture.stage(t)
+	// Simulate an inspector whose normalization changed after the copy was
+	// verified: the cutover must activate from the persisted inspection.
+	fixture.inspector.inspectionsByContents[migrationTestSHA256(contents)] = cutoverInspection(contents, "Rewritten Title", 1)
+	_ = path
+
+	cutover := fixture.cutover(t)
+	if cutover.MigratedCount != 1 || cutover.FailedCount != 0 {
+		t.Fatalf("migration cutover = %+v", cutover)
+	}
+	createdTrackID := findCutoverFile(t, cutover, trackID).CreatedTrackID
+	var title string
+	if err := fixture.database.QueryRow(`SELECT title FROM tracks WHERE id = ?`, createdTrackID).Scan(&title); err != nil {
+		t.Fatalf("read migrated Track: %v", err)
+	}
+	if title != "Original Title" {
+		t.Fatalf("migrated Track title = %q, want the staged %q", title, "Original Title")
+	}
+}
+
+func TestLibraryMigrationCutoverRemovesRedundantPendingArtwork(t *testing.T) {
+	contents := []byte("cutover redundant artwork audio")
+	fixture := newCutoverFixture(t)
+	_, trackID, _ := fixture.seedLegacyTrack(t, "artwork.flac", "Cutover Artwork", contents, 1)
+	fixture.inspect(contents, "Cutover Artwork", 1)
+	fixture.stage(t)
+	var pendingAlbumID, pendingArtworkPath, artworkSHA256, pendingAlbumArtistID string
+	if err := fixture.database.QueryRow(`
+		SELECT pending_album_id, pending_artwork_path, artwork_sha256, pending_album_artist_id
+		FROM legacy_migration_copies WHERE source_track_id = ?`, trackID,
+	).Scan(&pendingAlbumID, &pendingArtworkPath, &artworkSHA256, &pendingAlbumArtistID); err != nil {
+		t.Fatalf("read verified migration copy: %v", err)
+	}
+	canonicalArtworkPath := filepath.Join(fixture.storage, "library", "existing-album-"+pendingAlbumArtistID, "existing-album-"+pendingAlbumID, "cover.png")
+	if err := os.MkdirAll(filepath.Dir(canonicalArtworkPath), 0o750); err != nil {
+		t.Fatalf("create canonical artwork directory: %v", err)
+	}
+	if err := os.WriteFile(canonicalArtworkPath, []byte(cutoverArtworkData), 0o600); err != nil {
+		t.Fatalf("write canonical artwork: %v", err)
+	}
+	if _, err := fixture.database.Exec(`
+		INSERT INTO album_artwork (
+			id, album_id, source_track_id, content_sha256, media_type, width, height,
+			encoded_size_bytes, file_path
+		) VALUES ('existing-artwork', ?, ?, ?, 'image/png', 1, 1, ?, ?)`,
+		pendingAlbumID, trackID, artworkSHA256, len(cutoverArtworkData), canonicalArtworkPath,
+	); err != nil {
+		t.Fatalf("seed existing Album Artwork: %v", err)
+	}
+
+	cutover := fixture.cutover(t)
+	if cutover.MigratedCount != 1 || cutover.FailedCount != 0 {
+		t.Fatalf("migration cutover = %+v", cutover)
+	}
+	if _, err := os.Stat(pendingArtworkPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("redundant pending artwork survived the cutover: %v", err)
+	}
+	if artworkBytes, err := os.ReadFile(canonicalArtworkPath); err != nil || string(artworkBytes) != cutoverArtworkData {
+		t.Fatalf("canonical artwork bytes = %q, error = %v", artworkBytes, err)
+	}
+	if count := fixture.count(t, `SELECT COUNT(*) FROM album_artwork WHERE album_id = ?`, pendingAlbumID); count != 1 {
+		t.Fatalf("Album Artwork rows = %d, want 1", count)
+	}
+	migrationEntries, err := os.ReadDir(filepath.Join(fixture.storage, ".migration"))
+	if err == nil && len(migrationEntries) > 0 {
+		t.Fatalf("pending migration artifacts survived the cutover: %+v", migrationEntries)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read pending migration directory: %v", err)
+	}
 }

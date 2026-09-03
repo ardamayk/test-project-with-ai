@@ -163,6 +163,37 @@ describe('createApiClient', () => {
     expect(new Headers(request?.headers).get('X-Migration-Stage')).toBe('1');
   });
 
+  it('cuts over verified Library Migration copies explicitly', async () => {
+    const migrationCutover = {
+      migratedCount: 1,
+      rejectedCount: 0,
+      failedCount: 0,
+      notAttemptedCount: 0,
+      files: [
+        {
+          trackId: '0e8a2d64-6b0d-4a3f-9a55-cc1ef6a26e21',
+          originalFilename: 'one.flac',
+          state: 'migrated',
+          createdTrackId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+        },
+      ],
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(migrationCutover));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    const result = await client.cutoverLibraryMigration();
+
+    expect(result).toEqual(migrationCutover);
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/library-migrations/cutover',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const request = transport.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get('X-Migration-Cutover')).toBe('1');
+  });
+
   it('creates and confirms a multi-file Managed Import Batch', async () => {
     const createdBatch = {
       id: 'batch-1',

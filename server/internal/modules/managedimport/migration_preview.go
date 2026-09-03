@@ -54,6 +54,14 @@ func (service *Service) PreviewMigration(ctx context.Context) (MigrationPreview,
 }
 
 func (service *Service) previewMigration(ctx context.Context) (MigrationPreview, []migrationCandidate, error) {
+	return service.previewMigrationExcludingVerified(ctx, nil)
+}
+
+// previewMigrationExcludingVerified runs the shared migration analysis while
+// leaving already verified copies out of the storage preflight: activating a
+// verified copy only renames existing pending bytes, so counting them again
+// would reject cutovers that fit within the configured capacity.
+func (service *Service) previewMigrationExcludingVerified(ctx context.Context, verifiedSourceIDs map[string]bool) (MigrationPreview, []migrationCandidate, error) {
 	if err := ctx.Err(); err != nil {
 		return MigrationPreview{}, nil, err
 	}
@@ -66,7 +74,7 @@ func (service *Service) previewMigration(ctx context.Context) (MigrationPreview,
 		return MigrationPreview{}, nil, err
 	}
 	validateMigrationSet(&preview, candidates)
-	requirement, err := migrationStorageRequirement(preview, candidates)
+	requirement, err := migrationStorageRequirement(preview, candidates, verifiedSourceIDs)
 	if err != nil {
 		return MigrationPreview{}, nil, err
 	}
@@ -312,9 +320,12 @@ func rejectMigrationFile(file *MigrationPreviewFile, err error) {
 	*file = rejected
 }
 
-func migrationStorageRequirement(preview MigrationPreview, candidates []migrationCandidate) (StorageRequirement, error) {
+func migrationStorageRequirement(preview MigrationPreview, candidates []migrationCandidate, excludedSourceIDs map[string]bool) (StorageRequirement, error) {
 	var requirement StorageRequirement
 	for _, candidate := range candidates {
+		if excludedSourceIDs[candidate.source.TrackID] {
+			continue
+		}
 		if preview.Files[candidate.previewIndex].State != MIGRATION_FILE_ACCEPTED {
 			continue
 		}

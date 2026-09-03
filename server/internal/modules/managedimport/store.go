@@ -303,6 +303,23 @@ func (store *Store) FindMigrationAlbumArtwork(ctx context.Context, albumID strin
 	return path, contentSHA256, nil
 }
 
+// FindMigrationCopyInspection returns the inspection JSON persisted with a
+// verified Library Migration copy.
+func (store *Store) FindMigrationCopyInspection(ctx context.Context, sourceTrackID string) (string, error) {
+	var inspectionJSON string
+	err := store.database.QueryRowContext(ctx, `
+		SELECT inspection_json FROM legacy_migration_copies
+		WHERE source_track_id = ? AND status = 'verified'`, sourceTrackID,
+	).Scan(&inspectionJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: no verified Library Migration copy for legacy Track %q", ErrInvalidState, sourceTrackID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("read verified Library Migration inspection: %w", err)
+	}
+	return inspectionJSON, nil
+}
+
 func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string) (_ Job, returnErr error) {
 	job := Job{ID: uuid.NewString(), Status: STATUS_UPLOADING, Revision: 1}
 	if batchID == "" {

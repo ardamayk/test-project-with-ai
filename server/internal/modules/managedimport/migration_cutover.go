@@ -3,11 +3,14 @@ package managedimport
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
+	internaldb "github.com/ardam/navidrome-replacement/server/internal/db"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/google/uuid"
 )
@@ -28,7 +31,7 @@ func (service *Service) ActivateMigration(ctx context.Context) (MigrationCutover
 	managedImportCommitMu.Lock()
 	defer managedImportCommitMu.Unlock()
 
-	inactiveFiles, err := service.inactiveMigrationCutoverFiles(ctx)
+	inactiveFiles, verifiedSourceIDs, err := service.reconcileVerifiedMigrationCopies(ctx)
 	if err != nil {
 		return MigrationCutover{}, err
 	}
@@ -36,7 +39,7 @@ func (service *Service) ActivateMigration(ctx context.Context) (MigrationCutover
 	for _, file := range inactiveFiles {
 		inactiveBySource[file.TrackID] = true
 	}
-	preview, candidates, err := service.previewMigration(ctx)
+	preview, candidates, err := service.previewMigrationExcludingVerified(ctx, verifiedSourceIDs)
 	if err != nil {
 		return MigrationCutover{}, err
 	}
@@ -66,7 +69,7 @@ func (service *Service) ActivateMigration(ctx context.Context) (MigrationCutover
 			cutover.FailedCount++
 			continue
 		}
-		file, activateErr := service.activateMigrationCandidate(ctx, candidatesByIndex[index])
+		file, activateErr := service.activateMigrationCandidate(ctx, candidatesByIndex[index].source)
 		if activateErr != nil {
 			if ctx.Err() != nil {
 				return MigrationCutover{}, errors.Join(activateErr, ctx.Err())
@@ -83,24 +86,27 @@ func (service *Service) ActivateMigration(ctx context.Context) (MigrationCutover
 	return cutover, nil
 }
 
-// inactiveMigrationCutoverFiles reports verified copies whose Legacy source is
-// no longer an active Legacy Track. Their state is left untouched so a later
-// run can revisit them once the source is restored.
-func (service *Service) inactiveMigrationCutoverFiles(ctx context.Context) ([]MigrationCutoverFile, error) {
+// reconcileVerifiedMigrationCopies reports verified copies whose Legacy source
+// is no longer an active Legacy Track, and returns the source IDs of every
+// verified copy. Untouched copies can be revisited by a later run once the
+// source is restored.
+func (service *Service) reconcileVerifiedMigrationCopies(ctx context.Context) ([]MigrationCutoverFile, map[string]bool, error) {
 	copies, err := service.store.ListVerifiedMigrationCopies(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	files := make([]MigrationCutoverFile, 0)
+	verifiedSourceIDs := make(map[string]bool, len(copies))
+	inactiveFiles := make([]MigrationCutoverFile, 0)
 	for _, copy := range copies {
+		verifiedSourceIDs[copy.SourceTrackID] = true
 		active, err := service.store.LegacyMigrationSourceActive(ctx, copy.SourceTrackID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if active {
 			continue
 		}
-		files = append(files, MigrationCutoverFile{
+		inactiveFiles = append(inactiveFiles, MigrationCutoverFile{
 			TrackID:          copy.SourceTrackID,
 			OriginalFilename: filepath.Base(copy.SourceFilePath),
 			State:            MIGRATION_CUTOVER_NOT_ATTEMPTED,
@@ -109,48 +115,86 @@ func (service *Service) inactiveMigrationCutoverFiles(ctx context.Context) ([]Mi
 			ErrorReason:      MIGRATION_CUTOVER_INACTIVE_SOURCE_REASON,
 		})
 	}
-	return files, nil
+	return inactiveFiles, verifiedSourceIDs, nil
 }
 
 // activateMigrationCandidate promotes one verified copy into an active
-// Managed Track and removes the corresponding Legacy Track.
-func (service *Service) activateMigrationCandidate(ctx context.Context, candidate migrationCandidate) (MigrationCutoverFile, error) {
+// Managed Track and removes the corresponding Legacy Track. It activates from
+// the inspection verified at staging: the pending Track, Album, and path
+// identities were derived from that inspection, so a fresh inspection can no
+// longer be trusted to match them.
+func (service *Service) activateMigrationCandidate(ctx context.Context, source legacyMigrationSource) (MigrationCutoverFile, error) {
 	file := MigrationCutoverFile{
-		TrackID:          candidate.source.TrackID,
-		OriginalFilename: filepath.Base(candidate.source.FilePath),
+		TrackID:          source.TrackID,
+		OriginalFilename: filepath.Base(source.FilePath),
 	}
-	copy, found, err := service.store.FindMigrationCopy(ctx, candidate.source.TrackID)
+	copy, found, err := service.store.FindMigrationCopy(ctx, source.TrackID)
 	if err != nil {
 		return file, err
 	}
 	if !found || copy.Status != "verified" {
-		return file, fmt.Errorf("verified Library Migration copy for legacy Track %q is missing", candidate.source.TrackID)
+		return file, fmt.Errorf("verified Library Migration copy for legacy Track %q is missing", source.TrackID)
+	}
+	inspectionJSON, err := service.store.FindMigrationCopyInspection(ctx, source.TrackID)
+	if err != nil {
+		return file, err
+	}
+	inspection, err := decodeMigrationInspection(inspectionJSON)
+	if err != nil {
+		return file, err
 	}
 	existingArtworkPath, existingArtworkSHA256, err := service.store.FindMigrationAlbumArtwork(ctx, copy.PendingAlbumID)
 	if err != nil {
 		return file, err
 	}
 	if existingArtworkPath != "" && existingArtworkSHA256 != copy.ArtworkSHA256 {
-		return file, &ValidationError{
-			Code:   "album_artwork_conflict",
-			Field:  "artwork",
-			Reason: "embedded Album Artwork differs from the existing Album",
-			Err:    errors.New("embedded Album Artwork differs from the existing Album"),
+		return file, migrationAlbumArtworkConflict()
+	}
+	// The pending artwork becomes redundant once the Album Artwork is already
+	// registered; remove it after activation if no other copy still needs it.
+	removePendingArtwork := existingArtworkPath != ""
+	if removePendingArtwork {
+		exclusive, exclusiveErr := service.store.IsMigrationArtworkExclusive(ctx, copy.SourceTrackID, copy.PendingArtworkPath)
+		if exclusiveErr != nil {
+			return file, exclusiveErr
 		}
+		removePendingArtwork = exclusive
 	}
 	placement, err := service.storage.PromoteMigrationCopy(copy, existingArtworkPath)
 	if err != nil {
 		return file, err
 	}
-	invalidations, err := service.store.ActivateMigrationCopy(ctx, copy, candidate.inspection, placement, existingArtworkPath)
+	invalidations, err := service.store.ActivateMigrationCopy(ctx, copy, inspection, placement, existingArtworkPath)
 	if err != nil {
 		return file, err
+	}
+	if removePendingArtwork {
+		if cleanupErr := service.storage.RemovePendingMigrationArtwork(copy); cleanupErr != nil {
+			slog.WarnContext(ctx, "removing the redundant pending Library Migration artwork failed", "error", cleanupErr)
+		}
 	}
 	service.publishQueueInvalidations(invalidations)
 	file.State = MIGRATION_CUTOVER_MIGRATED
 	file.CreatedTrackID = copy.PendingTrackID
 	file.ContentSHA256 = copy.PendingSHA256
 	return file, nil
+}
+
+func migrationAlbumArtworkConflict() *ValidationError {
+	return &ValidationError{
+		Code:   "album_artwork_conflict",
+		Field:  "artwork",
+		Reason: "embedded Album Artwork differs from the existing Album",
+		Err:    errors.New("embedded Album Artwork differs from the existing Album"),
+	}
+}
+
+func decodeMigrationInspection(encoded string) (library.MediaInspection, error) {
+	var inspection library.MediaInspection
+	if err := json.Unmarshal([]byte(encoded), &inspection); err != nil {
+		return library.MediaInspection{}, fmt.Errorf("decode verified Library Migration inspection: %w", err)
+	}
+	return inspection, nil
 }
 
 // ActivateMigrationCopy atomically removes the migrated Legacy Track with all
@@ -200,7 +244,42 @@ func (store *Store) ActivateMigrationCopy(ctx context.Context, copy migrationCop
 	if artistListErr != nil {
 		return nil, artistListErr
 	}
-	trackResult, deleteTrackErr := transaction.ExecContext(ctx, `DELETE FROM tracks WHERE id = ? AND missing_at IS NULL`, copy.SourceTrackID)
+	identity := commitIdentity{
+		TrackID: copy.PendingTrackID, AlbumID: copy.PendingAlbumID, AlbumArtistID: copy.PendingAlbumArtistID,
+		ExistingArtworkPath: existingArtworkPath,
+	}
+	if existingArtworkPath != "" {
+		identity.ExistingArtworkSHA256 = copy.ArtworkSHA256
+	}
+	data := commitData{Identity: identity, Placement: placement, Inspection: inspection, AlbumKey: albumIdentityKey(inspection.Metadata)}
+	artistIDMap, upsertErr := upsertArtists(ctx, transaction, inspection.Metadata, identity)
+	if upsertErr != nil {
+		return nil, upsertErr
+	}
+	if albumErr := upsertAlbum(ctx, transaction, data, artistIDMap); albumErr != nil {
+		return nil, albumErr
+	}
+	// The Legacy Track and the new Managed Track claim the same active Album
+	// position; hide the Legacy Track for the remainder of the transaction so
+	// the active-position unique index never sees both. Everything commits or
+	// rolls back together, so the Legacy Track only ever leaves the active
+	// library when the managed activation succeeds.
+	if _, hideErr := transaction.ExecContext(ctx, `UPDATE tracks SET missing_at = CURRENT_TIMESTAMP WHERE id = ? AND missing_at IS NULL`, copy.SourceTrackID); hideErr != nil {
+		return nil, fmt.Errorf("hide migrated Legacy Track: %w", hideErr)
+	}
+	if trackErr := insertTrack(ctx, transaction, data); trackErr != nil {
+		return nil, trackErr
+	}
+	// Registered Album Artwork sourced from the removed Legacy Track is
+	// re-owned by the new Managed Track so the removal cannot break the
+	// artwork source invariants. This must run after the insert: the
+	// artwork-source triggers require the source Track to belong to the
+	// Album at all times.
+	if _, reownErr := transaction.ExecContext(ctx, `
+		UPDATE album_artwork SET source_track_id = ? WHERE source_track_id = ?`, copy.PendingTrackID, copy.SourceTrackID); reownErr != nil {
+		return nil, fmt.Errorf("re-own Album Artwork sourced from the migrated Legacy Track: %w", reownErr)
+	}
+	trackResult, deleteTrackErr := transaction.ExecContext(ctx, `DELETE FROM tracks WHERE id = ? AND missing_at IS NOT NULL`, copy.SourceTrackID)
 	if deleteTrackErr != nil {
 		return nil, fmt.Errorf("remove migrated Legacy Track: %w", deleteTrackErr)
 	}
@@ -222,23 +301,18 @@ func (store *Store) ActivateMigrationCopy(ctx context.Context, copy migrationCop
 			return nil, fmt.Errorf("delete inactive Artist: %w", deleteArtistErr)
 		}
 	}
-	identity := commitIdentity{
-		TrackID: copy.PendingTrackID, AlbumID: copy.PendingAlbumID, AlbumArtistID: copy.PendingAlbumArtistID,
-		ExistingArtworkPath: existingArtworkPath,
+	// Removing legacy entities orphans transition-only legacy Artists and
+	// Genres; clean them like the established library deletion paths do.
+	// Legacy identity promotion (FinalizeLegacyRemoval) is deliberately not
+	// run here: the inserted Managed Album now owns the contested identity
+	// key, and promoting a surviving legacy Album onto the same key would
+	// violate the unique Album identity index and abort the cutover.
+	if cleanupErr := internaldb.CleanupLegacyTransitionEntities(ctx, transaction); cleanupErr != nil {
+		return nil, fmt.Errorf("clean legacy transition entities after the Library Migration cutover: %w", cleanupErr)
 	}
-	if existingArtworkPath != "" {
-		identity.ExistingArtworkSHA256 = copy.ArtworkSHA256
-	}
-	data := commitData{Identity: identity, Placement: placement, Inspection: inspection, AlbumKey: albumIdentityKey(inspection.Metadata)}
-	artistIDMap, upsertErr := upsertArtists(ctx, transaction, inspection.Metadata, identity)
-	if upsertErr != nil {
-		return nil, upsertErr
-	}
-	if albumErr := upsertAlbum(ctx, transaction, data, artistIDMap); albumErr != nil {
-		return nil, albumErr
-	}
-	if trackErr := insertTrack(ctx, transaction, data); trackErr != nil {
-		return nil, trackErr
+	// The Legacy Track is gone; activate the new Managed Track.
+	if _, publishErr := transaction.ExecContext(ctx, `UPDATE tracks SET missing_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, copy.PendingTrackID); publishErr != nil {
+		return nil, fmt.Errorf("activate the cut over Managed Track: %w", publishErr)
 	}
 	if relationshipErr := insertRelationships(ctx, transaction, data, artistIDMap); relationshipErr != nil {
 		return nil, relationshipErr

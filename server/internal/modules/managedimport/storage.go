@@ -448,6 +448,29 @@ func (storage *Storage) PromoteMigrationCopy(copy migrationCopyRecord, existingA
 	}, nil
 }
 
+// RemovePendingMigrationArtwork deletes the redundant pending artwork of a cut
+// over copy whose Album Artwork was already registered at the canonical
+// location. It runs only after the copy row is gone, once no other verified
+// copy references the file, and tolerates an artwork that earlier siblings
+// already consumed.
+func (storage *Storage) RemovePendingMigrationArtwork(copy migrationCopyRecord) (returnErr error) {
+	recorded, err := storage.recordedMigrationPlacement(copy)
+	if err != nil {
+		return err
+	}
+	root, err := storage.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, closeManagedStorageRoot(root)) }()
+	artworkErr := removeRootedFile(root, recorded.artworkRelative, "pending Library Migration artwork")
+	if errors.Is(artworkErr, os.ErrNotExist) {
+		artworkErr = nil
+	}
+	directoryErr := removeEmptyDirectoriesUnder(root, filepath.Dir(recorded.audioRelative), MIGRATION_STORAGE_ROOT)
+	return errors.Join(artworkErr, directoryErr)
+}
+
 // cleanupFailedMigrationPromotion removes directories left empty by a failed
 // promotion. Files that already reached the canonical location are restored to
 // the pending location or adopted by a later cutover run.

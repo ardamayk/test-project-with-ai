@@ -89,6 +89,9 @@ export type ManagedImportHistoryItem = Schemas['ManagedImportHistoryItem'];
 export type ManagedImportHistoryFile = Schemas['ManagedImportHistoryFile'];
 export type LibraryMigrationPreview = Schemas['LibraryMigrationPreview'];
 export type LibraryMigrationStage = Schemas['LibraryMigrationStage'];
+export type LibraryMigrationCutover = Schemas['LibraryMigrationCutover'];
+export type LibraryMigrationCutoverFile =
+  Schemas['LibraryMigrationCutoverFile'];
 export type ManagedImportUploadProgress = (progress: number) => void;
 export type QueueConflictResponse = Omit<
   Schemas['QueueConflictResponse'],
@@ -446,6 +449,11 @@ export function createApiClient(config: ApiClientConfig) {
       request<LibraryMigrationStage>('/api/v1/library-migrations/stage', {
         method: 'POST',
         headers: { 'X-Migration-Stage': '1' },
+      }),
+    cutoverLibraryMigration: () =>
+      request<LibraryMigrationCutover>('/api/v1/library-migrations/cutover', {
+        method: 'POST',
+        headers: { 'X-Migration-Cutover': '1' },
       }),
     listImportHistory: () =>
       request<ManagedImportHistoryList>('/api/v1/import-history'),
