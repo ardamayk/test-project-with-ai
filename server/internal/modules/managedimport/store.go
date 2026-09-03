@@ -312,12 +312,12 @@ type queryRower interface {
 func getImportJob(ctx context.Context, queryer queryRower, jobID string) (importJob, error) {
 	var job importJob
 	var batchID, clientFileID, originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
-	var previewJSON, errorField, errorReason, outcome sql.NullString
+	var previewJSON, errorField, errorReason, outcome, replaceTrackID sql.NullString
 	err := queryer.QueryRowContext(ctx, `
 		SELECT id, status, revision, validation_progress, batch_id, client_file_id, original_filename, staged_file_path,
-			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected
+			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected, replace_track_id
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected, &replaceTrackID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
@@ -335,6 +335,8 @@ func getImportJob(ctx context.Context, queryer queryRower, jobID string) (import
 	job.ErrorField = errorField.String
 	job.ErrorReason = errorReason.String
 	job.Outcome = ImportOutcome(outcome.String)
+	job.ReplaceTrackID = replaceTrackID.String
+	job.ReplacesTrackID = replaceTrackID.String
 	return job, nil
 }
 
@@ -1269,15 +1271,15 @@ func insertHistoryFile(ctx context.Context, transaction *sql.Tx, importID string
 	return nil
 }
 
-func (store *Store) AlbumRequiresDiscNumber(ctx context.Context, metadata library.NormalizedMediaMetadata) (bool, error) {
+func (store *Store) AlbumRequiresDiscNumber(ctx context.Context, metadata library.NormalizedMediaMetadata, excludedTrackID string) (bool, error) {
 	var requiresDiscNumber bool
 	err := store.database.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM albums
 			JOIN tracks ON tracks.album_id = albums.id
-			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL
+			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL AND tracks.id != ?
 				AND (tracks.disc_no > 1 OR tracks.disc_total > 1)
-		)`, albumIdentityKey(metadata),
+		)`, albumIdentityKey(metadata), excludedTrackID,
 	).Scan(&requiresDiscNumber)
 	if err != nil {
 		return false, fmt.Errorf("inspect existing Album disc positions: %w", err)
@@ -1310,13 +1312,13 @@ func (store *Store) AwaitingPreviewPaths(ctx context.Context, excludedJobID stri
 	return paths, nil
 }
 
-func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata library.NormalizedMediaMetadata) (string, error) {
+func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata library.NormalizedMediaMetadata, excludedTrackID string) (string, error) {
 	var hasDiscConflict, hasTrackConflict bool
 	err := store.database.QueryRowContext(ctx, `
 		WITH matching_tracks AS (
 			SELECT tracks.disc_no, tracks.disc_total, tracks.track_no, tracks.track_total
 			FROM albums JOIN tracks ON tracks.album_id = albums.id
-			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL
+			WHERE albums.identity_key = ? AND tracks.missing_at IS NULL AND tracks.id != ?
 		)
 		SELECT
 			EXISTS (
@@ -1329,6 +1331,7 @@ func (store *Store) AlbumPositionTotalConflict(ctx context.Context, metadata lib
 					AND ((track_total IS NOT NULL AND track_total != ?) OR track_no > ?)
 			)`,
 		albumIdentityKey(metadata),
+		excludedTrackID,
 		metadata.DiscPosition.Total,
 		metadata.DiscPosition.Total,
 		metadata.DiscPosition.Total,
@@ -1367,6 +1370,12 @@ func (store *Store) FindExactDuplicateTrackID(ctx context.Context, contentSHA256
 }
 
 func (store *Store) ClassifyDuplicate(ctx context.Context, inspection library.MediaInspection) (DuplicateClassification, []DuplicateCandidate, error) {
+	return store.ClassifyDuplicateExcluding(ctx, inspection, "")
+}
+
+// ClassifyDuplicateExcluding ignores one Track for Possible Duplicate matching while still treating any
+// exact byte match, including that Track's own bytes, as an Exact Duplicate.
+func (store *Store) ClassifyDuplicateExcluding(ctx context.Context, inspection library.MediaInspection, excludedTrackID string) (DuplicateClassification, []DuplicateCandidate, error) {
 	trackID, err := store.FindExactDuplicateTrackID(ctx, inspection.FileSHA256)
 	if err != nil {
 		return "", nil, err
@@ -1378,7 +1387,7 @@ func (store *Store) ClassifyDuplicate(ctx context.Context, inspection library.Me
 		}
 		return DUPLICATE_EXACT, []DuplicateCandidate{candidate}, nil
 	}
-	trackIDs, err := store.findPossibleDuplicateTrackIDs(ctx, inspection.Metadata)
+	trackIDs, err := store.findPossibleDuplicateTrackIDs(ctx, inspection.Metadata, excludedTrackID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1396,12 +1405,12 @@ func (store *Store) ClassifyDuplicate(ctx context.Context, inspection library.Me
 	return DUPLICATE_POSSIBLE, candidates, nil
 }
 
-func (store *Store) findPossibleDuplicateTrackIDs(ctx context.Context, metadata library.NormalizedMediaMetadata) ([]string, error) {
-	positionIDs, err := store.findDuplicatesByPosition(ctx, metadata)
+func (store *Store) findPossibleDuplicateTrackIDs(ctx context.Context, metadata library.NormalizedMediaMetadata, excludedTrackID string) ([]string, error) {
+	positionIDs, err := store.findDuplicatesByPosition(ctx, metadata, excludedTrackID)
 	if err != nil {
 		return nil, err
 	}
-	identityIDs, err := store.findDuplicatesByIdentity(ctx, metadata)
+	identityIDs, err := store.findDuplicatesByIdentity(ctx, metadata, excludedTrackID)
 	if err != nil {
 		return nil, err
 	}
@@ -1416,15 +1425,15 @@ func (store *Store) findPossibleDuplicateTrackIDs(ctx context.Context, metadata 
 	return trackIDs, nil
 }
 
-func (store *Store) findDuplicatesByPosition(ctx context.Context, metadata library.NormalizedMediaMetadata) ([]string, error) {
+func (store *Store) findDuplicatesByPosition(ctx context.Context, metadata library.NormalizedMediaMetadata, excludedTrackID string) ([]string, error) {
 	rows, err := store.database.QueryContext(ctx, `
 		SELECT tracks.id
 		FROM tracks
 		JOIN albums ON albums.id = tracks.album_id
-		WHERE tracks.missing_at IS NULL
+		WHERE tracks.missing_at IS NULL AND tracks.id != ?
 			AND albums.identity_key = ?
 			AND COALESCE(tracks.disc_no, 1) = ? AND tracks.track_no = ?
-		ORDER BY tracks.id`, albumIdentityKey(metadata), metadata.DiscPosition.Number,
+		ORDER BY tracks.id`, excludedTrackID, albumIdentityKey(metadata), metadata.DiscPosition.Number,
 		metadata.TrackPosition.Number)
 	if err != nil {
 		return nil, fmt.Errorf("inspect possible Managed Import position duplicates: %w", err)
@@ -1432,7 +1441,7 @@ func (store *Store) findDuplicatesByPosition(ctx context.Context, metadata libra
 	return scanTrackIDs(rows, "position duplicates")
 }
 
-func (store *Store) findDuplicatesByIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata) ([]string, error) {
+func (store *Store) findDuplicatesByIdentity(ctx context.Context, metadata library.NormalizedMediaMetadata, excludedTrackID string) ([]string, error) {
 	normalizedArtists := make([]string, len(metadata.Artists))
 	for index, artist := range metadata.Artists {
 		normalizedArtists[index] = normalizeIdentity(artist)
@@ -1441,7 +1450,7 @@ func (store *Store) findDuplicatesByIdentity(ctx context.Context, metadata libra
 		SELECT tracks.id
 		FROM tracks
 		JOIN albums ON albums.id = tracks.album_id
-		WHERE tracks.missing_at IS NULL
+		WHERE tracks.missing_at IS NULL AND tracks.id != ?
 			AND albums.identity_key = ?
 			AND tracks.title_sort = ?
 			AND COALESCE((SELECT GROUP_CONCAT(name_normalized, char(30)) FROM (
@@ -1449,7 +1458,7 @@ func (store *Store) findDuplicatesByIdentity(ctx context.Context, metadata libra
 				FROM track_artists JOIN artists ON artists.id = track_artists.artist_id
 				WHERE track_artists.track_id = tracks.id ORDER BY track_artists.position
 			)), '') = ?
-		ORDER BY tracks.id`, albumIdentityKey(metadata), normalizeIdentity(metadata.Title),
+		ORDER BY tracks.id`, excludedTrackID, albumIdentityKey(metadata), normalizeIdentity(metadata.Title),
 		strings.Join(normalizedArtists, "\x1e"))
 	if err != nil {
 		return nil, fmt.Errorf("inspect possible Managed Import identity duplicates: %w", err)

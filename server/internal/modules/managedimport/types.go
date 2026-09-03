@@ -102,6 +102,9 @@ var (
 	ErrTrackNotFound       = errors.New("track not found")
 	ErrNotManagedTrack     = errors.New("track is not managed")
 	ErrDeletionConflict    = errors.New("permanent track deletion preview changed")
+	ErrReplacementConflict = errors.New("track replacement preview changed")
+	ErrNotReplacementJob   = errors.New("managed import job does not replace a track")
+	ErrReplacementRequired = errors.New("managed import job requires track replacement confirmation")
 )
 
 type Job struct {
@@ -111,6 +114,7 @@ type Job struct {
 	ValidationProgress int          `json:"validationProgress"`
 	ErrorCode          string       `json:"errorCode,omitempty"`
 	TrackID            string       `json:"trackId,omitempty"`
+	ReplacesTrackID    string       `json:"replacesTrackId,omitempty"`
 }
 
 type JobCreate struct {
@@ -162,12 +166,13 @@ const (
 )
 
 type Preview struct {
-	JobID                   string                  `json:"jobId"`
-	Status                  ImportStatus            `json:"status"`
-	Revision                int                     `json:"revision"`
-	File                    PreviewFile             `json:"file"`
-	DuplicateClassification DuplicateClassification `json:"duplicateClassification"`
-	DuplicateCandidates     []DuplicateCandidate    `json:"duplicateCandidates,omitempty"`
+	JobID                   string                   `json:"jobId"`
+	Status                  ImportStatus             `json:"status"`
+	Revision                int                      `json:"revision"`
+	File                    PreviewFile              `json:"file"`
+	DuplicateClassification DuplicateClassification  `json:"duplicateClassification"`
+	DuplicateCandidates     []DuplicateCandidate     `json:"duplicateCandidates,omitempty"`
+	Replacement             *TrackReplacementPreview `json:"replacement,omitempty"`
 }
 
 type DuplicateCandidate struct {
@@ -314,6 +319,7 @@ type importJob struct {
 	ErrorReason      string
 	Outcome          ImportOutcome
 	Selected         bool
+	ReplaceTrackID   string
 }
 
 type commitJournal struct {

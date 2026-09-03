@@ -719,6 +719,8 @@ describe('createApiClient', () => {
     expect(client.deleteAlbum).toBeTypeOf('function');
     expect(client.deleteTrack).toBeTypeOf('function');
     expect(client.previewTrackDeletion).toBeTypeOf('function');
+    expect(client.createTrackReplacement).toBeTypeOf('function');
+    expect(client.confirmTrackReplacement).toBeTypeOf('function');
     expect(client.listRadioStations).toBeTypeOf('function');
     expect(client.getRadioStation).toBeTypeOf('function');
     expect(client.searchRadioStations).toBeTypeOf('function');

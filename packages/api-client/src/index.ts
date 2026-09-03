@@ -70,6 +70,9 @@ export type PlaylistTrackAdd = Schemas['PlaylistTrackAdd'];
 export type ScanStatus = Schemas['ScanStatus'];
 export type DeleteResult = Schemas['DeleteResult'];
 export type TrackDeletionPreview = Schemas['TrackDeletionPreview'];
+export type TrackReplacementPreview = Schemas['TrackReplacementPreview'];
+export type TrackReplacementFieldDiff = Schemas['TrackReplacementFieldDiff'];
+export type TrackReplacementResult = Schemas['TrackReplacementResult'];
 export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track };
 export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] };
 export type ErrorResponse = Schemas['ErrorResponse'];
@@ -416,6 +419,24 @@ export function createApiClient(config: ApiClientConfig) {
         headers: { 'X-Permanent-Delete': '1' },
         body: JSON.stringify({ confirmationToken }),
       }),
+    createTrackReplacement: (trackId: string) =>
+      request<ManagedImportJob>(
+        `/api/v1/library/tracks/${trackId}/replacement`,
+        { method: 'POST' },
+      ),
+    confirmTrackReplacement: (
+      importId: string,
+      revision: number,
+      confirmationToken: string,
+    ) =>
+      request<TrackReplacementResult>(
+        `/api/v1/imports/${importId}/replacement`,
+        {
+          method: 'POST',
+          headers: { 'X-Track-Replacement': '1' },
+          body: JSON.stringify({ revision, confirmationToken }),
+        },
+      ),
     previewLibraryMigration: () =>
       request<LibraryMigrationPreview>('/api/v1/library-migrations/preview', {
         method: 'POST',

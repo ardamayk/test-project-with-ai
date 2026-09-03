@@ -120,6 +120,7 @@ type PlaybackContextValue = {
 	reorderQueue: (itemIds: string[]) => Promise<void>;
 	clearQueue: () => Promise<void>;
 	refreshQueue: () => Promise<void>;
+	stopPlayback: () => void;
 	getAlbumCoverUrl: (albumId: string) => string;
 };
 
@@ -456,6 +457,7 @@ export function PlaybackProvider({
 			reorderQueue,
 			clearQueue,
 			refreshQueue,
+			stopPlayback: () => engine.stop(),
 			getAlbumCoverUrl: (albumId) => apiRef.current.getAlbumCoverUrl(albumId),
 		}),
 		[

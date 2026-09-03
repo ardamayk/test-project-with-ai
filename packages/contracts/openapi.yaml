@@ -298,6 +298,29 @@ paths:
           $ref: "#/components/responses/Conflict"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/library/tracks/{trackId}/replacement:
+    post:
+      tags: [library]
+      operationId: createTrackReplacement
+      summary: Start an explicit Track Replacement for one Managed Track
+      description: >-
+        Creates a Managed Import Job bound to the Track. Upload the replacement file
+        with uploadManagedImportFile; the returned Import Preview carries a
+        replacement section listing every difference and destructive consequence.
+        Confirm with confirmTrackReplacement, never with confirmManagedImport.
+      parameters:
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "201":
+          description: Track Replacement job created and awaiting the replacement upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/library-migrations/preview:
     post:
       tags: [imports]
@@ -559,6 +582,54 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
+  /api/v1/imports/{importId}/replacement:
+    post:
+      tags: [imports]
+      operationId: confirmTrackReplacement
+      summary: Confirm a reviewed Track Replacement and delete the previous managed file
+      description: >-
+        Keeps the Track ID and every Playlist and Queue reference, makes the validated
+        replacement metadata authoritative, cleans emptied Albums and Artists, and
+        deletes the previous managed file only after the replacement was placed,
+        hashed, committed, and read back from its Canonical Library Path.
+      parameters:
+        - $ref: "#/components/parameters/importId"
+        - name: X-Track-Replacement
+          in: header
+          required: true
+          description: Explicit application confirmation required for the irreversible old-file deletion
+          schema:
+            type: string
+            enum: ["1"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackReplacementConfirmation"
+      responses:
+        "200":
+          description: Track Replacement committed, or the idempotent prior result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackReplacementResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: Replacement file no longer passes the Strict Import Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "507":
           $ref: "#/components/responses/InsufficientStorage"
   /api/v1/playback/queue:
@@ -1286,7 +1357,9 @@ components:
             Named server behaviors supported by this release. Queue event streaming
             is advertised as playback.queue-events.v1 and the first strict FLAC
             Managed Import tracer bullet as managed-import.v1. Multi-file Managed
-            Import Batches are advertised as managed-import-batches.v1.
+            Import Batches are advertised as managed-import-batches.v1, Permanent
+            Track Deletion as managed-track-deletion.v1, and explicit Track
+            Replacement as managed-track-replacement.v1.
     User:
       type: object
       required: [id, username]
@@ -1403,7 +1476,11 @@ components:
         trackId:
           type: string
           format: uuid
-          description: Created Track when status is committed.
+          description: Created or replaced Track when status is committed.
+        replacesTrackId:
+          type: string
+          format: uuid
+          description: Present when this job is an explicit Track Replacement of that Track.
     ManagedImportJobCreate:
       type: object
       required: [batchId, clientFileId]
@@ -1611,6 +1688,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
+        replacement:
+          $ref: "#/components/schemas/TrackReplacementPreview"
     ManagedImportDuplicateCandidate:
       type: object
       required: [trackId, title, artists, album, discNo, trackNo, format, durationMs]
@@ -2475,6 +2554,160 @@ components:
       properties:
         confirmationToken:
           type: string
+    TrackReplacementPreview:
+      type: object
+      description: Every visible consequence of replacing a Managed Track's audio file while keeping its identity.
+      required:
+        - trackId
+        - trackTitle
+        - sourceFormat
+        - technicalProperties
+        - metadata
+        - library
+        - artwork
+        - canonicalPath
+        - oldFile
+        - playlistReferences
+        - queueReferences
+        - possibleDuplicates
+        - confirmationToken
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        trackTitle:
+          type: string
+        sourceFormat:
+          $ref: "#/components/schemas/TrackReplacementFieldDiff"
+        technicalProperties:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackReplacementFieldDiff"
+        metadata:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackReplacementFieldDiff"
+        library:
+          $ref: "#/components/schemas/TrackReplacementLibraryChange"
+        artwork:
+          $ref: "#/components/schemas/TrackReplacementArtworkChange"
+        canonicalPath:
+          $ref: "#/components/schemas/TrackReplacementFieldDiff"
+        oldFile:
+          $ref: "#/components/schemas/TrackReplacementFileDeletion"
+        playlistReferences:
+          type: array
+          description: Playlist references that stay attached to the unchanged Track ID.
+          items:
+            $ref: "#/components/schemas/TrackDeletionPlaylistReference"
+        queueReferences:
+          type: array
+          description: Queue references that stay attached to the unchanged Track ID.
+          items:
+            $ref: "#/components/schemas/TrackDeletionQueueReference"
+        possibleDuplicates:
+          type: array
+          description: Other Tracks whose metadata resembles the replacement; informational only.
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
+        confirmationToken:
+          type: string
+          description: Opaque token binding confirmation to the reviewed Track, managed file, references, and replacement bytes
+    TrackReplacementFieldDiff:
+      type: object
+      required: [field, current, replacement, isChanged]
+      properties:
+        field:
+          type: string
+        current:
+          type: string
+        replacement:
+          type: string
+        isChanged:
+          type: boolean
+    TrackReplacementLibraryChange:
+      type: object
+      required: [currentAlbumId, movesAlbum, createsAlbum, removesEmptyAlbum, removesEmptyArtists, createsArtists, createsGenres]
+      properties:
+        currentAlbumId:
+          type: string
+          format: uuid
+        replacementAlbumId:
+          type: string
+          format: uuid
+        movesAlbum:
+          type: boolean
+        createsAlbum:
+          type: boolean
+        removesEmptyAlbum:
+          type: boolean
+        removesEmptyArtists:
+          type: array
+          items:
+            type: string
+        createsArtists:
+          type: array
+          items:
+            type: string
+        createsGenres:
+          type: array
+          items:
+            type: string
+    TrackReplacementArtworkChange:
+      type: object
+      required: [currentMediaType, currentSha256, replacementMediaType, replacementSha256, isChanged, replacesAlbumArtwork]
+      properties:
+        currentMediaType:
+          type: string
+        currentSha256:
+          type: string
+        replacementMediaType:
+          type: string
+        replacementSha256:
+          type: string
+        isChanged:
+          type: boolean
+        replacesAlbumArtwork:
+          type: boolean
+          description: True when the Album's display artwork file itself is replaced.
+    TrackReplacementFileDeletion:
+      type: object
+      required: [path, sizeBytes]
+      properties:
+        path:
+          type: string
+          description: Managed Storage-relative path of the previous managed file that will be deleted
+        sizeBytes:
+          type: integer
+          minimum: 0
+    TrackReplacementConfirmation:
+      type: object
+      required: [revision, confirmationToken]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        confirmationToken:
+          type: string
+    TrackReplacementResult:
+      type: object
+      required: [jobId, status, revision, trackId, deletedFiles]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [committed]
+        revision:
+          type: integer
+          minimum: 1
+        trackId:
+          type: string
+          format: uuid
+        deletedFiles:
+          type: integer
+          minimum: 0
     ScanStatus:
       type: object
       required: [status, scanned, added, updated, removed]

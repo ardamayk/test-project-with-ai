@@ -27,6 +27,7 @@ const (
 	IMPORT_HISTORY_VERSION        = 21
 	LEGACY_MIGRATION_COPY_VERSION = 22
 	TRACK_DELETION_VERSION        = 23
+	TRACK_REPLACEMENT_VERSION     = 24
 )
 
 func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
@@ -95,6 +96,24 @@ func TestPermanentTrackDeletionMigrationAppliesAndRollsBack(t *testing.T) {
 	}
 	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_COPY_VERSION)
 	assertTableMissing(t, sqlDB, "permanent_track_deletions")
+}
+
+func TestTrackReplacementMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, TRACK_DELETION_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), TRACK_REPLACEMENT_VERSION); err != nil {
+		t.Fatalf("apply Track Replacement migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, TRACK_REPLACEMENT_VERSION)
+	assertTableExists(t, sqlDB, "managed_track_replacements")
+	if _, err := sqlDB.Exec(`INSERT INTO managed_import_jobs (id, status, revision, replace_track_id) VALUES ('job-1', 'uploading', 1, 'track-1')`); err != nil {
+		t.Fatalf("insert Track Replacement job: %v", err)
+	}
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Track Replacement migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, TRACK_DELETION_VERSION)
+	assertTableMissing(t, sqlDB, "managed_track_replacements")
 }
 
 func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {
