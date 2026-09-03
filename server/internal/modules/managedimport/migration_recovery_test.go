@@ -311,8 +311,8 @@ func TestLibraryMigrationCutoverActivationFailureRestoresPromotedCopy(t *testing
 		t.Fatalf("legacy source file did not survive the failed cutover: %v", statErr)
 	}
 
-	if _, err := database.Exec(`DROP TRIGGER reject_migration_cutover`); err != nil {
-		t.Fatalf("drop cutover failure trigger: %v", err)
+	if _, dropErr := database.Exec(`DROP TRIGGER reject_migration_cutover`); dropErr != nil {
+		t.Fatalf("drop cutover failure trigger: %v", dropErr)
 	}
 	resumed, err := service.ActivateMigration(context.Background())
 	if err != nil {

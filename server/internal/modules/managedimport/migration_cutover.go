@@ -163,8 +163,9 @@ func (service *Service) activateMigrationCandidate(ctx context.Context, source l
 	// Record the promotion before any file moves so a restart can restore an
 	// interrupted cutover deterministically, mirroring the Managed Import
 	// commit journal.
-	if err := service.store.MarkMigrationCopyPromoted(ctx, copy.SourceTrackID); err != nil {
-		return file, err
+	promotionErr := service.store.MarkMigrationCopyPromoted(ctx, copy.SourceTrackID)
+	if promotionErr != nil {
+		return file, promotionErr
 	}
 	placement, err := service.storage.PromoteMigrationCopy(copy, existingArtworkPath)
 	if err != nil {
