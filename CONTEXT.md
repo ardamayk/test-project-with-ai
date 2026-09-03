@@ -55,8 +55,8 @@ A proposed import whose full-file content hash matches an existing Track. It is 
 _Avoid_: Possible Duplicate, same title, same recording
 
 **Library Migration**:
-An explicit, user-confirmed copy and verification of accepted Legacy Tracks into Managed Storage. Rejected source files remain unchanged outside the managed library.
-_Avoid_: Startup scan, automatic migration, destructive move
+An explicit, user-confirmed copy and verification of accepted Legacy Tracks into Managed Storage, followed by a cutover that activates each verified copy as a new Managed Track with a new stable Track ID and removes the Legacy Track from the active library. Old Playlist, Queue, and Playback Session Snapshot references to the migrated Track IDs are dropped rather than remapped; rejected source files remain unchanged outside the managed library.
+_Avoid_: Startup scan, automatic migration, destructive move, Track-ID remapping
 
 **Legacy Track**:
 A Track indexed from the former server-side music folder before Managed Import became authoritative. It remains playable without automatic rescanning until Library Migration accepts or rejects it.

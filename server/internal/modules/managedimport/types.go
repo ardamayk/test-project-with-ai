@@ -240,6 +240,36 @@ const (
 	MIGRATION_STAGE_FAILED   MigrationStageState = "failed"
 )
 
+type MigrationCutoverState string
+
+const (
+	MIGRATION_CUTOVER_MIGRATED      MigrationCutoverState = "migrated"
+	MIGRATION_CUTOVER_REJECTED      MigrationCutoverState = "rejected"
+	MIGRATION_CUTOVER_FAILED        MigrationCutoverState = "failed"
+	MIGRATION_CUTOVER_NOT_ATTEMPTED MigrationCutoverState = "not_attempted"
+)
+
+const ERROR_CODE_MIGRATION_SOURCE_INACTIVE = "legacy_source_inactive"
+
+type MigrationCutover struct {
+	MigratedCount     int                    `json:"migratedCount"`
+	RejectedCount     int                    `json:"rejectedCount"`
+	FailedCount       int                    `json:"failedCount"`
+	NotAttemptedCount int                    `json:"notAttemptedCount"`
+	Files             []MigrationCutoverFile `json:"files"`
+}
+
+type MigrationCutoverFile struct {
+	TrackID          string                `json:"trackId"`
+	OriginalFilename string                `json:"originalFilename"`
+	State            MigrationCutoverState `json:"state"`
+	CreatedTrackID   string                `json:"createdTrackId,omitempty"`
+	ContentSHA256    string                `json:"contentSha256,omitempty"`
+	ErrorCode        string                `json:"errorCode,omitempty"`
+	ErrorField       string                `json:"errorField,omitempty"`
+	ErrorReason      string                `json:"errorReason,omitempty"`
+}
+
 type MigrationStage struct {
 	VerifiedCount int                  `json:"verifiedCount"`
 	RejectedCount int                  `json:"rejectedCount"`

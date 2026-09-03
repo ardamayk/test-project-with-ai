@@ -16,6 +16,7 @@ import (
 
 const MIGRATION_PREVIEW_REQUEST_HEADER = "X-Migration-Preview"
 const MIGRATION_STAGE_REQUEST_HEADER = "X-Migration-Stage"
+const MIGRATION_CUTOVER_REQUEST_HEADER = "X-Migration-Cutover"
 const IMPORT_FILENAME_HEADER = "X-Import-Filename"
 const IMPORT_FILENAME_ENCODING_HEADER = "X-Import-Filename-Encoding"
 const URL_FILENAME_ENCODING = "url"
@@ -129,6 +130,19 @@ func (handlers *Handlers) StageMigration(writer http.ResponseWriter, request *ht
 		return
 	}
 	respond.JSON(writer, http.StatusOK, stage)
+}
+
+func (handlers *Handlers) CutoverMigration(writer http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(MIGRATION_CUTOVER_REQUEST_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "migration_cutover_forbidden", "Library Migration cutover requires an explicit application request")
+		return
+	}
+	cutover, err := handlers.service.ActivateMigration(request.Context())
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, cutover)
 }
 
 func (handlers *Handlers) PreviewTrackDeletion(writer http.ResponseWriter, request *http.Request) {

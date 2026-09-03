@@ -78,6 +78,7 @@ func (module *Module) cleanupInactive(ctx context.Context) {
 func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Post("/api/v1/library-migrations/preview", module.handlers.PreviewMigration)
 	router.Post("/api/v1/library-migrations/stage", module.handlers.StageMigration)
+	router.Post("/api/v1/library-migrations/cutover", module.handlers.CutoverMigration)
 	router.Get("/api/v1/library/tracks/{trackId}/deletion", module.handlers.PreviewTrackDeletion)
 	router.Delete("/api/v1/library/tracks/{trackId}", module.handlers.DeleteTrack)
 	router.Post("/api/v1/library/tracks/{trackId}/replacement", module.handlers.CreateTrackReplacement)
