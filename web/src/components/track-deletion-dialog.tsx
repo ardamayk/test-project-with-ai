@@ -9,6 +9,7 @@ export function TrackDeletionDialog({
 	isDeleting,
 	onCancel,
 	onConfirm,
+	onCloseAutoFocus,
 }: {
 	track: Track | null;
 	preview: TrackDeletionPreview | null;
@@ -17,6 +18,7 @@ export function TrackDeletionDialog({
 	isDeleting: boolean;
 	onCancel: () => void;
 	onConfirm: () => void;
+	onCloseAutoFocus?: (event: Event) => void;
 }) {
 	return (
 		<DialogPrimitive.Root
@@ -25,7 +27,10 @@ export function TrackDeletionDialog({
 		>
 			<DialogPrimitive.Portal>
 				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70" />
-				<DialogPrimitive.Content className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none">
+				<DialogPrimitive.Content
+					onCloseAutoFocus={onCloseAutoFocus}
+					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none"
+				>
 					<DeletionHeading track={track} />
 					{isLoading ? (
 						<p className="mt-4 text-sm">Loading deletion details…</p>

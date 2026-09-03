@@ -17,7 +17,13 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", databasePath)
+	// Transactions start with BEGIN IMMEDIATE so a writer takes the write lock
+	// up front and waits through busy_timeout. A deferred transaction that reads
+	// first and writes later fails with SQLITE_BUSY immediately when another
+	// connection holds the write lock; that failed COMMIT also leaves the pooled
+	// connection inside an open transaction, after which every later request on
+	// it fails with "cannot start a transaction within a transaction".
+	dsn := fmt.Sprintf("file:%s?_txlock=immediate&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", databasePath)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
