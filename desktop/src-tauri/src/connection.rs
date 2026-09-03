@@ -15,6 +15,7 @@ const REQUIRED_SERVER_CAPABILITIES: &[&str] = &[
     "playback.queue-events.v1",
     "managed-import-batches.v1",
     "managed-track-deletion.v1",
+    "managed-track-replacement.v1",
 ];
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const ALLOWED_REQUEST_HEADERS: &[&str] = &[
@@ -23,6 +24,7 @@ const ALLOWED_REQUEST_HEADERS: &[&str] = &[
     "content-type",
     "range",
     "x-permanent-delete",
+    "x-track-replacement",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -657,6 +659,7 @@ mod tests {
             "playback.queue-events.v1",
             "managed-import-batches.v1",
             "managed-track-deletion.v1",
+            "managed-track-replacement.v1",
             "optional.future",
         ]);
         let check = HttpBridge::new()
@@ -673,6 +676,7 @@ mod tests {
                 "playback.queue-events.v1",
                 "managed-import-batches.v1",
                 "managed-track-deletion.v1",
+                "managed-track-replacement.v1",
                 "optional.future"
             ]
         );
@@ -751,6 +755,47 @@ mod tests {
 
         assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
         assert!(error.message.contains("managed-import-batches.v1"));
+    }
+
+    #[tokio::test]
+    async fn managed_track_replacement_capability_is_required() {
+        let origin = serve_health(&[
+            "api.v1",
+            "playback.queue-events.v1",
+            "managed-import-batches.v1",
+            "managed-track-deletion.v1",
+        ]);
+        let error = HttpBridge::new()
+            .expect("create bridge")
+            .test_server(&ServerOrigin::parse(&origin).expect("valid origin"))
+            .await
+            .expect_err("Track Replacement capability should be required");
+
+        assert_eq!(error.code, ConnectionErrorCode::CapabilityMismatch);
+        assert!(error.message.contains("managed-track-replacement.v1"));
+    }
+
+    #[tokio::test]
+    async fn http_bridge_forwards_track_replacement_confirmation_header() {
+        let origin = serve_health(&["api.v1"]);
+        let configured = ServerOrigin::parse(&origin).expect("valid origin");
+        let request = HttpRequest {
+            method: "POST".to_owned(),
+            url: "/api/v1/imports/import-1/replacement".to_owned(),
+            headers: BTreeMap::from([
+                ("content-type".to_owned(), "application/json".to_owned()),
+                ("x-track-replacement".to_owned(), "1".to_owned()),
+            ]),
+            body: Some(br#"{"revision":2,"confirmationToken":"token"}"#.to_vec()),
+        };
+
+        let response = HttpBridge::new()
+            .expect("create bridge")
+            .send(&configured, request)
+            .await
+            .expect("Track Replacement request succeeds");
+
+        assert_eq!(response.status, 200);
     }
 
     #[tokio::test]

@@ -211,6 +211,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/tracks/{trackId}/replacement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an explicit Track Replacement for one Managed Track
+         * @description Creates a Managed Import Job bound to the Track. Upload the replacement file with uploadManagedImportFile; the returned Import Preview carries a replacement section listing every difference and destructive consequence. Confirm with confirmTrackReplacement, never with confirmManagedImport.
+         */
+        post: operations["createTrackReplacement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library-migrations/preview": {
         parameters: {
             query?: never;
@@ -377,6 +397,26 @@ export interface paths {
         put?: never;
         /** Confirm an Import Preview and commit its Managed Track */
         post: operations["confirmManagedImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/{importId}/replacement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm a reviewed Track Replacement and delete the previous managed file
+         * @description Keeps the Track ID and every Playlist and Queue reference, makes the validated replacement metadata authoritative, cleans emptied Albums and Artists, and deletes the previous managed file only after the replacement was placed, hashed, committed, and read back from its Canonical Library Path.
+         */
+        post: operations["confirmTrackReplacement"];
         delete?: never;
         options?: never;
         head?: never;
@@ -706,7 +746,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1. */
+            /** @description Named server behaviors supported by this release. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, and explicit Track Replacement as managed-track-replacement.v1. */
             capabilities: string[];
         };
         User: {
@@ -763,9 +803,14 @@ export interface components {
             errorCode?: string;
             /**
              * Format: uuid
-             * @description Created Track when status is committed.
+             * @description Created or replaced Track when status is committed.
              */
             trackId?: string;
+            /**
+             * Format: uuid
+             * @description Present when this job is an explicit Track Replacement of that Track.
+             */
+            replacesTrackId?: string;
         };
         ManagedImportJobCreate: {
             /**
@@ -871,6 +916,7 @@ export interface components {
             /** @enum {string} */
             duplicateClassification: "none" | "exact_duplicate" | "possible_duplicate";
             duplicateCandidates?: components["schemas"]["ManagedImportDuplicateCandidate"][];
+            replacement?: components["schemas"]["TrackReplacementPreview"];
         };
         ManagedImportDuplicateCandidate: {
             /** Format: uuid */
@@ -1322,6 +1368,73 @@ export interface components {
         };
         TrackDeletionConfirmation: {
             confirmationToken: string;
+        };
+        /** @description Every visible consequence of replacing a Managed Track's audio file while keeping its identity. */
+        TrackReplacementPreview: {
+            /** Format: uuid */
+            trackId: string;
+            trackTitle: string;
+            sourceFormat: components["schemas"]["TrackReplacementFieldDiff"];
+            technicalProperties: components["schemas"]["TrackReplacementFieldDiff"][];
+            metadata: components["schemas"]["TrackReplacementFieldDiff"][];
+            library: components["schemas"]["TrackReplacementLibraryChange"];
+            artwork: components["schemas"]["TrackReplacementArtworkChange"];
+            canonicalPath: components["schemas"]["TrackReplacementFieldDiff"];
+            oldFile: components["schemas"]["TrackReplacementFileDeletion"];
+            /** @description Playlist references that stay attached to the unchanged Track ID. */
+            playlistReferences: components["schemas"]["TrackDeletionPlaylistReference"][];
+            /** @description Queue references that stay attached to the unchanged Track ID. */
+            queueReferences: components["schemas"]["TrackDeletionQueueReference"][];
+            /** @description Other Tracks whose metadata resembles the replacement; informational only. */
+            possibleDuplicates: components["schemas"]["ManagedImportDuplicateCandidate"][];
+            /** @description Opaque token binding confirmation to the reviewed Track, managed file, references, and replacement bytes */
+            confirmationToken: string;
+        };
+        TrackReplacementFieldDiff: {
+            field: string;
+            current: string;
+            replacement: string;
+            isChanged: boolean;
+        };
+        TrackReplacementLibraryChange: {
+            /** Format: uuid */
+            currentAlbumId: string;
+            /** Format: uuid */
+            replacementAlbumId?: string;
+            movesAlbum: boolean;
+            createsAlbum: boolean;
+            removesEmptyAlbum: boolean;
+            removesEmptyArtists: string[];
+            createsArtists: string[];
+            createsGenres: string[];
+        };
+        TrackReplacementArtworkChange: {
+            currentMediaType: string;
+            currentSha256: string;
+            replacementMediaType: string;
+            replacementSha256: string;
+            isChanged: boolean;
+            /** @description True when the Album's display artwork file itself is replaced. */
+            replacesAlbumArtwork: boolean;
+        };
+        TrackReplacementFileDeletion: {
+            /** @description Managed Storage-relative path of the previous managed file that will be deleted */
+            path: string;
+            sizeBytes: number;
+        };
+        TrackReplacementConfirmation: {
+            revision: number;
+            confirmationToken: string;
+        };
+        TrackReplacementResult: {
+            /** Format: uuid */
+            jobId: string;
+            /** @enum {string} */
+            status: "committed";
+            revision: number;
+            /** Format: uuid */
+            trackId: string;
+            deletedFiles: number;
         };
         ScanStatus: {
             /** @enum {string} */
@@ -1813,6 +1926,30 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    createTrackReplacement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track Replacement job created and awaiting the replacement upload */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportJob"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     previewLibraryMigration: {
         parameters: {
             query?: never;
@@ -2135,6 +2272,49 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            507: components["responses"]["InsufficientStorage"];
+        };
+    };
+    confirmTrackReplacement: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Explicit application confirmation required for the irreversible old-file deletion */
+                "X-Track-Replacement": "1";
+            };
+            path: {
+                importId: components["parameters"]["importId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackReplacementConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Track Replacement committed, or the idempotent prior result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackReplacementResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description Replacement file no longer passes the Strict Import Profile */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             507: components["responses"]["InsufficientStorage"];
         };
     };

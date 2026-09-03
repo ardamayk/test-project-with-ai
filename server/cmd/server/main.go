@@ -122,7 +122,7 @@ func corsHandler(allowedOrigins []string) func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete", "X-Track-Replacement"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
@@ -146,9 +146,15 @@ func isUnboundedRequest(request *http.Request) bool {
 	if isStreamPath(request.URL.Path) {
 		return true
 	}
-	return request.Method == http.MethodDelete &&
+	if request.Method == http.MethodDelete &&
 		request.Header.Get("X-Permanent-Delete") == "1" &&
-		strings.HasPrefix(request.URL.Path, "/api/v1/library/tracks/")
+		strings.HasPrefix(request.URL.Path, "/api/v1/library/tracks/") {
+		return true
+	}
+	return request.Method == http.MethodPost &&
+		request.Header.Get("X-Track-Replacement") == "1" &&
+		strings.HasPrefix(request.URL.Path, "/api/v1/imports/") &&
+		strings.HasSuffix(request.URL.Path, "/replacement")
 }
 
 func isStreamPath(path string) bool {

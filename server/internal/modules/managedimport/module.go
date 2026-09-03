@@ -50,6 +50,9 @@ func (module *Module) Start(ctx context.Context) error {
 	if err := module.service.RecoverPendingTrackDeletions(ctx); err != nil {
 		return err
 	}
+	if err := module.service.RecoverPendingTrackReplacements(ctx); err != nil {
+		return err
+	}
 	if err := module.service.CleanupRestart(ctx); err != nil {
 		return err
 	}
@@ -77,6 +80,7 @@ func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Post("/api/v1/library-migrations/stage", module.handlers.StageMigration)
 	router.Get("/api/v1/library/tracks/{trackId}/deletion", module.handlers.PreviewTrackDeletion)
 	router.Delete("/api/v1/library/tracks/{trackId}", module.handlers.DeleteTrack)
+	router.Post("/api/v1/library/tracks/{trackId}/replacement", module.handlers.CreateTrackReplacement)
 	router.Get("/api/v1/import-history", module.handlers.ListHistory)
 	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
 	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)
@@ -87,4 +91,5 @@ func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Delete("/api/v1/imports/{importId}", module.handlers.CancelJob)
 	router.Put("/api/v1/imports/{importId}/file", module.handlers.UploadFile)
 	router.Post("/api/v1/imports/{importId}/confirm", module.handlers.Confirm)
+	router.Post("/api/v1/imports/{importId}/replacement", module.handlers.ConfirmTrackReplacement)
 }

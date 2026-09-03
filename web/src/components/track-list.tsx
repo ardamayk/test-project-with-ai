@@ -1,6 +1,14 @@
 import type { Track } from "@repo/api-client";
 import { formatReplayGainAvailability, usePlayback } from "@repo/ui";
-import { Clock, Heart, Info, ListMinus, Trash2, X } from "lucide-react";
+import {
+	Clock,
+	Heart,
+	Info,
+	ListMinus,
+	Replace,
+	Trash2,
+	X,
+} from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useState } from "react";
 import {
@@ -12,11 +20,14 @@ import {
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
 import { useServerCapability } from "#/hooks/use-server-capability";
 import { useTrackDeletionFlow } from "#/hooks/use-track-deletion-flow";
+import { useTrackReplacementFlow } from "#/hooks/use-track-replacement-flow";
 import { getTrackArtistName, getTrackGenreNames } from "#/lib/library-display";
 import { cn } from "#/lib/utils";
 import { TrackDeletionDialog } from "./track-deletion-dialog";
+import { TrackReplacementDialog } from "./track-replacement-dialog";
 
 const MANAGED_TRACK_DELETION_CAPABILITY = "managed-track-deletion.v1";
+const MANAGED_TRACK_REPLACEMENT_CAPABILITY = "managed-track-replacement.v1";
 
 function formatDuration(ms: number): string {
 	if (!ms || ms < 0) return "0:00";
@@ -57,6 +68,7 @@ export function TrackList({
 	numbering = "track",
 	onRemoveTrack,
 	onDeleteTrackSuccess,
+	onReplaceTrackSuccess,
 	removeLabel = "Remove",
 }: {
 	tracks: Track[];
@@ -70,6 +82,7 @@ export function TrackList({
 	numbering?: "track" | "list";
 	onRemoveTrack?: (track: Track) => void;
 	onDeleteTrackSuccess?: (track: Track) => void;
+	onReplaceTrackSuccess?: (track: Track) => void;
 	removeLabel?: string;
 }) {
 	const { playTrack, currentTrack, getAlbumCoverUrl } = usePlayback();
@@ -77,6 +90,10 @@ export function TrackList({
 	const trackDeletion = useTrackDeletionFlow(onDeleteTrackSuccess);
 	const hasDeletionCapability = useServerCapability(
 		MANAGED_TRACK_DELETION_CAPABILITY,
+	);
+	const trackReplacement = useTrackReplacementFlow(onReplaceTrackSuccess);
+	const hasReplacementCapability = useServerCapability(
+		MANAGED_TRACK_REPLACEMENT_CAPABILITY,
 	);
 	const [detailsTrack, setDetailsTrack] = useState<Track | null>(null);
 
@@ -221,6 +238,17 @@ export function TrackList({
 									) : null}
 									{showDelete &&
 									track.sourceKind === "managed" &&
+									hasReplacementCapability ? (
+										<ContextMenuItem
+											disabled={trackReplacement.isBusy}
+											onSelect={() => trackReplacement.open(track)}
+										>
+											<Replace className="size-4" />
+											Replace file
+										</ContextMenuItem>
+									) : null}
+									{showDelete &&
+									track.sourceKind === "managed" &&
 									hasDeletionCapability ? (
 										<ContextMenuItem
 											variant="destructive"
@@ -251,6 +279,20 @@ export function TrackList({
 				isDeleting={trackDeletion.isDeleting}
 				onCancel={trackDeletion.cancel}
 				onConfirm={trackDeletion.confirm}
+			/>
+			<TrackReplacementDialog
+				track={trackReplacement.track}
+				step={trackReplacement.step}
+				preview={trackReplacement.preview}
+				progress={trackReplacement.progress}
+				error={trackReplacement.error}
+				isBusy={trackReplacement.isBusy}
+				isDesktop={trackReplacement.isDesktop}
+				onCancel={() => void trackReplacement.cancel()}
+				onClose={trackReplacement.close}
+				onFile={(file) => void trackReplacement.replaceWith(file)}
+				onSelectDesktopFile={() => void trackReplacement.selectDesktopFile()}
+				onConfirm={() => void trackReplacement.confirm()}
 			/>
 		</>
 	);

@@ -29,6 +29,8 @@ type Service struct {
 	commitPhaseHook  func(commitPhase) error
 	commitResultHook func() error
 	queueEvents      QueueInvalidationPublisher
+
+	replacementPhaseHook func(replacementPhase) error
 }
 
 var managedImportCommitMu sync.Mutex
@@ -186,6 +188,9 @@ func (service *Service) cancelJob(ctx context.Context, jobID string, updatedBefo
 	}
 	if job.Status == STATUS_COMMITTED {
 		return ErrInvalidState
+	}
+	if _, hasReplacement, journalErr := service.store.FindIncompleteReplacementJournal(ctx, jobID); journalErr != nil || hasReplacement {
+		return errors.Join(journalErr, ErrInvalidState)
 	}
 	if err := service.removeUncommittedStaging([]importJob{job}); err != nil {
 		return err
@@ -591,7 +596,7 @@ func (service *Service) validateStagedUpload(ctx context.Context, jobID string, 
 }
 
 func (service *Service) persistPreview(ctx context.Context, job importJob, originalFilename string, upload stagedUpload, inspection library.MediaInspection) (Preview, error) {
-	classification, candidates, err := service.store.ClassifyDuplicate(ctx, inspection)
+	classification, candidates, err := service.store.ClassifyDuplicateExcluding(ctx, inspection, job.ReplaceTrackID)
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 	}
@@ -605,6 +610,15 @@ func (service *Service) persistPreview(ctx context.Context, job importJob, origi
 	preview := previewFromInspection(previewJob, inspection)
 	preview.DuplicateClassification = classification
 	preview.DuplicateCandidates = candidates
+	if job.ReplaceTrackID != "" && classification != DUPLICATE_EXACT {
+		state, stateErr := service.buildReplacementState(ctx, job, inspection, upload.Path)
+		if stateErr != nil {
+			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, stateErr)
+		}
+		preview.DuplicateClassification = DUPLICATE_NONE
+		preview.DuplicateCandidates = nil
+		preview.Replacement = &state.Preview
+	}
 	previewBytes, err := json.Marshal(preview)
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, fmt.Errorf("encode Import Preview: %w", err))
@@ -660,15 +674,20 @@ func validationCancellationError(ctx context.Context) error {
 }
 
 func (service *Service) validateAlbumPositions(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata) error {
+	return service.validateAlbumPositionsExcluding(ctx, jobID, metadata, "")
+}
+
+// validateAlbumPositionsExcluding ignores one existing Track, which a Track Replacement is about to overwrite.
+func (service *Service) validateAlbumPositionsExcluding(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata, excludedTrackID string) error {
 	if metadata.HasDiscNumber {
-		return service.validateExistingAlbumTotals(ctx, metadata)
+		return service.validateExistingAlbumTotals(ctx, metadata, excludedTrackID)
 	}
-	requiresDiscNumber, err := service.requiresDiscNumber(ctx, jobID, metadata)
+	requiresDiscNumber, err := service.requiresDiscNumber(ctx, jobID, metadata, excludedTrackID)
 	if err != nil {
 		return err
 	}
 	if !requiresDiscNumber {
-		return service.validateExistingAlbumTotals(ctx, metadata)
+		return service.validateExistingAlbumTotals(ctx, metadata, excludedTrackID)
 	}
 	return &ValidationError{
 		Code:   string(library.INSPECTION_ERROR_INVALID_METADATA),
@@ -678,8 +697,8 @@ func (service *Service) validateAlbumPositions(ctx context.Context, jobID string
 	}
 }
 
-func (service *Service) requiresDiscNumber(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata) (bool, error) {
-	requiresDiscNumber, err := service.store.AlbumRequiresDiscNumber(ctx, metadata)
+func (service *Service) requiresDiscNumber(ctx context.Context, jobID string, metadata library.NormalizedMediaMetadata, excludedTrackID string) (bool, error) {
+	requiresDiscNumber, err := service.store.AlbumRequiresDiscNumber(ctx, metadata, excludedTrackID)
 	if err != nil || requiresDiscNumber {
 		return requiresDiscNumber, err
 	}
@@ -709,8 +728,8 @@ func isMultiDisc(metadata library.NormalizedMediaMetadata) bool {
 	return metadata.DiscPosition.Number > 1 || metadata.DiscPosition.Total > 1
 }
 
-func (service *Service) validateExistingAlbumTotals(ctx context.Context, metadata library.NormalizedMediaMetadata) error {
-	field, err := service.store.AlbumPositionTotalConflict(ctx, metadata)
+func (service *Service) validateExistingAlbumTotals(ctx context.Context, metadata library.NormalizedMediaMetadata, excludedTrackID string) error {
+	field, err := service.store.AlbumPositionTotalConflict(ctx, metadata, excludedTrackID)
 	if err != nil {
 		return err
 	}
@@ -738,6 +757,9 @@ func (service *Service) ConfirmWithDecision(ctx context.Context, jobID string, r
 	}
 	if job.BatchID != "" {
 		return Result{}, ErrInvalidState
+	}
+	if job.ReplaceTrackID != "" {
+		return Result{}, ErrReplacementRequired
 	}
 	return service.confirmJob(ctx, job, revision, decision)
 }
@@ -1419,6 +1441,12 @@ func failureDetails(err error) (string, string) {
 		return "insufficient_storage", "Managed Storage does not have enough capacity for this import and its safety reserve"
 	case errors.Is(err, ErrUnsafeStoragePath):
 		return "unsafe_storage_path", "Managed Storage path failed containment checks"
+	case errors.Is(err, ErrTrackNotFound):
+		return "track_not_found", "the Track to replace no longer exists"
+	case errors.Is(err, ErrNotManagedTrack):
+		return "not_managed_track", "only Managed Tracks can be replaced"
+	case errors.Is(err, ErrReplacementConflict):
+		return "replacement_preview_changed", "the Track to replace changed during validation"
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return string(library.INSPECTION_ERROR_VALIDATION_CANCELLED), "file validation was canceled"
 	default:

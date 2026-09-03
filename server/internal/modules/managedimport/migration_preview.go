@@ -115,7 +115,7 @@ func (service *Service) validateMigrationInspection(ctx context.Context, inspect
 	if err := service.validateMigrationDiscNumber(ctx, inspection.Metadata); err != nil {
 		return err
 	}
-	if err := service.validateExistingAlbumTotals(ctx, inspection.Metadata); err != nil {
+	if err := service.validateExistingAlbumTotals(ctx, inspection.Metadata, ""); err != nil {
 		return err
 	}
 	if err := service.validateExistingAlbumArtwork(ctx, inspection); err != nil {
@@ -141,7 +141,7 @@ func (service *Service) validateMigrationDiscNumber(ctx context.Context, metadat
 	if metadata.HasDiscNumber {
 		return nil
 	}
-	requiresDiscNumber, err := service.store.AlbumRequiresDiscNumber(ctx, metadata)
+	requiresDiscNumber, err := service.store.AlbumRequiresDiscNumber(ctx, metadata, "")
 	if err != nil || !requiresDiscNumber {
 		return err
 	}

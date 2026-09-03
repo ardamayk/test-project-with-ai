@@ -163,6 +163,35 @@ func (handlers *Handlers) DeleteTrack(writer http.ResponseWriter, request *http.
 	respond.JSON(writer, http.StatusOK, result)
 }
 
+func (handlers *Handlers) CreateTrackReplacement(writer http.ResponseWriter, request *http.Request) {
+	job, err := handlers.service.CreateReplacementJob(request.Context(), chi.URLParam(request, "trackId"))
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusCreated, job)
+}
+
+func (handlers *Handlers) ConfirmTrackReplacement(writer http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(TRACK_REPLACEMENT_CONFIRMATION_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "track_replacement_forbidden", "Track Replacement requires explicit confirmation")
+		return
+	}
+	var confirmation TrackReplacementConfirmation
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_TRACK_REPLACEMENT_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&confirmation); err != nil || confirmation.Revision < 1 || confirmation.ConfirmationToken == "" {
+		respond.Error(writer, http.StatusBadRequest, "invalid_replacement_confirmation", "Track Replacement requires a positive revision and the preview confirmation token")
+		return
+	}
+	result, err := handlers.service.ConfirmReplacement(request.Context(), chi.URLParam(request, "importId"), confirmation)
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, result)
+}
+
 func (handlers *Handlers) CancelJob(writer http.ResponseWriter, request *http.Request) {
 	if err := handlers.service.CancelJob(request.Context(), chi.URLParam(request, "importId")); err != nil {
 		handleError(writer, request, err)
@@ -224,9 +253,15 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	case errors.Is(err, ErrTrackNotFound):
 		respond.Error(writer, http.StatusNotFound, "track_not_found", "Track not found")
 	case errors.Is(err, ErrNotManagedTrack):
-		respond.Error(writer, http.StatusConflict, "not_managed_track", "Only Managed Tracks can be permanently deleted")
+		respond.Error(writer, http.StatusConflict, "not_managed_track", "Only Managed Tracks can be permanently deleted or replaced")
 	case errors.Is(err, ErrDeletionConflict):
 		respond.Error(writer, http.StatusConflict, "deletion_preview_changed", "Track or its references changed; review Permanent Track Deletion again")
+	case errors.Is(err, ErrReplacementConflict):
+		respond.Error(writer, http.StatusConflict, "replacement_preview_changed", "Track or its references changed; review Track Replacement again")
+	case errors.Is(err, ErrNotReplacementJob):
+		respond.Error(writer, http.StatusConflict, "not_track_replacement", "Managed Import Job does not replace a Track")
+	case errors.Is(err, ErrReplacementRequired):
+		respond.Error(writer, http.StatusConflict, "track_replacement_required", "This Managed Import Job replaces a Track and must be confirmed as a Track Replacement")
 	case errors.Is(err, ErrNotFound):
 		respond.Error(writer, http.StatusNotFound, "import_not_found", "Managed Import Job not found")
 	case errors.Is(err, ErrRevisionConflict):

@@ -47,6 +47,30 @@ vi.mock("#/hooks/use-server-capability", () => ({
 	useServerCapability: () => hasDeletionCapability,
 }));
 
+const openReplacement = vi.fn();
+const confirmReplacement = vi.fn();
+const cancelReplacement = vi.fn();
+let replacementFlow: Record<string, unknown> = {};
+
+vi.mock("#/hooks/use-track-replacement-flow", () => ({
+	useTrackReplacementFlow: () => ({
+		track: null,
+		step: "select",
+		preview: null,
+		progress: 0,
+		error: null,
+		isBusy: false,
+		isDesktop: false,
+		open: openReplacement,
+		cancel: cancelReplacement,
+		replaceWith: vi.fn(),
+		selectDesktopFile: vi.fn(),
+		confirm: confirmReplacement,
+		close: vi.fn(),
+		...replacementFlow,
+	}),
+}));
+
 const sampleTrack: Track = {
 	id: "t1",
 	title: "Welcome to New York",
@@ -80,6 +104,10 @@ describe("TrackList", () => {
 	beforeEach(() => {
 		favorite = false;
 		hasDeletionCapability = true;
+		replacementFlow = {};
+		openReplacement.mockReset();
+		confirmReplacement.mockReset();
+		cancelReplacement.mockReset();
 		playTrack.mockClear();
 		toggleFavorite.mockClear();
 		deleteTrack.mockClear();
@@ -241,6 +269,125 @@ describe("TrackList", () => {
 		render(<TrackList tracks={[sampleTrack]} showDelete={false} />);
 
 		expect(screen.queryByText("Delete track")).toBeNull();
+	});
+
+	it("offers Track Replacement only for managed Tracks with the server capability", () => {
+		render(<TrackList tracks={[sampleTrack]} />);
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(screen.getByText("Replace file"));
+		expect(openReplacement).toHaveBeenCalledWith(sampleTrack);
+
+		cleanup();
+		render(<TrackList tracks={[{ ...sampleTrack, sourceKind: "legacy" }]} />);
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		expect(screen.queryByText("Replace file")).toBeNull();
+
+		cleanup();
+		hasDeletionCapability = false;
+		render(<TrackList tracks={[sampleTrack]} />);
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		expect(screen.queryByText("Replace file")).toBeNull();
+	});
+
+	it("shows every Track Replacement consequence before confirming", () => {
+		replacementFlow = {
+			track: sampleTrack,
+			step: "review",
+			preview: {
+				trackId: "t1",
+				trackTitle: "Welcome to New York",
+				sourceFormat: {
+					field: "format",
+					current: "mp3",
+					replacement: "flac",
+					isChanged: true,
+				},
+				technicalProperties: [
+					{
+						field: "bitDepth",
+						current: "",
+						replacement: "24",
+						isChanged: true,
+					},
+				],
+				metadata: [
+					{
+						field: "genres",
+						current: "Pop",
+						replacement: "Synthpop",
+						isChanged: true,
+					},
+				],
+				library: {
+					currentAlbumId: "a1",
+					movesAlbum: true,
+					createsAlbum: true,
+					removesEmptyAlbum: true,
+					removesEmptyArtists: ["Old Artist"],
+					createsArtists: ["New Artist"],
+					createsGenres: [],
+				},
+				artwork: {
+					currentMediaType: "image/png",
+					currentSha256: "a",
+					replacementMediaType: "image/jpeg",
+					replacementSha256: "b",
+					isChanged: true,
+					replacesAlbumArtwork: false,
+				},
+				canonicalPath: {
+					field: "canonicalPath",
+					current: "library/taylor-swift/1989/01-welcome.mp3",
+					replacement: "library/new-artist/album/01-welcome.flac",
+					isChanged: true,
+				},
+				oldFile: {
+					path: "library/taylor-swift/1989/01-welcome.mp3",
+					sizeBytes: 50_059_000,
+				},
+				playlistReferences: [{ id: "p1", name: "Road Trip" }],
+				queueReferences: [{ userId: "user-1", itemCount: 2 }],
+				possibleDuplicates: [],
+				confirmationToken: "token-1",
+			},
+		};
+		render(<TrackList tracks={[sampleTrack]} />);
+
+		const dialog = screen.getByRole("dialog", {
+			name: "Replace Welcome to New York",
+		});
+		expect(within(dialog).getByText("mp3")).toBeTruthy();
+		expect(within(dialog).getByText("flac")).toBeTruthy();
+		expect(within(dialog).getByText("Synthpop")).toBeTruthy();
+		expect(
+			within(dialog).getByText("Moves the Track into a new Album"),
+		).toBeTruthy();
+		expect(within(dialog).getByText("Removes the emptied Album")).toBeTruthy();
+		expect(
+			within(dialog).getByText("Removes unreferenced Artists: Old Artist"),
+		).toBeTruthy();
+		expect(
+			within(dialog).getByText(/Embedded artwork changes from image\/png to/),
+		).toBeTruthy();
+		expect(
+			within(dialog).getByText("library/new-artist/album/01-welcome.flac"),
+		).toBeTruthy();
+		expect(
+			within(dialog).getByText(/will be deleted permanently/),
+		).toBeTruthy();
+		expect(within(dialog).getByText("Road Trip")).toBeTruthy();
+		expect(within(dialog).getByText("2 Queue items")).toBeTruthy();
+
+		fireEvent.click(
+			within(dialog).getByRole("button", { name: "Replace track" }),
+		);
+		expect(confirmReplacement).toHaveBeenCalledTimes(1);
 	});
 
 	it("hides permanent deletion for non-managed Tracks", () => {
