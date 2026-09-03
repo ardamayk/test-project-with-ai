@@ -29,6 +29,7 @@ type Service struct {
 	commitPhaseHook  func(commitPhase) error
 	commitResultHook func() error
 	queueEvents      QueueInvalidationPublisher
+	legacySources    *legacySourceStorage
 
 	replacementPhaseHook func(replacementPhase) error
 	migrationPhaseHook   func(migrationPhase) error
@@ -75,6 +76,7 @@ func NewService(store *Store, storage *Storage, inspector library.MediaInspector
 		activeUploads: make(map[string]*activeUpload),
 		cancelingJobs: make(map[string]bool),
 		queueEvents:   discardQueueInvalidations{},
+		legacySources: newLegacySourceStorage(nil),
 	}
 }
 

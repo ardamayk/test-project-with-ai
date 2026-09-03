@@ -346,6 +346,12 @@ func (store *Store) ActivateMigrationCopy(ctx context.Context, copy migrationCop
 			return nil, artworkInsertErr
 		}
 	}
+	// Keep the proof that this legacy source became the new Managed Track so a
+	// later, separately confirmed cleanup can resolve exactly this file. The
+	// cutover itself never touches the legacy source.
+	if recordErr := recordMigratedSource(ctx, transaction, copy); recordErr != nil {
+		return nil, recordErr
+	}
 	if commitErr := transaction.Commit(); commitErr != nil {
 		return nil, fmt.Errorf("commit Library Migration cutover: %w", commitErr)
 	}

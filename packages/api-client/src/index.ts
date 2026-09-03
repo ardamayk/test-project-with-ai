@@ -92,6 +92,15 @@ export type LibraryMigrationStage = Schemas['LibraryMigrationStage'];
 export type LibraryMigrationCutover = Schemas['LibraryMigrationCutover'];
 export type LibraryMigrationCutoverFile =
   Schemas['LibraryMigrationCutoverFile'];
+export type LibraryMigrationCleanupPreview =
+  Schemas['LibraryMigrationCleanupPreview'];
+export type LibraryMigrationCleanupPreviewFile =
+  Schemas['LibraryMigrationCleanupPreviewFile'];
+export type LibraryMigrationCleanupConfirmation =
+  Schemas['LibraryMigrationCleanupConfirmation'];
+export type LibraryMigrationCleanup = Schemas['LibraryMigrationCleanup'];
+export type LibraryMigrationCleanupFile =
+  Schemas['LibraryMigrationCleanupFile'];
 export type ManagedImportUploadProgress = (progress: number) => void;
 export type QueueConflictResponse = Omit<
   Schemas['QueueConflictResponse'],
@@ -454,6 +463,18 @@ export function createApiClient(config: ApiClientConfig) {
       request<LibraryMigrationCutover>('/api/v1/library-migrations/cutover', {
         method: 'POST',
         headers: { 'X-Migration-Cutover': '1' },
+      }),
+    previewLibraryMigrationCleanup: () =>
+      request<LibraryMigrationCleanupPreview>(
+        '/api/v1/library-migrations/cleanup',
+      ),
+    cleanupLibraryMigrationSources: (
+      confirmation: LibraryMigrationCleanupConfirmation,
+    ) =>
+      request<LibraryMigrationCleanup>('/api/v1/library-migrations/cleanup', {
+        method: 'POST',
+        headers: { 'X-Migration-Cleanup': '1' },
+        body: JSON.stringify(confirmation),
       }),
     listImportHistory: () =>
       request<ManagedImportHistoryList>('/api/v1/import-history'),

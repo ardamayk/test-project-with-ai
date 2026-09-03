@@ -285,6 +285,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library-migrations/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List legacy source files eligible for cleanup after a verified migration
+         * @description Lists every legacy source file. Only sources proven to correspond to an active migrated Managed Track (recorded by a completed cutover, with the managed bytes and the source bytes still hashing to the migrated content) are eligible. Rejected, failed, pending, unverified, changed, or unsafe sources are reported as ineligible and can never be selected. The preview reports the exact eligible file count and total size and changes nothing.
+         */
+        get: operations["previewLibraryMigrationCleanup"];
+        put?: never;
+        /**
+         * Irreversibly delete the confirmed legacy source files of migrated Managed Tracks
+         * @description Deletes exactly the legacy source files named by the selected Managed Track IDs. Every target is resolved and verified again before any file is removed; if the selection, the confirmed file count, or the confirmed total size no longer match the eligible set, nothing is deleted and the request is rejected with a conflict. Empty parent directories are pruned upward to the configured music path without recursing into siblings. Migration success never triggers this cleanup automatically.
+         */
+        post: operations["cleanupLibraryMigrationSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches": {
         parameters: {
             query?: never;
@@ -1014,6 +1038,73 @@ export interface components {
             createdTrackId?: string;
             /** @description Verified full-file hash of the activated Managed Track. */
             contentSha256?: string;
+            errorCode?: string;
+            errorField?: string;
+            errorReason?: string;
+        };
+        LibraryMigrationCleanupPreview: {
+            /** @description Exact number of legacy source files that may be deleted. */
+            eligibleCount: number;
+            ineligibleCount: number;
+            /**
+             * Format: int64
+             * @description Exact total size of the eligible legacy source files.
+             */
+            totalSizeBytes: number;
+            files: components["schemas"]["LibraryMigrationCleanupPreviewFile"][];
+        };
+        LibraryMigrationCleanupPreviewFile: {
+            /**
+             * Format: uuid
+             * @description Migrated Managed Track for eligible files; the Legacy Track for unmigrated sources.
+             */
+            trackId: string;
+            /**
+             * Format: uuid
+             * @description Legacy Track that the migrated source was seeded from.
+             */
+            sourceTrackId?: string;
+            /** @description Display-only basename of the legacy source file. */
+            originalFilename: string;
+            /** @enum {string} */
+            state: "eligible" | "ineligible";
+            /** Format: int64 */
+            sizeBytes?: number;
+            /** @description Verified hash shared by the legacy source and the migrated Managed Track. */
+            contentSha256?: string;
+            errorCode?: string;
+            errorField?: string;
+            errorReason?: string;
+        };
+        LibraryMigrationCleanupConfirmation: {
+            /** @description Migrated Managed Tracks whose legacy source files are to be deleted. */
+            trackIds: string[];
+            /** @description Exact file count shown in the confirmation; must equal the number of selected Tracks. */
+            fileCount: number;
+            /**
+             * Format: int64
+             * @description Exact total size shown in the confirmation; must equal the current size of the selected files.
+             */
+            totalSizeBytes: number;
+        };
+        LibraryMigrationCleanup: {
+            deletedCount: number;
+            failedCount: number;
+            /** Format: int64 */
+            deletedBytes: number;
+            prunedDirectoryCount: number;
+            files: components["schemas"]["LibraryMigrationCleanupFile"][];
+        };
+        LibraryMigrationCleanupFile: {
+            /** Format: uuid */
+            trackId: string;
+            /** Format: uuid */
+            sourceTrackId: string;
+            originalFilename: string;
+            /** @enum {string} */
+            state: "deleted" | "failed";
+            /** Format: int64 */
+            sizeBytes?: number;
             errorCode?: string;
             errorField?: string;
             errorReason?: string;
@@ -2069,6 +2160,57 @@ export interface operations {
                     "application/json": components["schemas"]["LibraryMigrationCutover"];
                 };
             };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    previewLibraryMigrationCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Legacy source cleanup preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMigrationCleanupPreview"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    cleanupLibraryMigrationSources: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Explicit application confirmation required for irreversible legacy source deletion */
+                "X-Migration-Cleanup": "1";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryMigrationCleanupConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Per-file result of deleting the confirmed legacy source files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMigrationCleanup"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
         };

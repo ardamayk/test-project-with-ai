@@ -58,6 +58,10 @@ _Avoid_: Possible Duplicate, same title, same recording
 An explicit, user-confirmed copy and verification of accepted Legacy Tracks into Managed Storage, followed by a cutover that activates each verified copy as a new Managed Track with a new stable Track ID and removes the Legacy Track from the active library. Old Playlist, Queue, and Playback Session Snapshot references to the migrated Track IDs are dropped rather than remapped; rejected source files remain unchanged outside the managed library.
 _Avoid_: Startup scan, automatic migration, destructive move, Track-ID remapping
 
+**Legacy Source Cleanup**:
+An optional, separately confirmed deletion of legacy source files whose bytes were proven to become active Managed Tracks through a completed Library Migration cutover. The confirmation states the exact file count, total size, and irreversible outcome; every target is re-verified before any deletion, only the explicit files are removed, and emptied parent directories are pruned upward to the configured music path without broad recursion. Rejected, failed, pending, and unverified sources are never selectable, and no migration phase triggers the cleanup automatically.
+_Avoid_: Automatic cleanup, destructive migration, recursive directory removal
+
 **Legacy Track**:
 A Track indexed from the former server-side music folder before Managed Import became authoritative. It remains playable without automatic rescanning until Library Migration accepts or rejects it.
 _Avoid_: Managed Import, External Library Root
