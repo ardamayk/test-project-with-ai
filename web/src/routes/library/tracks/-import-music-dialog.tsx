@@ -294,8 +294,8 @@ function ProgressBar({
 		>
 			<div
 				className={cn(
-					"h-full rounded-full bg-primary transition-[width] duration-200",
-					isIndeterminate && "animate-pulse",
+					"h-full rounded-full bg-primary",
+					isIndeterminate && "opacity-60",
 				)}
 				style={{ width: `${percent}%` }}
 			/>
@@ -497,12 +497,7 @@ type StatusBadgeSpec = {
 const stateBadges: Record<ImportFileEntry["state"], StatusBadgeSpec> = {
 	accepted: { label: "Accepted", variant: "outline", Icon: CircleCheck },
 	rejected: { label: "Rejected", variant: "destructive", Icon: CircleX },
-	unresolved: {
-		label: "Unresolved",
-		variant: "secondary",
-		Icon: LoaderCircle,
-		iconClassName: "animate-spin",
-	},
+	unresolved: { label: "Unresolved", variant: "secondary", Icon: LoaderCircle },
 	completed: { label: "Completed", variant: "default", Icon: CircleCheck },
 };
 
