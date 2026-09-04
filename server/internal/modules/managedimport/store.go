@@ -145,9 +145,9 @@ func getImportJob(ctx context.Context, queryer queryRower, jobID string) (import
 	var previewJSON, errorField, errorReason, outcome, replaceTrackID sql.NullString
 	err := queryer.QueryRowContext(ctx, `
 		SELECT id, status, revision, validation_progress, batch_id, client_file_id, original_filename, staged_file_path,
-			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected, replace_track_id
+			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected, replace_track_id, validation_issues
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected, &replaceTrackID)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected, &replaceTrackID, &job.Issues)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
@@ -284,7 +284,7 @@ func scanHistoryItem(scanner historyFileScanner) (HistoryItem, error) {
 func listHistoryFiles(ctx context.Context, queryer historyQueryer, importID string) (_ []HistoryFile, returnErr error) {
 	rows, err := queryer.QueryContext(ctx, `
 		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256,
-			result_code, created_track_id, replaced_track_id
+			result_code, created_track_id, replaced_track_id, validation_issues
 		FROM managed_import_history_files WHERE import_id = ? ORDER BY position`, importID)
 	if err != nil {
 		return nil, fmt.Errorf("list Import History files for %q: %w", importID, err)
@@ -299,7 +299,7 @@ func listHistoryFiles(ctx context.Context, queryer historyQueryer, importID stri
 		var file HistoryFile
 		var safeFilename, contentSHA256, createdTrackID, replacedTrackID sql.NullString
 		if err := rows.Scan(&file.FileID, &file.JobID, &safeFilename, &file.StartedAt, &file.CompletedAt,
-			&contentSHA256, &file.ResultCode, &createdTrackID, &replacedTrackID); err != nil {
+			&contentSHA256, &file.ResultCode, &createdTrackID, &replacedTrackID, &file.Issues); err != nil {
 			return nil, fmt.Errorf("read Import History file: %w", err)
 		}
 		file.SafeFilename = safeFilename.String
@@ -546,7 +546,7 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 		UPDATE managed_import_jobs
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
 			content_sha256 = ?, preview_json = ?, upload_size_bytes = ?, error_code = NULL,
-			error_field = NULL, error_reason = NULL, outcome = NULL, selected = 1,
+			error_field = NULL, error_reason = NULL, validation_issues = '[]', outcome = NULL, selected = 1,
 			validation_progress = 100, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ? AND (
 			batch_id IS NULL OR ? + COALESCE((
@@ -725,7 +725,11 @@ func (store *Store) MarkUploadInterrupted(ctx context.Context, jobID, originalFi
 	return nil
 }
 
-func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, errorCode, errorField, errorReason string) (returnErr error) {
+func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, errorCode, errorField, errorReason string, issueLists ...ValidationIssues) (returnErr error) {
+	var issues ValidationIssues
+	if len(issueLists) > 0 {
+		issues = issueLists[0]
+	}
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin failed Managed Import transition: %w", err)
@@ -739,9 +743,9 @@ func (store *Store) MarkFailed(ctx context.Context, jobID, originalFilename, err
 	result, err := transaction.ExecContext(ctx, `
 		UPDATE managed_import_jobs
 		SET status = ?, original_filename = COALESCE(NULLIF(?, ''), original_filename), error_code = ?,
-			error_field = ?, error_reason = ?, outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END,
+			error_field = ?, error_reason = ?, validation_issues = ?, outcome = CASE WHEN batch_id IS NULL THEN NULL ELSE ? END,
 			selected = 0, staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND status IN (?, ?)`, STATUS_FAILED, originalFilename, errorCode, errorField, errorReason,
+		WHERE id = ? AND status IN (?, ?)`, STATUS_FAILED, originalFilename, errorCode, errorField, errorReason, issues,
 		OUTCOME_REJECTED, jobID, STATUS_UPLOADING, STATUS_AWAITING_CONFIRMATION)
 	if err != nil {
 		return fmt.Errorf("mark Managed Import failed: %w", err)
@@ -924,10 +928,10 @@ func archiveStandaloneHistory(ctx context.Context, transaction *sql.Tx, jobID st
 func readBatchHistoryFiles(ctx context.Context, transaction *sql.Tx, batchID string, terminalCode HistoryResultCode, completedAt time.Time) (_ []HistoryFile, counts HistoryCounts, returnErr error) {
 	rows, err := transaction.QueryContext(ctx, `
 		SELECT COALESCE(NULLIF(client_file_id, ''), id), id, original_filename, created_at, updated_at,
-			content_sha256, status, outcome, error_code, track_id, batch_position
+			content_sha256, status, outcome, error_code, track_id, validation_issues, batch_position
 		FROM managed_import_jobs WHERE batch_id = ?
 		UNION ALL
-		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256, ?, ?, ?, NULL, position
+		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256, ?, ?, ?, NULL, '[]', position
 		FROM managed_import_canceled_files WHERE batch_id = ?
 		ORDER BY batch_position`, batchID, STATUS_FAILED, OUTCOME_NOT_ATTEMPTED, IMPORT_CANCELED_RESULT_CODE, batchID)
 	if err != nil {
@@ -959,7 +963,7 @@ func scanHistorySourceFile(scanner historyFileScanner, hasPosition bool) (Histor
 	var safeFilename, contentSHA256, outcome, errorCode, trackID sql.NullString
 	var status ImportStatus
 	destinations := []any{&file.FileID, &file.JobID, &safeFilename, &file.StartedAt, &file.CompletedAt,
-		&contentSHA256, &status, &outcome, &errorCode, &trackID}
+		&contentSHA256, &status, &outcome, &errorCode, &trackID, &file.Issues}
 	var position int
 	if hasPosition {
 		destinations = append(destinations, &position)
@@ -976,7 +980,7 @@ func scanHistorySourceFile(scanner historyFileScanner, hasPosition bool) (Histor
 func readStandaloneHistory(ctx context.Context, transaction *sql.Tx, jobID string, terminalCode HistoryResultCode) (HistoryItem, bool, error) {
 	row := transaction.QueryRowContext(ctx, `
 		SELECT COALESCE(NULLIF(client_file_id, ''), id), id, original_filename, created_at, updated_at,
-			content_sha256, status, outcome, error_code, track_id
+			content_sha256, status, outcome, error_code, track_id, validation_issues
 		FROM managed_import_jobs WHERE id = ? AND batch_id IS NULL`, jobID)
 	file, outcome, status, errorCode, trackID, err := scanHistorySourceFile(row, false)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1095,10 +1099,10 @@ func insertHistoryFile(ctx context.Context, transaction *sql.Tx, importID string
 	_, err := transaction.ExecContext(ctx, `
 		INSERT INTO managed_import_history_files (
 			import_id, file_id, job_id, safe_filename, started_at, completed_at, content_sha256,
-			result_code, created_track_id, replaced_track_id, position
-		) VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?)`,
+			result_code, created_track_id, replaced_track_id, position, validation_issues
+		) VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
 		importID, file.FileID, file.JobID, file.SafeFilename, file.StartedAt, file.CompletedAt,
-		file.ContentSHA256, file.ResultCode, file.CreatedTrackID, file.ReplacedTrackID, position)
+		file.ContentSHA256, file.ResultCode, file.CreatedTrackID, file.ReplacedTrackID, position, file.Issues)
 	if err != nil {
 		return fmt.Errorf("store Import History file %q: %w", file.FileID, err)
 	}

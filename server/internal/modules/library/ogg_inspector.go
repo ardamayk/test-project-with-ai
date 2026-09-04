@@ -268,20 +268,20 @@ func inspectVorbisOGG(ctx context.Context, file *os.File, sizeBytes int64, analy
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	metadata, artwork, err := inspectOGGMetadataAndArtwork(tags)
-	if err != nil {
-		return MediaInspection{}, err
-	}
+	metadata, artwork, metadataErr := inspectOGGMetadataAndArtwork(tags)
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
-		return MediaInspection{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind Vorbis stream: %w", err))
+		return MediaInspection{}, errors.Join(metadataErr, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind Vorbis stream: %w", err)))
 	}
 	decoder, err := oggvorbis.NewReader(file)
 	if err != nil {
-		return MediaInspection{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
+		return MediaInspection{}, errors.Join(metadataErr, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err))
 	}
 	audio, err := decodeVorbisToEnd(ctx, decoder, sizeBytes, analysis.encodedAudioBytes, reportProgress)
 	if err != nil {
-		return MediaInspection{}, err
+		return MediaInspection{}, errors.Join(metadataErr, err)
+	}
+	if metadataErr != nil {
+		return MediaInspection{}, metadataErr
 	}
 	return MediaInspection{Metadata: metadata, AlbumArtwork: artwork, Audio: audio}, nil
 }
@@ -346,13 +346,13 @@ func inspectOpusOGG(ctx context.Context, file *os.File, sizeBytes int64, analysi
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	metadata, artwork, err := inspectOGGMetadataAndArtwork(tags)
-	if err != nil {
-		return MediaInspection{}, err
-	}
+	metadata, artwork, metadataErr := inspectOGGMetadataAndArtwork(tags)
 	audio, err := decodeOpusToEnd(ctx, reader, header, sizeBytes, analysis, reportProgress)
 	if err != nil {
-		return MediaInspection{}, err
+		return MediaInspection{}, errors.Join(metadataErr, err)
+	}
+	if metadataErr != nil {
+		return MediaInspection{}, metadataErr
 	}
 	return MediaInspection{Metadata: metadata, AlbumArtwork: artwork, Audio: audio}, nil
 }
@@ -471,15 +471,9 @@ func readLengthPrefixedValue(data []byte) ([]byte, []byte, error) {
 }
 
 func inspectOGGMetadataAndArtwork(tags map[string][]string) (NormalizedMediaMetadata, AlbumArtwork, error) {
-	metadata, err := normalizeMediaMetadata(tags, replayGainFromTags(tags))
-	if err != nil {
-		return NormalizedMediaMetadata{}, AlbumArtwork{}, err
-	}
-	artwork, err := inspectPictureComments(tags["METADATA_BLOCK_PICTURE"])
-	if err != nil {
-		return NormalizedMediaMetadata{}, AlbumArtwork{}, err
-	}
-	return metadata, artwork, nil
+	metadata, metadataErr := normalizeMediaMetadata(tags, replayGainFromTags(tags))
+	artwork, artworkErr := inspectPictureComments(tags["METADATA_BLOCK_PICTURE"])
+	return metadata, artwork, errors.Join(metadataErr, artworkErr)
 }
 
 func inspectPictureComments(values []string) (AlbumArtwork, error) {

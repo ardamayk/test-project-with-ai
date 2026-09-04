@@ -755,7 +755,15 @@ export interface components {
             theme?: components["schemas"]["ThemePreferences"];
             layout?: components["schemas"]["LayoutPreferences"];
         };
+        ValidationIssue: {
+            code: string;
+            field: string;
+            /** @description Safe, actionable description of one validation failure. */
+            reason: string;
+        };
         ErrorResponse: {
+            /** @description All independently detectable validation failures, in check order. */
+            issues?: components["schemas"]["ValidationIssue"][];
             error: string;
             code: string;
             message: string;
@@ -805,6 +813,8 @@ export interface components {
             files: components["schemas"]["ManagedImportBatchFile"][];
         };
         ManagedImportBatchFile: {
+            /** @description All independently detectable validation failures, in check order. */
+            issues?: components["schemas"]["ValidationIssue"][];
             /** Format: uuid */
             jobId: string;
             /** Format: uuid */
@@ -851,6 +861,8 @@ export interface components {
             canceled: number;
         };
         ManagedImportHistoryFile: {
+            /** @description All independently detectable validation failures, in check order. */
+            issues?: components["schemas"]["ValidationIssue"][];
             /** Format: uuid */
             fileId: string;
             /** Format: uuid */

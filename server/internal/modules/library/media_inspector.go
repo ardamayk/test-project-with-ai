@@ -257,16 +257,10 @@ func inspectOpenFLAC(ctx context.Context, file *os.File, reportProgress Inspecti
 		return MediaInspection{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "container", err)
 	}
 
-	metadata, err := inspectFLACMetadata(stream.Blocks)
-	if err != nil {
-		return MediaInspection{}, err
-	}
-	artwork, err := inspectFLACArtwork(stream.Blocks)
-	if err != nil {
-		return MediaInspection{}, err
-	}
-	audio, err := inspectFLACAudio(ctx, stream, decoderReader, sizeBytes, reportProgress)
-	if err != nil {
+	metadata, metadataErr := inspectFLACMetadata(stream.Blocks)
+	artwork, artworkErr := inspectFLACArtwork(stream.Blocks)
+	audio, audioErr := inspectFLACAudio(ctx, stream, decoderReader, sizeBytes, reportProgress)
+	if err := errors.Join(metadataErr, artworkErr, audioErr); err != nil {
 		return MediaInspection{}, err
 	}
 	return MediaInspection{Metadata: metadata, AlbumArtwork: artwork, Audio: audio, FileSHA256: fileHash}, nil
@@ -327,20 +321,11 @@ func inspectFLACMetadata(blocks []*flacmeta.Block) (NormalizedMediaMetadata, err
 }
 
 func normalizeMediaMetadata(tags map[string][]string, replayGain ReplayGainMetadata) (NormalizedMediaMetadata, error) {
-	names, err := inspectVorbisNames(tags)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	trackPosition, err := inspectTrackPosition(tags)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	discPosition, err := inspectDiscPosition(tags)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	year, err := optionalYear(tags)
-	if err != nil {
+	names, namesErr := inspectVorbisNames(tags)
+	trackPosition, trackErr := inspectTrackPosition(tags)
+	discPosition, discErr := inspectDiscPosition(tags)
+	year, yearErr := optionalYear(tags)
+	if err := errors.Join(namesErr, trackErr, discErr, yearErr); err != nil {
 		return NormalizedMediaMetadata{}, err
 	}
 	return NormalizedMediaMetadata{
@@ -404,27 +389,19 @@ type normalizedMediaNames struct {
 }
 
 func inspectVorbisNames(tags map[string][]string) (normalizedMediaNames, error) {
-	var names normalizedMediaNames
-	var err error
-	if names.Title, err = requiredSingleTag(tags, "TITLE"); err != nil {
-		return normalizedMediaNames{}, err
+	title, titleErr := requiredSingleTag(tags, "TITLE")
+	artists, artistsErr := requiredTags(tags, "ARTIST")
+	albumArtists, albumArtistsErr := requiredTags(tags, "ALBUMARTIST")
+	album, albumErr := requiredSingleTag(tags, "ALBUM")
+	genres, genresErr := requiredTags(tags, "GENRE")
+	if genresErr == nil {
+		genres = splitGenreTagValues(genres)
+		if len(genres) == 0 {
+			genresErr = inspectionError(INSPECTION_ERROR_INVALID_METADATA, "GENRE", errors.New("tag holds no Genre once delimiters are removed"))
+		}
 	}
-	if names.Artists, err = requiredTags(tags, "ARTIST"); err != nil {
-		return normalizedMediaNames{}, err
-	}
-	if names.AlbumArtists, err = requiredTags(tags, "ALBUMARTIST"); err != nil {
-		return normalizedMediaNames{}, err
-	}
-	if names.Album, err = requiredSingleTag(tags, "ALBUM"); err != nil {
-		return normalizedMediaNames{}, err
-	}
-	if names.Genres, err = requiredTags(tags, "GENRE"); err != nil {
-		return normalizedMediaNames{}, err
-	}
-	if names.Genres = splitGenreTagValues(names.Genres); len(names.Genres) == 0 {
-		return normalizedMediaNames{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "GENRE", errors.New("tag holds no Genre once delimiters are removed"))
-	}
-	return names, nil
+	return normalizedMediaNames{Title: title, Artists: artists, AlbumArtists: albumArtists, Album: album, Genres: genres},
+		errors.Join(titleErr, artistsErr, albumArtistsErr, albumErr, genresErr)
 }
 
 func collectVorbisTags(blocks []*flacmeta.Block) map[string][]string {

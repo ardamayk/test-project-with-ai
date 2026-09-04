@@ -1,3 +1,4 @@
+import { ApiError } from "@repo/api-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	act,
@@ -574,6 +575,24 @@ describe("tracks route", () => {
 							resultCode: "imported",
 							createdTrackId: "00000000-0000-4000-8000-000000000013",
 						},
+						{
+							fileId: "00000000-0000-4000-8000-000000000014",
+							jobId: "00000000-0000-4000-8000-000000000015",
+							safeFilename: "rejected.flac",
+							resultCode: "invalid_metadata",
+							issues: [
+								{
+									code: "invalid_metadata",
+									field: "GENRE",
+									reason: "required tag is missing",
+								},
+								{
+									code: "missing_artwork",
+									field: "artwork",
+									reason: "embedded front cover is required",
+								},
+							],
+						},
 					],
 				},
 			],
@@ -585,6 +604,14 @@ describe("tracks route", () => {
 		await screen.findByText("Partially completed");
 		expect(screen.getByText("1 imported · 1 rejected")).toBeTruthy();
 		expect(screen.getByText("strict-import.flac")).toBeTruthy();
+		expect(screen.getByText("Genre: required tag is missing").tagName).toBe(
+			"LI",
+		);
+		expect(
+			screen.getByText(
+				"Embedded front cover not found. Add an image marked as Front Cover.",
+			).tagName,
+		).toBe("LI");
 
 		fireEvent.click(screen.getByRole("button", { name: "Retry import" }));
 
@@ -1394,6 +1421,107 @@ describe("tracks route", () => {
 		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
 			"import-1",
 		]);
+	});
+
+	it("shows every validation issue on a separate readable line", async () => {
+		mocks.uploadManagedImportFile.mockRejectedValueOnce(
+			new ApiError(422, {
+				error: "invalid_metadata",
+				code: "invalid_metadata",
+				message: "Validation failed",
+				issues: [
+					{
+						code: "invalid_metadata",
+						field: "GENRE",
+						reason: "required tag is missing",
+					},
+					{
+						code: "missing_artwork",
+						field: "artwork",
+						reason: "embedded front cover is required",
+					},
+				],
+			}),
+		);
+		mocks.getManagedImportBatch.mockRejectedValueOnce(
+			new Error("Refresh unavailable"),
+		);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [new File(["audio"], "broken.flac", { type: "audio/flac" })],
+			},
+		});
+		const genre = await screen.findByText("Genre: required tag is missing");
+		const artwork = screen.getByText(
+			"Embedded front cover not found. Add an image marked as Front Cover.",
+		);
+		expect(genre.tagName).toBe("LI");
+		expect(artwork.tagName).toBe("LI");
+		expect(screen.queryByText("missing_artwork")).toBeNull();
+	});
+
+	it("preserves native validation issues after batch refresh", async () => {
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "selection", name: "broken.flac", size: 42 },
+		]);
+		const issues = [
+			{
+				code: "invalid_metadata",
+				field: "GENRE",
+				reason: "required tag is missing",
+			},
+			{
+				code: "missing_artwork",
+				field: "artwork",
+				reason: "embedded front cover is required",
+			},
+		];
+		mocks.desktopUploadImportFile.mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: "invalid_metadata",
+					code: "invalid_metadata",
+					message: "Validation failed",
+					issues,
+				}),
+				{ status: 422 },
+			),
+		);
+		mocks.getManagedImportBatch.mockResolvedValue({
+			id: "batch-1",
+			status: "uploading",
+			revision: 2,
+			files: [
+				{
+					jobId: "import-1",
+					state: "rejected",
+					status: "failed",
+					revision: 1,
+					validationProgress: 100,
+					selected: false,
+					errorCode: "invalid_metadata",
+					errorReason: "required tag is missing",
+					issues,
+				},
+			],
+		});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+		await waitFor(() => expect(mocks.getManagedImportBatch).toHaveBeenCalled());
+		expect(
+			(await screen.findByText("Genre: required tag is missing")).tagName,
+		).toBe("LI");
+		expect(
+			screen.getByText(
+				"Embedded front cover not found. Add an image marked as Front Cover.",
+			).tagName,
+		).toBe("LI");
 	});
 
 	it("confirms modal close and cancels uncommitted server staging", async () => {

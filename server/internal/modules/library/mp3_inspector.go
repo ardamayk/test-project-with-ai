@@ -139,6 +139,7 @@ type mp3FrameHeader struct {
 }
 
 type mp3StreamInfo struct {
+	audioEnd     int64
 	sampleRateHz int
 	channelCount int
 	totalSamples uint64
@@ -150,16 +151,16 @@ func inspectOpenMP3(ctx context.Context, file *os.File, reportProgress Inspectio
 	if err != nil {
 		return MediaInspection{}, mp3FileError(err)
 	}
-	tag, err := inspectID3Tag(file)
-	if err != nil {
-		return MediaInspection{}, err
+	tag, tagErr := inspectID3Tag(file)
+	if tag.offset == 0 {
+		return MediaInspection{}, tagErr
 	}
-	stream, err := inspectMP3Frames(file, tag.offset, sizeBytes)
-	if err != nil {
-		return MediaInspection{}, err
+	stream, streamErr := inspectMP3Frames(ctx, file, tag.offset, sizeBytes)
+	var audio TechnicalAudioProperties
+	if streamErr == nil {
+		audio, streamErr = decodeMP3(ctx, file, stream, reportProgress)
 	}
-	audio, err := decodeMP3(ctx, file, stream, reportProgress)
-	if err != nil {
+	if err := errors.Join(tagErr, streamErr); err != nil {
 		return MediaInspection{}, err
 	}
 	return MediaInspection{Metadata: tag.metadata, AlbumArtwork: tag.artwork, Audio: audio, FileSHA256: fileHash}, nil
@@ -177,23 +178,22 @@ func inspectID3Tag(file *os.File) (id3Tag, error) {
 	if err != nil {
 		return id3Tag{}, err
 	}
-	values, err := collectID3Values(frames, version)
-	if err != nil {
-		return id3Tag{}, err
+	values, parseErr := collectID3Values(frames, version)
+	var failedFields []string
+	for _, issue := range InspectionIssues(parseErr) {
+		failedFields = append(failedFields, issue.Field)
 	}
-	metadata, err := normalizeID3Metadata(values)
+	metadata, metadataErr := normalizeID3Metadata(values)
+	artwork, artworkErr := inspectID3Artwork(values.pictures)
+	return id3Tag{metadata: metadata, artwork: artwork, offset: offset}, errors.Join(parseErr, excludeInspectionFields(errors.Join(metadataErr, artworkErr), failedFields))
+}
+
+func inspectID3Artwork(pictures []taggedID3Picture) (AlbumArtwork, error) {
+	picture, err := selectID3FrontCover(pictures)
 	if err != nil {
-		return id3Tag{}, err
+		return AlbumArtwork{}, err
 	}
-	picture, err := selectID3FrontCover(values.pictures)
-	if err != nil {
-		return id3Tag{}, err
-	}
-	artwork, err := validateArtworkData(picture.mimeType, picture.data)
-	if err != nil {
-		return id3Tag{}, err
-	}
-	return id3Tag{metadata: metadata, artwork: artwork, offset: offset}, nil
+	return validateArtworkData(picture.mimeType, picture.data)
 }
 
 func readID3Frames(file *os.File) ([]id3Frame, byte, int64, error) {
@@ -288,60 +288,50 @@ func parseID3FrameHeader(data []byte, version byte) (id3Frame, int, error) {
 
 func collectID3Values(frames []id3Frame, version byte) (id3Values, error) {
 	values := id3Values{tags: make(map[string][]string), replayGain: make(map[string]string)}
+	var failures []error
 	for _, frame := range frames {
-		key := canonicalID3FrameName(frame.name, version)
-		if key != "" {
-			frameValues, err := decodeID3TextValues(frame.payload, version)
-			if err != nil {
-				return id3Values{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, err)
-			}
-			if key == "GENRE" {
-				frameValues = splitGenreTagValues(frameValues)
-			}
-			values.tags[key] = append(values.tags[key], frameValues...)
-			continue
+		failures = append(failures, collectID3Frame(&values, frame, version))
+	}
+	return values, errors.Join(failures...)
+}
+
+func collectID3Frame(values *id3Values, frame id3Frame, version byte) error {
+	key := canonicalID3FrameName(frame.name, version)
+	if key != "" {
+		frameValues, err := decodeID3TextValues(frame.payload, version)
+		if err != nil {
+			return inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, err)
 		}
-		if frame.name == id3UserTextFrameName(version) {
-			if err := collectID3UserText(values.replayGain, frame.payload); err != nil {
-				return id3Values{}, invalidID3Error(err)
-			}
-			continue
+		if key == "GENRE" {
+			frameValues = splitGenreTagValues(frameValues)
 		}
-		if frame.name == id3PictureFrameName(version) {
-			if err := collectID3Picture(&values, frame.payload, version); err != nil {
-				return id3Values{}, err
-			}
+		values.tags[key] = append(values.tags[key], frameValues...)
+		return nil
+	}
+	if frame.name == id3UserTextFrameName(version) {
+		if err := collectID3UserText(values.replayGain, frame.payload); err != nil {
+			return invalidID3Error(err)
 		}
 	}
-	return values, nil
+	if frame.name == id3PictureFrameName(version) {
+		return collectID3Picture(values, frame.payload, version)
+	}
+	return nil
 }
 
 func normalizeID3Metadata(values id3Values) (NormalizedMediaMetadata, error) {
-	replayGain, err := replayGainFromID3(values.replayGain)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	return normalizeMediaMetadata(values.tags, replayGain)
+	replayGain, replayGainErr := replayGainFromID3(values.replayGain)
+	metadata, metadataErr := normalizeMediaMetadata(values.tags, replayGain)
+	return metadata, errors.Join(replayGainErr, metadataErr)
 }
 
 func replayGainFromID3(values map[string]string) (ReplayGainMetadata, error) {
-	trackGain, err := parseID3ReplayGain(values, "REPLAYGAIN_TRACK_GAIN", parseReplayGainValue)
-	if err != nil {
-		return ReplayGainMetadata{}, err
-	}
-	trackPeak, err := parseID3ReplayGain(values, "REPLAYGAIN_TRACK_PEAK", parseReplayGainPeak)
-	if err != nil {
-		return ReplayGainMetadata{}, err
-	}
-	albumGain, err := parseID3ReplayGain(values, "REPLAYGAIN_ALBUM_GAIN", parseReplayGainValue)
-	if err != nil {
-		return ReplayGainMetadata{}, err
-	}
-	albumPeak, err := parseID3ReplayGain(values, "REPLAYGAIN_ALBUM_PEAK", parseReplayGainPeak)
-	if err != nil {
-		return ReplayGainMetadata{}, err
-	}
-	return ReplayGainMetadata{TrackGainDB: trackGain, TrackPeak: trackPeak, AlbumGainDB: albumGain, AlbumPeak: albumPeak}, nil
+	trackGain, trackGainErr := parseID3ReplayGain(values, "REPLAYGAIN_TRACK_GAIN", parseReplayGainValue)
+	trackPeak, trackPeakErr := parseID3ReplayGain(values, "REPLAYGAIN_TRACK_PEAK", parseReplayGainPeak)
+	albumGain, albumGainErr := parseID3ReplayGain(values, "REPLAYGAIN_ALBUM_GAIN", parseReplayGainValue)
+	albumPeak, albumPeakErr := parseID3ReplayGain(values, "REPLAYGAIN_ALBUM_PEAK", parseReplayGainPeak)
+	return ReplayGainMetadata{TrackGainDB: trackGain, TrackPeak: trackPeak, AlbumGainDB: albumGain, AlbumPeak: albumPeak},
+		errors.Join(trackGainErr, trackPeakErr, albumGainErr, albumPeakErr)
 }
 
 func parseID3ReplayGain(values map[string]string, key string, parse func(string) *float64) (*float64, error) {
@@ -562,10 +552,14 @@ func decodeID3UTF16(data []byte, hasBOM bool) (string, error) {
 	return string(utf16.Decode(values)), nil
 }
 
-func inspectMP3Frames(file *os.File, audioOffset, sizeBytes int64) (mp3StreamInfo, error) {
+func inspectMP3Frames(ctx context.Context, file *os.File, audioOffset, sizeBytes int64) (mp3StreamInfo, error) {
 	audioEnd, err := mp3AudioEnd(file, sizeBytes)
 	if err != nil {
 		return mp3StreamInfo{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", err)
+	}
+	audioEnd, err = mp3APEv2AudioEnd(ctx, file, audioOffset, audioEnd)
+	if err != nil {
+		return mp3StreamInfo{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "APEv2", err)
 	}
 	if audioOffset >= audioEnd {
 		return mp3StreamInfo{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", errors.New("MP3 audio stream is empty"))
@@ -573,8 +567,11 @@ func inspectMP3Frames(file *os.File, audioOffset, sizeBytes int64) (mp3StreamInf
 	if _, err := file.Seek(audioOffset, io.SeekStart); err != nil {
 		return mp3StreamInfo{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("seek MP3 audio: %w", err))
 	}
-	var stream mp3StreamInfo
+	stream := mp3StreamInfo{audioEnd: audioEnd}
 	for offset := audioOffset; offset < audioEnd; {
+		if err := inspectionCancellationError(ctx); err != nil {
+			return mp3StreamInfo{}, err
+		}
 		var headerBytes [MP3_FRAME_HEADER_SIZE_BYTES]byte
 		if _, err := io.ReadFull(file, headerBytes[:]); err != nil {
 			return mp3StreamInfo{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", fmt.Errorf("read MP3 frame header: %w", err))
@@ -668,7 +665,7 @@ func decodeMP3(ctx context.Context, file *os.File, stream mp3StreamInfo, reportP
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_FILE_READ, "file", fmt.Errorf("rewind MP3 file: %w", err))
 	}
-	decoder, err := mp3.NewDecoder(contextReader{ctx: ctx, reader: file})
+	decoder, err := mp3.NewDecoder(contextReader{ctx: ctx, reader: io.NewSectionReader(file, 0, stream.audioEnd)})
 	if err != nil {
 		return TechnicalAudioProperties{}, inspectionError(INSPECTION_ERROR_AUDIO_DECODE, "audio", err)
 	}

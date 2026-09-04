@@ -12,6 +12,7 @@ import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { isDesktopClient } from "#/desktop/bridge";
 import { cn } from "#/lib/utils.ts";
+import { ImportErrors } from "./-import-errors";
 import {
 	type DuplicateDecision,
 	type ImportFileEntry,
@@ -398,9 +399,7 @@ const ImportFileRow = memo(function ImportFileRow({
 				isBusy={isBusy}
 				onDecisionChange={onDuplicateDecisionChange}
 			/>
-			{entry.errorMessage ? (
-				<p className="text-destructive text-sm">{entry.errorMessage}</p>
-			) : null}
+			<ImportErrors message={entry.errorMessage} />
 		</article>
 	);
 });

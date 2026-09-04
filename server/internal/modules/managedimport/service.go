@@ -1372,13 +1372,15 @@ func (service *Service) rollbackFilesystemCommit(ctx context.Context, journal co
 func (service *Service) failUpload(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {
 	errorCode, reason := failureDetails(uploadErr)
 	errorField := ""
+	var issues ValidationIssues
 	var validationErr *ValidationError
 	if errors.As(uploadErr, &validationErr) {
 		errorField = validationErr.Field
+		issues = validationErr.validationIssues()
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, job.ID, originalFilename, errorCode, errorField, reason))
+	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, job.ID, originalFilename, errorCode, errorField, reason, issues))
 }
 
 func (service *Service) markUploadInterrupted(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {

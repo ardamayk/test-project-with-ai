@@ -130,20 +130,21 @@ type Batch struct {
 }
 
 type BatchFile struct {
-	JobID              string         `json:"jobId"`
-	ClientFileID       string         `json:"clientFileId,omitempty"`
-	State              BatchFileState `json:"state"`
-	Status             ImportStatus   `json:"status"`
-	Revision           int            `json:"revision"`
-	ValidationProgress int            `json:"validationProgress"`
-	OriginalFilename   string         `json:"originalFilename,omitempty"`
-	Selected           bool           `json:"selected"`
-	Preview            *Preview       `json:"preview,omitempty"`
-	ErrorCode          string         `json:"errorCode,omitempty"`
-	ErrorField         string         `json:"errorField,omitempty"`
-	ErrorReason        string         `json:"errorReason,omitempty"`
-	Outcome            ImportOutcome  `json:"outcome,omitempty"`
-	TrackID            string         `json:"trackId,omitempty"`
+	Issues             ValidationIssues `json:"issues,omitempty"`
+	JobID              string           `json:"jobId"`
+	ClientFileID       string           `json:"clientFileId,omitempty"`
+	State              BatchFileState   `json:"state"`
+	Status             ImportStatus     `json:"status"`
+	Revision           int              `json:"revision"`
+	ValidationProgress int              `json:"validationProgress"`
+	OriginalFilename   string           `json:"originalFilename,omitempty"`
+	Selected           bool             `json:"selected"`
+	Preview            *Preview         `json:"preview,omitempty"`
+	ErrorCode          string           `json:"errorCode,omitempty"`
+	ErrorField         string           `json:"errorField,omitempty"`
+	ErrorReason        string           `json:"errorReason,omitempty"`
+	Outcome            ImportOutcome    `json:"outcome,omitempty"`
+	TrackID            string           `json:"trackId,omitempty"`
 }
 
 type BatchConfirmation struct {
@@ -245,18 +246,20 @@ type HistoryCounts struct {
 }
 
 type HistoryFile struct {
-	FileID          string    `json:"fileId"`
-	JobID           string    `json:"jobId"`
-	SafeFilename    string    `json:"safeFilename,omitempty"`
-	StartedAt       time.Time `json:"startedAt"`
-	CompletedAt     time.Time `json:"completedAt"`
-	ContentSHA256   string    `json:"contentSha256,omitempty"`
-	ResultCode      string    `json:"resultCode"`
-	CreatedTrackID  string    `json:"createdTrackId,omitempty"`
-	ReplacedTrackID string    `json:"replacedTrackId,omitempty"`
+	Issues          ValidationIssues `json:"issues,omitempty"`
+	FileID          string           `json:"fileId"`
+	JobID           string           `json:"jobId"`
+	SafeFilename    string           `json:"safeFilename,omitempty"`
+	StartedAt       time.Time        `json:"startedAt"`
+	CompletedAt     time.Time        `json:"completedAt"`
+	ContentSHA256   string           `json:"contentSha256,omitempty"`
+	ResultCode      string           `json:"resultCode"`
+	CreatedTrackID  string           `json:"createdTrackId,omitempty"`
+	ReplacedTrackID string           `json:"replacedTrackId,omitempty"`
 }
 
 type importJob struct {
+	Issues ValidationIssues `json:"issues,omitempty"`
 	Job
 	BatchID          string
 	ClientFileID     string
@@ -286,6 +289,7 @@ type commitJournal struct {
 }
 
 type ValidationError struct {
+	Issues ValidationIssues `json:"issues,omitempty"`
 	Code   string
 	Field  string
 	Reason string
@@ -306,7 +310,7 @@ func (validationErr *ValidationError) Unwrap() error {
 func validationError(err error) error {
 	var inspectionErr *library.InspectionError
 	if errors.As(err, &inspectionErr) {
-		return &ValidationError{Code: string(inspectionErr.Code), Field: inspectionErr.Field, Reason: inspectionErr.Reason, Err: inspectionErr.Err}
+		return &ValidationError{Code: string(inspectionErr.Code), Field: inspectionErr.Field, Reason: inspectionErr.Reason, Err: err, Issues: ValidationIssues(library.InspectionIssues(err))}
 	}
 	return err
 }
@@ -361,6 +365,7 @@ func batchFileFromJob(job importJob) (BatchFile, error) {
 		ErrorCode:          job.ErrorCode,
 		ErrorField:         job.ErrorField,
 		ErrorReason:        job.ErrorReason,
+		Issues:             job.Issues,
 		Outcome:            job.Outcome,
 		TrackID:            job.TrackID,
 	}

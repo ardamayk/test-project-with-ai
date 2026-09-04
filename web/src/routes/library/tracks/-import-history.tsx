@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { Button } from "#/components/ui/button";
 import { apiClient } from "#/lib/api";
+import { ImportErrors } from "./-import-errors";
+import { formatImportIssues } from "./-import-validation";
 
 export function ImportHistory({ onRetry }: { onRetry: () => void }) {
 	const history = useQuery({
@@ -121,6 +123,7 @@ function ImportHistoryFileRow({
 				{file.safeFilename ?? "Filename unavailable"}
 			</p>
 			<p className="break-all text-foreground">Result: {file.resultCode}</p>
+			<ImportErrors message={formatImportIssues(file.issues)} />
 			<p className="break-all text-caption">
 				File {file.fileId} · Job {file.jobId}
 			</p>

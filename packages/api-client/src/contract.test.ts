@@ -122,6 +122,7 @@ describe('generated Managed Import contract', () => {
       message: string;
       field?: string;
       reason?: string;
+      issues?: { code: string; field: string; reason: string }[];
     }>();
     expectTypeOf<
       operations['uploadManagedImportFile']['responses'][422]['content']['application/json']

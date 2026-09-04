@@ -1487,10 +1487,26 @@ components:
           $ref: "#/components/schemas/ThemePreferences"
         layout:
           $ref: "#/components/schemas/LayoutPreferences"
+    ValidationIssue:
+      type: object
+      required: [code, field, reason]
+      properties:
+        code:
+          type: string
+        field:
+          type: string
+        reason:
+          type: string
+          description: Safe, actionable description of one validation failure.
     ErrorResponse:
       type: object
       required: [error, code, message]
       properties:
+        issues:
+          type: array
+          description: All independently detectable validation failures, in check order.
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
         error:
           type: string
         code:
@@ -1564,6 +1580,11 @@ components:
       type: object
       required: [jobId, state, status, revision, validationProgress, selected]
       properties:
+        issues:
+          type: array
+          description: All independently detectable validation failures, in check order.
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
         jobId:
           type: string
           format: uuid
@@ -1661,6 +1682,11 @@ components:
       type: object
       required: [fileId, jobId, startedAt, completedAt, resultCode]
       properties:
+        issues:
+          type: array
+          description: All independently detectable validation failures, in check order.
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
         fileId:
           type: string
           format: uuid

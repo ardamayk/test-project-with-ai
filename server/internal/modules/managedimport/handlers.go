@@ -296,7 +296,11 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 		var validationErr *ValidationError
 		if errors.As(err, &validationErr) {
 			reason := strictValidationReason(validationErr)
-			respond.ErrorWithField(writer, http.StatusUnprocessableEntity, validationErr.Code, strictValidationMessage(validationErr, reason), validationErr.Field, reason)
+			respond.JSON(writer, http.StatusUnprocessableEntity, struct {
+				respond.ErrorResponse
+				Issues ValidationIssues `json:"issues"`
+			}{respond.ErrorResponse{Error: validationErr.Code, Code: validationErr.Code,
+				Message: strictValidationMessage(validationErr, reason), Field: validationErr.Field, Reason: reason}, validationErr.validationIssues()})
 			return
 		}
 		slog.ErrorContext(request.Context(), "Managed Import request failed", "path", request.URL.Path, "error", err)

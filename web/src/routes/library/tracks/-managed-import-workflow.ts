@@ -16,6 +16,8 @@ import {
 } from "#/desktop/bridge";
 import { apiClient } from "#/lib/api";
 
+import { formatImportIssue, formatImportIssues } from "./-import-validation";
+
 export type ImportState = "idle" | "uploading" | "confirming";
 
 const MAX_CONCURRENT_UPLOADS = 3;
@@ -613,7 +615,15 @@ function mergeBatchFiles(
 	return entries.map((entry) => {
 		const result = files.find((file) => file.jobId === entry.jobId);
 		if (!result) return entry;
-		const serverError = result.errorReason ?? result.errorCode;
+		const serverError =
+			formatImportIssues(result.issues) ??
+			(result.errorCode === "missing_artwork"
+				? formatImportIssue({
+						code: result.errorCode,
+						field: "artwork",
+						reason: result.errorReason ?? "",
+					})
+				: (result.errorReason ?? result.errorCode));
 		return {
 			...entry,
 			state: result.state,
@@ -712,6 +722,16 @@ async function retryUnresolvedUploads(
 }
 
 function importErrorMessage(error: unknown): string {
+	if (error instanceof ApiError) {
+		const message = formatImportIssues(error.body.issues);
+		if (message) return message;
+		if (error.body.code === "missing_artwork")
+			return formatImportIssue({
+				code: error.body.code,
+				field: "artwork",
+				reason: error.message,
+			});
+	}
 	if (error instanceof Error && error.message.trim()) return error.message;
 	if (
 		typeof error === "object" &&
