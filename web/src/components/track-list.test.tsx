@@ -82,12 +82,12 @@ const sampleTrack: Track = {
 	discNo: 1,
 	durationMs: 212_000,
 	format: "flac",
-	sourceKind: "managed",
 	genre: "Pop",
 	artists: [],
 	genres: [{ id: "genre-pop", name: "Pop" }],
 	bitDepth: 24,
 	sampleRateHz: 96_000,
+	bitrateKbps: 1856,
 	sizeBytes: 50_059_000,
 	replayGain: {
 		trackGainDb: -7.25,
@@ -281,13 +281,6 @@ describe("TrackList", () => {
 		expect(openReplacement).toHaveBeenCalledWith(sampleTrack);
 
 		cleanup();
-		render(<TrackList tracks={[{ ...sampleTrack, sourceKind: "legacy" }]} />);
-		fireEvent.contextMenu(
-			screen.getByRole("row", { name: /Welcome to New York/ }),
-		);
-		expect(screen.queryByText("Replace file")).toBeNull();
-
-		cleanup();
 		hasDeletionCapability = false;
 		render(<TrackList tracks={[sampleTrack]} />);
 		fireEvent.contextMenu(
@@ -391,15 +384,6 @@ describe("TrackList", () => {
 		expect(confirmReplacement).toHaveBeenCalledTimes(1);
 	});
 
-	it("hides permanent deletion for non-managed Tracks", () => {
-		render(<TrackList tracks={[{ ...sampleTrack, sourceKind: "legacy" }]} />);
-
-		fireEvent.contextMenu(
-			screen.getByRole("row", { name: /Welcome to New York/ }),
-		);
-		expect(screen.queryByText("Delete track")).toBeNull();
-	});
-
 	it("hides permanent deletion when the server capability is absent", () => {
 		hasDeletionCapability = false;
 		render(<TrackList tracks={[sampleTrack]} />);
@@ -429,6 +413,10 @@ describe("TrackList", () => {
 		expect(within(dialog).getByText("Disc")).toBeTruthy();
 		expect(within(dialog).getByText("Duration")).toBeTruthy();
 		expect(within(dialog).getByText("Codec")).toBeTruthy();
+		expect(within(dialog).getByText("Bitrate")).toBeTruthy();
+		expect(
+			within(dialog).getByText("1856 kbps (Calculated by app)"),
+		).toBeTruthy();
 		expect(within(dialog).getByText("Sample rate")).toBeTruthy();
 		expect(within(dialog).getByText("Bit depth")).toBeTruthy();
 		expect(within(dialog).getByText("Genre")).toBeTruthy();

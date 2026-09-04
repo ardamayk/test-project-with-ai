@@ -174,7 +174,7 @@ export function AlbumsPage() {
 						description={
 							hasActiveFilters
 								? "Try adjusting your search or filters."
-								: "Scan your library to get started."
+								: "Import music to get started."
 						}
 					/>
 				) : (

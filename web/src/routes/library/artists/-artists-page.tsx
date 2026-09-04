@@ -77,7 +77,7 @@ export function ArtistsPage({
 						description={
 							search.trim()
 								? "Try adjusting your search."
-								: "Scan your library to get started."
+								: "Import music to get started."
 						}
 					/>
 				) : (

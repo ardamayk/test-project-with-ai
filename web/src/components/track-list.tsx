@@ -52,6 +52,18 @@ function formatSampleRate(hz?: number): string | null {
 	return `${(hz / 1000).toFixed(1)} kHz`;
 }
 
+function formatBitDepth(bits?: number): string | null {
+	if (!bits || bits <= 0) return null;
+	return `${bits}-bit`;
+}
+
+function formatBitrate(kbps?: number, format?: string): string | null {
+	if (!kbps || kbps <= 0) return null;
+	const provenance =
+		format?.toLowerCase() === "wav" ? "Native" : "Calculated by app";
+	return `${kbps} kbps (${provenance})`;
+}
+
 function formatBytes(bytes?: number): string | null {
 	if (!bytes || bytes <= 0) return null;
 	const mib = bytes / 1024 / 1024;
@@ -259,9 +271,7 @@ export function TrackList({
 											{removeLabel}
 										</ContextMenuItem>
 									) : null}
-									{showDelete &&
-									track.sourceKind === "managed" &&
-									hasReplacementCapability ? (
+									{showDelete && hasReplacementCapability ? (
 										<ContextMenuItem
 											disabled={trackReplacement.isBusy}
 											onSelect={() => {
@@ -273,9 +283,7 @@ export function TrackList({
 											Replace file
 										</ContextMenuItem>
 									) : null}
-									{showDelete &&
-									track.sourceKind === "managed" &&
-									hasDeletionCapability ? (
+									{showDelete && hasDeletionCapability ? (
 										<ContextMenuItem
 											variant="destructive"
 											disabled={trackDeletion.isDeleting}
@@ -348,8 +356,9 @@ function TrackDetailsDialog({
 				["Track", track.trackNo?.toString()],
 				["Duration", formatDurationLabel(track.durationMs)],
 				["Codec", track.format],
+				["Bitrate", formatBitrate(track.bitrateKbps, track.format)],
 				["Sample rate", formatSampleRate(track.sampleRateHz)],
-				["Bit depth", track.bitDepth ? `${track.bitDepth}-bit` : null],
+				["Bit depth", formatBitDepth(track.bitDepth)],
 				[
 					"Track ReplayGain",
 					formatReplayGainAvailability(

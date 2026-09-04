@@ -3,7 +3,6 @@ module github.com/ardam/navidrome-replacement/server
 go 1.26.6
 
 require (
-	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/getkin/kin-openapi v0.135.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.1

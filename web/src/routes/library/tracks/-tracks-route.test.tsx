@@ -434,34 +434,6 @@ describe("tracks route", () => {
 		await waitFor(() => expect(document.activeElement).toBe(importButton));
 	});
 
-	it("shows a Legacy Track migration notice that links to Settings", async () => {
-		mocks.listTracks.mockResolvedValue({
-			items: [
-				{ ...libraryTracks[0], sourceKind: "legacy" },
-				{ ...libraryTracks[1], sourceKind: "managed" },
-			],
-		});
-		renderWithQuery(<TracksPage />);
-		await screen.findByText("Anti-Hero");
-
-		const banner = screen.getByTestId("legacy-migration-banner");
-		expect(banner.textContent).toContain("1 Legacy Track still play");
-		const link = screen.getByRole("link", { name: "Open Library Migration" });
-		expect(link.getAttribute("href")).toBe("/settings");
-	});
-
-	it("hides the migration notice when every loaded Track is managed", async () => {
-		mocks.listTracks.mockResolvedValue({
-			items: libraryTracks.map((track) => ({
-				...track,
-				sourceKind: "managed",
-			})),
-		});
-		renderWithQuery(<TracksPage />);
-		await screen.findByText("Anti-Hero");
-		expect(screen.queryByTestId("legacy-migration-banner")).toBeNull();
-	});
-
 	it("disables Import Music when the Music Server lacks the Managed Import capability", async () => {
 		mocks.getHealth.mockResolvedValue({
 			status: "ok",

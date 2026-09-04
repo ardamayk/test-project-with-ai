@@ -47,9 +47,7 @@ HTTP status codes follow standard semantics (400, 401, 403, 404, 408, 409, 410, 
 
 ## Library (v1)
 
-- Ingestion: Managed Import only (`/api/v1/imports/...`); Legacy Tracks move through the explicit Library Migration (`/api/v1/library-migrations/...`)
-- `MUSIC_PATHS` (comma-separated) only locates existing Legacy Tracks; the server never scans it
-- Deprecated: `POST /api/v1/library/scan` answers `410 legacy_scan_retired`; `GET /api/v1/library/scan/status` is permanently `idle`. Both stay mounted for API v1 compatibility (ADR 0006, ADR 0015) and new clients must not call them
+- Ingestion: Managed Import only (`/api/v1/imports/...`); the server never scans a server-side folder (ADR 0015, ADR 0016)
 - Browse: artists, albums, tracks list/detail endpoints under `/api/v1/library/`
 - Supported formats: mp3, flac, ogg, m4a, opus, wav
 
@@ -105,7 +103,6 @@ mise run generate
 | `managed-import-batches.v1` | Multi-file Import Batches with per-file status and duplicate decisions |
 | `managed-track-deletion.v1` | Permanent Track Deletion preview and confirmation |
 | `managed-track-replacement.v1` | Explicit Track Replacement |
-| `library-migration.v1` | Library Migration preview, stage, cutover, and Legacy Source Cleanup |
 
 `@repo/api-client` exports one constant per capability plus `hasServerCapability` and `missingServerCapabilities`; the Web Client's `useServerCapabilityState` hook wraps them.
 
@@ -114,8 +111,8 @@ mise run generate
 Generated files are committed (ADR 0013). `mise run generate:check` regenerates into a temporary directory and fails when either committed output is stale. Go tests additionally verify the contract without UI journeys:
 
 - `server/internal/api/contract_test.go` proves the spec embedded in the binary matches `packages/contracts/openapi.yaml` and that every operation has a unique `operationId`.
-- `server/cmd/server/contract_test.go` walks the assembled router: every documented operation is mounted, every mounted `/api/v1` route is documented, every advertised capability is described in `HealthResponse`, every documented request header passes CORS preflight, and the deprecated scan routes keep their compatibility behavior.
-- `testutil.ServeContractRequest` validates responses against the embedded spec; the Managed Import, Track Replacement, Permanent Track Deletion, and Library Migration contract tests exercise binary uploads and structured errors at the HTTP seam.
+- `server/cmd/server/contract_test.go` walks the assembled router: every documented operation is mounted, every mounted `/api/v1` route is documented, every advertised capability is described in `HealthResponse`, every documented request header passes CORS preflight.
+- `testutil.ServeContractRequest` validates responses against the embedded spec; the Managed Import, Track Replacement, and Permanent Track Deletion contract tests exercise binary uploads and structured errors at the HTTP seam.
 - `packages/api-client/src/contract.test.ts` pins the generated schemas, upload media types, structured errors, and capability negotiation on the client side.
 
 ## Swagger UI

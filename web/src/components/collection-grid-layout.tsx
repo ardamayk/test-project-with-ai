@@ -1,4 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
+import { PAGE_CONTENT_WIDTH_CLASS } from "#/components/page-layout";
 import { Button } from "#/components/ui/button";
 import {
 	Empty,
@@ -22,8 +23,7 @@ const SKELETON_CARD_KEYS = [
 	"skeleton-9",
 	"skeleton-10",
 ] as const;
-export const COLLECTION_PAGE_CONTAINER_CLASS =
-	"w-full min-[1801px]:mx-auto min-[1801px]:max-w-[1476px]";
+export const COLLECTION_PAGE_CONTAINER_CLASS = PAGE_CONTENT_WIDTH_CLASS;
 
 export function CollectionPageContainer({
 	className,

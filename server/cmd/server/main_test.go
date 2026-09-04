@@ -13,8 +13,6 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	var radioPreviewHasDeadline bool
 	var queueEventsHasDeadline bool
 	var importUploadHasDeadline bool
-	var migrationPreviewHasDeadline bool
-	var migrationStageHasDeadline bool
 	var permanentDeletionHasDeadline bool
 	var apiHasDeadline bool
 
@@ -42,16 +40,6 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 		}
 		if r.URL.Path == "/api/v1/imports/import-1/file" {
 			importUploadHasDeadline = hasDeadline
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if r.URL.Path == "/api/v1/library-migrations/preview" {
-			migrationPreviewHasDeadline = hasDeadline
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if r.URL.Path == "/api/v1/library-migrations/stage" {
-			migrationStageHasDeadline = hasDeadline
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -90,14 +78,6 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	)
 	wrapped.ServeHTTP(
 		httptest.NewRecorder(),
-		httptest.NewRequest(http.MethodPost, "/api/v1/library-migrations/preview", nil),
-	)
-	wrapped.ServeHTTP(
-		httptest.NewRecorder(),
-		httptest.NewRequest(http.MethodPost, "/api/v1/library-migrations/stage", nil),
-	)
-	wrapped.ServeHTTP(
-		httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/api/v1/health", nil),
 	)
 
@@ -116,34 +96,11 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	if importUploadHasDeadline {
 		t.Fatal("Managed Import upload should not inherit request timeout deadline")
 	}
-	if migrationPreviewHasDeadline {
-		t.Fatal("Library Migration preview should not inherit request timeout deadline")
-	}
-	if migrationStageHasDeadline {
-		t.Fatal("Library Migration stage should not inherit request timeout deadline")
-	}
 	if permanentDeletionHasDeadline {
 		t.Fatal("Permanent Track Deletion should not inherit request timeout deadline")
 	}
 	if !apiHasDeadline {
 		t.Fatal("non-stream API route should keep request timeout deadline")
-	}
-}
-
-func TestCORSAllowsLibraryMigrationStageHeader(t *testing.T) {
-	handler := corsHandler([]string{"https://app.example"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	request := httptest.NewRequest(http.MethodOptions, "/api/v1/library-migrations/stage", nil)
-	request.Header.Set("Origin", "https://app.example")
-	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
-	request.Header.Set("Access-Control-Request-Headers", "X-Migration-Stage")
-	response := httptest.NewRecorder()
-
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("CORS preflight status = %d, want %d", response.Code, http.StatusOK)
 	}
 }
 

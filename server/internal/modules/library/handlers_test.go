@@ -6,61 +6,39 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/ardam/navidrome-replacement/server/internal/config"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
 	_ "modernc.org/sqlite"
 )
 
-func setupHandlerFixture(t *testing.T) (*Handlers, *sql.DB, string) {
+func setupHandlerFixture(t *testing.T) (*Handlers, *sql.DB) {
 	t.Helper()
-	musicRoot := t.TempDir()
 	db := openMemoryDB(t)
-
 	store := NewStore(db)
-	svc := NewService(store, config.Config{MusicPaths: []string{musicRoot}})
-	return NewHandlers(svc), db, musicRoot
+	return NewHandlers(NewService(store)), db
 }
 
-func seedTrack(t *testing.T, db *sql.DB, store *Store, musicRoot string) (albumID, trackID string) {
+func seedTrack(t *testing.T, db *sql.DB) (albumID, trackID string) {
 	t.Helper()
-	trackPath := filepath.Join(musicRoot, "song.flac")
-	if err := os.WriteFile(trackPath, []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	meta := FileMetadata{
-		Path:         trackPath,
-		Format:       "flac",
-		SizeBytes:    10,
-		ModTime:      time.Now(),
+	return testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{
 		Title:        "Song",
 		Artist:       "Artist",
-		AlbumArtist:  "Artist",
 		Album:        "Album",
 		TrackNo:      1,
 		Year:         2024,
 		DurationMs:   1000,
-		Genre:        "Pop",
+		Genres:       []string{"Pop"},
 		SampleRateHz: 96000,
 		BitDepth:     24,
-		ReplayGain: ReplayGainMetadata{
+		ReplayGain: testutil.ReplayGainSpec{
 			TrackGainDB: float64Pointer(-7.25),
 			TrackPeak:   float64Pointer(0.98),
 			AlbumGainDB: float64Pointer(-6.5),
 			AlbumPeak:   float64Pointer(1.01),
 		},
-	}
-	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT album_id, id FROM tracks`).Scan(&albumID, &trackID); err != nil {
-		t.Fatal(err)
-	}
-	return albumID, trackID
+	})
 }
 
 func TestPagination(t *testing.T) {
@@ -78,7 +56,7 @@ func TestPagination(t *testing.T) {
 }
 
 func TestHandlersGetAlbumNotFound(t *testing.T) {
-	h, _, _ := setupHandlerFixture(t)
+	h, _ := setupHandlerFixture(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
@@ -92,9 +70,8 @@ func TestHandlersGetAlbumNotFound(t *testing.T) {
 }
 
 func TestHandlersGetAlbumReturnsGenresAndAudioFormat(t *testing.T) {
-	h, db, musicRoot := setupHandlerFixture(t)
-	store := NewStore(db)
-	albumID, _ := seedTrack(t, db, store, musicRoot)
+	h, db := setupHandlerFixture(t)
+	albumID, _ := seedTrack(t, db)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -141,36 +118,14 @@ func TestHandlersGetAlbumReturnsGenresAndAudioFormat(t *testing.T) {
 }
 
 func TestHandlersGetAlbumKeepsMatchingTrackNumbersOnDifferentDiscs(t *testing.T) {
-	h, db, musicRoot := setupHandlerFixture(t)
-	store := NewStore(db)
-	albumID, _ := seedTrack(t, db, store, musicRoot)
+	h, db := setupHandlerFixture(t)
+	albumID, _ := seedTrack(t, db)
 
-	duplicatePath := filepath.Join(musicRoot, "song-copy.flac")
-	if err := os.WriteFile(duplicatePath, []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	meta := FileMetadata{
-		Path:         duplicatePath,
-		Format:       "flac",
-		SizeBytes:    10,
-		ModTime:      time.Now(),
-		Title:        "Song",
-		Artist:       "Artist",
-		AlbumArtist:  "Artist",
-		Album:        "Album",
-		TrackNo:      1,
-		Year:         2024,
-		DurationMs:   1000,
-		Genre:        "Pop",
-		SampleRateHz: 96000,
-		BitDepth:     24,
-	}
-	if _, _, err := store.SeedLegacyTrack(context.Background(), meta); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE tracks SET disc_no = CASE WHEN file_path = ? THEN 2 ELSE 1 END WHERE album_id = ?`, duplicatePath, albumID); err != nil {
-		t.Fatal(err)
-	}
+	testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{
+		AlbumID: albumID, Title: "Song", Artist: "Artist", Album: "Album",
+		TrackNo: 1, DiscNo: 2, Year: 2024, DurationMs: 1000, Genres: []string{"Pop"},
+		SampleRateHz: 96000, BitDepth: 24,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -195,44 +150,5 @@ func TestHandlersGetAlbumKeepsMatchingTrackNumbersOnDifferentDiscs(t *testing.T)
 	}
 	if body.Tracks[0].DiscNo != 1 || body.Tracks[1].DiscNo != 2 {
 		t.Fatalf("disc order = [%d, %d], want [1, 2]", body.Tracks[0].DiscNo, body.Tracks[1].DiscNo)
-	}
-}
-
-func TestHandlersDeleteAlbum(t *testing.T) {
-	h, db, musicRoot := setupHandlerFixture(t)
-	store := NewStore(db)
-	albumID, _ := seedTrack(t, db, store, musicRoot)
-
-	req := httptest.NewRequest(http.MethodDelete, "/", nil)
-	rec := httptest.NewRecorder()
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("albumId", albumID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	h.DeleteAlbum(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-
-	var result DeleteResult
-	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
-		t.Fatal(err)
-	}
-	if result.DeletedFiles != 1 {
-		t.Fatalf("deletedFiles = %d, want 1", result.DeletedFiles)
-	}
-}
-
-func TestHandlersDeleteTrackNotFound(t *testing.T) {
-	h, _, _ := setupHandlerFixture(t)
-	req := httptest.NewRequest(http.MethodDelete, "/", nil)
-	rec := httptest.NewRecorder()
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("trackId", "missing")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	h.DeleteTrack(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }

@@ -2,8 +2,6 @@ package library
 
 import (
 	"testing"
-
-	"github.com/dhowden/tag"
 )
 
 func TestResolveAlbumArtist(t *testing.T) {
@@ -36,76 +34,6 @@ func TestResolveAlbumArtist(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("album artist = %q, want %q", got, tc.want)
 			}
-		})
-	}
-}
-
-func TestReadReplayGainMetadata(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  map[string]interface{}
-		want ReplayGainMetadata
-	}{
-		{
-			name: "reads all Vorbis values",
-			raw: map[string]interface{}{
-				"replaygain_track_gain": "-7.25 dB",
-				"replaygain_track_peak": "0.987654",
-				"replaygain_album_gain": "-6.50 dB",
-				"replaygain_album_peak": "1.012345",
-			},
-			want: ReplayGainMetadata{
-				TrackGainDB: float64Pointer(-7.25),
-				TrackPeak:   float64Pointer(0.987654),
-				AlbumGainDB: float64Pointer(-6.5),
-				AlbumPeak:   float64Pointer(1.012345),
-			},
-		},
-		{
-			name: "reads partial ID3 user text values",
-			raw: map[string]interface{}{
-				"TXXX":   &tag.Comm{Description: "REPLAYGAIN_TRACK_GAIN", Text: "+1.75 dB"},
-				"TXXX_0": &tag.Comm{Description: "REPLAYGAIN_ALBUM_PEAK", Text: "0.95"},
-			},
-			want: ReplayGainMetadata{
-				TrackGainDB: float64Pointer(1.75),
-				AlbumPeak:   float64Pointer(0.95),
-			},
-		},
-		{
-			name: "ignores malformed and non-finite values",
-			raw: map[string]interface{}{
-				"REPLAYGAIN_TRACK_GAIN": []string{"loud"},
-				"REPLAYGAIN_TRACK_PEAK": []string{"NaN"},
-				"REPLAYGAIN_ALBUM_GAIN": []string{"+Inf dB"},
-				"REPLAYGAIN_ALBUM_PEAK": []string{""},
-			},
-			want: ReplayGainMetadata{},
-		},
-		{
-			name: "keeps valid gains while rejecting negative peaks",
-			raw: map[string]interface{}{
-				"REPLAYGAIN_TRACK_GAIN": "-7.25 dB",
-				"REPLAYGAIN_TRACK_PEAK": "-0.01",
-				"REPLAYGAIN_ALBUM_GAIN": "+1.50 dB",
-				"REPLAYGAIN_ALBUM_PEAK": "-1",
-			},
-			want: ReplayGainMetadata{
-				TrackGainDB: float64Pointer(-7.25),
-				AlbumGainDB: float64Pointer(1.5),
-			},
-		},
-		{
-			name: "keeps absent values unavailable",
-			raw:  map[string]interface{}{},
-			want: ReplayGainMetadata{},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := readReplayGainMetadata(test.raw)
-			assertReplayGainMetadata(t, got, test.want)
 		})
 	}
 }

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { AlbumDetailHeader } from "#/components/album-detail-header";
 import { MoreFromArtist } from "#/components/more-from-artist";
+import { DetailPageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { apiClient } from "#/lib/api";
 import { getAlbumArtistName } from "#/lib/library-display";
@@ -48,7 +49,7 @@ export function AlbumDetailContent({ albumId }: { albumId: string }) {
 	};
 
 	return (
-		<div className="p-6">
+		<DetailPageShell testId="album-detail-content">
 			<AlbumDetailHeader
 				album={data}
 				onPlayAlbum={handlePlayAlbum}
@@ -70,6 +71,6 @@ export function AlbumDetailContent({ albumId }: { albumId: string }) {
 				artistName={getAlbumArtistName(data)}
 				excludeAlbumId={data.id}
 			/>
-		</div>
+		</DetailPageShell>
 	);
 }

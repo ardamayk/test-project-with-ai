@@ -23,8 +23,8 @@ web/src
 
 Domain routes are registered through `server/internal/modules`.
 
-- `library`: artists, albums, tracks, covers, deletes (no scanning; the deprecated scan routes only answer for API v1 compatibility)
-- `managedimport`: Managed Import uploads, validation, Import Preview, commit, Track Replacement, Library Migration
+- `library`: artists, albums, tracks, covers (read-only; the server never scans a folder)
+- `managedimport`: Managed Import uploads, validation, Import Preview, commit, Permanent Track Deletion, Track Replacement
 - `playback`: queue and range streaming
 - `preferences`: theme and layout preferences
 - `docs`: MDX docs, Swagger UI, OpenAPI YAML

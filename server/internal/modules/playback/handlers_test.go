@@ -8,61 +8,33 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	api "github.com/ardam/navidrome-replacement/server/internal/api/gen"
 	"github.com/ardam/navidrome-replacement/server/internal/auth"
-	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
 )
 
-func setupPlaybackHandlers(t *testing.T) (*Handlers, *Store, *library.Store, *sql.DB, string) {
+func setupPlaybackHandlers(t *testing.T) (*Handlers, *Store, *library.Store, *sql.DB) {
 	t.Helper()
-	musicRoot := t.TempDir()
 	db := testutil.OpenMigratedDB(t)
-
 	libStore := library.NewStore(db)
-	libSvc := library.NewService(libStore, config.Config{MusicPaths: []string{musicRoot}})
+	libSvc := library.NewService(libStore)
 	pbStore := NewStore(db, libStore)
-	return NewHandlers(pbStore, libSvc, NewQueueEventBroker()), pbStore, libStore, db, musicRoot
+	return NewHandlers(pbStore, libSvc, NewQueueEventBroker()), pbStore, libStore, db
 }
 
-func seedPlaybackTrack(t *testing.T, db *sql.DB, libStore *library.Store, musicRoot string) string {
+func seedPlaybackTrack(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	trackPath := filepath.Join(musicRoot, "song.flac")
-	if err := os.WriteFile(trackPath, []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	meta := library.FileMetadata{
-		Path:        trackPath,
-		Format:      "flac",
-		SizeBytes:   10,
-		ModTime:     time.Now(),
-		Title:       "Song",
-		Artist:      "Artist",
-		AlbumArtist: "Artist",
-		Album:       "Album",
-		TrackNo:     1,
-		DurationMs:  1000,
-	}
-	if _, _, err := libStore.SeedLegacyTrack(context.Background(), meta); err != nil {
-		t.Fatal(err)
-	}
-	var trackID string
-	if err := db.QueryRow(`SELECT id FROM tracks`).Scan(&trackID); err != nil {
-		t.Fatal(err)
-	}
+	_, trackID := testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{Title: "Song", Artist: "Artist", Album: "Album", TrackNo: 1})
 	return trackID
 }
 
 func TestHandlersGetQueueEmpty(t *testing.T) {
-	h, _, _, _, _ := setupPlaybackHandlers(t)
+	h, _, _, _ := setupPlaybackHandlers(t)
 	rec := httptest.NewRecorder()
 	h.GetQueue(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusOK {
@@ -81,7 +53,7 @@ func TestHandlersGetQueueEmpty(t *testing.T) {
 }
 
 func TestHandlersStreamQueueEventsStartsWithLatestQueueInvalidation(t *testing.T) {
-	handlers, _, _, _, _ := setupPlaybackHandlers(t)
+	handlers, _, _, _ := setupPlaybackHandlers(t)
 	server := httptest.NewServer(http.HandlerFunc(handlers.StreamQueueEvents))
 	t.Cleanup(server.Close)
 
@@ -104,8 +76,8 @@ func TestHandlersStreamQueueEventsStartsWithLatestQueueInvalidation(t *testing.T
 }
 
 func TestHandlersStreamQueueEventsNotifiesSimultaneousClients(t *testing.T) {
-	handlers, _, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
-	trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+	handlers, _, _, db := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db)
 	router := chi.NewRouter()
 	router.Get("/events", handlers.StreamQueueEvents)
 	router.Post("/items", handlers.AppendItem)
@@ -138,8 +110,8 @@ func TestHandlersStreamQueueEventsNotifiesSimultaneousClients(t *testing.T) {
 }
 
 func TestHandlersStreamQueueEventsReconnectsWithLatestRevision(t *testing.T) {
-	handlers, store, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
-	trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+	handlers, store, _, db := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db)
 	router := chi.NewRouter()
 	router.Get("/events", handlers.StreamQueueEvents)
 	server := httptest.NewServer(router)
@@ -164,8 +136,8 @@ func TestHandlersStreamQueueEventsReconnectsWithLatestRevision(t *testing.T) {
 }
 
 func TestHandlersStreamQueueEventsUsesPersistedSequenceIndependentOfRevision(t *testing.T) {
-	handlers, store, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
-	trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+	handlers, store, _, db := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db)
 	if _, err := store.AppendItem(context.Background(), auth.DefaultUserID, trackID, "0"); err != nil {
 		t.Fatal(err)
 	}
@@ -230,8 +202,8 @@ func readQueueEvent(t *testing.T, scanner *bufio.Scanner) queueServerEvent {
 }
 
 func TestHandlersReplaceQueue(t *testing.T) {
-	h, _, libStore, db, musicRoot := setupPlaybackHandlers(t)
-	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
+	h, _, _, db := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db)
 
 	body, _ := json.Marshal(map[string]any{"trackIds": []string{trackID}, "revision": "0"})
 	req := httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))
@@ -311,8 +283,8 @@ func TestHandlersReturnCurrentQueueForEveryStaleMutation(t *testing.T) {
 
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			handlers, store, libraryStore, db, musicRoot := setupPlaybackHandlers(t)
-			trackID := seedPlaybackTrack(t, db, libraryStore, musicRoot)
+			handlers, store, _, db := setupPlaybackHandlers(t)
+			trackID := seedPlaybackTrack(t, db)
 			queue, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0")
 			if err != nil {
 				t.Fatal(err)
@@ -324,8 +296,8 @@ func TestHandlersReturnCurrentQueueForEveryStaleMutation(t *testing.T) {
 }
 
 func TestHandlersReorderQueue(t *testing.T) {
-	h, store, libStore, db, musicRoot := setupPlaybackHandlers(t)
-	trackID := seedPlaybackTrack(t, db, libStore, musicRoot)
+	h, store, _, db := setupPlaybackHandlers(t)
+	trackID := seedPlaybackTrack(t, db)
 	queue, err := store.AppendItem(context.Background(), "00000000-0000-0000-0000-000000000001", trackID, "0")
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +319,7 @@ func TestHandlersReorderQueue(t *testing.T) {
 }
 
 func TestHandlersAppendItemRequiresTrackID(t *testing.T) {
-	h, _, _, _, _ := setupPlaybackHandlers(t)
+	h, _, _, _ := setupPlaybackHandlers(t)
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(`{}`)))
 	rec := httptest.NewRecorder()
 	h.AppendItem(rec, req)
@@ -357,7 +329,7 @@ func TestHandlersAppendItemRequiresTrackID(t *testing.T) {
 }
 
 func TestHandlersStreamTrackNotFound(t *testing.T) {
-	h, _, _, _, _ := setupPlaybackHandlers(t)
+	h, _, _, _ := setupPlaybackHandlers(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()

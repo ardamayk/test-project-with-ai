@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   API_V1_CAPABILITY,
   hasServerCapability,
-  LIBRARY_MIGRATION_CAPABILITY,
   MANAGED_IMPORT_BATCHES_CAPABILITY,
   MANAGED_IMPORT_CAPABILITY,
   MANAGED_TRACK_DELETION_CAPABILITY,
@@ -20,7 +19,6 @@ const currentServer = {
     MANAGED_IMPORT_BATCHES_CAPABILITY,
     MANAGED_TRACK_DELETION_CAPABILITY,
     MANAGED_TRACK_REPLACEMENT_CAPABILITY,
-    LIBRARY_MIGRATION_CAPABILITY,
   ],
 };
 
@@ -32,7 +30,7 @@ describe('Server Capability gating', () => {
     expect(
       hasServerCapability(
         currentServer.capabilities,
-        LIBRARY_MIGRATION_CAPABILITY,
+        MANAGED_TRACK_REPLACEMENT_CAPABILITY,
       ),
     ).toBe(true);
   });
@@ -74,11 +72,11 @@ describe('Server Capability gating', () => {
       missingServerCapabilities(olderServer, [
         API_V1_CAPABILITY,
         MANAGED_IMPORT_BATCHES_CAPABILITY,
-        LIBRARY_MIGRATION_CAPABILITY,
+        MANAGED_TRACK_REPLACEMENT_CAPABILITY,
       ]),
     ).toEqual([
       MANAGED_IMPORT_BATCHES_CAPABILITY,
-      LIBRARY_MIGRATION_CAPABILITY,
+      MANAGED_TRACK_REPLACEMENT_CAPABILITY,
     ]);
   });
 

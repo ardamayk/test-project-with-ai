@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Play, Radio, Star } from "lucide-react";
 import { useEffect, useState } from "react";
+import { DetailPageShell } from "#/components/page-layout";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
@@ -111,7 +112,10 @@ export function RadioStationDetailContent({
 	const patch = stationPatchFromForm(form);
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto p-6">
+		<DetailPageShell
+			testId="radio-station-detail-content"
+			className="flex flex-col gap-6"
+		>
 			<Link to="/radio" className="text-foreground text-sm hover:text-heading">
 				Back to radio
 			</Link>
@@ -240,7 +244,7 @@ export function RadioStationDetailContent({
 					</p>
 				) : null}
 			</section>
-		</div>
+		</DetailPageShell>
 	);
 }
 

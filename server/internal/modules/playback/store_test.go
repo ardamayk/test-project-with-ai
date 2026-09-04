@@ -74,7 +74,7 @@ func (f fakeTrackAccess) GetTrack(_ context.Context, trackID string) (library.Tr
 func TestStoreGetQueueReturnsTrackResolutionErrors(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.OpenMigratedDB(t)
-	testutil.InsertTrack(t, db, "track-1")
+	testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{TrackID: "track-1"})
 	trackReadError := errors.New("library unavailable")
 	trackAccess := fakeTrackAccess{
 		tracks: map[string]library.Track{
@@ -100,7 +100,7 @@ func TestStoreGetQueueReturnsTrackResolutionErrors(t *testing.T) {
 func TestStoreGetQueueSkipsConfirmedMissingTracks(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.OpenMigratedDB(t)
-	testutil.InsertTrack(t, db, "track-1")
+	testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{TrackID: "track-1"})
 	trackAccess := fakeTrackAccess{
 		tracks: map[string]library.Track{
 			"track-1": {ID: "track-1", Title: "First"},
@@ -133,7 +133,7 @@ func setupPlaybackStore(t *testing.T, tracks map[string]library.Track) *Store {
 	t.Helper()
 	db := testutil.OpenMigratedDB(t)
 	for trackID := range tracks {
-		testutil.InsertTrack(t, db, trackID)
+		testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{TrackID: trackID})
 	}
 	return NewStore(db, fakeTrackAccess{tracks: tracks})
 }

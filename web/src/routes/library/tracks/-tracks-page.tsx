@@ -19,7 +19,6 @@ import { apiClient } from "#/lib/api";
 import { filterTracksByText } from "#/lib/filter-tracks";
 import { ImportHistory } from "./-import-history";
 import { ImportMusicDialog } from "./-import-music-dialog";
-import { LegacyMigrationBanner } from "./-legacy-migration-banner";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
 	const [debounced, setDebounced] = useState(value);
@@ -51,7 +50,6 @@ export function TracksPage() {
 			}
 		>
 			<CollectionPageContainer className="space-y-6">
-				<LegacyMigrationBanner tracks={tracks.sourceTracks} />
 				<TrackResults {...tracks} />
 				<ImportHistory onRetry={managedImport.open} />
 			</CollectionPageContainer>

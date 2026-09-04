@@ -169,7 +169,7 @@ func inspectM4AMetadata(rawTags map[string]string, structuredCredits map[string]
 	for key, value := range rawTags {
 		tags[m4aMetadataKey(key)] = []string{value}
 	}
-	if genres := splitM4AGenres(m4aTagValue(rawTags, "genre")); len(genres) > 0 {
+	if genres := splitGenreTagValues([]string{m4aTagValue(rawTags, "genre")}); len(genres) > 0 {
 		tags["GENRE"] = genres
 	}
 	if artists := structuredCredits["ARTISTS"]; len(artists) > 0 {
@@ -199,12 +199,6 @@ func inspectM4AMetadata(rawTags map[string]string, structuredCredits map[string]
 		TrackPosition: trackPosition, DiscPosition: discPosition, HasDiscNumber: len(tags["DISCNUMBER"]) > 0,
 		Genres: names.Genres, Year: year, ReplayGain: readReplayGainStringMetadata(rawTags),
 	}, nil
-}
-
-func splitM4AGenres(value string) []string {
-	return strings.FieldsFunc(value, func(separator rune) bool {
-		return separator == ';' || separator == '/' || separator == '|'
-	})
 }
 
 func m4aTagValue(tags map[string]string, key string) string {

@@ -42,15 +42,15 @@ describe("useServerCapability", () => {
 		const { result } = renderHook(
 			() => ({
 				managedImport: useServerCapability("managed-import.v1"),
-				migration: useServerCapabilityState("library-migration.v1"),
+				missing: useServerCapabilityState("future.missing-feature.v1"),
 				unknown: useServerCapability("future.unknown-feature.v7"),
 			}),
 			{ wrapper: createWrapper() },
 		);
 
-		expect(result.current.migration).toBe("unknown");
+		expect(result.current.missing).toBe("unknown");
 		await waitFor(() => expect(result.current.managedImport).toBe(true));
-		expect(result.current.migration).toBe("missing");
+		expect(result.current.missing).toBe("missing");
 		expect(result.current.unknown).toBe(true);
 		expect(getHealth).toHaveBeenCalledTimes(1);
 	});

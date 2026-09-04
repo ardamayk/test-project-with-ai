@@ -97,56 +97,6 @@ func TestCleanupRestartRemovesOrphanStaging(t *testing.T) {
 	}
 }
 
-func TestCleanupRestartReconcilesPreparedMigrationCopy(t *testing.T) {
-	database := testutil.OpenMigratedDB(t)
-	sourcePath, sourceTrackID := seedLegacyMigrationTrack(t, database, "prepared.flac", []byte("legacy source"), 1)
-	storage := newStorage(t.TempDir(), StorageLimits{FileBytes: 1024, BatchBytes: 1024}, unlimitedStorageCapacity)
-	pendingTrackID := "00000000-0000-4000-8000-000000000001"
-	pendingAlbumID := "00000000-0000-4000-8000-000000000002"
-	pendingAlbumArtistID := "00000000-0000-4000-8000-000000000003"
-	pendingDirectory := filepath.Join(storage.root, ".migration", "artist-"+pendingAlbumArtistID, "album-"+pendingAlbumID)
-	pendingAudioPath := filepath.Join(pendingDirectory, "01-01-track-"+pendingTrackID+".flac")
-	pendingArtworkPath := filepath.Join(pendingDirectory, "cover.png")
-	if err := os.MkdirAll(pendingDirectory, 0o700); err != nil {
-		t.Fatalf("create pending migration directory: %v", err)
-	}
-	if err := os.WriteFile(pendingAudioPath, []byte("pending audio"), 0o600); err != nil {
-		t.Fatalf("write pending migration audio: %v", err)
-	}
-	if err := os.WriteFile(pendingArtworkPath, []byte("pending artwork"), 0o600); err != nil {
-		t.Fatalf("write pending migration artwork: %v", err)
-	}
-	validHash := strings.Repeat("a", 64)
-	if _, err := database.Exec(`
-		INSERT INTO legacy_migration_copies (
-			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
-			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
-			pending_sha256, artwork_sha256, inspection_json, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'prepared')`,
-		sourceTrackID, pendingTrackID, pendingAlbumID, pendingAlbumArtistID, sourcePath,
-		pendingAudioPath, pendingArtworkPath, validHash, validHash, validHash,
-	); err != nil {
-		t.Fatalf("seed prepared migration copy: %v", err)
-	}
-	service := NewService(NewStore(database), storage, nil)
-
-	if err := service.CleanupRestart(context.Background()); err != nil {
-		t.Fatalf("reconcile prepared migration copy: %v", err)
-	}
-	for _, path := range []string{pendingAudioPath, pendingArtworkPath} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("prepared migration artifact %q stat error = %v", path, err)
-		}
-	}
-	var status, recoveryReason string
-	if err := database.QueryRow(`SELECT status, recovery_reason FROM legacy_migration_copies WHERE source_track_id = ?`, sourceTrackID).Scan(&status, &recoveryReason); err != nil {
-		t.Fatalf("read recovered migration copy: %v", err)
-	}
-	if status != "failed" || recoveryReason == "" {
-		t.Fatalf("recovered migration copy = (%q, %q)", status, recoveryReason)
-	}
-}
-
 func TestCleanupRestartReconcilesRecordsWhenStagingCleanupPartiallyFails(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	store := NewStore(database)

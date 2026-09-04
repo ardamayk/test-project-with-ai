@@ -84,7 +84,7 @@ describe("artists route", () => {
 		const firstRender = renderWithQuery(<ArtistsPage />);
 
 		expect(await screen.findByText("No artists yet")).toBeTruthy();
-		expect(screen.getByText("Scan your library to get started.")).toBeTruthy();
+		expect(screen.getByText("Import music to get started.")).toBeTruthy();
 		firstRender.unmount();
 
 		mocks.listArtists.mockResolvedValue({

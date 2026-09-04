@@ -33,14 +33,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// MUSIC_PATHS only locates existing Legacy Tracks for playback, deletion,
-	// and explicit Library Migration. The server never scans these paths.
-	if len(cfg.MusicPaths) == 0 {
-		slog.Warn("MUSIC_PATHS is empty; Legacy Track playback and Library Migration are unavailable until configured")
-	} else {
-		slog.Info("legacy music paths configured (not scanned)", "paths", cfg.MusicPaths)
-	}
-
 	migrationsDir := filepath.Join("migrations")
 	if _, err := os.Stat(migrationsDir); os.IsNotExist(err) {
 		migrationsDir = filepath.Join("server", "migrations")
@@ -87,7 +79,7 @@ func corsHandler(allowedOrigins []string) func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Migration-Cleanup", "X-Migration-Cutover", "X-Migration-Preview", "X-Migration-Stage", "X-Permanent-Delete", "X-Track-Replacement"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "Last-Event-ID", "Range", "X-Import-Filename", "X-Import-Filename-Encoding", "X-Permanent-Delete", "X-Track-Replacement"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
@@ -123,7 +115,7 @@ func isUnboundedRequest(request *http.Request) bool {
 }
 
 func isStreamPath(path string) bool {
-	if path == "/api/v1/playback/queue/events" || path == "/api/v1/library-migrations/preview" || path == "/api/v1/library-migrations/stage" {
+	if path == "/api/v1/playback/queue/events" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/imports/") && strings.HasSuffix(path, "/file") {

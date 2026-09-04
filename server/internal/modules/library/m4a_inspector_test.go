@@ -29,7 +29,7 @@ func TestInspectM4AMetadataPreservesStructuredValues(t *testing.T) {
 	if !reflect.DeepEqual(metadata.AlbumArtists, []string{"Album Artist / One", "Album Artist Two"}) {
 		t.Fatalf("structured Album Artists = %#v", metadata.AlbumArtists)
 	}
-	if !reflect.DeepEqual(metadata.Genres, []string{"R&B", "Pop", "Rock", "Live, Bootleg"}) {
+	if !reflect.DeepEqual(metadata.Genres, []string{"R&B", "Pop", "Rock", "Live", "Bootleg"}) {
 		t.Fatalf("Genres = %#v", metadata.Genres)
 	}
 	if metadata.TrackPosition != (MediaPosition{Number: 3, Total: 9}) || metadata.DiscPosition != (MediaPosition{Number: 1, Total: 2}) || metadata.Year != 2026 {

@@ -22,15 +22,7 @@ job; no extra CI wiring is needed.
    details.
 6. Permanent Track Deletion requires the destructive confirmation dialog;
    cancelling leaves the Track playable.
-7. Library Migration and optional Legacy Source Cleanup through the Settings
-   page (issue #128). The spec seeds an Indexed Legacy Track, follows the
-   Tracks-page notice to the Library Migration section, runs Analyze library,
-   Copy and verify, and the cutover confirmation dialog, and then the separate
-   destructive Legacy Source Cleanup dialog. The rendered Tracks page, the
-   migrated stream, and the files on disk are verified after each step; a
-   stale cleanup confirmation is sent directly to the endpoint to prove the
-   server refuses it.
-8. Keyboard access: Enter opens the modal, Tab stays trapped inside, Escape
+7. Keyboard access: Enter opens the modal, Tab stays trapped inside, Escape
    closes and returns focus to the opener, closing an uncommitted batch asks
    `window.confirm`, and accepting it deletes the batch and its staging files.
 
@@ -46,21 +38,8 @@ Every run uses a unique run identifier in Artist, Album, and Track titles, so
 the persistent `server/data/e2e.db` can accumulate earlier results without
 triggering duplicate classification.
 
-## Legacy Track seeding
-
-Startup scanning is retired (ADR 0015), so `server/cmd/e2e-seed-legacy`
-registers an on-disk audio file as an Indexed Legacy Track for browser tests:
-
-```bash
-go run ./cmd/e2e-seed-legacy -database ./data/e2e.db -file /abs/path/legacy.mp3 \
-  -title "Title" -artist "Artist" -album-artist "Artist" -album "Album" -genre Rock
-```
-
-It is a fixture-only path and must never run against a production database.
-
 ## Server layout
 
 `web/playwright.config.ts` starts the Music Server with
-`MANAGED_STORAGE_PATH=./data/e2e-managed` and `MUSIC_PATHS=./data/e2e-legacy`
-(relative to `server/`). The spec resolves the same directories to inspect
-`.staging` and to place legacy sources, so keep the two in sync.
+`MANAGED_STORAGE_PATH=./data/e2e-managed` (relative to `server/`). The spec
+resolves the same directory to inspect `.staging`, so keep the two in sync.

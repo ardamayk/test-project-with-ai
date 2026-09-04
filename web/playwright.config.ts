@@ -23,15 +23,13 @@ export default defineConfig({
 			url: "http://localhost:8090/api/v1/health",
 			reuseExistingServer: !process.env.CI,
 			cwd: "../server",
-			// Managed Storage and the legacy music path are isolated under
-			// server/data so the Managed Import journey (e2e/managed-import.spec.ts)
-			// can inspect staging and seed Legacy Tracks; keep these paths in sync
-			// with that spec.
+			// Managed Storage is isolated under server/data so the Managed Import
+			// journey (e2e/managed-import.spec.ts) can inspect staging; keep this
+			// path in sync with that spec.
 			env: {
 				SERVER_ADDR: "127.0.0.1:8090",
 				DATABASE_PATH: "./data/e2e.db",
 				MANAGED_STORAGE_PATH: "./data/e2e-managed",
-				MUSIC_PATHS: "./data/e2e-legacy",
 			},
 		},
 		{

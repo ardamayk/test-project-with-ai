@@ -24,7 +24,7 @@ const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 const trackReadSelect = `SELECT
 	t.id, t.title, t.artist_name, t.album_id, al.title,
 	t.track_no, COALESCE(t.disc_no, 1), t.track_total, t.disc_total,
-	t.duration_ms, COALESCE(ts.source_format, t.format), COALESCE(ts.source_kind, 'legacy'), COALESCE(ts.size_bytes, t.size_bytes),
+	t.duration_ms, COALESCE(ts.source_format, t.format), COALESCE(ts.size_bytes, t.size_bytes),
 	COALESCE(t.genre, ''), COALESCE(t.sample_rate_hz, 0), COALESCE(t.bit_depth, 0),
 	COALESCE(t.channel_count, 0), COALESCE(t.bitrate_bps, 0), t.codec, t.container,
 	t.sample_format, COALESCE(ts.file_path, t.file_path), t.replaygain_track_gain_db,
@@ -44,7 +44,7 @@ func scanExpandedTrack(scanner rowScanner) (Track, error) {
 	var codec, container, sampleFormat sql.NullString
 	err := scanner.Scan(
 		&track.ID, &track.Title, &track.ArtistName, &track.AlbumID, &track.AlbumTitle,
-		&trackNo, &track.DiscNo, &trackTotal, &discTotal, &track.DurationMs, &track.Format, &track.SourceKind,
+		&trackNo, &track.DiscNo, &trackTotal, &discTotal, &track.DurationMs, &track.Format,
 		&track.SizeBytes, &track.Genre, &track.SampleRateHz, &track.BitDepth, &track.ChannelCount,
 		&track.BitrateBps, &codec, &container, &sampleFormat, &track.FilePath,
 		&track.ReplayGain.TrackGainDB, &track.ReplayGain.TrackPeak,
@@ -255,15 +255,7 @@ func (s *Store) readAlbumArtwork(ctx context.Context, albumIDs []string) (map[st
 	}
 	query := fmt.Sprintf(`SELECT album_id, source_track_id, content_sha256, media_type,
 		width, height, encoded_size_bytes
-		FROM visible_album_artwork WHERE album_id IN (%s)
-		UNION ALL
-		SELECT legacy.album_id, legacy.source_track_id, legacy.content_sha256, legacy.media_type,
-			legacy.width, legacy.height, legacy.encoded_size_bytes
-		FROM legacy_album_artwork_metadata legacy
-		WHERE legacy.album_id IN (%s) AND NOT EXISTS (
-			SELECT 1 FROM visible_album_artwork current WHERE current.album_id = legacy.album_id
-		)`, placeholders, placeholders)
-	args = append(args, args...)
+		FROM visible_album_artwork WHERE album_id IN (%s)`, placeholders)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read Album Artwork for IDs %q: %w", albumIDs, err)

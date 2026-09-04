@@ -60,17 +60,26 @@ function formatSampleRate(hz?: number): string | null {
 	return `${(hz / 1000).toFixed(1)} kHz`;
 }
 
+function formatBitDepth(bits?: number): string | null {
+	if (!bits || bits <= 0) return null;
+	return `${bits}-bit`;
+}
+
+function formatBitrate(kbps?: number, format?: string): string | null {
+	if (!kbps || kbps <= 0) return null;
+	const provenance =
+		format?.toLowerCase() === "wav" ? "Native" : "Calculated by app";
+	return `${kbps} kbps (${provenance})`;
+}
+
 function formatQualityLabel(
-	track: { bitrateKbps?: number; sampleRateHz?: number } | null,
+	track: { bitDepth?: number; sampleRateHz?: number } | null,
 ): string {
 	if (!track) return "Quality";
-	const parts = [
-		track.bitrateKbps && track.bitrateKbps > 0
-			? `${track.bitrateKbps} kbps`
-			: null,
-		formatSampleRate(track.sampleRateHz),
-	].filter(Boolean);
-	return parts.length > 0 ? parts.join(" · ") : "Quality";
+	const bitDepth = formatBitDepth(track.bitDepth);
+	const sampleRate = formatSampleRate(track.sampleRateHz);
+	if (!bitDepth && !sampleRate) return "Quality";
+	return [bitDepth ?? "-", sampleRate ?? "-"].join(" · ");
 }
 
 function formatRadioQualityLabel(station: RadioStation | null): string {
@@ -767,9 +776,9 @@ function TrackInfoDialog({
 		["Track", track.trackNo?.toString()],
 		["Duration", formatDuration(track.durationMs)],
 		["Codec", track.format],
-		["Bitrate", track.bitrateKbps ? `${track.bitrateKbps} kbps` : null],
+		["Bitrate", formatBitrate(track.bitrateKbps, track.format)],
 		["Sample rate", formatSampleRate(track.sampleRateHz)],
-		["Bit depth", track.bitDepth ? `${track.bitDepth}-bit` : null],
+		["Bit depth", formatBitDepth(track.bitDepth)],
 		[
 			"Track ReplayGain",
 			formatReplayGainAvailability(

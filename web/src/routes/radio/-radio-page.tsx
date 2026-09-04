@@ -5,6 +5,10 @@ import { Link } from "@tanstack/react-router";
 import { Headphones, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+	COLLECTION_PAGE_CONTAINER_CLASS,
+	CollectionPageContainer,
+} from "#/components/collection-grid-layout";
+import {
 	HEADER_SEARCH_CONTAINER_CLASS,
 	HEADER_SEARCH_INPUT_CLASS,
 	PageHeader,
@@ -102,6 +106,7 @@ export function RadioPage() {
 				<PageHeader
 					title="Radio Stations"
 					description="Tune into curated streams from around the globe or add your own custom URLs."
+					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 					actions={
 						<>
 							<div className={HEADER_SEARCH_CONTAINER_CLASS}>
@@ -129,7 +134,7 @@ export function RadioPage() {
 				/>
 			}
 		>
-			<section className="flex min-h-0 flex-col gap-4">
+			<CollectionPageContainer className="flex min-h-0 flex-col gap-4">
 				<div className="flex items-center justify-between gap-4">
 					<h2 className="font-semibold text-heading text-xl">Your Stations</h2>
 				</div>
@@ -172,7 +177,7 @@ export function RadioPage() {
 						))}
 					</div>
 				) : null}
-			</section>
+			</CollectionPageContainer>
 		</PageShell>
 	);
 }

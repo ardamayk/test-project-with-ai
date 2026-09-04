@@ -20,7 +20,6 @@ type Config struct {
 	DatabasePath                 string
 	CORSOrigins                  []string
 	Version                      string
-	MusicPaths                   []string
 	ManagedStoragePath           string
 	ManagedStorageReserveBytes   int64
 	ManagedImportFileLimitBytes  int64
@@ -44,7 +43,6 @@ func Load() (Config, error) {
 		DatabasePath: getEnv("DATABASE_PATH", "./data/app.db"),
 		CORSOrigins:  []string{"http://localhost:3000", "http://127.0.0.1:3000"},
 		Version:      getEnv("APP_VERSION", "0.1.0"),
-		MusicPaths:   parseMusicPaths(getEnv("MUSIC_PATHS", "./music")),
 		ManagedStoragePath: getEnv(
 			"MANAGED_STORAGE_PATH",
 			"./data/managed",
@@ -93,18 +91,6 @@ func ValidateServerAddress(address string) error {
 		return fmt.Errorf("SERVER_ADDR %q must bind to a loopback address while authentication is disabled", address)
 	}
 	return nil
-}
-
-func parseMusicPaths(raw string) []string {
-	parts := strings.Split(raw, ",")
-	paths := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			paths = append(paths, p)
-		}
-	}
-	return paths
 }
 
 func getEnv(key, fallback string) string {

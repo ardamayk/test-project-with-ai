@@ -25,7 +25,6 @@ func newContractServer(t *testing.T) chi.Router {
 		Version:            "contract-test",
 		CORSOrigins:        []string{CONTRACT_TEST_ORIGIN},
 		ManagedStoragePath: t.TempDir(),
-		MusicPaths:         []string{t.TempDir()},
 	}
 	return newAssembledServer(cfg, testutil.OpenMigratedDB(t)).router
 }
@@ -85,38 +84,10 @@ func TestAssembledServerAdvertisesOnlyDocumentedCapabilities(t *testing.T) {
 			t.Errorf("capability %q is advertised but not documented in HealthResponse.capabilities", capability)
 		}
 	}
-	for _, required := range []string{"managed-import.v1", "managed-import-batches.v1", "library-migration.v1", "managed-track-deletion.v1", "managed-track-replacement.v1"} {
+	for _, required := range []string{"managed-import.v1", "managed-import-batches.v1", "managed-track-deletion.v1", "managed-track-replacement.v1"} {
 		if !slices.Contains(health.Capabilities, required) {
 			t.Errorf("capability %q is missing from the health response", required)
 		}
-	}
-}
-
-func TestAssembledServerKeepsDeprecatedLegacyScanBehaviorForOlderClients(t *testing.T) {
-	contract := testutil.Contract(t)
-	if trigger := contract.Paths.Find("/api/v1/library/scan"); trigger == nil || trigger.Post == nil || !trigger.Post.Deprecated {
-		t.Fatal("POST /api/v1/library/scan must stay documented and marked deprecated")
-	}
-	if status := contract.Paths.Find("/api/v1/library/scan/status"); status == nil || status.Get == nil || !status.Get.Deprecated {
-		t.Fatal("GET /api/v1/library/scan/status must stay documented and marked deprecated")
-	}
-
-	server := newContractServer(t)
-	trigger := testutil.ServeContractRequest(t, server, testutil.ContractRequest{Method: http.MethodPost, Path: "/api/v1/library/scan"})
-	testutil.AssertStructuredError(t, trigger, http.StatusGone, "legacy_scan_retired")
-	if trigger.Header().Get("Deprecation") == "" {
-		t.Fatal("retired scan trigger must carry a Deprecation header")
-	}
-
-	status := testutil.ServeContractRequest(t, server, testutil.ContractRequest{Method: http.MethodGet, Path: "/api/v1/library/scan/status"})
-	var scanStatus struct {
-		Status  string `json:"status"`
-		Scanned int    `json:"scanned"`
-		Added   int    `json:"added"`
-	}
-	testutil.DecodeJSON(t, status, &scanStatus)
-	if status.Code != http.StatusOK || scanStatus.Status != "idle" || scanStatus.Scanned != 0 || scanStatus.Added != 0 {
-		t.Fatalf("legacy scan status = %d %+v, want 200 idle with zero counts", status.Code, scanStatus)
 	}
 }
 

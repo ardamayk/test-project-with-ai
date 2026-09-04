@@ -1,23 +1,15 @@
 package library
 
-import (
-	"context"
+import "context"
 
-	"github.com/ardam/navidrome-replacement/server/internal/config"
-)
-
-// Service exposes read and delete operations over the library. Ingestion is
-// owned by Managed Import; the retired legacy scanner never runs here.
+// Service exposes read operations over the library. Ingestion, deletion and
+// replacement are owned by Managed Import.
 type Service struct {
-	store      *Store
-	musicPaths []string
+	store *Store
 }
 
-func NewService(store *Store, cfg config.Config) *Service {
-	return &Service{
-		store:      store,
-		musicPaths: cfg.MusicPaths,
-	}
+func NewService(store *Store) *Service {
+	return &Service{store: store}
 }
 
 func (s *Service) ListArtists(ctx context.Context, limit, offset int, q string) (ArtistList, error) {
@@ -46,16 +38,4 @@ func (s *Service) GetTrack(ctx context.Context, trackID string) (Track, error) {
 
 func (s *Service) GetTrackFilePath(ctx context.Context, trackID string) (string, error) {
 	return s.store.GetTrackFilePath(ctx, trackID)
-}
-
-func (s *Service) DeleteTrack(ctx context.Context, trackID string) (DeleteResult, error) {
-	return s.store.DeleteTrack(ctx, trackID, func(path string) error {
-		return removeMusicFile(path, s.musicPaths)
-	})
-}
-
-func (s *Service) DeleteAlbum(ctx context.Context, albumID string) (DeleteResult, error) {
-	return s.store.DeleteAlbum(ctx, albumID, func(path string) error {
-		return removeMusicFile(path, s.musicPaths)
-	})
 }
