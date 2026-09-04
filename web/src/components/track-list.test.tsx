@@ -88,6 +88,7 @@ const sampleTrack: Track = {
 	genres: [{ id: "genre-pop", name: "Pop" }],
 	bitDepth: 24,
 	sampleRateHz: 96_000,
+	bitrateKbps: 1856,
 	sizeBytes: 50_059_000,
 	replayGain: {
 		trackGainDb: -7.25,
@@ -429,6 +430,10 @@ describe("TrackList", () => {
 		expect(within(dialog).getByText("Disc")).toBeTruthy();
 		expect(within(dialog).getByText("Duration")).toBeTruthy();
 		expect(within(dialog).getByText("Codec")).toBeTruthy();
+		expect(within(dialog).getByText("Bitrate")).toBeTruthy();
+		expect(
+			within(dialog).getByText("1856 kbps (Calculated by app)"),
+		).toBeTruthy();
 		expect(within(dialog).getByText("Sample rate")).toBeTruthy();
 		expect(within(dialog).getByText("Bit depth")).toBeTruthy();
 		expect(within(dialog).getByText("Genre")).toBeTruthy();

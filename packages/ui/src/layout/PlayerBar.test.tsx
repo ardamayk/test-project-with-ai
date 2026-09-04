@@ -36,6 +36,7 @@ const track = {
 	format: "flac",
 	genres: [],
 	sampleRateHz: 96000,
+	bitDepth: 24,
 	bitrateKbps: 1411,
 	replayGain: {
 		trackGainDb: -7.25,
@@ -274,14 +275,14 @@ describe("PlayerBar", () => {
 		expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
 	});
 
-	it("renders bitrate and sample rate quality details with track actions menu", async () => {
+	it("renders bit depth and sample rate quality details with track actions menu", async () => {
 		renderPlayerBar();
 		await openActionsMenu();
 
 		expect(
-			screen.getByRole("button", { name: "Quality 1411 kbps · 96 kHz" }),
+			screen.getByRole("button", { name: "Quality 24-bit · 96 kHz" }),
 		).toBeTruthy();
-		expect(screen.getByText("1411 kbps · 96 kHz")).toBeTruthy();
+		expect(screen.getByText("24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("Add to playlist")).toBeTruthy();
 		expect(screen.queryByText("Play next")).toBeNull();
 		expect(screen.getByText("Go to album")).toBeTruthy();
@@ -291,6 +292,21 @@ describe("PlayerBar", () => {
 				.disabled,
 		).toBe(true);
 		expect(screen.getByRole("menuitem", { name: "Details" })).toBeTruthy();
+	});
+
+	it("shows a dash for tracks that carry no bit depth", async () => {
+		const bitDepth = track.bitDepth;
+		track.bitDepth = 0;
+		try {
+			renderPlayerBar();
+			await openActionsMenu();
+
+			expect(
+				screen.getByRole("button", { name: "Quality - · 96 kHz" }),
+			).toBeTruthy();
+		} finally {
+			track.bitDepth = bitDepth;
+		}
 	});
 
 	it("opens compact output modes in the Player Bar and applies Normal", async () => {
@@ -464,6 +480,21 @@ describe("PlayerBar", () => {
 		expect(screen.queryByText("Favorites")).toBeNull();
 	});
 
+	it("labels a WAV bitrate as read from the container", async () => {
+		const format = track.format;
+		track.format = "wav";
+		try {
+			renderPlayerBar();
+			await openActionsMenu();
+			fireEvent.click(screen.getByRole("menuitem", { name: "Details" }));
+
+			const dialog = screen.getByRole("dialog", { name: "Track 1" });
+			expect(within(dialog).getByText("1411 kbps (Native)")).toBeTruthy();
+		} finally {
+			track.format = format;
+		}
+	});
+
 	it("opens a track info modal from the actions menu", async () => {
 		renderPlayerBar();
 		await openActionsMenu();
@@ -473,7 +504,9 @@ describe("PlayerBar", () => {
 		const dialog = screen.getByRole("dialog", { name: "Track 1" });
 		expect(within(dialog).getByText("Title")).toBeTruthy();
 		expect(within(dialog).getByText("Album 1")).toBeTruthy();
-		expect(within(dialog).getByText("1411 kbps")).toBeTruthy();
+		expect(
+			within(dialog).getByText("1411 kbps (Calculated by app)"),
+		).toBeTruthy();
 		expect(within(dialog).getByText("96 kHz")).toBeTruthy();
 		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
 		expect(within(dialog).getByText("Available · Gain -7.25 dB")).toBeTruthy();
