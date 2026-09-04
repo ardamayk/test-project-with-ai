@@ -122,6 +122,14 @@ func TestHandlersListArtistsCountsDistinctArtistsAndPreservesAlbumGenreSummary(t
 	if artists.Total == 0 {
 		t.Fatal("list Artists returned no Artists for the seeded library")
 	}
+	for _, artist := range artists.Items {
+		if artist.ID == "guest-artist" {
+			t.Fatalf("list Artists included track-only Artist %q; only Album Artists belong in the list", artist.Name)
+		}
+		if artist.ID == "album-guest" && artist.AlbumCount != 2 {
+			t.Fatalf("Album Artist %q album count = %d, want 2", artist.Name, artist.AlbumCount)
+		}
+	}
 
 	albumsRequest := httptest.NewRequest(http.MethodGet, "/", nil)
 	albumsResponse := httptest.NewRecorder()

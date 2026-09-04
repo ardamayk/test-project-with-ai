@@ -15,7 +15,7 @@ export function Toaster() {
 		<SonnerToaster
 			theme={theme}
 			position="bottom-right"
-			offset="6.5rem"
+			offset="calc(72px + 0.75rem)"
 			closeButton
 			toastOptions={{
 				classNames: {

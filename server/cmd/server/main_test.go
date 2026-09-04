@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -101,6 +103,39 @@ func TestStreamAwareTimeoutSkipsStreamingRoutes(t *testing.T) {
 	}
 	if !apiHasDeadline {
 		t.Fatal("non-stream API route should keep request timeout deadline")
+	}
+}
+
+func TestNewHTTPServerCancelsRequestContextsOnShutdown(t *testing.T) {
+	requestCtxDone := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(requestCtxDone)
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newHTTPServer(listener.Addr().String(), handler)
+	go func() { _ = server.Serve(listener) }()
+
+	response, err := http.Get("http://" + listener.Addr().String() + "/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown with a streaming request open = %v, want the request context cancelled first", err)
+	}
+	select {
+	case <-requestCtxDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("streaming handler request context was not cancelled by Shutdown")
 	}
 }
 
