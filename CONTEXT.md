@@ -16,11 +16,7 @@ _Avoid_: Folder scan, referenced file, automatic import
 
 **Local Folder Import**:
 A Managed Import initiated by selecting a directory on a Playback Client and recursively uploading its supported contents. The client directory and its hierarchy are not retained as a library source or storage structure.
-_Avoid_: External Library Root, folder scan, preserved folder hierarchy
-
-**External Library Root**:
-A read-only, server-visible directory that a user explicitly registers and refreshes as an additional library source. Its files remain externally owned and are never copied, symlinked, or deleted by the Music Server.
-_Avoid_: Local Folder Import, Managed Storage, client-local path
+_Avoid_: folder scan, preserved folder hierarchy
 
 **Managed Storage**:
 The Music Server-owned location that holds one authoritative audio file per Track in its Source Audio Format and one extracted artwork file per Album.
@@ -35,7 +31,7 @@ The validation result shown before a Managed Import is committed. It identifies 
 _Avoid_: Completed import, scan result
 
 **Strict Import Profile**:
-The fallback-free metadata, artwork, and audio-integrity contract shared by Managed Import and Library Migration. A file that fails any required condition is rejected without synthesizing missing values or granting legacy exceptions.
+The fallback-free metadata, artwork, and audio-integrity contract used by Managed Import. A file that fails any required condition is rejected without synthesizing missing values or granting legacy exceptions.
 _Avoid_: Best-effort scan, legacy exception, filename fallback
 
 **Import Batch**:
@@ -53,18 +49,6 @@ _Avoid_: Exact duplicate, automatic replacement
 **Exact Duplicate**:
 A proposed import whose full-file content hash matches an existing Track. It is rejected without changing library state, regardless of its client filename or source location.
 _Avoid_: Possible Duplicate, same title, same recording
-
-**Library Migration**:
-An explicit, user-confirmed copy and verification of accepted Legacy Tracks into Managed Storage, followed by a cutover that activates each verified copy as a new Managed Track with a new stable Track ID and removes the Legacy Track from the active library. Old Playlist, Queue, and Playback Session Snapshot references to the migrated Track IDs are dropped rather than remapped; rejected source files remain unchanged outside the managed library.
-_Avoid_: Startup scan, automatic migration, destructive move, Track-ID remapping
-
-**Legacy Source Cleanup**:
-An optional, separately confirmed deletion of legacy source files whose bytes were proven to become active Managed Tracks through a completed Library Migration cutover. The confirmation states the exact file count, total size, and irreversible outcome; every target is re-verified before any deletion, only the explicit files are removed, and emptied parent directories are pruned upward to the configured music path without broad recursion. Rejected, failed, pending, and unverified sources are never selectable, and no migration phase triggers the cleanup automatically.
-_Avoid_: Automatic cleanup, destructive migration, recursive directory removal
-
-**Legacy Track**:
-A Track indexed from the former server-side music folder before Managed Import became authoritative. It remains playable without automatic rescanning until Library Migration accepts or rejects it.
-_Avoid_: Managed Import, External Library Root
 
 **Source Audio Format**:
 The audio file's existing supported format, which a Managed Import preserves without transcoding.
@@ -92,11 +76,7 @@ _Avoid_: File copy, playlist entry, Radio Station
 
 **Managed Track**:
 A Track backed by a Music Server-owned audio file in Managed Storage.
-_Avoid_: External Track, Legacy Track, client-local file
-
-**External Track**:
-A Track backed by a read-only, externally owned audio file inside an External Library Root.
-_Avoid_: Managed Track, copied import, client-local file
+_Avoid_: client-local file
 
 **Genre**:
 A normalized classification referenced by one or more Tracks. An Album's displayed Genres are derived from its active Tracks without copying audio files.
@@ -115,8 +95,8 @@ A user-created named collection of library Tracks. Managed Imports do not create
 _Avoid_: Album, genre, import batch, Queue
 
 **Permanent Track Deletion**:
-An irreversible removal of both a Track and its managed audio file from the Music Server.
-_Avoid_: Remove from Playlist, hide Track, trash
+An irreversible removal of both a Track and its managed audio file from the Music Server. Deleting an Album is not a separate concept: it is one Permanent Track Deletion per Track in that Album, previewed and confirmed once at the Album level, with each Track committing independently so one failure does not undo the others. The Album record and its artwork disappear when their last Track does.
+_Avoid_: Remove from Playlist, hide Track, trash, Album delete as an atomic unit
 
 ### Playback
 

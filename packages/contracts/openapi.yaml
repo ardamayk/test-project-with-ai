@@ -83,39 +83,6 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/v1/library/scan:
-    post:
-      tags: [library]
-      operationId: triggerLibraryScan
-      summary: Deprecated legacy scan trigger (retired)
-      deprecated: true
-      description: >-
-        Legacy server-side library scanning is retired. Managed Import is the
-        authoritative ingestion path and Legacy Tracks change only through an
-        explicit Library Migration. This route stays mounted for API v1
-        compatibility and always answers 410 with error code
-        legacy_scan_retired; it never discovers or ingests files. New clients
-        must not call it.
-      responses:
-        "410":
-          $ref: "#/components/responses/Gone"
-  /api/v1/library/scan/status:
-    get:
-      tags: [library]
-      operationId: getLibraryScanStatus
-      summary: Deprecated legacy scan status (always idle)
-      deprecated: true
-      description: >-
-        Retained for API v1 compatibility so older clients that poll after a
-        scan trigger stop gracefully. The scanner never runs, so the status is
-        permanently idle with zero counts. New clients must not call it.
-      responses:
-        "200":
-          description: Permanently idle scan status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScanStatus"
   /api/v1/library/artists:
     get:
       tags: [library]
@@ -177,23 +144,6 @@ paths:
                 $ref: "#/components/schemas/AlbumDetail"
         "404":
           $ref: "#/components/responses/NotFound"
-    delete:
-      tags: [library]
-      operationId: deleteAlbum
-      summary: Delete album, its tracks, and music files
-      parameters:
-        - $ref: "#/components/parameters/albumId"
-      responses:
-        "200":
-          description: Album deleted
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteResult"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
   /api/v1/library/albums/{albumId}/cover:
     get:
       tags: [library]
@@ -324,145 +274,6 @@ paths:
                 $ref: "#/components/schemas/ManagedImportJob"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-  /api/v1/library-migrations/preview:
-    post:
-      tags: [imports]
-      operationId: previewLibraryMigration
-      summary: Analyze every Legacy Track through the Strict Import Profile without changing library state
-      parameters:
-        - name: X-Migration-Preview
-          in: header
-          required: true
-          description: Non-simple application header required to prevent cross-origin form submissions
-          schema:
-            type: string
-            enum: ["1"]
-      responses:
-        "200":
-          description: Stable accepted and rejected Library Migration preview
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LibraryMigrationPreview"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/library-migrations/stage:
-    post:
-      tags: [imports]
-      operationId: stageLibraryMigration
-      summary: Copy and verify accepted Legacy Tracks in hidden pending Managed Storage locations
-      parameters:
-        - name: X-Migration-Stage
-          in: header
-          required: true
-          description: Non-simple application header required to confirm explicit migration staging
-          schema:
-            type: string
-            enum: ["1"]
-      responses:
-        "200":
-          description: Per-file result of staging and verifying the current Library Migration candidates
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LibraryMigrationStage"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/library-migrations/cutover:
-    post:
-      tags: [imports]
-      operationId: cutoverLibraryMigration
-      summary: Activate verified migration copies as Managed Tracks and remove the migrated Legacy Tracks
-      description: >-
-        Re-runs the migration preview and staging, then activates every verified
-        copy under a new stable Track ID. The corresponding Legacy Track is removed
-        only after managed activation succeeds, and its old Playlist, Queue, and
-        snapshot references are dropped rather than remapped. The final report
-        distinguishes migrated, rejected, failed, and not-attempted files.
-      parameters:
-        - name: X-Migration-Cutover
-          in: header
-          required: true
-          description: Non-simple application header required to confirm explicit migration cutover
-          schema:
-            type: string
-            enum: ["1"]
-      responses:
-        "200":
-          description: Per-file result of cutting over the verified Library Migration copies
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LibraryMigrationCutover"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/library-migrations/cleanup:
-    get:
-      tags: [imports]
-      operationId: previewLibraryMigrationCleanup
-      summary: List legacy source files eligible for cleanup after a verified migration
-      description: >-
-        Lists every legacy source file. Only sources proven to correspond to an
-        active migrated Managed Track (recorded by a completed cutover, with the
-        managed bytes and the source bytes still hashing to the migrated
-        content) are eligible. Rejected, failed, pending, unverified, changed,
-        or unsafe sources are reported as ineligible and can never be selected.
-        The preview reports the exact eligible file count and total size and
-        changes nothing.
-      responses:
-        "200":
-          description: Legacy source cleanup preview
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LibraryMigrationCleanupPreview"
-        "409":
-          $ref: "#/components/responses/Conflict"
-    post:
-      tags: [imports]
-      operationId: cleanupLibraryMigrationSources
-      summary: Irreversibly delete the confirmed legacy source files of migrated Managed Tracks
-      description: >-
-        Deletes exactly the legacy source files named by the selected Managed
-        Track IDs. Every target is resolved and verified again before any file
-        is removed; if the selection, the confirmed file count, or the confirmed
-        total size no longer match the eligible set, nothing is deleted and the
-        request is rejected with a conflict. Empty parent directories are pruned
-        upward to the configured music path without recursing into siblings.
-        Migration success never triggers this cleanup automatically.
-      parameters:
-        - name: X-Migration-Cleanup
-          in: header
-          required: true
-          description: Explicit application confirmation required for irreversible legacy source deletion
-          schema:
-            type: string
-            enum: ["1"]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LibraryMigrationCleanupConfirmation"
-      responses:
-        "200":
-          description: Per-file result of deleting the confirmed legacy source files
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LibraryMigrationCleanup"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
   /api/v1/import-batches:
@@ -1439,12 +1250,6 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
-    Gone:
-      description: The requested legacy behavior is retired and will not run
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
     InsufficientStorage:
       description: Managed Storage cannot satisfy the configured reserve and temporary-space requirements
       content:
@@ -1542,10 +1347,8 @@ components:
             is advertised as playback.queue-events.v1 and the first strict FLAC
             Managed Import tracer bullet as managed-import.v1. Multi-file Managed
             Import Batches are advertised as managed-import-batches.v1, Permanent
-            Track Deletion as managed-track-deletion.v1, explicit Track
-            Replacement as managed-track-replacement.v1, and the explicit
-            Library Migration workflow (preview, stage, cutover, and Legacy
-            Source Cleanup) as library-migration.v1. Clients gate optional
+            Track Deletion as managed-track-deletion.v1, and explicit Track
+            Replacement as managed-track-replacement.v1. Clients gate optional
             behavior on the exact capability name and must ignore unknown
             entries so newer servers stay compatible with older clients.
     User:
@@ -1905,255 +1708,6 @@ components:
         durationMs:
           type: integer
           minimum: 1
-    LibraryMigrationPreview:
-      type: object
-      required: [acceptedCount, rejectedCount, files]
-      properties:
-        acceptedCount:
-          type: integer
-          minimum: 0
-        rejectedCount:
-          type: integer
-          minimum: 0
-        files:
-          type: array
-          items:
-            $ref: "#/components/schemas/LibraryMigrationPreviewFile"
-    LibraryMigrationPreviewFile:
-      type: object
-      required: [trackId, originalFilename, state]
-      properties:
-        trackId:
-          type: string
-          format: uuid
-        originalFilename:
-          type: string
-          description: Display-only basename of the existing Legacy Track source.
-        state:
-          type: string
-          enum: [accepted, rejected]
-        preview:
-          $ref: "#/components/schemas/ManagedImportPreviewFile"
-        errorCode:
-          type: string
-          description: Stable Strict Import Profile or capacity failure code.
-        errorField:
-          type: string
-          description: Machine-readable field associated with a rejection.
-        errorReason:
-          type: string
-          description: Actionable per-file rejection reason.
-    LibraryMigrationStage:
-      type: object
-      required: [verifiedCount, rejectedCount, failedCount, files]
-      properties:
-        verifiedCount:
-          type: integer
-          minimum: 0
-        rejectedCount:
-          type: integer
-          minimum: 0
-        failedCount:
-          type: integer
-          minimum: 0
-        files:
-          type: array
-          items:
-            $ref: "#/components/schemas/LibraryMigrationStageFile"
-    LibraryMigrationStageFile:
-      type: object
-      required: [trackId, originalFilename, state]
-      properties:
-        trackId:
-          type: string
-          format: uuid
-        originalFilename:
-          type: string
-          description: Display-only basename of the existing Legacy Track source.
-        state:
-          type: string
-          enum: [verified, rejected, failed]
-        pendingTrackId:
-          type: string
-          format: uuid
-        sourceSha256:
-          type: string
-          pattern: "^[0-9a-f]{64}$"
-        pendingSha256:
-          type: string
-          pattern: "^[0-9a-f]{64}$"
-        errorCode:
-          type: string
-        errorField:
-          type: string
-        errorReason:
-          type: string
-    LibraryMigrationCutover:
-      type: object
-      required: [migratedCount, rejectedCount, failedCount, notAttemptedCount, files]
-      properties:
-        migratedCount:
-          type: integer
-          minimum: 0
-        rejectedCount:
-          type: integer
-          minimum: 0
-        failedCount:
-          type: integer
-          minimum: 0
-        notAttemptedCount:
-          type: integer
-          minimum: 0
-        files:
-          type: array
-          items:
-            $ref: "#/components/schemas/LibraryMigrationCutoverFile"
-    LibraryMigrationCutoverFile:
-      type: object
-      required: [trackId, originalFilename, state]
-      properties:
-        trackId:
-          type: string
-          format: uuid
-          description: Legacy Track that the migration source was seeded from.
-        originalFilename:
-          type: string
-          description: Display-only basename of the existing Legacy Track source.
-        state:
-          type: string
-          enum: [migrated, rejected, failed, not_attempted]
-        createdTrackId:
-          type: string
-          format: uuid
-          description: New stable Managed Track ID active after the cutover.
-        contentSha256:
-          type: string
-          pattern: "^[0-9a-f]{64}$"
-          description: Verified full-file hash of the activated Managed Track.
-        errorCode:
-          type: string
-        errorField:
-          type: string
-        errorReason:
-          type: string
-    LibraryMigrationCleanupPreview:
-      type: object
-      required: [eligibleCount, ineligibleCount, totalSizeBytes, files]
-      properties:
-        eligibleCount:
-          type: integer
-          minimum: 0
-          description: Exact number of legacy source files that may be deleted.
-        ineligibleCount:
-          type: integer
-          minimum: 0
-        totalSizeBytes:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Exact total size of the eligible legacy source files.
-        files:
-          type: array
-          items:
-            $ref: "#/components/schemas/LibraryMigrationCleanupPreviewFile"
-    LibraryMigrationCleanupPreviewFile:
-      type: object
-      required: [trackId, originalFilename, state]
-      properties:
-        trackId:
-          type: string
-          format: uuid
-          description: Migrated Managed Track for eligible files; the Legacy Track for unmigrated sources.
-        sourceTrackId:
-          type: string
-          format: uuid
-          description: Legacy Track that the migrated source was seeded from.
-        originalFilename:
-          type: string
-          description: Display-only basename of the legacy source file.
-        state:
-          type: string
-          enum: [eligible, ineligible]
-        sizeBytes:
-          type: integer
-          format: int64
-          minimum: 0
-        contentSha256:
-          type: string
-          pattern: "^[0-9a-f]{64}$"
-          description: Verified hash shared by the legacy source and the migrated Managed Track.
-        errorCode:
-          type: string
-        errorField:
-          type: string
-        errorReason:
-          type: string
-    LibraryMigrationCleanupConfirmation:
-      type: object
-      required: [trackIds, fileCount, totalSizeBytes]
-      properties:
-        trackIds:
-          type: array
-          minItems: 1
-          items:
-            type: string
-            format: uuid
-          description: Migrated Managed Tracks whose legacy source files are to be deleted.
-        fileCount:
-          type: integer
-          minimum: 1
-          description: Exact file count shown in the confirmation; must equal the number of selected Tracks.
-        totalSizeBytes:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Exact total size shown in the confirmation; must equal the current size of the selected files.
-    LibraryMigrationCleanup:
-      type: object
-      required: [deletedCount, failedCount, deletedBytes, prunedDirectoryCount, files]
-      properties:
-        deletedCount:
-          type: integer
-          minimum: 0
-        failedCount:
-          type: integer
-          minimum: 0
-        deletedBytes:
-          type: integer
-          format: int64
-          minimum: 0
-        prunedDirectoryCount:
-          type: integer
-          minimum: 0
-        files:
-          type: array
-          items:
-            $ref: "#/components/schemas/LibraryMigrationCleanupFile"
-    LibraryMigrationCleanupFile:
-      type: object
-      required: [trackId, sourceTrackId, originalFilename, state]
-      properties:
-        trackId:
-          type: string
-          format: uuid
-        sourceTrackId:
-          type: string
-          format: uuid
-        originalFilename:
-          type: string
-        state:
-          type: string
-          enum: [deleted, failed]
-        sizeBytes:
-          type: integer
-          format: int64
-          minimum: 0
-        errorCode:
-          type: string
-        errorField:
-          type: string
-        errorReason:
-          type: string
     ManagedImportPreviewFile:
       oneOf:
         - $ref: "#/components/schemas/ManagedImportFlacPreviewFile"
@@ -2535,10 +2089,6 @@ components:
           type: integer
         format:
           type: string
-        sourceKind:
-          type: string
-          enum: [legacy, managed]
-          description: Ownership of the Track's authoritative audio source.
         codec:
           type: string
         container:
@@ -3064,32 +2614,6 @@ components:
         deletedFiles:
           type: integer
           minimum: 0
-    ScanStatus:
-      type: object
-      deprecated: true
-      description: >-
-        Legacy scan status retained for API v1 compatibility. The scanner is
-        retired, so the Music Server always reports idle with zero counts.
-      required: [status, scanned, added, updated, removed]
-      properties:
-        status:
-          type: string
-          enum: [idle, running, completed, failed]
-        scanned:
-          type: integer
-        added:
-          type: integer
-        updated:
-          type: integer
-        removed:
-          type: integer
-        error:
-          type: string
-        startedAt:
-          type: string
-          format: date-time
-        finishedAt:
-          type: string
           format: date-time
     QueueItem:
       type: object

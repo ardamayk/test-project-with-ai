@@ -4,7 +4,7 @@ This matrix is the final operational verification for the Managed Import
 release (issue #56, parent #21). Every row is an automated Go test in
 `server/internal/modules/managedimport` that drives the versioned HTTP seam or
 the in-package fault-injection seams (`newModule` capacity, `commitPhaseHook`,
-`replacementPhaseHook`, `migrationPhaseHook`) and asserts only externally
+`replacementPhaseHook`) and asserts only externally
 observable outcomes: response codes, library reads, Import History, and the
 exact contents of Managed Storage. The whole matrix runs inside the normal
 `mise run server:test` task and the Fast Gate `server` job; no extra CI wiring
@@ -20,12 +20,10 @@ audited from one place.
 | Condition | Test |
 | --- | --- |
 | Reserve would be exhausted before preview | `TestManagedImportRejectsUploadWhenStorageReserveWouldBeExhausted` |
-| Migration preview refuses accepted files that do not fit | `TestLibraryMigrationPreviewRejectsAcceptedFilesWhenCapacityIsInsufficient` |
 | Free space drops between preview and commit (selected plus artwork bytes) | `TestManagedImportRechecksSelectedAndTemporaryBytesBeforeCommit` |
 | Batch confirmation reports the per-file `insufficient_storage` code | `TestManagedImportBatchPreservesConfirmationFailureCode` |
 | Exact Duplicate is classified before the commit capacity check | `TestManagedImportClassifiesExactDuplicateBeforeCommitCapacity` |
 | Track Replacement rechecks capacity for the temporary second copy and keeps the old Track streamable | `TestTrackReplacementRechecksCapacityBeforeCommitAndKeepsOldTrack` |
-| Migration cutover activates verified copies within tight capacity | `TestLibraryMigrationCutoverActivatesVerifiedCopiesWithinTightCapacity` |
 
 ## Concurrency and stale state
 
@@ -42,10 +40,9 @@ audited from one place.
 | Stale deletion preview mutates nothing | `TestManagedTrackDeletionRejectsStalePreviewWithoutMutation` |
 | Stale replacement token is refused | `TestTrackReplacementPreservesIdentityAndReferences` |
 | Exact Duplicate and occupied Album position on replacement | `TestTrackReplacementRejectsExactDuplicateAndOccupiedPosition` |
-| Same-edition position collisions become Possible Duplicates that need an explicit decision; different editions are not blocked | `TestManagedImportClassifiesOnlySameEditionPositionAsPossibleDuplicate`, `TestManagedImportDoesNotClassifyDifferentEditionAsDuplicate`, `TestManagedImportRechecksPossibleDuplicateAtConfirmation`, `TestLibraryMigrationPreviewRejectsDuplicateAlbumPositionsWithinMigration` |
+| Same-edition position collisions become Possible Duplicates that need an explicit decision; different editions are not blocked | `TestManagedImportClassifiesOnlySameEditionPositionAsPossibleDuplicate`, `TestManagedImportDoesNotClassifyDifferentEditionAsDuplicate`, `TestManagedImportRechecksPossibleDuplicateAtConfirmation` |
 | Two replacement jobs for one Track: exactly one commits, the other reports `replacement_preview_changed` | `TestTrackReplacementConcurrentJobsForOneTrackAreSerialized` |
 | Track Replacement racing Permanent Track Deletion: exactly one wins, no pending journals remain | `TestTrackReplacementAndPermanentDeletionRaceIsDeterministic` |
-| Concurrent migration analysis is refused | `TestLibraryMigrationPreviewRejectsConcurrentAnalysis` |
 
 ## Corruption, image bombs, path attacks, upload limits
 
@@ -74,21 +71,13 @@ audited from one place.
 | The real `Module.Start` chain, run twice, recovers a commit journal crashed at every durable phase and leaves no visible pending state | `TestModuleStartRecoversPendingCommitJournalInOneRestartPass` |
 | Track Replacement crash at every phase, including after the database commit | `TestTrackReplacementRecoversFromCrashAtEveryPhase`, `TestTrackReplacementCompletesAfterCrashFollowingDatabaseCommit` |
 | Permanent Track Deletion recovery with and without the file already removed | `TestManagedTrackDeletionRecoveryCompletesPreparedDeletion` |
-| Library Migration crash at every durable phase | `TestLibraryMigrationRecoversFromCrashAtEveryDurablePhase` |
-| Migration restart reconciles prepared, promoted, and orphaned copies | `TestCleanupRestartReconcilesPreparedMigrationCopy`, `TestCleanupRestartRestoresPromotedCopyInterruptedMidPromotion`, `TestCleanupRestartSweepsOrphanedMigrationFiles`, `TestCleanupRestartFailsVerifiedMigrationCopyWhenPendingAudioDisappeared` |
-| Repeated migration cutover is idempotent | `TestLibraryMigrationCutoverIsIdempotent` |
-| Migration contract lists every phase | `TestLibraryMigrationContractCoversEveryPhase` |
-| Startup scanning stays retired while deprecated scan routes remain compatible for older clients | `TestAssembledServerKeepsDeprecatedLegacyScanBehaviorForOlderClients` (`server/cmd/server`), `TestDeprecatedScanRoutesStayCompatible` (`server/internal/modules/library`) |
 
-## Permanent deletion and legacy cleanup confinement
+## Permanent deletion confinement
 
 | Condition | Test |
 | --- | --- |
 | Deletion refuses outside, symlinked, broad, unresolved, traversal, and NUL-byte targets | `TestManagedTrackDeletionRejectsUnsafeSources` |
 | Deletion requires the explicit application confirmation header | `TestManagedTrackDeletionRequiresExplicitApplicationConfirmation` |
-| Legacy cleanup refuses sources outside the configured music paths | `TestLegacySourceCleanupRefusesSourcesOutsideMusicPaths` |
-| Legacy cleanup refuses the whole selection when one source changed | `TestLegacySourceCleanupRefusesWholeSelectionWhenOneSourceChanged` |
-| Legacy cleanup requires an explicit confirmation | `TestLegacySourceCleanupRequiresExplicitConfirmation` |
 
 ## Defect found by the matrix
 

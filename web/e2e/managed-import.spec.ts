@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,11 +18,8 @@ import {
 // Critical Web Managed Import journey (issue #54). The tests run serially
 // against the real Music Server started by playwright.config.ts and share one
 // unique run identifier so accumulated e2e state from earlier runs never
-// collides with duplicate classification.
-//
-// Library Migration and Legacy Source Cleanup are driven through the Settings
-// page; the versioned HTTP contract is only used to verify the resulting
-// library state, streams, and files on disk.
+// collides with duplicate classification. The versioned HTTP contract is only
+// used to verify the resulting library state, streams, and files on disk.
 
 test.describe.configure({ mode: "serial" });
 
@@ -33,13 +29,11 @@ const ALBUM = `Journey Album ${RUN_ID}`;
 const ALPHA = `${RUN_ID} Alpha`;
 const BETA = `${RUN_ID} Beta`;
 const BETA_REMASTER = `${RUN_ID} Beta Remaster`;
-const LEGACY = `${RUN_ID} Legacy`;
 
 // Paths must match the webServer env in playwright.config.ts, which the Go
 // server resolves relative to its own working directory (../server).
 const SERVER_DIR = fileURLToPath(new URL("../../server", import.meta.url));
 const MANAGED_STORAGE_DIR = path.join(SERVER_DIR, "data/e2e-managed");
-const LEGACY_MUSIC_DIR = path.join(SERVER_DIR, "data/e2e-legacy");
 const FIXTURE_DIR = path.join(tmpdir(), `managed-import-${RUN_ID}`);
 
 const STREAM_PATTERN = /\/api\/v1\/tracks\/[^/]+\/stream/;
@@ -114,7 +108,6 @@ const alphaCopy = writeFixture("alpha-renamed-copy.mp3", fixtures.alpha.bytes);
 interface TrackSummary {
 	id: string;
 	title: string;
-	sourceKind: string;
 	sizeBytes: number;
 	albumId: string;
 }
@@ -294,7 +287,6 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 
 	const tracks = await listRunTracks(request);
 	expect(tracks.map((track) => track.title).sort()).toEqual([ALPHA, BETA]);
-	expect(tracks.every((track) => track.sourceKind === "managed")).toBe(true);
 	expect(newStagingFiles(stagingBefore)).toEqual([]);
 });
 
@@ -541,176 +533,6 @@ test("Permanent Track Deletion requires an explicit destructive confirmation", a
 	).toBe(404);
 	const remaining = await listRunTracks(request);
 	expect(remaining.map((track) => track.title).sort()).toEqual([ALPHA, BETA]);
-});
-
-test("Library Migration and optional Legacy Source Cleanup", async ({
-	page,
-	request,
-}) => {
-	const legacyDirectory = path.join(LEGACY_MUSIC_DIR, RUN_ID);
-	const legacy = writeFixture(
-		"legacy.mp3",
-		buildStrictMp3({
-			title: LEGACY,
-			artists: [ARTIST],
-			albumArtist: ARTIST,
-			album: `Legacy Album ${RUN_ID}`,
-			track: "1/1",
-			genres: ["Rock"],
-		}),
-		legacyDirectory,
-	);
-	const legacyTrackId = execFileSync(
-		"go",
-		[
-			"run",
-			"./cmd/e2e-seed-legacy",
-			"-database",
-			process.env.DATABASE_PATH ?? "./data/e2e.db",
-			"-file",
-			legacy.path,
-			"-title",
-			LEGACY,
-			"-artist",
-			ARTIST,
-			"-album-artist",
-			ARTIST,
-			"-album",
-			`Legacy Album ${RUN_ID}`,
-			"-genre",
-			"Rock",
-		],
-		{ cwd: SERVER_DIR, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-	).trim();
-	expect(legacyTrackId).toMatch(/^[0-9a-f-]{36}$/);
-
-	await gotoTracks(page);
-	await expect(trackRow(page, LEGACY)).toBeVisible();
-	await trackRow(page, LEGACY).click({ button: "right" });
-	await expect(page.getByRole("menuitem", { name: "Details" })).toBeVisible();
-	await expect(
-		page.getByRole("menuitem", { name: "Delete track" }),
-	).toHaveCount(0);
-	await expect(
-		page.getByRole("menuitem", { name: "Replace file" }),
-	).toHaveCount(0);
-	await page.keyboard.press("Escape");
-
-	// The Tracks page points at the Settings section that owns the migration.
-	await expect(page.getByTestId("legacy-migration-banner")).toBeVisible();
-	await page.getByRole("link", { name: "Open Library Migration" }).click();
-	const migration = page.getByRole("region", { name: "Library Migration" });
-	await expect(migration).toBeVisible({ timeout: 15_000 });
-	await expect(migration.getByTestId("legacy-track-count")).toContainText(
-		"Legacy Track",
-	);
-
-	await migration.getByRole("button", { name: "Analyze library" }).click();
-	const analysis = migration.getByRole("table", { name: /^Analysis:/ });
-	await expect(analysis).toBeVisible({ timeout: 30_000 });
-	const legacyRow = analysis
-		.getByRole("row")
-		.filter({ has: page.getByText("legacy.mp3", { exact: true }) });
-	await expect(legacyRow).toContainText("Accepted");
-	await expect(
-		page.getByRole("button", { name: "Activate migrated Tracks…" }),
-	).toBeDisabled();
-
-	await migration.getByRole("button", { name: "Copy and verify" }).click();
-	const copies = migration.getByRole("table", { name: /^Copies:/ });
-	await expect(copies).toBeVisible({ timeout: 30_000 });
-	await expect(
-		copies
-			.getByRole("row")
-			.filter({ has: page.getByText("legacy.mp3", { exact: true }) }),
-	).toContainText("Verified");
-	expect(existsSync(legacy.path)).toBe(true);
-
-	// Cutover needs its own confirmation that states the reference cleanup.
-	await migration
-		.getByRole("button", { name: "Activate migrated Tracks…" })
-		.click();
-	const cutoverDialog = page.getByRole("dialog", {
-		name: "Activate migrated Tracks?",
-	});
-	await expect(cutoverDialog).toContainText(
-		"old Playlist, Queue, and snapshot references are dropped",
-	);
-	await cutoverDialog
-		.getByRole("button", { name: "Activate migrated Tracks" })
-		.click();
-	const cutoverTable = migration.getByRole("table", { name: /^Cutover:/ });
-	await expect(cutoverTable).toBeVisible({ timeout: 30_000 });
-	await expect(cutoverDialog).toHaveCount(0);
-	const migratedRow = cutoverTable
-		.getByRole("row")
-		.filter({ has: page.getByText("legacy.mp3", { exact: true }) });
-	await expect(migratedRow).toContainText("Migrated");
-	const migratedTrackId = ((await migratedRow.textContent()) ?? "").match(
-		/New Track ID ([0-9a-f-]{36})/,
-	)?.[1] as string;
-	expect(migratedTrackId).toMatch(/^[0-9a-f-]{36}$/);
-	expect(migratedTrackId).not.toBe(legacyTrackId);
-	const stream = await request.get(`/api/v1/tracks/${migratedTrackId}/stream`);
-	expect(stream.status()).toBe(200);
-	expect(sha256(await stream.body())).toBe(legacy.sha256);
-
-	// The rendered library shows the migrated Track exactly once, now managed,
-	// and the migration notice is gone.
-	await gotoTracks(page);
-	await expect(trackRow(page, LEGACY)).toHaveCount(1);
-	await expect(page.getByTestId("legacy-migration-banner")).toHaveCount(0);
-	const migratedTrack = await findTrack(request, LEGACY);
-	expect(migratedTrack.id).toBe(migratedTrackId);
-	expect(migratedTrack.sourceKind).toBe("managed");
-	expect(
-		(await request.get(`/api/v1/tracks/${legacyTrackId}/stream`)).status(),
-	).toBe(404);
-	await trackRow(page, LEGACY).click({ button: "right" });
-	await expect(
-		page.getByRole("menuitem", { name: "Delete track" }),
-	).toBeVisible();
-	await page.keyboard.press("Escape");
-
-	// Migration never deletes the source; cleanup is a separate destructive
-	// confirmation on the Settings page whose count and size the server
-	// re-verifies. A stale confirmation is refused without touching files.
-	expect(existsSync(legacy.path)).toBe(true);
-	const mismatch = await request.post("/api/v1/library-migrations/cleanup", {
-		headers: { "X-Migration-Cleanup": "1" },
-		data: { trackIds: [migratedTrackId], fileCount: 1, totalSizeBytes: 1 },
-	});
-	expect(mismatch.status()).toBe(409);
-	expect(existsSync(legacy.path)).toBe(true);
-
-	await page.goto("/settings");
-	await expect(migration).toBeVisible({ timeout: 15_000 });
-	await migration
-		.getByRole("button", { name: "Clean up legacy sources…" })
-		.click();
-	const cleanupDialog = page.getByRole("dialog", {
-		name: "Permanently delete legacy source files?",
-	});
-	await expect(cleanupDialog).toContainText("This cannot be undone");
-	await expect(cleanupDialog).toContainText("Files to delete");
-	await cleanupDialog
-		.getByRole("button", { name: "Delete legacy sources permanently" })
-		.click();
-	const cleanupTable = migration.getByRole("table", { name: /^Cleanup:/ });
-	await expect(cleanupTable).toBeVisible({ timeout: 30_000 });
-	await expect(
-		cleanupTable
-			.getByRole("row")
-			.filter({ has: page.getByText("legacy.mp3", { exact: true }) }),
-	).toContainText("Deleted");
-	await expect(cleanupDialog).toHaveCount(0);
-	expect(existsSync(legacy.path)).toBe(false);
-	expect(existsSync(legacyDirectory)).toBe(false);
-	expect(
-		(await request.get(`/api/v1/tracks/${migratedTrackId}/stream`)).status(),
-	).toBe(200);
-	await gotoTracks(page);
-	await expect(trackRow(page, LEGACY)).toBeVisible();
 });
 
 test("Import Music dialog is keyboard accessible and cancelling cleans staging", async ({

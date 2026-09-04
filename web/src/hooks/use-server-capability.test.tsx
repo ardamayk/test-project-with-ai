@@ -42,7 +42,7 @@ describe("useServerCapability", () => {
 		const { result } = renderHook(
 			() => ({
 				managedImport: useServerCapability("managed-import.v1"),
-				migration: useServerCapabilityState("library-migration.v1"),
+				migration: useServerCapabilityState("future.missing-feature.v1"),
 				unknown: useServerCapability("future.unknown-feature.v7"),
 			}),
 			{ wrapper: createWrapper() },

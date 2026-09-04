@@ -31,8 +31,8 @@ func newMP3ManagedImportRouter(t *testing.T) (http.Handler, *sql.DB, string) {
 	t.Helper()
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()
-	configuration := config.Config{ManagedStoragePath: managedStoragePath, MusicPaths: []string{t.TempDir()}}
-	libraryModule := library.NewModule(database, configuration)
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	libraryModule := library.NewModule(database)
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
 	playbackModule := playback.NewModule(database, libraryModule.TrackAccess())
 	router := chi.NewRouter()

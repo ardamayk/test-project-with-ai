@@ -20,13 +20,7 @@ mise run dev
 
 Add music through **Managed Import**: open **Tracks** in the web UI, click **Import Music**, and select audio files or a local folder (mp3, flac, ogg, m4a, opus, wav). Every file is validated strictly, shown in an Import Preview, and stored in Managed Storage only after you confirm.
 
-The server never scans a server-side folder. `MUSIC_PATHS` (comma-separated) only locates **Legacy Tracks** that were indexed before Managed Import became authoritative, so they stay playable until you run the explicit Library Migration API:
-
-```bash
-export MUSIC_PATHS=/path/to/music,./music
-```
-
-Copying a file into one of these folders does not add a Track. The former `POST /api/v1/library/scan` route is deprecated and answers `410 legacy_scan_retired`.
+The server never scans a server-side folder; Managed Import is the only way music enters the library.
 
 ### Managed Storage
 

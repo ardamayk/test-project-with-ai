@@ -55,9 +55,8 @@ func TestManagedImportCommitsStrictWAVThroughLibraryPlayback(t *testing.T) {
 	managedStoragePath := t.TempDir()
 	configuration := config.Config{
 		ManagedStoragePath: managedStoragePath,
-		MusicPaths:         []string{t.TempDir()},
 	}
-	libraryModule := library.NewModule(database, configuration)
+	libraryModule := library.NewModule(database)
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
 	playbackModule := playback.NewModule(database, libraryModule.TrackAccess())
 	router := chi.NewRouter()

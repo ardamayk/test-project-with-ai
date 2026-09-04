@@ -33,7 +33,7 @@ type assembledServer struct {
 func newAssembledServer(cfg config.Config, sqlDB *sql.DB) assembledServer {
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
-	libModule := library.NewModule(sqlDB, cfg)
+	libModule := library.NewModule(sqlDB)
 	trackAccess := libModule.TrackAccess()
 	queueEvents := playback.NewQueueEventBroker()
 	importModule := managedimport.NewModule(sqlDB, cfg, library.NewMediaInspector(), queueEvents)

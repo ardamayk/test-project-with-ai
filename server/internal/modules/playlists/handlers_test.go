@@ -14,8 +14,8 @@ import (
 
 func setupPlaylistHandlers(t *testing.T) (*Handlers, *Store, string) {
 	t.Helper()
-	store, libStore, db, musicRoot := setupPlaylistStore(t)
-	trackID := seedPlaylistTrack(t, db, libStore, musicRoot)
+	store, db := setupPlaylistStore(t)
+	trackID := seedPlaylistTrack(t, db)
 	return NewHandlers(store), store, trackID
 }
 

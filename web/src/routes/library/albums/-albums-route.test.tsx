@@ -174,7 +174,7 @@ describe("albums route", () => {
 		const firstRender = renderWithQuery(<AlbumsPage />);
 
 		expect(await screen.findByText("No albums yet")).toBeTruthy();
-		expect(screen.getByText("Scan your library to get started.")).toBeTruthy();
+		expect(screen.getByText("Import music to get started.")).toBeTruthy();
 		firstRender.unmount();
 
 		mocks.listAlbums.mockResolvedValue({

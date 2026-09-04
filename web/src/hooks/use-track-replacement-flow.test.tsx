@@ -60,7 +60,6 @@ const track = {
 	discNo: 1,
 	durationMs: 212_000,
 	format: "flac",
-	sourceKind: "managed",
 	artists: [],
 	genres: [],
 } as unknown as Track;

@@ -49,9 +49,8 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	managedStoragePath := t.TempDir()
 	configuration := config.Config{
 		ManagedStoragePath: managedStoragePath,
-		MusicPaths:         []string{t.TempDir()},
 	}
-	libraryModule := library.NewModule(database, configuration)
+	libraryModule := library.NewModule(database)
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
 	playbackModule := playback.NewModule(database, libraryModule.TrackAccess())
 	router := chi.NewRouter()
@@ -172,10 +171,6 @@ func TestManagedImportCommitsOneStrictFLACThroughLibraryPlayback(t *testing.T) {
 	wrongRevisionResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+job.ID+"/confirm", strings.NewReader(`{"revision":1}`), map[string]string{"Content-Type": "application/json"})
 	testutil.AssertErrorCode(t, wrongRevisionResponse, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	assertNormalizedAlbum(t, router, committedTrack.AlbumID, result.TrackID)
-	invokeDeprecatedLibraryScan(t, router)
-	if len(listTracks(t, router).Items) != 1 {
-		t.Fatal("deprecated legacy scan trigger changed the committed Managed Track")
-	}
 	streamResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/tracks/"+result.TrackID+"/stream", nil, nil)
 	if streamResponse.Code != http.StatusOK {
 		t.Fatalf("stream status = %d, body = %s", streamResponse.Code, streamResponse.Body.String())
@@ -545,8 +540,8 @@ func TestManagedImportConcurrentExactByteImportsReturnDeterministicDuplicate(t *
 func TestManagedImportBatchReportsPerFilePartialResults(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()
-	configuration := config.Config{ManagedStoragePath: managedStoragePath, MusicPaths: []string{t.TempDir()}}
-	libraryModule := library.NewModule(database, configuration)
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	libraryModule := library.NewModule(database)
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
@@ -1132,8 +1127,8 @@ func TestManagedImportCommitsOGGFormatsWithoutChangingSourceBytes(t *testing.T) 
 		t.Run(testCase.name, func(t *testing.T) {
 			database := testutil.OpenMigratedDB(t)
 			managedStoragePath := t.TempDir()
-			configuration := config.Config{ManagedStoragePath: managedStoragePath, MusicPaths: []string{t.TempDir()}}
-			libraryModule := library.NewModule(database, configuration)
+			configuration := config.Config{ManagedStoragePath: managedStoragePath}
+			libraryModule := library.NewModule(database)
 			importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
 			playbackModule := playback.NewModule(database, libraryModule.TrackAccess())
 			router := chi.NewRouter()
@@ -1207,22 +1202,6 @@ func assertCanonicalSource(t *testing.T, managedStoragePath, extension string, f
 	stored, err := os.ReadFile(audioPath)
 	if err != nil || !bytes.Equal(stored, fixture) {
 		t.Fatalf("canonical %s bytes differ: %v", extension, err)
-	}
-}
-
-func invokeDeprecatedLibraryScan(t *testing.T, router http.Handler) {
-	t.Helper()
-	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/library/scan", nil, nil)
-	if response.Code != http.StatusGone {
-		t.Fatalf("deprecated library scan status = %d, body = %s", response.Code, response.Body.String())
-	}
-	statusResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/scan/status", nil, nil)
-	var status struct {
-		Status string `json:"status"`
-	}
-	testutil.DecodeJSON(t, statusResponse, &status)
-	if status.Status != "idle" {
-		t.Fatalf("deprecated library scan status = %q, want idle", status.Status)
 	}
 }
 
@@ -1304,7 +1283,7 @@ func TestManagedImportRejectsInvalidFLACWithoutLibraryMutation(t *testing.T) {
 	managedStoragePath := t.TempDir()
 	configuration := config.Config{ManagedStoragePath: managedStoragePath}
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
-	libraryModule := library.NewModule(database, configuration)
+	libraryModule := library.NewModule(database)
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)
@@ -1915,7 +1894,7 @@ func TestManagedImportRequiresDiscNumberForExistingMultiDiscAlbum(t *testing.T) 
 	database := testutil.OpenMigratedDB(t)
 	configuration := config.Config{ManagedStoragePath: t.TempDir()}
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
-	libraryModule := library.NewModule(database, configuration)
+	libraryModule := library.NewModule(database)
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)
@@ -1961,7 +1940,7 @@ func TestManagedImportSeparatesDisplayValuesFromUnicodeComparisonKeys(t *testing
 	database := testutil.OpenMigratedDB(t)
 	configuration := config.Config{ManagedStoragePath: t.TempDir()}
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
-	libraryModule := library.NewModule(database, configuration)
+	libraryModule := library.NewModule(database)
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)
@@ -2080,7 +2059,7 @@ func TestManagedImportRejectsTotalsConflictingWithExistingAlbum(t *testing.T) {
 			database := testutil.OpenMigratedDB(t)
 			configuration := config.Config{ManagedStoragePath: t.TempDir()}
 			importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
-			libraryModule := library.NewModule(database, configuration)
+			libraryModule := library.NewModule(database)
 			router := chi.NewRouter()
 			importModule.RegisterRoutes(router)
 			libraryModule.RegisterRoutes(router)
@@ -2364,7 +2343,7 @@ func newManagedImportTestRouterWithDatabase(t *testing.T, database *sql.DB, mana
 	t.Helper()
 	configuration := config.Config{ManagedStoragePath: managedStoragePath}
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector())
-	libraryModule := library.NewModule(database, configuration)
+	libraryModule := library.NewModule(database)
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)

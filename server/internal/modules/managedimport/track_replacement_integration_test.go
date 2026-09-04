@@ -292,8 +292,8 @@ func TestTrackReplacementRejectsConflictingArtworkForSharedAlbum(t *testing.T) {
 
 func newTrackReplacementRouter(t *testing.T, database *sql.DB, managedStoragePath string) http.Handler {
 	t.Helper()
-	configuration := config.Config{ManagedStoragePath: managedStoragePath, MusicPaths: []string{t.TempDir()}}
-	libraryModule := library.NewModule(database, configuration)
+	configuration := config.Config{ManagedStoragePath: managedStoragePath}
+	libraryModule := library.NewModule(database)
 	queueEvents := playback.NewQueueEventBroker()
 	importModule := managedimport.NewModule(database, configuration, library.NewMediaInspector(), queueEvents)
 	playbackModule := playback.NewModule(database, libraryModule.TrackAccess(), queueEvents)

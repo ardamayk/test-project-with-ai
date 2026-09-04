@@ -816,15 +816,12 @@ impl MusicServer {
         let port = free_port();
         let data = root.join("server-data");
         let managed_storage = data.join("managed");
-        let legacy = data.join("legacy");
         fs::create_dir_all(&managed_storage).expect("create managed storage");
-        fs::create_dir_all(&legacy).expect("create legacy path");
         let child = Command::new(&binary)
             .current_dir(server_dir)
             .env("SERVER_ADDR", format!("127.0.0.1:{port}"))
             .env("DATABASE_PATH", data.join("parity.db"))
             .env("MANAGED_STORAGE_PATH", &managed_storage)
-            .env("MUSIC_PATHS", &legacy)
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()

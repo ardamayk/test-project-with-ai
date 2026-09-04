@@ -191,7 +191,7 @@ func newM4AManagedImportRouterWithInspector(t *testing.T, inspector library.Medi
 	database := testutil.OpenMigratedDB(t)
 	managedStoragePath := t.TempDir()
 	configuration := config.Config{ManagedStoragePath: managedStoragePath}
-	libraryModule := library.NewModule(database, configuration)
+	libraryModule := library.NewModule(database)
 	router := chi.NewRouter()
 	managedimport.NewModule(database, configuration, inspector).RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)

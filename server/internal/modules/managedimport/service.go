@@ -29,15 +29,12 @@ type Service struct {
 	commitPhaseHook  func(commitPhase) error
 	commitResultHook func() error
 	queueEvents      QueueInvalidationPublisher
-	legacySources    *legacySourceStorage
 
 	replacementPhaseHook func(replacementPhase) error
-	migrationPhaseHook   func(migrationPhase) error
 }
 
 var managedImportCommitMu sync.Mutex
 var managedImportBatchConfirmationMu sync.Mutex
-var libraryMigrationPreviewMu sync.Mutex
 
 type uploadLock struct {
 	mutex sync.Mutex
@@ -76,7 +73,6 @@ func NewService(store *Store, storage *Storage, inspector library.MediaInspector
 		activeUploads: make(map[string]*activeUpload),
 		cancelingJobs: make(map[string]bool),
 		queueEvents:   discardQueueInvalidations{},
-		legacySources: newLegacySourceStorage(nil),
 	}
 }
 
@@ -304,158 +300,12 @@ func (service *Service) CleanupRestart(ctx context.Context) error {
 	if recoveryErr != nil {
 		return recoveryErr
 	}
-	migrationRecoveryErr := service.recoverMigrationCopies(ctx)
 	stagingErr := service.storage.RemoveAllStaged()
-	orphanErr := service.cleanupOrphanMigrationFiles(ctx)
 	reconcileErr := service.cleanupUncommitted(ctx, nil)
 	if stagingErr != nil {
 		stagingErr = fmt.Errorf("remove Managed Import restart staging: %w", stagingErr)
 	}
-	if orphanErr != nil {
-		orphanErr = fmt.Errorf("sweep orphan Library Migration files: %w", orphanErr)
-	}
-	return errors.Join(migrationRecoveryErr, stagingErr, orphanErr, reconcileErr)
-}
-
-// recoverMigrationCopies brings every Library Migration copy into a
-// deterministic state after a restart: interrupted promotions are rolled back
-// to verified, incomplete staging is marked retryable-failed, and verified
-// copies whose pending bytes disappeared are marked failed. Original legacy
-// sources are never touched or deleted by recovery.
-func (service *Service) recoverMigrationCopies(ctx context.Context) error {
-	if err := service.recoverPromotedMigrationCopies(ctx); err != nil {
-		return err
-	}
-	if err := service.recoverPreparedMigrationCopies(ctx); err != nil {
-		return err
-	}
-	return service.verifyRecoveredMigrationCopies(ctx)
-}
-
-// recoverPromotedMigrationCopies restores copies whose promotion to the
-// Canonical Library Path started but whose cutover transaction did not commit.
-// The rollback never deletes the original legacy source and never completes
-// the cutover automatically; a later run resumes from the verified copy.
-func (service *Service) recoverPromotedMigrationCopies(ctx context.Context) error {
-	copies, err := service.store.ListPromotedMigrationCopies(ctx)
-	if err != nil {
-		return err
-	}
-	var recoveryErr error
-	for _, copy := range copies {
-		registeredArtworkPath, _, artworkErr := service.store.FindMigrationAlbumArtwork(ctx, copy.PendingAlbumID)
-		if artworkErr != nil {
-			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, artworkErr))
-			continue
-		}
-		restoreErr := service.restorePromotedMigration(ctx, copy, registeredArtworkPath == "", "server restarted during the Library Migration cutover")
-		if restoreErr != nil {
-			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, restoreErr))
-		}
-	}
-	return recoveryErr
-}
-
-// restorePromotedMigration rolls a promoted copy back to its pending location
-// and restores the verified phase, or fails the copy outright when the
-// restore itself cannot complete.
-func (service *Service) restorePromotedMigration(ctx context.Context, copy migrationCopyRecord, restoreArtwork bool, reason string) error {
-	restoreErr := service.storage.RestorePromotedMigrationCopy(copy, restoreArtwork)
-	if restoreErr == nil {
-		return service.store.RestorePromotedMigrationCopyRecord(ctx, copy.SourceTrackID, reason)
-	}
-	cleanupErr := service.storage.CleanupRecordedMigrationCopy(copy, false)
-	recordErr := service.store.MarkVerifiedMigrationCopyFailed(ctx, copy.SourceTrackID, restoreErr.Error())
-	return errors.Join(restoreErr, cleanupErr, recordErr)
-}
-
-// verifyRecoveredMigrationCopies retains verified copies whose pending audio
-// is still present and fails the ones that lost it, so sources stay
-// distinguishable and a later staging run can retry them.
-func (service *Service) verifyRecoveredMigrationCopies(ctx context.Context) error {
-	copies, err := service.store.ListVerifiedMigrationCopies(ctx)
-	if err != nil {
-		return err
-	}
-	var recoveryErr error
-	for _, copy := range copies {
-		present, presentErr := service.storage.PendingMigrationAudioPresent(copy)
-		if presentErr != nil {
-			if errors.Is(presentErr, ErrUnsafeStoragePath) {
-				recordErr := service.store.MarkVerifiedMigrationCopyFailed(ctx, copy.SourceTrackID, "unsafe recorded Library Migration path")
-				if recordErr != nil {
-					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, recordErr))
-				}
-				continue
-			}
-			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, presentErr))
-			continue
-		}
-		if present {
-			continue
-		}
-		removeArtwork, exclusiveErr := service.store.IsMigrationArtworkExclusive(ctx, copy.SourceTrackID, copy.PendingArtworkPath)
-		cleanupErr := exclusiveErr
-		if cleanupErr == nil {
-			cleanupErr = service.storage.CleanupRecordedMigrationCopy(copy, removeArtwork)
-		}
-		reason := "pending Library Migration copy disappeared before the cutover"
-		if cleanupErr != nil {
-			reason = cleanupErr.Error()
-		}
-		recordErr := service.store.MarkVerifiedMigrationCopyFailed(ctx, copy.SourceTrackID, reason)
-		if err := errors.Join(cleanupErr, recordErr); err != nil {
-			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, err))
-		}
-	}
-	return recoveryErr
-}
-
-// cleanupOrphanMigrationFiles removes pending migration files that no
-// recorded copy references, such as artwork left behind by a crash between
-// the cutover commit and the post-commit cleanup.
-func (service *Service) cleanupOrphanMigrationFiles(ctx context.Context) error {
-	copies, err := service.store.ListMigrationCopies(ctx)
-	if err != nil {
-		return err
-	}
-	recordedPaths := make(map[string]bool, 2*len(copies))
-	for _, copy := range copies {
-		recordedPaths[copy.PendingAudioPath] = true
-		recordedPaths[copy.PendingArtworkPath] = true
-	}
-	return service.storage.SweepOrphanMigrationFiles(recordedPaths)
-}
-
-func (service *Service) afterMigrationPhase(phase migrationPhase) error {
-	if service.migrationPhaseHook == nil {
-		return nil
-	}
-	return service.migrationPhaseHook(phase)
-}
-
-func (service *Service) recoverPreparedMigrationCopies(ctx context.Context) error {
-	copies, err := service.store.ListPreparedMigrationCopies(ctx)
-	if err != nil {
-		return err
-	}
-	var recoveryErr error
-	for _, copy := range copies {
-		removeArtwork, exclusiveErr := service.store.IsMigrationArtworkExclusive(ctx, copy.SourceTrackID, copy.PendingArtworkPath)
-		cleanupErr := exclusiveErr
-		if cleanupErr == nil {
-			cleanupErr = service.storage.CleanupRecordedMigrationCopy(copy, removeArtwork)
-		}
-		reason := "server restarted before pending copy verification"
-		if cleanupErr != nil {
-			reason = cleanupErr.Error()
-		}
-		recordErr := service.store.MarkMigrationCopyFailed(ctx, copy.SourceTrackID, reason)
-		if err := errors.Join(cleanupErr, recordErr); err != nil {
-			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover Library Migration copy %q: %w", copy.SourceTrackID, err))
-		}
-	}
-	return recoveryErr
+	return errors.Join(stagingErr, reconcileErr)
 }
 
 func (service *Service) RecoverCommits(ctx context.Context) error {

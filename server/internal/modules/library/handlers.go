@@ -17,35 +17,6 @@ func NewHandlers(service *Service) *Handlers {
 	return &Handlers{service: service}
 }
 
-// LEGACY_SCAN_RETIRED_CODE is returned by the deprecated scan trigger so older
-// Playback Clients fail clearly instead of waiting for a scan that never runs.
-const LEGACY_SCAN_RETIRED_CODE = "legacy_scan_retired"
-
-// ScanStatus is the deprecated API v1 scan status shape. The scanner is
-// retired, so the status is always idle.
-type ScanStatus struct {
-	Status  string `json:"status"`
-	Scanned int    `json:"scanned"`
-	Added   int    `json:"added"`
-	Updated int    `json:"updated"`
-	Removed int    `json:"removed"`
-}
-
-// TriggerScan answers the deprecated legacy scan trigger. It never discovers
-// or ingests files: Managed Import is the authoritative ingestion path.
-func (h *Handlers) TriggerScan(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Deprecation", "true")
-	respond.Error(w, http.StatusGone, LEGACY_SCAN_RETIRED_CODE,
-		"legacy library scanning is retired; add music through Managed Import or an explicit Library Migration")
-}
-
-// GetScanStatus answers the deprecated legacy scan status poll with a
-// permanently idle status so older clients stop polling gracefully.
-func (h *Handlers) GetScanStatus(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Deprecation", "true")
-	respond.JSON(w, http.StatusOK, ScanStatus{Status: "idle"})
-}
-
 func (h *Handlers) ListArtists(w http.ResponseWriter, r *http.Request) {
 	limit, offset := pagination(r)
 	q := r.URL.Query().Get("q")
@@ -93,10 +64,6 @@ func (h *Handlers) GetAlbum(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusNotFound, "not_found", "album not found")
 		return
 	}
-	if errors.Is(err, ErrManagedAlbum) {
-		respond.Error(w, http.StatusConflict, "managed_album_requires_track_deletion", err.Error())
-		return
-	}
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -120,42 +87,6 @@ func (h *Handlers) GetTrack(w http.ResponseWriter, r *http.Request) {
 	result, err := h.service.GetTrack(r.Context(), trackID)
 	if errors.Is(err, ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
-		return
-	}
-	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
-	respond.JSON(w, http.StatusOK, result)
-}
-
-func (h *Handlers) DeleteAlbum(w http.ResponseWriter, r *http.Request) {
-	albumID := chi.URLParam(r, "albumId")
-	result, err := h.service.DeleteAlbum(r.Context(), albumID)
-	if errors.Is(err, ErrNotFound) {
-		respond.Error(w, http.StatusNotFound, "not_found", "album not found")
-		return
-	}
-	if errors.Is(err, ErrMigrationStaged) {
-		respond.Error(w, http.StatusConflict, "migration_staged", err.Error())
-		return
-	}
-	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
-	respond.JSON(w, http.StatusOK, result)
-}
-
-func (h *Handlers) DeleteTrack(w http.ResponseWriter, r *http.Request) {
-	trackID := chi.URLParam(r, "trackId")
-	result, err := h.service.DeleteTrack(r.Context(), trackID)
-	if errors.Is(err, ErrNotFound) {
-		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
-		return
-	}
-	if errors.Is(err, ErrMigrationStaged) {
-		respond.Error(w, http.StatusConflict, "migration_staged", err.Error())
 		return
 	}
 	if err != nil {

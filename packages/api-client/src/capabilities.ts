@@ -15,7 +15,6 @@ export const MANAGED_IMPORT_BATCHES_CAPABILITY = 'managed-import-batches.v1';
 export const MANAGED_TRACK_DELETION_CAPABILITY = 'managed-track-deletion.v1';
 export const MANAGED_TRACK_REPLACEMENT_CAPABILITY =
   'managed-track-replacement.v1';
-export const LIBRARY_MIGRATION_CAPABILITY = 'library-migration.v1';
 
 export type ServerCapabilities =
   | HealthResponse

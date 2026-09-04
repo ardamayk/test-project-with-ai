@@ -1,9 +1,7 @@
 package library
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"regexp"
 	"sort"
 	"strings"
@@ -100,45 +98,4 @@ func decodeGenres(raw string) []string {
 		return splitGenres(raw)
 	}
 	return mergeGenres(genres)
-}
-
-func (s *Store) recomputeAlbumGenres(ctx context.Context, albumID string) error {
-	collected, err := s.listTrackGenres(ctx, albumID)
-	if err != nil {
-		return err
-	}
-	genres := mergeGenres(collected)
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE albums SET genres = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, encodeGenres(genres), albumID)
-	return err
-}
-
-func (s *Store) listTrackGenres(ctx context.Context, albumID string) (collected []string, err error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT genre FROM visible_tracks
-		WHERE album_id = ? AND genre IS NOT NULL AND genre != ''`, albumID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
-
-	for rows.Next() {
-		var genre string
-		if scanErr := rows.Scan(&genre); scanErr != nil {
-			return nil, scanErr
-		}
-		collected = append(collected, splitGenres(genre)...)
-	}
-	return collected, rows.Err()
-}
-
-func (s *Store) setTrackGenre(ctx context.Context, trackID, genre string) error {
-	if genre == "" {
-		return nil
-	}
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE tracks SET genre = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, genre, trackID)
-	return err
 }

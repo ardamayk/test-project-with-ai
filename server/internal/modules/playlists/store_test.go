@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
@@ -33,12 +30,10 @@ func (f fakeTrackAccess) GetTrackFilePath(_ context.Context, trackID string) (st
 	return track.FilePath, nil
 }
 
-func setupPlaylistStore(t *testing.T) (*Store, *library.Store, *sql.DB, string) {
+func setupPlaylistStore(t *testing.T) (*Store, *sql.DB) {
 	t.Helper()
-	musicRoot := t.TempDir()
 	db := testutil.OpenMigratedDB(t)
-	libStore := library.NewStore(db)
-	return NewStore(db, libStore), libStore, db, musicRoot
+	return NewStore(db, library.NewStore(db)), db
 }
 
 func setupPlaylistStoreWithTrackAccess(t *testing.T, tracks map[string]library.Track) *Store {
@@ -50,36 +45,14 @@ func setupPlaylistStoreWithTrackAccess(t *testing.T, tracks map[string]library.T
 	return NewStore(db, fakeTrackAccess{tracks: tracks})
 }
 
-func seedPlaylistTrack(t *testing.T, db *sql.DB, libStore *library.Store, musicRoot string) string {
+func seedPlaylistTrack(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	trackPath := filepath.Join(musicRoot, "song.flac")
-	if err := os.WriteFile(trackPath, []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	meta := library.FileMetadata{
-		Path:        trackPath,
-		Format:      "flac",
-		SizeBytes:   10,
-		ModTime:     time.Now(),
-		Title:       "Song",
-		Artist:      "Artist",
-		AlbumArtist: "Artist",
-		Album:       "Album",
-		TrackNo:     1,
-		DurationMs:  1000,
-	}
-	if _, _, err := libStore.SeedLegacyTrack(context.Background(), meta); err != nil {
-		t.Fatal(err)
-	}
-	var trackID string
-	if err := db.QueryRow(`SELECT id FROM tracks`).Scan(&trackID); err != nil {
-		t.Fatal(err)
-	}
+	_, trackID := testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{Title: "Song", Artist: "Artist", Album: "Album", TrackNo: 1})
 	return trackID
 }
 
 func TestListPlaylistsCreatesDefaultFavorites(t *testing.T) {
-	store, _, _, _ := setupPlaylistStore(t)
+	store, _ := setupPlaylistStore(t)
 
 	playlists, err := store.ListPlaylists(context.Background(), "user-1")
 	if err != nil {
@@ -95,8 +68,8 @@ func TestListPlaylistsCreatesDefaultFavorites(t *testing.T) {
 }
 
 func TestAddAndRemoveTrackAreIdempotent(t *testing.T) {
-	store, libStore, db, musicRoot := setupPlaylistStore(t)
-	trackID := seedPlaylistTrack(t, db, libStore, musicRoot)
+	store, db := setupPlaylistStore(t)
+	trackID := seedPlaylistTrack(t, db)
 
 	favorites, err := store.GetDefaultFavorites(context.Background(), "user-1")
 	if err != nil {
@@ -131,8 +104,8 @@ func TestAddAndRemoveTrackAreIdempotent(t *testing.T) {
 }
 
 func TestRemoveLastTrackDeletesUserPlaylist(t *testing.T) {
-	store, libStore, db, musicRoot := setupPlaylistStore(t)
-	trackID := seedPlaylistTrack(t, db, libStore, musicRoot)
+	store, db := setupPlaylistStore(t)
+	trackID := seedPlaylistTrack(t, db)
 
 	playlist, err := store.CreatePlaylist(context.Background(), "user-1", "Road")
 	if err != nil {
@@ -163,7 +136,7 @@ func TestRemoveLastTrackDeletesUserPlaylist(t *testing.T) {
 }
 
 func TestCreatePlaylistAndListWithFavoritesPinned(t *testing.T) {
-	store, _, _, _ := setupPlaylistStore(t)
+	store, _ := setupPlaylistStore(t)
 
 	created, err := store.CreatePlaylist(context.Background(), "user-1", "Road")
 	if err != nil {

@@ -1,8 +1,6 @@
 package db_test
 
 import (
-	"context"
-	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -10,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	database "github.com/ardam/navidrome-replacement/server/internal/db"
-	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
@@ -31,60 +27,8 @@ const (
 	MIGRATION_CUTOVER_RECOVERY_VERSION = 25
 	LEGACY_MIGRATION_SOURCES_VERSION   = 26
 	RETIRE_LEGACY_SCAN_JOBS_VERSION    = 27
+	REMOVE_LEGACY_LIBRARY_VERSION      = 28
 )
-
-func TestLegacyMigrationCopyMigrationAppliesAndRollsBack(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, IMPORT_HISTORY_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	if err := goose.UpTo(sqlDB, migrationsDir(t), LEGACY_MIGRATION_COPY_VERSION); err != nil {
-		t.Fatalf("apply Legacy Migration copy migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_COPY_VERSION)
-	assertTableExists(t, sqlDB, "legacy_migration_copies")
-	_, err := sqlDB.Exec(`
-		INSERT INTO legacy_migration_copies (
-			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
-			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
-			pending_sha256, artwork_sha256, inspection_json, status
-		) VALUES (
-			'track-1', 'pending-track', 'pending-album', 'pending-artist', '/music/track.flac',
-			'/managed/.migration/track.flac', '/managed/.migration/cover.png',
-			'0000000000000000000000000000000000000000000000000000000000000000',
-			'1000000000000000000000000000000000000000000000000000000000000000',
-			'2000000000000000000000000000000000000000000000000000000000000000',
-			'{}', 'verified'
-		)`)
-	if err == nil {
-		t.Fatal("mismatched migration hashes were accepted")
-	}
-	_, err = sqlDB.Exec(`
-		INSERT INTO legacy_migration_copies (
-			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
-			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
-			pending_sha256, artwork_sha256, inspection_json, status
-		) VALUES (
-			'track-1', 'pending-track', 'pending-album', 'pending-artist', '/music/track.flac',
-			'/managed/.migration/track.flac', '/managed/.migration/cover.png',
-			'0000000000000000000000000000000000000000000000000000000000000000',
-			'0000000000000000000000000000000000000000000000000000000000000000',
-			'2000000000000000000000000000000000000000000000000000000000000000',
-			'{}', 'prepared'
-		)`)
-	if err != nil {
-		t.Fatalf("store prepared Legacy Migration copy: %v", err)
-	}
-	if _, err := sqlDB.Exec(`UPDATE legacy_migration_copies SET status = 'failed', recovery_reason = 'placement failed' WHERE source_track_id = 'track-1'`); err != nil {
-		t.Fatalf("record failed Legacy Migration copy: %v", err)
-	}
-	assertTextValue(t, sqlDB, `SELECT recovery_reason FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "placement failed")
-	assertExecFails(t, sqlDB, `UPDATE legacy_migration_copies SET status = 'unknown' WHERE source_track_id = 'track-1'`, "CHECK constraint failed")
-
-	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("roll back Legacy Migration copy migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, IMPORT_HISTORY_VERSION)
-	assertTableMissing(t, sqlDB, "legacy_migration_copies")
-}
 
 func TestPermanentTrackDeletionMigrationAppliesAndRollsBack(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_COPY_VERSION)
@@ -117,77 +61,6 @@ func TestTrackReplacementMigrationAppliesAndRollsBack(t *testing.T) {
 	}
 	assertMigrationVersion(t, sqlDB, TRACK_DELETION_VERSION)
 	assertTableMissing(t, sqlDB, "managed_track_replacements")
-}
-
-func TestLegacyMigrationCutoverRecoveryMigrationAppliesAndRollsBack(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, TRACK_REPLACEMENT_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	if _, err := sqlDB.Exec(`
-		INSERT INTO legacy_migration_copies (
-			source_track_id, pending_track_id, pending_album_id, pending_album_artist_id,
-			source_file_path, pending_audio_path, pending_artwork_path, source_sha256,
-			pending_sha256, artwork_sha256, inspection_json, status
-		) VALUES (
-			'track-1', 'pending-track', 'pending-album', 'pending-artist', '/music/track.flac',
-			'/managed/.migration/track.flac', '/managed/.migration/cover.png',
-			'0000000000000000000000000000000000000000000000000000000000000000',
-			'0000000000000000000000000000000000000000000000000000000000000000',
-			'2000000000000000000000000000000000000000000000000000000000000000',
-			'{}', 'verified'
-		)`); err != nil {
-		t.Fatalf("store verified Legacy Migration copy: %v", err)
-	}
-	if err := goose.UpTo(sqlDB, migrationsDir(t), MIGRATION_CUTOVER_RECOVERY_VERSION); err != nil {
-		t.Fatalf("apply Legacy Migration cutover recovery migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, MIGRATION_CUTOVER_RECOVERY_VERSION)
-	assertTextValue(t, sqlDB, `SELECT phase FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "verified")
-	if _, err := sqlDB.Exec(`UPDATE legacy_migration_copies SET phase = 'promoted' WHERE source_track_id = 'track-1'`); err != nil {
-		t.Fatalf("promote Legacy Migration copy phase: %v", err)
-	}
-	assertExecFails(t, sqlDB, `UPDATE legacy_migration_copies SET phase = 'unknown' WHERE source_track_id = 'track-1'`, "CHECK constraint failed")
-
-	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("roll back Legacy Migration cutover recovery migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, TRACK_REPLACEMENT_VERSION)
-	assertExecFails(t, sqlDB, `SELECT phase FROM legacy_migration_copies WHERE source_track_id = 'track-1'`, "no such column: phase")
-}
-
-func TestLegacyMigrationSourcesMigrationAppliesAndRollsBack(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, MIGRATION_CUTOVER_RECOVERY_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	if err := goose.UpTo(sqlDB, migrationsDir(t), LEGACY_MIGRATION_SOURCES_VERSION); err != nil {
-		t.Fatalf("apply Legacy Migration sources migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_SOURCES_VERSION)
-	assertTableExists(t, sqlDB, "legacy_migration_sources")
-	if _, err := sqlDB.Exec(`
-		INSERT INTO legacy_migration_sources (track_id, source_track_id, source_file_path, source_sha256)
-		VALUES ('track-1', 'legacy-track', '/music/track.flac',
-			'0000000000000000000000000000000000000000000000000000000000000000')`); err != nil {
-		t.Fatalf("record migrated legacy source: %v", err)
-	}
-	assertExecFails(t, sqlDB, `
-		INSERT INTO legacy_migration_sources (track_id, source_track_id, source_file_path, source_sha256)
-		VALUES ('missing-track', 'legacy-track-2', '/music/other.flac',
-			'0000000000000000000000000000000000000000000000000000000000000000')`, "FOREIGN KEY constraint failed")
-	assertExecFails(t, sqlDB, `UPDATE legacy_migration_sources SET source_sha256 = 'short'`, "CHECK constraint failed")
-	// Removing the migrated Managed Track removes the proof, so the legacy
-	// source can no longer be offered for cleanup.
-	if _, err := sqlDB.Exec(`DELETE FROM tracks WHERE id = 'track-1'`); err != nil {
-		t.Fatalf("delete migrated Track: %v", err)
-	}
-	var remaining int
-	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM legacy_migration_sources`).Scan(&remaining); err != nil || remaining != 0 {
-		t.Fatalf("migrated legacy source count after Track deletion = %d, error = %v", remaining, err)
-	}
-
-	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("roll back Legacy Migration sources migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, MIGRATION_CUTOVER_RECOVERY_VERSION)
-	assertTableMissing(t, sqlDB, "legacy_migration_sources")
 }
 
 func TestManagedImportCommitJournalMigrationAppliesAndRollsBack(t *testing.T) {
@@ -344,383 +217,6 @@ func TestStrictTrackIdentityMigrationPreservesPopulatedLegacyDatabase(t *testing
 	assertTableMissing(t, sqlDB, "track_sources")
 }
 
-func TestLegacyBackfillMigrationAppliesAndRollsBack(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
-	if err := goose.UpTo(sqlDB, migrationsDir(t), BACKFILL_MIGRATION_VERSION); err != nil {
-		t.Fatalf("apply legacy backfill migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, BACKFILL_MIGRATION_VERSION)
-	assertLegacyBackfillSchema(t, sqlDB)
-
-	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("roll back legacy backfill migration: %v", err)
-	}
-	assertMigrationVersion(t, sqlDB, STRICT_IDENTITY_VERSION)
-	assertTableMissing(t, sqlDB, "legacy_library_backfill_state")
-	assertTableMissing(t, sqlDB, "legacy_track_identities")
-	assertTableMissing(t, sqlDB, "legacy_album_genres")
-}
-
-func TestBackfillExpandedLibraryPopulatesSourcesAndArtistRelationships(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-
-	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("expand populated database: %v", err)
-	}
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	assertRowCount(t, sqlDB, "track_sources", 1)
-	assertRowCount(t, sqlDB, "track_artists", 1)
-	assertRowCount(t, sqlDB, "album_artists", 1)
-	assertRowCount(t, sqlDB, "legacy_artist_identities", 1)
-	assertRowCount(t, sqlDB, "legacy_album_identities", 1)
-	assertRowCount(t, sqlDB, "legacy_track_identities", 1)
-	assertTextValue(t, sqlDB, `SELECT source_kind FROM track_sources WHERE track_id = 'track-1'`, "legacy")
-	assertTextValue(t, sqlDB, `SELECT file_path FROM track_sources WHERE track_id = 'track-1'`, "/music/track.flac")
-	assertTextValue(t, sqlDB, `SELECT name FROM artists
-		WHERE id = (SELECT artist_id FROM track_artists WHERE track_id = 'track-1')`, "Artist")
-	assertTextValue(t, sqlDB, `SELECT name FROM artists
-		WHERE id = (SELECT artist_id FROM album_artists WHERE album_id = 'album-1')`, "Artist")
-	assertLegacyTrack(t, sqlDB)
-}
-
-func TestBackfillExpandedLibraryPopulatesIdentityGenresAndTechnicalMetadata(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	_, err := sqlDB.Exec(`
-		UPDATE albums SET year = 2024, genres = '["Rock"]' WHERE id = 'album-1';
-		UPDATE tracks SET artist_name = 'Track Artist', genre = 'Rock; Pop',
-			sample_rate_hz = 96000, bit_depth = 24
-		WHERE id = 'track-1';
-	`)
-	if err != nil {
-		t.Fatalf("enrich legacy library: %v", err)
-	}
-	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("expand populated database: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	assertRowCount(t, sqlDB, "artists", 2)
-	assertRowCount(t, sqlDB, "genres", 2)
-	assertRowCount(t, sqlDB, "track_genres", 2)
-	assertRowCount(t, sqlDB, "legacy_album_genres", 1)
-	assertTextValue(t, sqlDB, `SELECT name_normalized FROM artists WHERE name = 'Track Artist'`, "track artist")
-	assertTextValue(t, sqlDB, `SELECT group_concat(name, ',') FROM (SELECT name FROM genres ORDER BY name_normalized)`, "Pop,Rock")
-	assertTextValue(t, sqlDB, `SELECT identity_key FROM albums WHERE id = 'album-1'`, "artist\x1falbum\x1f2024")
-	assertTextValue(t, sqlDB, `SELECT release_date FROM albums WHERE id = 'album-1'`, "2024")
-	assertTextValue(t, sqlDB, `SELECT identity_key FROM tracks WHERE id = 'track-1'`, "track")
-	assertTextValue(t, sqlDB, `SELECT source_format FROM track_sources WHERE track_id = 'track-1'`, "flac")
-	assertIntegerValue(t, sqlDB, `SELECT sample_rate_hz FROM tracks WHERE id = 'track-1'`, 96000)
-	assertIntegerValue(t, sqlDB, `SELECT bit_depth FROM tracks WHERE id = 'track-1'`, 24)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM tracks
-		WHERE id = 'track-1' AND codec IS NULL AND container IS NULL
-		AND sample_format IS NULL AND bitrate_bps IS NULL`, 1)
-}
-
-func TestBackfillExpandedLibraryNormalizesAlbumOnlyGenres(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	if _, err := sqlDB.Exec(`UPDATE albums SET genres = '["Rock","Pop"]' WHERE id = 'album-1'`); err != nil {
-		t.Fatalf("store legacy Album Genres: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	assertRowCount(t, sqlDB, "genres", 2)
-	assertRowCount(t, sqlDB, "legacy_album_genres", 2)
-	assertTextValue(t, sqlDB, `SELECT group_concat(name, ',') FROM (SELECT name FROM genres ORDER BY name_normalized)`, "Pop,Rock")
-}
-
-func TestBackfillExpandedLibraryIgnoresDelimiterOnlyGenres(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	if _, err := sqlDB.Exec(`UPDATE tracks SET genre = '; / | ,' WHERE id = 'track-1'`); err != nil {
-		t.Fatalf("store delimiter-only legacy Track Genre: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	assertRowCount(t, sqlDB, "genres", 0)
-	assertRowCount(t, sqlDB, "track_genres", 0)
-	assertLegacyTrack(t, sqlDB)
-}
-
-func TestBackfillExpandedLibraryPopulatesAlbumArtworkMetadata(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	fixturePath, coverData := loadStrictImportArtwork(t)
-	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = ? WHERE id = 'album-1'`, coverData); err != nil {
-		t.Fatalf("store legacy Album artwork: %v", err)
-	}
-	if _, err := sqlDB.Exec(`UPDATE tracks SET file_path = ? WHERE id = 'track-1'`, fixturePath); err != nil {
-		t.Fatalf("store legacy Track path: %v", err)
-	}
-	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("expand populated database: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	expectedHash := fmt.Sprintf("%x", sha256.Sum256(coverData))
-	assertRowCount(t, sqlDB, "album_artwork", 0)
-	assertRowCount(t, sqlDB, "legacy_album_artwork_metadata", 1)
-	assertTextValue(t, sqlDB, `SELECT content_sha256 FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, expectedHash)
-	assertTextValue(t, sqlDB, `SELECT media_type FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, "image/png")
-	assertTextValue(t, sqlDB, `SELECT source_track_id FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, "track-1")
-	assertIntegerValue(t, sqlDB, `SELECT width * height FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, 1024)
-	assertIntegerValue(t, sqlDB, `SELECT encoded_size_bytes FROM legacy_album_artwork_metadata WHERE album_id = 'album-1'`, int64(len(coverData)))
-	insertSecondAlbumTrack(t, sqlDB)
-	assertExecFails(t, sqlDB, `UPDATE legacy_album_artwork_metadata SET source_track_id = 'track-2' WHERE album_id = 'album-1'`, "Legacy Album Artwork source Track must belong to the Album")
-	if _, err := sqlDB.Exec(`DELETE FROM tracks WHERE id = 'track-1'`); err != nil {
-		t.Fatalf("delete legacy Album Artwork source Track: %v", err)
-	}
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_album_artwork_metadata WHERE source_track_id IS NULL`, 1)
-}
-
-func TestOpenAndMigrateBackfillsPopulatedLegacyDatabase(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "legacy.db")
-	legacyDB := openDatabasePathAtVersion(t, databasePath, LEGACY_MIGRATION_VERSION)
-	insertLegacyLibrary(t, legacyDB)
-	if err := legacyDB.Close(); err != nil {
-		t.Fatalf("close legacy database: %v", err)
-	}
-
-	sqlDB, err := database.OpenAndMigrate(context.Background(), databasePath, migrationsDir(t))
-	if err != nil {
-		t.Fatalf("open and migrate populated legacy database: %v", err)
-	}
-	registerDatabaseCleanup(t, sqlDB)
-
-	assertRowCount(t, sqlDB, "track_sources", 1)
-	assertRowCount(t, sqlDB, "track_artists", 1)
-	assertRowCount(t, sqlDB, "album_artists", 1)
-}
-
-func TestBackfillExpandedLibraryIsIdempotentAndPreservesLegacyPersistence(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	fixturePath, coverData := loadStrictImportArtwork(t)
-	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = ? WHERE id = 'album-1'`, coverData); err != nil {
-		t.Fatalf("store legacy Album artwork: %v", err)
-	}
-	if _, err := sqlDB.Exec(`UPDATE tracks SET file_path = ? WHERE id = 'track-1'`, fixturePath); err != nil {
-		t.Fatalf("store legacy Track path: %v", err)
-	}
-	if _, err := sqlDB.Exec(`UPDATE tracks SET artist_name = '  Track   Artist ', genre = 'Alt   Rock' WHERE id = 'track-1'`); err != nil {
-		t.Fatalf("store legacy Track metadata: %v", err)
-	}
-	if err := goose.Up(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("expand populated database: %v", err)
-	}
-
-	for run := 1; run <= 2; run++ {
-		if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-			t.Fatalf("backfill expanded library run %d: %v", run, err)
-		}
-	}
-
-	assertRowCount(t, sqlDB, "artists", 2)
-	assertRowCount(t, sqlDB, "track_sources", 1)
-	assertRowCount(t, sqlDB, "track_artists", 1)
-	assertRowCount(t, sqlDB, "album_artists", 1)
-	assertRowCount(t, sqlDB, "genres", 1)
-	assertRowCount(t, sqlDB, "track_genres", 1)
-	assertRowCount(t, sqlDB, "album_artwork", 0)
-	assertRowCount(t, sqlDB, "legacy_artist_identities", 2)
-	assertRowCount(t, sqlDB, "legacy_album_identities", 1)
-	assertRowCount(t, sqlDB, "legacy_track_identities", 1)
-	assertRowCount(t, sqlDB, "legacy_album_artwork_metadata", 1)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_library_backfill_state WHERE completed_at IS NOT NULL`, 1)
-	assertForeignKeyIntegrity(t, sqlDB)
-	assertTextValue(t, sqlDB, `SELECT artist_name FROM tracks WHERE id = 'track-1'`, "  Track   Artist ")
-	assertTextValue(t, sqlDB, `SELECT genre FROM tracks WHERE id = 'track-1'`, "Alt   Rock")
-	assertTextValue(t, sqlDB, `SELECT cover_mime FROM albums WHERE id = 'album-1'`, "image/png")
-}
-
-func TestBackfillExpandedLibraryStopsAtCompletedLegacyBoundary(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("initial expanded library backfill: %v", err)
-	}
-	_, err := sqlDB.Exec(`
-		INSERT INTO artists (id, name, name_sort, name_normalized) VALUES
-			('managed-artist', 'Managed Artist', 'managed artist', 'managed artist');
-		INSERT INTO albums (id, artist_id, title, title_sort, identity_key) VALUES
-			('managed-album', 'managed-artist', 'Managed Album', 'managed album', 'managed-album');
-		INSERT INTO tracks (
-			id, album_id, title, title_sort, artist_name, track_no, duration_ms,
-			format, size_bytes, file_path, file_mtime, identity_key
-		) VALUES (
-			'managed-track', 'managed-album', 'Managed Track', 'managed track',
-			'Managed Artist feat. Guest', 1, 1000, 'flac', 100, '/managed/track.flac', 1,
-			'managed-track'
-		);
-		INSERT INTO track_artists (track_id, artist_id, position) VALUES
-			('managed-track', 'managed-artist', 0);
-		UPDATE tracks SET artist_name = 'Changed Artist', genre = 'Changed Genre'
-		WHERE id = 'track-1';
-	`)
-	if err != nil {
-		t.Fatalf("store post-backfill library changes: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("repeat expanded library backfill: %v", err)
-	}
-
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_artist_identities WHERE artist_id = 'managed-artist'`, 0)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_album_identities WHERE album_id = 'managed-album'`, 0)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM legacy_track_identities WHERE track_id = 'managed-track'`, 0)
-	assertTextValue(t, sqlDB, `SELECT artist_id FROM track_artists WHERE track_id = 'managed-track'`, "managed-artist")
-}
-
-func TestBackfillExpandedLibraryRollsBackWhenExpandedRowsAreIncomplete(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	insertSecondAlbumTrack(t, sqlDB)
-	_, err := sqlDB.Exec(`INSERT INTO track_sources (
-		id, track_id, source_kind, file_path, source_format, size_bytes
-	) VALUES (
-		'legacy-source:track-1', 'track-2', 'legacy', '/music/track-2.flac', 'flac', 100
-	)`)
-	if err != nil {
-		t.Fatalf("store conflicting expanded Track source: %v", err)
-	}
-
-	err = database.BackfillExpandedLibrary(context.Background(), sqlDB)
-	if err == nil || !strings.Contains(err.Error(), "Track source") {
-		t.Fatalf("backfill error = %v, want incomplete Track source error", err)
-	}
-
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM track_sources WHERE track_id = 'track-1'`, 0)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM artists WHERE name_normalized IS NOT NULL`, 0)
-}
-
-func TestBackfillExpandedLibrarySkipsInvalidLegacyArtwork(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	if _, err := sqlDB.Exec(`UPDATE albums SET cover_mime = 'image/png', cover_data = x'010203' WHERE id = 'album-1'`); err != nil {
-		t.Fatalf("store invalid legacy Album artwork: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	assertRowCount(t, sqlDB, "album_artwork", 0)
-	assertRowCount(t, sqlDB, "legacy_album_artwork_metadata", 1)
-	assertRowCount(t, sqlDB, "track_sources", 1)
-	assertLegacyTrack(t, sqlDB)
-}
-
-func TestBackfillExpandedLibraryKeepsAmbiguousLegacyTrackPositionsPlayable(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	_, err := sqlDB.Exec(`INSERT INTO tracks (
-		id, album_id, title, title_sort, artist_name, track_no, duration_ms,
-		format, size_bytes, file_path, file_mtime
-	) VALUES (
-		'track-duplicate', 'album-1', 'Duplicate Position', 'duplicate position',
-		'Artist', 1, 1000, 'flac', 100, '/music/duplicate.flac', 1
-	)`)
-	if err != nil {
-		t.Fatalf("store duplicate legacy Track position: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM tracks WHERE identity_key IS NULL`, 2)
-	assertRowCount(t, sqlDB, "legacy_track_identities", 2)
-	assertRowCount(t, sqlDB, "track_sources", 2)
-	assertLegacyTrack(t, sqlDB)
-}
-
-func TestBackfillExpandedLibraryRecordsNormalizedIdentityCollisions(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "colliding-identities.db")
-	legacyDB := openDatabasePathAtVersion(t, databasePath, LEGACY_MIGRATION_VERSION)
-	_, err := legacyDB.Exec(`
-		INSERT INTO artists (id, name, name_sort) VALUES
-			('artist-spaced', 'A  B', 'a  b'),
-			('artist-collapsed', 'A B', 'a b');
-		INSERT INTO albums (id, artist_id, title, title_sort, year) VALUES
-			('album-spaced', 'artist-spaced', 'Album', 'album', 2024),
-			('album-collapsed', 'artist-collapsed', 'Album', 'album', 2024);
-		INSERT INTO tracks (
-			id, album_id, title, title_sort, artist_name, track_no,
-			duration_ms, format, size_bytes, file_path, file_mtime
-		) VALUES
-			('track-spaced', 'album-spaced', 'One', 'one', 'A  B', 1, 1000, 'flac', 100, '/music/one.flac', 1),
-			('track-collapsed', 'album-collapsed', 'Two', 'two', 'A B', 1, 1000, 'flac', 100, '/music/two.flac', 1);
-	`)
-	if err != nil {
-		t.Fatalf("store colliding legacy identities: %v", err)
-	}
-	if closeErr := legacyDB.Close(); closeErr != nil {
-		t.Fatalf("close colliding legacy database: %v", closeErr)
-	}
-
-	sqlDB, err := database.OpenAndMigrate(context.Background(), databasePath, migrationsDir(t))
-	if err != nil {
-		t.Fatalf("open and backfill colliding legacy identities: %v", err)
-	}
-	registerDatabaseCleanup(t, sqlDB)
-
-	assertRowCount(t, sqlDB, "legacy_artist_identities", 2)
-	assertRowCount(t, sqlDB, "legacy_album_identities", 2)
-	assertRowCount(t, sqlDB, "legacy_track_identities", 2)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM artists WHERE name_normalized IS NULL`, 2)
-	assertIntegerValue(t, sqlDB, `SELECT COUNT(*) FROM albums WHERE identity_key IS NULL`, 2)
-	assertRowCount(t, sqlDB, "track_sources", 2)
-	assertTextValue(t, sqlDB, `SELECT artist_id FROM track_artists WHERE track_id = 'track-spaced'`, "artist-spaced")
-	assertTextValue(t, sqlDB, `SELECT artist_id FROM track_artists WHERE track_id = 'track-collapsed'`, "artist-collapsed")
-}
-
-func TestBackfillExpandedLibraryPreservesExistingExpandedMetadata(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, BACKFILL_MIGRATION_VERSION)
-	insertLegacyLibrary(t, sqlDB)
-	_, err := sqlDB.Exec(`
-		UPDATE albums SET identity_key = 'existing-album', release_date = '2020-01-02' WHERE id = 'album-1';
-		UPDATE tracks SET identity_key = 'existing-track', codec = 'existing-codec',
-			container = 'existing-container', sample_format = 'existing-format', bitrate_bps = 123
-		WHERE id = 'track-1';
-		INSERT INTO track_sources (
-			id, track_id, source_kind, file_path, content_sha256, source_format, size_bytes
-		) VALUES (
-			'existing-source', 'track-1', 'managed', '/managed/track.flac',
-			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'flac', 100
-		);
-	`)
-	if err != nil {
-		t.Fatalf("store expanded metadata: %v", err)
-	}
-
-	if err := database.BackfillExpandedLibrary(context.Background(), sqlDB); err != nil {
-		t.Fatalf("backfill expanded library: %v", err)
-	}
-
-	assertTextValue(t, sqlDB, `SELECT identity_key || ':' || release_date FROM albums WHERE id = 'album-1'`, "existing-album:2020-01-02")
-	assertTextValue(t, sqlDB, `SELECT identity_key || ':' || codec || ':' || container || ':' || sample_format
-		FROM tracks WHERE id = 'track-1'`, "existing-track:existing-codec:existing-container:existing-format")
-	assertIntegerValue(t, sqlDB, `SELECT bitrate_bps FROM tracks WHERE id = 'track-1'`, 123)
-	assertRowCount(t, sqlDB, "track_sources", 1)
-}
-
 func TestStrictTrackIdentitySchemaEnforcesIdentityAndConcurrencyConstraints(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, STRICT_IDENTITY_VERSION)
 	insertLegacyLibrary(t, sqlDB)
@@ -862,20 +358,6 @@ func insertSecondAlbumTrack(t *testing.T, sqlDB *sql.DB) {
 	if err != nil {
 		t.Fatalf("insert second Album and Track: %v", err)
 	}
-}
-
-func loadStrictImportArtwork(t *testing.T) (string, []byte) {
-	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve strict import fixture path")
-	}
-	fixturePath := filepath.Join(filepath.Dir(currentFile), "..", "modules", "library", "testdata", "strict-import.flac")
-	inspection, err := library.NewMediaInspector().Inspect(context.Background(), fixturePath, nil)
-	if err != nil {
-		t.Fatalf("inspect strict import fixture: %v", err)
-	}
-	return fixturePath, inspection.AlbumArtwork.Data
 }
 
 func assertOrderedRelationshipsRejectPositionConflicts(t *testing.T, sqlDB *sql.DB) {
@@ -1042,20 +524,6 @@ func assertStrictIdentitySchema(t *testing.T, sqlDB *sql.DB) {
 	assertColumnExists(t, sqlDB, "artists", "name_normalized")
 }
 
-func assertLegacyBackfillSchema(t *testing.T, sqlDB *sql.DB) {
-	t.Helper()
-	for _, tableName := range []string{
-		"legacy_library_backfill_state",
-		"legacy_artist_identities",
-		"legacy_album_identities",
-		"legacy_track_identities",
-		"legacy_album_genres",
-		"legacy_album_artwork_metadata",
-	} {
-		assertTableExists(t, sqlDB, tableName)
-	}
-}
-
 func assertTableExists(t *testing.T, sqlDB *sql.DB, tableName string) {
 	t.Helper()
 	var count int
@@ -1132,25 +600,47 @@ func registerDatabaseCleanup(t *testing.T, sqlDB *sql.DB) {
 	})
 }
 
-func TestRetireLegacyScanJobsMigrationAppliesAndRollsBack(t *testing.T) {
-	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_SOURCES_VERSION)
-	assertTableExists(t, sqlDB, "scan_jobs")
-	if _, err := sqlDB.Exec(`INSERT INTO scan_jobs (id, status, started_at) VALUES ('job-1', 'completed', '2026-01-01 00:00:00')`); err != nil {
-		t.Fatalf("record legacy scan job: %v", err)
+func TestRemoveLegacyLibraryMigrationDeletesLegacyRowsAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, RETIRE_LEGACY_SCAN_JOBS_VERSION)
+	for _, statement := range []string{
+		`INSERT INTO artists (id, name, name_sort, name_normalized) VALUES ('artist-managed', 'Managed Artist', 'managed artist', 'managed artist'), ('artist-legacy', 'Legacy Artist', 'legacy artist', 'legacy artist')`,
+		`INSERT INTO albums (id, artist_id, title, title_sort, genres) VALUES ('album-managed', 'artist-managed', 'Managed Album', 'managed album', '[]'), ('album-legacy', 'artist-legacy', 'Legacy Album', 'legacy album', '[]')`,
+		`INSERT INTO album_artists (album_id, artist_id, position) VALUES ('album-managed', 'artist-managed', 0), ('album-legacy', 'artist-legacy', 0)`,
+		`INSERT INTO tracks (id, album_id, title, title_sort, artist_name, duration_ms, format, size_bytes, file_path, file_mtime) VALUES ('track-managed', 'album-managed', 'Kept', 'kept', 'Managed Artist', 1000, 'flac', 10, '/managed/kept.flac', 1)`,
+		`INSERT INTO tracks (id, album_id, title, title_sort, artist_name, duration_ms, format, size_bytes, file_path, file_mtime, missing_at) VALUES ('track-legacy', 'album-legacy', 'Retired', 'retired', 'Legacy Artist', 1000, 'flac', 10, '/music/retired.flac', 1, CURRENT_TIMESTAMP)`,
+		`INSERT INTO track_sources (id, track_id, source_kind, file_path, content_sha256, source_format, size_bytes) VALUES ('source-managed', 'track-managed', 'managed', '/managed/kept.flac', '` + strings.Repeat("a", 64) + `', 'flac', 10)`,
+		`INSERT INTO track_sources (id, track_id, source_kind, file_path, source_format, size_bytes) VALUES ('source-legacy', 'track-legacy', 'legacy', '/music/retired.flac', 'flac', 10)`,
+		`INSERT INTO track_artists (track_id, artist_id, position) VALUES ('track-managed', 'artist-managed', 0), ('track-legacy', 'artist-legacy', 0)`,
+		`INSERT INTO genres (id, name, name_normalized) VALUES ('genre-kept', 'Pop', 'pop'), ('genre-orphan', 'Retired Genre', 'retired genre')`,
+		`INSERT INTO track_genres (track_id, genre_id, position) VALUES ('track-managed', 'genre-kept', 0), ('track-legacy', 'genre-orphan', 0)`,
+		`INSERT INTO legacy_migration_sources (track_id, source_track_id, source_file_path, source_sha256) VALUES ('track-managed', 'track-legacy', '/music/retired.flac', '` + strings.Repeat("b", 64) + `')`,
+	} {
+		if _, err := sqlDB.Exec(statement); err != nil {
+			t.Fatalf("seed pre-removal library: %v\n%s", err, statement)
+		}
 	}
 
-	if err := goose.UpTo(sqlDB, migrationsDir(t), RETIRE_LEGACY_SCAN_JOBS_VERSION); err != nil {
-		t.Fatalf("apply retire legacy scan jobs migration: %v", err)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), REMOVE_LEGACY_LIBRARY_VERSION); err != nil {
+		t.Fatalf("apply remove legacy library migration: %v", err)
 	}
-	assertMigrationVersion(t, sqlDB, RETIRE_LEGACY_SCAN_JOBS_VERSION)
-	assertTableMissing(t, sqlDB, "scan_jobs")
+	assertMigrationVersion(t, sqlDB, REMOVE_LEGACY_LIBRARY_VERSION)
+	assertRowCount(t, sqlDB, "tracks", 1)
+	assertTextValue(t, sqlDB, `SELECT id FROM tracks`, "track-managed")
+	assertRowCount(t, sqlDB, "track_sources", 1)
+	assertRowCount(t, sqlDB, "albums", 1)
+	assertRowCount(t, sqlDB, "artists", 1)
+	assertRowCount(t, sqlDB, "genres", 1)
+	assertTextValue(t, sqlDB, `SELECT name FROM genres`, "Pop")
+	for _, table := range []string{"legacy_migration_copies", "legacy_migration_sources", "legacy_library_backfill_state", "legacy_artist_identities", "legacy_album_identities", "legacy_track_identities", "legacy_album_genres", "legacy_album_artwork_metadata"} {
+		assertTableMissing(t, sqlDB, table)
+	}
+	assertForeignKeyIntegrity(t, sqlDB)
 
 	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
-		t.Fatalf("roll back retire legacy scan jobs migration: %v", err)
+		t.Fatalf("roll back remove legacy library migration: %v", err)
 	}
-	assertMigrationVersion(t, sqlDB, LEGACY_MIGRATION_SOURCES_VERSION)
-	assertTableExists(t, sqlDB, "scan_jobs")
-	if _, err := sqlDB.Exec(`INSERT INTO scan_jobs (id, status, started_at) VALUES ('job-2', 'completed', '2026-01-01 00:00:00')`); err != nil {
-		t.Fatalf("restored scan_jobs table rejects legacy rows: %v", err)
-	}
+	assertMigrationVersion(t, sqlDB, RETIRE_LEGACY_SCAN_JOBS_VERSION)
+	assertTableExists(t, sqlDB, "legacy_migration_sources")
+	assertTableExists(t, sqlDB, "legacy_library_backfill_state")
+	assertRowCount(t, sqlDB, "tracks", 1)
 }

@@ -56,48 +56,6 @@ export interface paths {
         patch: operations["patchPreferences"];
         trace?: never;
     };
-    "/api/v1/library/scan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Deprecated legacy scan trigger (retired)
-         * @deprecated
-         * @description Legacy server-side library scanning is retired. Managed Import is the authoritative ingestion path and Legacy Tracks change only through an explicit Library Migration. This route stays mounted for API v1 compatibility and always answers 410 with error code legacy_scan_retired; it never discovers or ingests files. New clients must not call it.
-         */
-        post: operations["triggerLibraryScan"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library/scan/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Deprecated legacy scan status (always idle)
-         * @deprecated
-         * @description Retained for API v1 compatibility so older clients that poll after a scan trigger stop gracefully. The scanner never runs, so the status is permanently idle with zero counts. New clients must not call it.
-         */
-        get: operations["getLibraryScanStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/library/artists": {
         parameters: {
             query?: never;
@@ -143,8 +101,7 @@ export interface paths {
         get: operations["getAlbum"];
         put?: never;
         post?: never;
-        /** Delete album, its tracks, and music files */
-        delete: operations["deleteAlbum"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -233,84 +190,6 @@ export interface paths {
          * @description Creates a Managed Import Job bound to the Track. Upload the replacement file with uploadManagedImportFile; the returned Import Preview carries a replacement section listing every difference and destructive consequence. Confirm with confirmTrackReplacement, never with confirmManagedImport.
          */
         post: operations["createTrackReplacement"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library-migrations/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Analyze every Legacy Track through the Strict Import Profile without changing library state */
-        post: operations["previewLibraryMigration"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library-migrations/stage": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Copy and verify accepted Legacy Tracks in hidden pending Managed Storage locations */
-        post: operations["stageLibraryMigration"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library-migrations/cutover": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Activate verified migration copies as Managed Tracks and remove the migrated Legacy Tracks
-         * @description Re-runs the migration preview and staging, then activates every verified copy under a new stable Track ID. The corresponding Legacy Track is removed only after managed activation succeeds, and its old Playlist, Queue, and snapshot references are dropped rather than remapped. The final report distinguishes migrated, rejected, failed, and not-attempted files.
-         */
-        post: operations["cutoverLibraryMigration"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library-migrations/cleanup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List legacy source files eligible for cleanup after a verified migration
-         * @description Lists every legacy source file. Only sources proven to correspond to an active migrated Managed Track (recorded by a completed cutover, with the managed bytes and the source bytes still hashing to the migrated content) are eligible. Rejected, failed, pending, unverified, changed, or unsafe sources are reported as ineligible and can never be selected. The preview reports the exact eligible file count and total size and changes nothing.
-         */
-        get: operations["previewLibraryMigrationCleanup"];
-        put?: never;
-        /**
-         * Irreversibly delete the confirmed legacy source files of migrated Managed Tracks
-         * @description Deletes exactly the legacy source files named by the selected Managed Track IDs. Every target is resolved and verified again before any file is removed; if the selection, the confirmed file count, or the confirmed total size no longer match the eligible set, nothing is deleted and the request is rejected with a conflict. Empty parent directories are pruned upward to the configured music path without recursing into siblings. Migration success never triggers this cleanup automatically.
-         */
-        post: operations["cleanupLibraryMigrationSources"];
         delete?: never;
         options?: never;
         head?: never;
@@ -818,7 +697,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, and the explicit Library Migration workflow (preview, stage, cutover, and Legacy Source Cleanup) as library-migration.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
+            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, and explicit Track Replacement as managed-track-replacement.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
             capabilities: string[];
         };
         User: {
@@ -1000,142 +879,6 @@ export interface components {
             trackNo: number;
             format: string;
             durationMs: number;
-        };
-        LibraryMigrationPreview: {
-            acceptedCount: number;
-            rejectedCount: number;
-            files: components["schemas"]["LibraryMigrationPreviewFile"][];
-        };
-        LibraryMigrationPreviewFile: {
-            /** Format: uuid */
-            trackId: string;
-            /** @description Display-only basename of the existing Legacy Track source. */
-            originalFilename: string;
-            /** @enum {string} */
-            state: "accepted" | "rejected";
-            preview?: components["schemas"]["ManagedImportPreviewFile"];
-            /** @description Stable Strict Import Profile or capacity failure code. */
-            errorCode?: string;
-            /** @description Machine-readable field associated with a rejection. */
-            errorField?: string;
-            /** @description Actionable per-file rejection reason. */
-            errorReason?: string;
-        };
-        LibraryMigrationStage: {
-            verifiedCount: number;
-            rejectedCount: number;
-            failedCount: number;
-            files: components["schemas"]["LibraryMigrationStageFile"][];
-        };
-        LibraryMigrationStageFile: {
-            /** Format: uuid */
-            trackId: string;
-            /** @description Display-only basename of the existing Legacy Track source. */
-            originalFilename: string;
-            /** @enum {string} */
-            state: "verified" | "rejected" | "failed";
-            /** Format: uuid */
-            pendingTrackId?: string;
-            sourceSha256?: string;
-            pendingSha256?: string;
-            errorCode?: string;
-            errorField?: string;
-            errorReason?: string;
-        };
-        LibraryMigrationCutover: {
-            migratedCount: number;
-            rejectedCount: number;
-            failedCount: number;
-            notAttemptedCount: number;
-            files: components["schemas"]["LibraryMigrationCutoverFile"][];
-        };
-        LibraryMigrationCutoverFile: {
-            /**
-             * Format: uuid
-             * @description Legacy Track that the migration source was seeded from.
-             */
-            trackId: string;
-            /** @description Display-only basename of the existing Legacy Track source. */
-            originalFilename: string;
-            /** @enum {string} */
-            state: "migrated" | "rejected" | "failed" | "not_attempted";
-            /**
-             * Format: uuid
-             * @description New stable Managed Track ID active after the cutover.
-             */
-            createdTrackId?: string;
-            /** @description Verified full-file hash of the activated Managed Track. */
-            contentSha256?: string;
-            errorCode?: string;
-            errorField?: string;
-            errorReason?: string;
-        };
-        LibraryMigrationCleanupPreview: {
-            /** @description Exact number of legacy source files that may be deleted. */
-            eligibleCount: number;
-            ineligibleCount: number;
-            /**
-             * Format: int64
-             * @description Exact total size of the eligible legacy source files.
-             */
-            totalSizeBytes: number;
-            files: components["schemas"]["LibraryMigrationCleanupPreviewFile"][];
-        };
-        LibraryMigrationCleanupPreviewFile: {
-            /**
-             * Format: uuid
-             * @description Migrated Managed Track for eligible files; the Legacy Track for unmigrated sources.
-             */
-            trackId: string;
-            /**
-             * Format: uuid
-             * @description Legacy Track that the migrated source was seeded from.
-             */
-            sourceTrackId?: string;
-            /** @description Display-only basename of the legacy source file. */
-            originalFilename: string;
-            /** @enum {string} */
-            state: "eligible" | "ineligible";
-            /** Format: int64 */
-            sizeBytes?: number;
-            /** @description Verified hash shared by the legacy source and the migrated Managed Track. */
-            contentSha256?: string;
-            errorCode?: string;
-            errorField?: string;
-            errorReason?: string;
-        };
-        LibraryMigrationCleanupConfirmation: {
-            /** @description Migrated Managed Tracks whose legacy source files are to be deleted. */
-            trackIds: string[];
-            /** @description Exact file count shown in the confirmation; must equal the number of selected Tracks. */
-            fileCount: number;
-            /**
-             * Format: int64
-             * @description Exact total size shown in the confirmation; must equal the current size of the selected files.
-             */
-            totalSizeBytes: number;
-        };
-        LibraryMigrationCleanup: {
-            deletedCount: number;
-            failedCount: number;
-            /** Format: int64 */
-            deletedBytes: number;
-            prunedDirectoryCount: number;
-            files: components["schemas"]["LibraryMigrationCleanupFile"][];
-        };
-        LibraryMigrationCleanupFile: {
-            /** Format: uuid */
-            trackId: string;
-            /** Format: uuid */
-            sourceTrackId: string;
-            originalFilename: string;
-            /** @enum {string} */
-            state: "deleted" | "failed";
-            /** Format: int64 */
-            sizeBytes?: number;
-            errorCode?: string;
-            errorField?: string;
-            errorReason?: string;
         };
         ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportWavPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
         ManagedImportPreviewFileCommon: {
@@ -1343,11 +1086,6 @@ export interface components {
             discTotal?: number;
             durationMs: number;
             format: string;
-            /**
-             * @description Ownership of the Track's authoritative audio source.
-             * @enum {string}
-             */
-            sourceKind?: "legacy" | "managed";
             codec?: string;
             container?: string;
             sampleFormat?: string;
@@ -1601,24 +1339,8 @@ export interface components {
             revision: number;
             /** Format: uuid */
             trackId: string;
+            /** Format: date-time */
             deletedFiles: number;
-        };
-        /**
-         * @deprecated
-         * @description Legacy scan status retained for API v1 compatibility. The scanner is retired, so the Music Server always reports idle with zero counts.
-         */
-        ScanStatus: {
-            /** @enum {string} */
-            status: "idle" | "running" | "completed" | "failed";
-            scanned: number;
-            added: number;
-            updated: number;
-            removed: number;
-            error?: string;
-            /** Format: date-time */
-            startedAt?: string;
-            /** Format: date-time */
-            finishedAt?: string;
         };
         QueueItem: {
             /** Format: uuid */
@@ -1697,15 +1419,6 @@ export interface components {
         };
         /** @description Conflict */
         Conflict: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["ErrorResponse"];
-            };
-        };
-        /** @description The requested legacy behavior is retired and will not run */
-        Gone: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1837,38 +1550,6 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
-    triggerLibraryScan: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            410: components["responses"]["Gone"];
-        };
-    };
-    getLibraryScanStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Permanently idle scan status */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScanStatus"];
-                };
-            };
-        };
-    };
     listArtists: {
         parameters: {
             query?: {
@@ -1941,30 +1622,6 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
-        };
-    };
-    deleteAlbum: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                albumId: components["parameters"]["albumId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Album deleted */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeleteResult"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
         };
     };
     getAlbumCover: {
@@ -2117,132 +1774,6 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-        };
-    };
-    previewLibraryMigration: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Non-simple application header required to prevent cross-origin form submissions */
-                "X-Migration-Preview": "1";
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Stable accepted and rejected Library Migration preview */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LibraryMigrationPreview"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
-        };
-    };
-    stageLibraryMigration: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Non-simple application header required to confirm explicit migration staging */
-                "X-Migration-Stage": "1";
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Per-file result of staging and verifying the current Library Migration candidates */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LibraryMigrationStage"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
-        };
-    };
-    cutoverLibraryMigration: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Non-simple application header required to confirm explicit migration cutover */
-                "X-Migration-Cutover": "1";
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Per-file result of cutting over the verified Library Migration copies */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LibraryMigrationCutover"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
-        };
-    };
-    previewLibraryMigrationCleanup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Legacy source cleanup preview */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LibraryMigrationCleanupPreview"];
-                };
-            };
-            409: components["responses"]["Conflict"];
-        };
-    };
-    cleanupLibraryMigrationSources: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Explicit application confirmation required for irreversible legacy source deletion */
-                "X-Migration-Cleanup": "1";
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LibraryMigrationCleanupConfirmation"];
-            };
-        };
-        responses: {
-            /** @description Per-file result of deleting the confirmed legacy source files */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LibraryMigrationCleanup"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
         };
     };

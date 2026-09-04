@@ -1,10 +1,8 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
-import type { components, operations, paths } from './generated/schema';
+import type { components, operations } from './generated/schema';
 import {
-  ApiError,
   createApiClient,
   hasServerCapability,
-  LIBRARY_MIGRATION_CAPABILITY,
   MANAGED_IMPORT_CAPABILITY,
   missingServerCapabilities,
 } from './index';
@@ -72,7 +70,7 @@ describe('generated Managed Import contract', () => {
     >().toEqualTypeOf<number>();
   });
 
-  it('types Import History, Track Replacement, deletion, and migration', () => {
+  it('types Import History, Track Replacement, and deletion', () => {
     expectTypeOf<Schemas['ManagedImportHistoryList']['items']>().toEqualTypeOf<
       Schemas['ManagedImportHistoryItem'][]
     >();
@@ -94,15 +92,6 @@ describe('generated Managed Import contract', () => {
     expectTypeOf<
       Schemas['TrackDeletionConfirmation']['confirmationToken']
     >().toEqualTypeOf<string>();
-    expectTypeOf<
-      Schemas['LibraryMigrationCutoverFile']['state']
-    >().toEqualTypeOf<'migrated' | 'rejected' | 'failed' | 'not_attempted'>();
-    expectTypeOf<
-      Schemas['LibraryMigrationCleanupConfirmation']
-    >().toHaveProperty('trackIds');
-    expectTypeOf<
-      Schemas['LibraryMigrationCleanupConfirmation']
-    >().toHaveProperty('totalSizeBytes');
   });
 
   it('documents every supported binary upload media type', () => {
@@ -137,9 +126,6 @@ describe('generated Managed Import contract', () => {
     expectTypeOf<
       operations['uploadManagedImportFile']['responses'][422]['content']['application/json']
     >().toEqualTypeOf<Schemas['ErrorResponse']>();
-    expectTypeOf<
-      operations['triggerLibraryScan']['responses'][410]['content']['application/json']
-    >().toEqualTypeOf<Schemas['ErrorResponse']>();
   });
 
   it('exposes one client method per Managed Import operation', () => {
@@ -161,11 +147,6 @@ describe('generated Managed Import contract', () => {
         | 'deleteTrack'
         | 'createTrackReplacement'
         | 'confirmTrackReplacement'
-        | 'previewLibraryMigration'
-        | 'stageLibraryMigration'
-        | 'cutoverLibraryMigration'
-        | 'previewLibraryMigrationCleanup'
-        | 'cleanupLibraryMigrationSources'
       >,
       keyof typeof client
     > = {
@@ -183,58 +164,10 @@ describe('generated Managed Import contract', () => {
       deleteTrack: 'deleteTrack',
       createTrackReplacement: 'createTrackReplacement',
       confirmTrackReplacement: 'confirmTrackReplacement',
-      previewLibraryMigration: 'previewLibraryMigration',
-      stageLibraryMigration: 'stageLibraryMigration',
-      cutoverLibraryMigration: 'cutoverLibraryMigration',
-      previewLibraryMigrationCleanup: 'previewLibraryMigrationCleanup',
-      cleanupLibraryMigrationSources: 'cleanupLibraryMigrationSources',
     };
     for (const method of Object.values(wrappers)) {
       expect(client[method]).toBeTypeOf('function');
     }
-  });
-});
-
-describe('legacy compatibility under the versioned contract', () => {
-  it('keeps the retired scan operations documented but out of the client', () => {
-    expectTypeOf<paths['/api/v1/library/scan']['post']>().toEqualTypeOf<
-      operations['triggerLibraryScan']
-    >();
-    expectTypeOf<paths['/api/v1/library/scan/status']['get']>().toEqualTypeOf<
-      operations['getLibraryScanStatus']
-    >();
-    const client = createApiClient({ baseUrl: 'http://music.test' });
-    expect('triggerLibraryScan' in client).toBe(false);
-    expect('getLibraryScanStatus' in client).toBe(false);
-  });
-
-  it('surfaces the documented 410 as a structured ApiError for an older caller', async () => {
-    const transport = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          error: 'legacy_scan_retired',
-          code: 'legacy_scan_retired',
-          message: 'Legacy library scanning is retired; use Managed Import.',
-        }),
-        {
-          status: 410,
-          headers: { 'Content-Type': 'application/json', Deprecation: 'true' },
-        },
-      ),
-    );
-    const client = createApiClient({ baseUrl: 'http://music.test', transport });
-
-    // An older client bundle still calls the retired route through the same
-    // request pipeline; it must receive the documented structured failure
-    // rather than a hang or an unexplained transport error.
-    const failure = await client.getHealth().catch((error: unknown) => error);
-
-    expect(failure).toBeInstanceOf(ApiError);
-    expect(failure).toMatchObject({
-      status: 410,
-      body: { code: 'legacy_scan_retired', error: 'legacy_scan_retired' },
-      message: 'Legacy library scanning is retired; use Managed Import.',
-    });
   });
 });
 
@@ -260,12 +193,10 @@ describe('capability negotiation at the client seam', () => {
     const health = await client.getHealth();
 
     expect(hasServerCapability(health, MANAGED_IMPORT_CAPABILITY)).toBe(true);
-    expect(hasServerCapability(health, LIBRARY_MIGRATION_CAPABILITY)).toBe(
-      false,
+    expect(hasServerCapability(health, 'library-migration.v1')).toBe(false);
+    expect(missingServerCapabilities(health, ['library-migration.v1'])).toEqual(
+      ['library-migration.v1'],
     );
-    expect(
-      missingServerCapabilities(health, [LIBRARY_MIGRATION_CAPABILITY]),
-    ).toEqual([LIBRARY_MIGRATION_CAPABILITY]);
     expect(hasServerCapability(health, 'future.optional.v3')).toBe(true);
   });
 });

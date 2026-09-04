@@ -82,7 +82,6 @@ const sampleTrack: Track = {
 	discNo: 1,
 	durationMs: 212_000,
 	format: "flac",
-	sourceKind: "managed",
 	genre: "Pop",
 	artists: [],
 	genres: [{ id: "genre-pop", name: "Pop" }],
@@ -282,13 +281,6 @@ describe("TrackList", () => {
 		expect(openReplacement).toHaveBeenCalledWith(sampleTrack);
 
 		cleanup();
-		render(<TrackList tracks={[{ ...sampleTrack, sourceKind: "legacy" }]} />);
-		fireEvent.contextMenu(
-			screen.getByRole("row", { name: /Welcome to New York/ }),
-		);
-		expect(screen.queryByText("Replace file")).toBeNull();
-
-		cleanup();
 		hasDeletionCapability = false;
 		render(<TrackList tracks={[sampleTrack]} />);
 		fireEvent.contextMenu(
@@ -390,15 +382,6 @@ describe("TrackList", () => {
 			within(dialog).getByRole("button", { name: "Replace track" }),
 		);
 		expect(confirmReplacement).toHaveBeenCalledTimes(1);
-	});
-
-	it("hides permanent deletion for non-managed Tracks", () => {
-		render(<TrackList tracks={[{ ...sampleTrack, sourceKind: "legacy" }]} />);
-
-		fireEvent.contextMenu(
-			screen.getByRole("row", { name: /Welcome to New York/ }),
-		);
-		expect(screen.queryByText("Delete track")).toBeNull();
 	});
 
 	it("hides permanent deletion when the server capability is absent", () => {

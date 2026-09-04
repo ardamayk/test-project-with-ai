@@ -78,18 +78,6 @@ const (
 	COMMIT_PHASE_ROLLED_BACK        commitPhase = "rolled_back"
 )
 
-// migrationPhase marks the durable progress of a Library Migration copy. The
-// database_committed phase only exists in memory: the copy row is deleted by
-// the cutover transaction that reaches it.
-type migrationPhase string
-
-const (
-	MIGRATION_PHASE_PREPARED           migrationPhase = "prepared"
-	MIGRATION_PHASE_VERIFIED           migrationPhase = "verified"
-	MIGRATION_PHASE_PROMOTED           migrationPhase = "promoted"
-	MIGRATION_PHASE_DATABASE_COMMITTED migrationPhase = "database_committed"
-)
-
 type HistoryResultCode string
 
 const (
@@ -110,8 +98,6 @@ var (
 	ErrInvalidUpload       = errors.New("managed import upload is invalid")
 	ErrInsufficientStorage = errors.New("managed storage capacity is insufficient")
 	ErrUnsafeStoragePath   = errors.New("managed storage path is unsafe")
-	ErrMigrationInProgress = errors.New("library migration preview is already in progress")
-	ErrCleanupConflict     = errors.New("legacy source cleanup preview changed")
 	ErrTrackNotFound       = errors.New("track not found")
 	ErrNotManagedTrack     = errors.New("track is not managed")
 	ErrDeletionConflict    = errors.New("permanent track deletion preview changed")
@@ -220,146 +206,6 @@ type PreviewFile struct {
 	BitDepth         int      `json:"bitDepth,omitempty"`
 	BitrateKbps      int      `json:"bitrateKbps"`
 	ArtworkMediaType string   `json:"artworkMediaType"`
-}
-
-type MigrationFileState string
-
-const (
-	MIGRATION_FILE_ACCEPTED MigrationFileState = "accepted"
-	MIGRATION_FILE_REJECTED MigrationFileState = "rejected"
-)
-
-type MigrationPreview struct {
-	AcceptedCount int                    `json:"acceptedCount"`
-	RejectedCount int                    `json:"rejectedCount"`
-	Files         []MigrationPreviewFile `json:"files"`
-}
-
-type MigrationPreviewFile struct {
-	TrackID          string             `json:"trackId"`
-	OriginalFilename string             `json:"originalFilename"`
-	State            MigrationFileState `json:"state"`
-	Preview          *PreviewFile       `json:"preview,omitempty"`
-	ErrorCode        string             `json:"errorCode,omitempty"`
-	ErrorField       string             `json:"errorField,omitempty"`
-	ErrorReason      string             `json:"errorReason,omitempty"`
-}
-
-type MigrationStageState string
-
-const (
-	MIGRATION_STAGE_VERIFIED MigrationStageState = "verified"
-	MIGRATION_STAGE_REJECTED MigrationStageState = "rejected"
-	MIGRATION_STAGE_FAILED   MigrationStageState = "failed"
-)
-
-type MigrationCutoverState string
-
-const (
-	MIGRATION_CUTOVER_MIGRATED      MigrationCutoverState = "migrated"
-	MIGRATION_CUTOVER_REJECTED      MigrationCutoverState = "rejected"
-	MIGRATION_CUTOVER_FAILED        MigrationCutoverState = "failed"
-	MIGRATION_CUTOVER_NOT_ATTEMPTED MigrationCutoverState = "not_attempted"
-)
-
-const ERROR_CODE_MIGRATION_SOURCE_INACTIVE = "legacy_source_inactive"
-
-type MigrationCutover struct {
-	MigratedCount     int                    `json:"migratedCount"`
-	RejectedCount     int                    `json:"rejectedCount"`
-	FailedCount       int                    `json:"failedCount"`
-	NotAttemptedCount int                    `json:"notAttemptedCount"`
-	Files             []MigrationCutoverFile `json:"files"`
-}
-
-type MigrationCutoverFile struct {
-	TrackID          string                `json:"trackId"`
-	OriginalFilename string                `json:"originalFilename"`
-	State            MigrationCutoverState `json:"state"`
-	CreatedTrackID   string                `json:"createdTrackId,omitempty"`
-	ContentSHA256    string                `json:"contentSha256,omitempty"`
-	ErrorCode        string                `json:"errorCode,omitempty"`
-	ErrorField       string                `json:"errorField,omitempty"`
-	ErrorReason      string                `json:"errorReason,omitempty"`
-}
-
-type MigrationCleanupState string
-
-const (
-	MIGRATION_CLEANUP_ELIGIBLE   MigrationCleanupState = "eligible"
-	MIGRATION_CLEANUP_INELIGIBLE MigrationCleanupState = "ineligible"
-	MIGRATION_CLEANUP_DELETED    MigrationCleanupState = "deleted"
-	MIGRATION_CLEANUP_FAILED     MigrationCleanupState = "failed"
-)
-
-// MigrationCleanupPreview lists every legacy source file with the exact
-// count and total size of the files that may be deleted. Only sources proven
-// to correspond to successfully migrated Managed Tracks are eligible.
-type MigrationCleanupPreview struct {
-	EligibleCount   int                           `json:"eligibleCount"`
-	IneligibleCount int                           `json:"ineligibleCount"`
-	TotalSizeBytes  int64                         `json:"totalSizeBytes"`
-	Files           []MigrationCleanupPreviewFile `json:"files"`
-}
-
-type MigrationCleanupPreviewFile struct {
-	TrackID          string                `json:"trackId"`
-	SourceTrackID    string                `json:"sourceTrackId,omitempty"`
-	OriginalFilename string                `json:"originalFilename"`
-	State            MigrationCleanupState `json:"state"`
-	SizeBytes        int64                 `json:"sizeBytes,omitempty"`
-	ContentSHA256    string                `json:"contentSha256,omitempty"`
-	ErrorCode        string                `json:"errorCode,omitempty"`
-	ErrorField       string                `json:"errorField,omitempty"`
-	ErrorReason      string                `json:"errorReason,omitempty"`
-}
-
-// MigrationCleanupConfirmation names the exact Managed Tracks whose legacy
-// sources are to be deleted together with the file count and total size the
-// user confirmed; any mismatch rejects the whole request.
-type MigrationCleanupConfirmation struct {
-	TrackIDs       []string `json:"trackIds"`
-	FileCount      int      `json:"fileCount"`
-	TotalSizeBytes int64    `json:"totalSizeBytes"`
-}
-
-type MigrationCleanup struct {
-	DeletedCount         int                    `json:"deletedCount"`
-	FailedCount          int                    `json:"failedCount"`
-	DeletedBytes         int64                  `json:"deletedBytes"`
-	PrunedDirectoryCount int                    `json:"prunedDirectoryCount"`
-	Files                []MigrationCleanupFile `json:"files"`
-}
-
-type MigrationCleanupFile struct {
-	TrackID          string                `json:"trackId"`
-	SourceTrackID    string                `json:"sourceTrackId"`
-	OriginalFilename string                `json:"originalFilename"`
-	State            MigrationCleanupState `json:"state"`
-	SizeBytes        int64                 `json:"sizeBytes,omitempty"`
-	ErrorCode        string                `json:"errorCode,omitempty"`
-	ErrorField       string                `json:"errorField,omitempty"`
-	ErrorReason      string                `json:"errorReason,omitempty"`
-}
-
-type MigrationStage struct {
-	VerifiedCount int                  `json:"verifiedCount"`
-	RejectedCount int                  `json:"rejectedCount"`
-	FailedCount   int                  `json:"failedCount"`
-	Files         []MigrationStageFile `json:"files"`
-}
-
-type MigrationStageFile struct {
-	TrackID          string              `json:"trackId"`
-	OriginalFilename string              `json:"originalFilename"`
-	State            MigrationStageState `json:"state"`
-	PendingTrackID   string              `json:"pendingTrackId,omitempty"`
-	PendingPath      string              `json:"-"`
-	SourceSHA256     string              `json:"sourceSha256,omitempty"`
-	PendingSHA256    string              `json:"pendingSha256,omitempty"`
-	ErrorCode        string              `json:"errorCode,omitempty"`
-	ErrorField       string              `json:"errorField,omitempty"`
-	ErrorReason      string              `json:"errorReason,omitempty"`
 }
 
 type Confirmation struct {

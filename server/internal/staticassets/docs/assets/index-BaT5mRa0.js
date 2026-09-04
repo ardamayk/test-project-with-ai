@@ -10,7 +10,7 @@ Error generating stack: `+e.message+`
 `,(0,p.jsx)(t.p,{children:`Self-hosted music server with a modular widget layout and plugin-ready architecture.`}),`
 `,(0,p.jsx)(t.h2,{children:`Docs map`}),`
 `,(0,p.jsxs)(t.ul,{children:[`
-`,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.strong,{children:`Getting Started:`}),` local dev, scan flow, production build`]}),`
+`,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.strong,{children:`Getting Started:`}),` local dev, Managed Import flow, production build`]}),`
 `,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.strong,{children:`Architecture:`}),` monorepo shape, Go modules, embedded static assets`]}),`
 `,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.strong,{children:`Layout Customization:`}),` widget shell, panels, preferences`]}),`
 `,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.strong,{children:`API Reference:`}),` Swagger UI and generated contract outputs`]}),`
@@ -36,10 +36,8 @@ mise run dev
 `,(0,p.jsxs)(t.li,{children:[`Web dev server: http://localhost:3000 (proxies `,(0,p.jsx)(t.code,{children:`/api`}),` to Go)`]}),`
 `]}),`
 `,(0,p.jsx)(t.h3,{children:`Music library`}),`
-`,(0,p.jsx)(t.p,{children:`Point the server at one or more local folders (comma-separated):`}),`
-`,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-bash`,children:`export MUSIC_PATHS=/path/to/music,./music
-`})}),`
-`,(0,p.jsxs)(t.p,{children:[`Then open `,(0,p.jsx)(t.strong,{children:`Library`}),` in the web UI and click `,(0,p.jsx)(t.strong,{children:`Scan library`}),` to index audio files (mp3, flac, ogg, m4a, opus, wav).`]}),`
+`,(0,p.jsxs)(t.p,{children:[`Add music through `,(0,p.jsx)(t.strong,{children:`Managed Import`}),`: open `,(0,p.jsx)(t.strong,{children:`Tracks`}),` in the web UI, click `,(0,p.jsx)(t.strong,{children:`Import Music`}),`, and select audio files or a local folder (mp3, flac, ogg, m4a, opus, wav). Every file is validated strictly, shown in an Import Preview, and stored in Managed Storage only after you confirm.`]}),`
+`,(0,p.jsx)(t.p,{children:`The server never scans a server-side folder; Managed Import is the only way music enters the library.`}),`
 `,(0,p.jsx)(t.h3,{children:`Managed Storage`}),`
 `,(0,p.jsx)(t.p,{children:`Managed imports use one server-owned storage root. The server keeps a 2 GiB safety reserve by default and enforces configurable per-file and per-batch streaming limits:`}),`
 `,(0,p.jsx)(t.pre,{children:(0,p.jsx)(t.code,{className:`language-bash`,children:`export MANAGED_STORAGE_PATH=./data/managed
@@ -53,6 +51,9 @@ export MANAGED_IMPORT_BATCH_LIMIT_BYTES=2147483648
 ./bin/server
 `})}),`
 `,(0,p.jsxs)(t.p,{children:[`Mise is the canonical interface for development and CI tasks. Run `,(0,p.jsx)(t.code,{children:`mise run ci:fast`}),` for static checks and unit tests, `,(0,p.jsx)(t.code,{children:`mise run ci:integration`}),` for integration tests, or `,(0,p.jsx)(t.code,{children:`mise run ci:full`}),` for the full local policy. Target one artifact or domain with commands such as `,(0,p.jsx)(t.code,{children:`mise run web:build`}),`, `,(0,p.jsx)(t.code,{children:`mise run server:test`}),`, and `,(0,p.jsx)(t.code,{children:`mise run desktop:check`}),`; root pnpm commands are compatibility proxies.`]}),`
+`,(0,p.jsx)(t.h3,{children:`Git hooks`}),`
+`,(0,p.jsxs)(t.p,{children:[(0,p.jsx)(t.code,{children:`pnpm install`}),` enables local Husky hooks. Pre-commit formats and checks staged JavaScript, TypeScript, JSON, Go, and Rust source while preserving partial staging. OpenAPI drift verification runs only when generation inputs are staged. Pre-push runs the complete `,(0,p.jsx)(t.code,{children:`mise run ci:fast`}),` policy.`]}),`
+`,(0,p.jsxs)(t.p,{children:[`These hooks provide bypassable local feedback; CI is authoritative. Pass `,(0,p.jsx)(t.code,{children:`--no-verify`}),` to `,(0,p.jsx)(t.code,{children:`git commit`}),` or `,(0,p.jsx)(t.code,{children:`git push`}),` when needed. Hook installation is disabled in CI and production dependency installs. When `,(0,p.jsx)(t.code,{children:`graphify-out/`}),` exists, Graphify post-commit and branch-switch updates run if `,(0,p.jsx)(t.code,{children:`graphify`}),` is available on `,(0,p.jsx)(t.code,{children:`PATH`}),`; otherwise they intentionally do nothing.`]}),`
 `,(0,p.jsx)(t.p,{children:`Single binary serves:`}),`
 `,(0,p.jsxs)(t.ul,{children:[`
 `,(0,p.jsxs)(t.li,{children:[`React SPA at `,(0,p.jsx)(t.code,{children:`/`})]}),`
@@ -94,7 +95,8 @@ web/src
 `,(0,p.jsx)(t.h2,{children:`Server modules`}),`
 `,(0,p.jsxs)(t.p,{children:[`Domain routes are registered through `,(0,p.jsx)(t.code,{children:`server/internal/modules`}),`.`]}),`
 `,(0,p.jsxs)(t.ul,{children:[`
-`,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.code,{children:`library`}),`: scan, artists, albums, tracks, covers, deletes`]}),`
+`,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.code,{children:`library`}),`: artists, albums, tracks, covers, deletes (no scanning; the deprecated scan routes only answer for API v1 compatibility)`]}),`
+`,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.code,{children:`managedimport`}),`: Managed Import uploads, validation, Import Preview, commit, Track Replacement, Library Migration`]}),`
 `,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.code,{children:`playback`}),`: queue and range streaming`]}),`
 `,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.code,{children:`preferences`}),`: theme and layout preferences`]}),`
 `,(0,p.jsxs)(t.li,{children:[(0,p.jsx)(t.code,{children:`docs`}),`: MDX docs, Swagger UI, OpenAPI YAML`]}),`

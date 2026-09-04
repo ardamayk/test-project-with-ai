@@ -6,7 +6,6 @@ import { Button } from "#/components/ui/button";
 import { apiClient } from "#/lib/api";
 import { cn } from "#/lib/utils";
 import { themePresetOptions } from "#/themes/presets";
-import { LibraryMigrationSection } from "./-library-migration-section";
 
 const themeModes: ThemePreferences["mode"][] = ["light", "dark", "system"];
 
@@ -91,8 +90,6 @@ function SettingsPage() {
 					))}
 				</div>
 			</section>
-
-			<LibraryMigrationSection />
 		</div>
 	);
 }

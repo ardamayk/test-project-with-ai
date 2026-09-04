@@ -271,9 +271,7 @@ export function TrackList({
 											{removeLabel}
 										</ContextMenuItem>
 									) : null}
-									{showDelete &&
-									track.sourceKind === "managed" &&
-									hasReplacementCapability ? (
+									{showDelete && hasReplacementCapability ? (
 										<ContextMenuItem
 											disabled={trackReplacement.isBusy}
 											onSelect={() => {
@@ -285,9 +283,7 @@ export function TrackList({
 											Replace file
 										</ContextMenuItem>
 									) : null}
-									{showDelete &&
-									track.sourceKind === "managed" &&
-									hasDeletionCapability ? (
+									{showDelete && hasDeletionCapability ? (
 										<ContextMenuItem
 											variant="destructive"
 											disabled={trackDeletion.isDeleting}

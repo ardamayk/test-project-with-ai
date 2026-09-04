@@ -32,7 +32,6 @@ var serverCapabilities = []string{
 	"managed-import-batches.v1",
 	"managed-track-deletion.v1",
 	"managed-track-replacement.v1",
-	"library-migration.v1",
 }
 
 // ServerCapabilities returns a copy of the advertised Server Capabilities.

@@ -50,9 +50,6 @@ func TestGetHealth(t *testing.T) {
 	if !slices.Contains(body.Capabilities, "managed-track-replacement.v1") {
 		t.Fatalf("capabilities = %v, want managed-track-replacement.v1", body.Capabilities)
 	}
-	if !slices.Contains(body.Capabilities, "library-migration.v1") {
-		t.Fatalf("capabilities = %v, want library-migration.v1", body.Capabilities)
-	}
 }
 
 func TestGetMe(t *testing.T) {

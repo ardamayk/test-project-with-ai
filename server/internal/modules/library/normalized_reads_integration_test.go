@@ -15,9 +15,8 @@ import (
 )
 
 func TestHandlersGetAlbumReturnsNormalizedRelationshipsAndDiscOrder(t *testing.T) {
-	handlers, database, musicRoot := setupHandlerFixture(t)
-	store := NewStore(database)
-	albumID, trackID := seedTrack(t, database, store, musicRoot)
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
 	seedExpandedReadFixture(t, database, albumID, trackID)
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -39,9 +38,8 @@ func TestHandlersGetAlbumReturnsNormalizedRelationshipsAndDiscOrder(t *testing.T
 }
 
 func TestHandlersListTracksSearchesNormalizedCreditsAndGenres(t *testing.T) {
-	handlers, database, musicRoot := setupHandlerFixture(t)
-	store := NewStore(database)
-	albumID, trackID := seedTrack(t, database, store, musicRoot)
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
 	seedExpandedReadFixture(t, database, albumID, trackID)
 
 	for _, query := range []string{"Guest, Artist", "Electronic / Ambient"} {
@@ -62,9 +60,8 @@ func TestHandlersListTracksSearchesNormalizedCreditsAndGenres(t *testing.T) {
 }
 
 func TestHandlersListAlbumsFiltersByTrackArtistCredit(t *testing.T) {
-	handlers, database, musicRoot := setupHandlerFixture(t)
-	store := NewStore(database)
-	albumID, trackID := seedTrack(t, database, store, musicRoot)
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
 	seedExpandedReadFixture(t, database, albumID, trackID)
 
 	request := httptest.NewRequest(http.MethodGet, "/?artistId=guest-artist", nil)
@@ -84,9 +81,8 @@ func TestHandlersListAlbumsFiltersByTrackArtistCredit(t *testing.T) {
 }
 
 func TestHandlersListArtistsCountsDistinctArtistsAndPreservesLegacyAlbumGenres(t *testing.T) {
-	handlers, database, musicRoot := setupHandlerFixture(t)
-	store := NewStore(database)
-	firstAlbumID, firstTrackID := seedTrack(t, database, store, musicRoot)
+	handlers, database := setupHandlerFixture(t)
+	firstAlbumID, firstTrackID := seedTrack(t, database)
 	seedExpandedReadFixture(t, database, firstAlbumID, firstTrackID)
 	executeFixtureStatement(t, database, `UPDATE albums SET genres = '["Legacy Album Genre"]' WHERE id = ?`, firstAlbumID)
 	executeFixtureStatement(t, database, `
@@ -134,9 +130,8 @@ func TestHandlersListArtistsCountsDistinctArtistsAndPreservesLegacyAlbumGenres(t
 }
 
 func TestHandlersGetAlbumCoverReadsNormalizedArtworkFile(t *testing.T) {
-	handlers, database, musicRoot := setupHandlerFixture(t)
-	store := NewStore(database)
-	albumID, trackID := seedTrack(t, database, store, musicRoot)
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
 	artworkPath := filepath.Join(t.TempDir(), "cover.png")
 	artworkData := []byte("normalized artwork")
 	if err := os.WriteFile(artworkPath, artworkData, 0o600); err != nil {
