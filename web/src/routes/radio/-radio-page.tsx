@@ -22,6 +22,7 @@ import {
 	HEADER_SEARCH_CONTAINER_CLASS,
 	HEADER_SEARCH_INPUT_CLASS,
 } from "#/lib/page-layout-classes";
+import { matchesLocalStationFilter } from "#/lib/radio-station-filter";
 import { cn } from "#/lib/utils";
 
 const radioQueryKeys = {
@@ -29,28 +30,6 @@ const radioQueryKeys = {
 	nowPlaying: (stationId: string) =>
 		["radio", "stations", stationId, "now-playing"] as const,
 };
-
-export function matchesLocalStationFilter(
-	station: RadioStation,
-	filter: string,
-): boolean {
-	const query = filter.trim().toLowerCase();
-	if (!query) {
-		return true;
-	}
-
-	const haystack = [
-		station.name,
-		station.country,
-		station.language,
-		...station.tags,
-	]
-		.filter(Boolean)
-		.join(" ")
-		.toLowerCase();
-
-	return haystack.includes(query);
-}
 
 export function RadioPage() {
 	const queryClient = useQueryClient();

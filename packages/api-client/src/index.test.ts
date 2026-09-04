@@ -134,7 +134,7 @@ describe('createApiClient', () => {
     };
     const result = {
       deleted: preview.tracks,
-      failed: [],
+      stoppedAt: null,
       deletedFiles: 2,
     };
     const transport = vi

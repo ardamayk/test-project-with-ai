@@ -103,6 +103,24 @@ func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Reque
 	respond.JSON(writer, http.StatusOK, job)
 }
 
+// readDeletionConfirmation enforces the explicit-confirmation header and
+// decodes the preview token shared by Track and Album deletion. It writes the
+// error response itself and reports whether the caller may continue.
+func readDeletionConfirmation(writer http.ResponseWriter, request *http.Request, subject string) (string, bool) {
+	if request.Header.Get(PERMANENT_DELETE_CONFIRMATION_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "permanent_deletion_forbidden", "Permanent Track Deletion requires explicit confirmation")
+		return "", false
+	}
+	var confirmation TrackDeletionConfirmation
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_TRACK_DELETION_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&confirmation); err != nil || confirmation.ConfirmationToken == "" {
+		respond.Error(writer, http.StatusBadRequest, "invalid_deletion_confirmation", subject+" requires the preview confirmation token")
+		return "", false
+	}
+	return confirmation.ConfirmationToken, true
+}
+
 func (handlers *Handlers) PreviewAlbumDeletion(writer http.ResponseWriter, request *http.Request) {
 	preview, err := handlers.service.PreviewAlbumDeletion(request.Context(), chi.URLParam(request, "albumId"))
 	if err != nil {
@@ -113,20 +131,13 @@ func (handlers *Handlers) PreviewAlbumDeletion(writer http.ResponseWriter, reque
 }
 
 func (handlers *Handlers) DeleteAlbum(writer http.ResponseWriter, request *http.Request) {
-	if request.Header.Get(PERMANENT_DELETE_CONFIRMATION_HEADER) != "1" {
-		respond.Error(writer, http.StatusForbidden, "permanent_deletion_forbidden", "Permanent Track Deletion requires explicit confirmation")
-		return
-	}
-	var confirmation TrackDeletionConfirmation
-	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_TRACK_DELETION_BODY_BYTES))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&confirmation); err != nil || confirmation.ConfirmationToken == "" {
-		respond.Error(writer, http.StatusBadRequest, "invalid_deletion_confirmation", "Album deletion requires the preview confirmation token")
+	confirmationToken, ok := readDeletionConfirmation(writer, request, "Album deletion")
+	if !ok {
 		return
 	}
 	result, err := handlers.service.DeleteAlbum(request.Context(), AlbumDeletionRequest{
 		AlbumID:           chi.URLParam(request, "albumId"),
-		ConfirmationToken: confirmation.ConfirmationToken,
+		ConfirmationToken: confirmationToken,
 	})
 	if err != nil {
 		handleError(writer, request, err)
@@ -145,20 +156,13 @@ func (handlers *Handlers) PreviewTrackDeletion(writer http.ResponseWriter, reque
 }
 
 func (handlers *Handlers) DeleteTrack(writer http.ResponseWriter, request *http.Request) {
-	if request.Header.Get(PERMANENT_DELETE_CONFIRMATION_HEADER) != "1" {
-		respond.Error(writer, http.StatusForbidden, "permanent_deletion_forbidden", "Permanent Track Deletion requires explicit confirmation")
-		return
-	}
-	var confirmation TrackDeletionConfirmation
-	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_TRACK_DELETION_BODY_BYTES))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&confirmation); err != nil || confirmation.ConfirmationToken == "" {
-		respond.Error(writer, http.StatusBadRequest, "invalid_deletion_confirmation", "Permanent Track Deletion requires the preview confirmation token")
+	confirmationToken, ok := readDeletionConfirmation(writer, request, "Permanent Track Deletion")
+	if !ok {
 		return
 	}
 	result, err := handlers.service.DeleteTrack(request.Context(), TrackDeletionRequest{
 		TrackID:           chi.URLParam(request, "trackId"),
-		ConfirmationToken: confirmation.ConfirmationToken,
+		ConfirmationToken: confirmationToken,
 	})
 	if err != nil {
 		handleError(writer, request, err)

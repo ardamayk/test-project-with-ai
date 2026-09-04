@@ -33,11 +33,12 @@ type AlbumDeletionTrack struct {
 
 // AlbumDeletionResult reports each Track separately because every Track
 // commits on its own: a failure stops the run and leaves the remaining Tracks
-// untouched rather than undoing the ones already deleted.
+// untouched rather than undoing the ones already deleted. StoppedAt is nil
+// when every Track was deleted.
 type AlbumDeletionResult struct {
-	Deleted      []AlbumDeletionTrack  `json:"deleted"`
-	Failed       []AlbumDeletionFailed `json:"failed"`
-	DeletedFiles int                   `json:"deletedFiles"`
+	Deleted      []AlbumDeletionTrack `json:"deleted"`
+	StoppedAt    *AlbumDeletionFailed `json:"stoppedAt"`
+	DeletedFiles int                  `json:"deletedFiles"`
 }
 
 type AlbumDeletionFailed struct {
@@ -65,10 +66,13 @@ func (service *Service) PreviewAlbumDeletion(ctx context.Context, albumID string
 }
 
 // DeleteAlbum re-derives the preview, refuses a stale token, then runs one
-// Permanent Track Deletion per Track in album order. Each Track is previewed
-// again immediately before its own deletion because deleting a sibling changes
-// what the next deletion means (for example which Track carries the final
-// album artwork).
+// Permanent Track Deletion per Track in album order. The album token is
+// checked once, before the loop; no lock spans the run. Each Track's
+// deletion is protected by DeleteTrack itself, which re-derives and compares
+// the Track's state inside its own transaction. The per-Track token minted
+// here only feeds that check; it is re-derived right before each deletion
+// because deleting a sibling changes what the next one means (for example
+// which Track carries the final album artwork).
 func (service *Service) DeleteAlbum(ctx context.Context, request AlbumDeletionRequest) (AlbumDeletionResult, error) {
 	state, err := loadAlbumDeletionState(ctx, service.store.database, service.storage, request.AlbumID)
 	if err != nil {
@@ -77,7 +81,7 @@ func (service *Service) DeleteAlbum(ctx context.Context, request AlbumDeletionRe
 	if !tokensEqual(state.Preview.ConfirmationToken, request.ConfirmationToken) {
 		return AlbumDeletionResult{}, fmt.Errorf("%w: album deletion preview changed", ErrDeletionConflict)
 	}
-	result := AlbumDeletionResult{Deleted: []AlbumDeletionTrack{}, Failed: []AlbumDeletionFailed{}}
+	result := AlbumDeletionResult{Deleted: []AlbumDeletionTrack{}}
 	for _, track := range state.Preview.Tracks {
 		var deleteErr error
 		var deleted TrackDeletionResult
@@ -92,7 +96,7 @@ func (service *Service) DeleteAlbum(ctx context.Context, request AlbumDeletionRe
 			deleted, deleteErr = service.DeleteTrack(ctx, TrackDeletionRequest{TrackID: track.TrackID, ConfirmationToken: trackState.Preview.ConfirmationToken})
 		}
 		if deleteErr != nil {
-			result.Failed = append(result.Failed, AlbumDeletionFailed{TrackID: track.TrackID, TrackTitle: track.TrackTitle, Reason: deleteErr.Error()})
+			result.StoppedAt = &AlbumDeletionFailed{TrackID: track.TrackID, TrackTitle: track.TrackTitle, Reason: deleteErr.Error()}
 			break
 		}
 		result.Deleted = append(result.Deleted, track)

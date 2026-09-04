@@ -28,7 +28,7 @@ func TestManagedAlbumDeletionPreviewsEveryTrackAndDeletesThemAll(t *testing.T) {
 	if preview.AlbumID != "album-1" || preview.AlbumTitle != "Album" || preview.TrackCount != 2 {
 		t.Fatalf("preview album = %+v", preview)
 	}
-	if preview.TotalSizeBytes != int64(len("first-bytes")+len("second-bytes")) {
+	if preview.TotalSizeBytes != int64(len("track-1-bytes")+len("track-2-bytes")) {
 		t.Fatalf("preview total size = %d", preview.TotalSizeBytes)
 	}
 	if len(preview.Tracks) != 2 || preview.Tracks[0].TrackTitle != "First" || preview.Tracks[1].TrackTitle != "Second" {
@@ -54,7 +54,7 @@ func TestManagedAlbumDeletionPreviewsEveryTrackAndDeletesThemAll(t *testing.T) {
 	}
 	var result managedimport.AlbumDeletionResult
 	decodeDeletionResponse(t, deleteResponse, &result)
-	if len(result.Deleted) != 2 || len(result.Failed) != 0 || result.DeletedFiles != 2 {
+	if len(result.Deleted) != 2 || result.StoppedAt != nil || result.DeletedFiles != 2 {
 		t.Fatalf("delete result = %+v", result)
 	}
 	for _, path := range []string{first, second} {
@@ -136,6 +136,11 @@ func TestManagedAlbumDeletionRequiresExplicitConfirmationAndKnownAlbum(t *testin
 	unconfirmed := performTrackDeletionRequest(t, router, http.MethodDelete, "/api/v1/library/albums/album-1", body, false)
 	if unconfirmed.Code != http.StatusForbidden {
 		t.Fatalf("unconfirmed delete status = %d", unconfirmed.Code)
+	}
+	emptyToken, _ := json.Marshal(managedimport.TrackDeletionConfirmation{ConfirmationToken: ""})
+	invalid := performTrackDeletionRequest(t, router, http.MethodDelete, "/api/v1/library/albums/album-1", emptyToken, true)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("empty token delete status = %d", invalid.Code)
 	}
 	assertDeletionCount(t, database, `SELECT COUNT(*) FROM tracks`, 1)
 }

@@ -9,12 +9,13 @@ import (
 	"testing"
 )
 
-// seedManagedAlbumTrack seeds one Managed Track with distinct bytes so several
-// tracks can share an album under the unique content-hash constraint.
+// SeedManagedAlbumTrackForTest seeds one Managed Track whose bytes derive from
+// its ID, so several tracks can share an album under the unique content-hash
+// constraint. Shared with the external test package.
 func SeedManagedAlbumTrackForTest(t *testing.T, database *sql.DB, root, albumID, artistID, trackID string, trackNo int, title string) string {
 	t.Helper()
 	trackPath := filepath.Join(root, "library", artistID, albumID, trackID+".flac")
-	contents := map[string]string{"track-1": "first-bytes", "track-2": "second-bytes", "track-3": "third-bytes"}[trackID]
+	contents := trackID + "-bytes"
 	writeAlbumDeletionFile(t, trackPath, contents)
 	contentSHA256 := fmt.Sprintf("%x", sha256.Sum256([]byte(contents)))
 	statements := []struct {

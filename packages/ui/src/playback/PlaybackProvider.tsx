@@ -310,9 +310,10 @@ export function PlaybackProvider({
 		advanceToNextQueueItem();
 	}, [advanceToNextQueueItem, engine, session]);
 
-	// A Track that fails to play (typically because it was deleted from the
-	// library while queued, per ADR 0010) is announced and skipped instead of
-	// leaving the Player stuck on a dead source.
+	// A Track can stop being playable while it sits in the Queue: ADR 0010 lets
+	// a deletion elsewhere leave the playing source in place, so its next play
+	// fails. Announce the failure and move on instead of leaving the Player
+	// stuck; a native engine that owns Queue advancement is only told.
 	const announcedErrorRef = useRef<PlaybackError | null>(null);
 	useEffect(() => {
 		if (session.status !== "error" || session.source?.type !== "track") {
@@ -321,11 +322,21 @@ export function PlaybackProvider({
 		}
 		if (!session.error || announcedErrorRef.current === session.error) return;
 		announcedErrorRef.current = session.error;
+		const currentIndex = queueRef.current.findIndex(
+			(item) => item.id === currentQueueItemIdRef.current,
+		);
+		const hasNext =
+			!engine.syncQueueContext && currentIndex >= 0
+				? currentIndex + 1 < queueRef.current.length
+				: false;
 		toast.error(`Couldn't play ${session.source.track.title}`, {
-			description: `${session.error.message}. Skipping to the next track.`,
+			description: hasNext
+				? `${session.error.message}. Skipping to the next track.`
+				: session.error.message,
 		});
+		if (engine.syncQueueContext) return;
 		advanceToNextQueueItem();
-	}, [advanceToNextQueueItem, session]);
+	}, [advanceToNextQueueItem, engine, session]);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {

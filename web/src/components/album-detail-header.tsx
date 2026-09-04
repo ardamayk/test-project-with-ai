@@ -1,4 +1,7 @@
-import type { AlbumDetail } from "@repo/api-client";
+import {
+	type AlbumDetail,
+	MANAGED_ALBUM_DELETION_CAPABILITY,
+} from "@repo/api-client";
 import { AlbumArt } from "@repo/ui";
 import { Clock, Disc3, Music2, Play, SkipForward, Trash2 } from "lucide-react";
 import { AlbumDeletionDialog } from "#/components/album-deletion-dialog";
@@ -12,6 +15,7 @@ import {
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
 import { useAlbumDeletionFlow } from "#/hooks/use-album-deletion-flow";
+import { useServerCapability } from "#/hooks/use-server-capability";
 import { getAlbumExternalLinks } from "#/lib/album-external-links";
 import { getAlbumGenres } from "#/lib/album-genres";
 import { apiClient } from "#/lib/api";
@@ -59,6 +63,9 @@ export function AlbumDetailHeader({
 	const externalLinks = getAlbumExternalLinks(artistName, album.title);
 	const genres = getAlbumGenres(album);
 	const albumDeletion = useAlbumDeletionFlow();
+	const canDeleteAlbums = useServerCapability(
+		MANAGED_ALBUM_DELETION_CAPABILITY,
+	);
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>
@@ -161,13 +168,15 @@ export function AlbumDetailHeader({
 				</div>
 			</ContextMenuTrigger>
 			<ContextMenuContent>
-				<ContextMenuItem
-					variant="destructive"
-					onSelect={() => albumDeletion.open(album)}
-				>
-					<Trash2 className="size-4" />
-					Delete album
-				</ContextMenuItem>
+				{canDeleteAlbums ? (
+					<ContextMenuItem
+						variant="destructive"
+						onSelect={() => albumDeletion.open(album)}
+					>
+						<Trash2 className="size-4" />
+						Delete album
+					</ContextMenuItem>
+				) : null}
 			</ContextMenuContent>
 			<AlbumDeletionDialog
 				album={albumDeletion.album}

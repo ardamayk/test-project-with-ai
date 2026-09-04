@@ -1,7 +1,7 @@
 import type { AlbumDeletionResult } from "@repo/api-client";
 import { toast, usePlayback } from "@repo/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { apiClient } from "#/lib/api";
 import { invalidateLibraryCache } from "#/lib/invalidate-library-cache";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
@@ -51,9 +51,8 @@ export function usePreviewAlbumDeletion() {
 
 function describeAlbumDeletion(result: AlbumDeletionResult): string {
 	const deleted = `${result.deleted.length} track${result.deleted.length === 1 ? "" : "s"} deleted`;
-	const failure = result.failed[0];
-	if (!failure) return deleted;
-	return `${deleted}; stopped at "${failure.trackTitle}": ${failure.reason}`;
+	if (!result.stoppedAt) return deleted;
+	return `${deleted}; stopped at "${result.stoppedAt.trackTitle}": ${result.stoppedAt.reason}`;
 }
 
 /**
@@ -64,6 +63,7 @@ function describeAlbumDeletion(result: AlbumDeletionResult): string {
 export function useDeleteAlbum() {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
+	const location = useLocation();
 	const playback = usePlayback();
 
 	return useMutation({
@@ -81,27 +81,34 @@ export function useDeleteAlbum() {
 			} else {
 				await playback.refreshQueue();
 			}
-			const albumGone = result.failed.length === 0;
+			const albumGone = result.stoppedAt === null;
+			const firstDeleted = result.deleted[0];
 			await invalidateLibraryCache(
 				queryClient,
-				albumGone ? { albumId } : { trackId: result.deleted[0]?.trackId },
+				albumGone
+					? { albumId }
+					: firstDeleted
+						? { trackId: firstDeleted.trackId }
+						: {},
 			);
 			await invalidatePlaylistCache(queryClient);
 			if (albumGone) {
-				toast.success("Album deleted", {
+				toast.success("All tracks deleted", {
 					description: describeAlbumDeletion(result),
 				});
-				if (window.location.pathname.includes(albumId)) {
+				if (location.pathname.includes(albumId)) {
 					void navigate({ to: "/library/albums" });
 				}
 			} else {
-				toast.error("Album deletion stopped", {
+				toast.error("Deletion stopped", {
 					description: describeAlbumDeletion(result),
 				});
 			}
 		},
 		onError: (cause) => {
-			toast.error("Album could not be deleted", { description: cause.message });
+			toast.error("Tracks could not be deleted", {
+				description: cause.message,
+			});
 		},
 	});
 }

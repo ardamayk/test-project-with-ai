@@ -84,7 +84,7 @@ func TestAssembledServerAdvertisesOnlyDocumentedCapabilities(t *testing.T) {
 			t.Errorf("capability %q is advertised but not documented in HealthResponse.capabilities", capability)
 		}
 	}
-	for _, required := range []string{"managed-import.v1", "managed-import-batches.v1", "managed-track-deletion.v1", "managed-track-replacement.v1"} {
+	for _, required := range []string{"managed-import.v1", "managed-import-batches.v1", "managed-track-deletion.v1", "managed-track-replacement.v1", "managed-album-deletion.v1"} {
 		if !slices.Contains(health.Capabilities, required) {
 			t.Errorf("capability %q is missing from the health response", required)
 		}

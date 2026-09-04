@@ -1,4 +1,7 @@
-import type { Album } from "@repo/api-client";
+import {
+	type Album,
+	MANAGED_ALBUM_DELETION_CAPABILITY,
+} from "@repo/api-client";
 import { AlbumArt } from "@repo/ui";
 import { Link } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
@@ -12,11 +15,15 @@ import {
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
 import { useAlbumDeletionFlow } from "#/hooks/use-album-deletion-flow";
+import { useServerCapability } from "#/hooks/use-server-capability";
 import { apiClient } from "#/lib/api";
 import { getAlbumArtistName } from "#/lib/library-display";
 
 export function AlbumGrid({ albums }: { albums: Album[] }) {
 	const albumDeletion = useAlbumDeletionFlow();
+	const canDeleteAlbums = useServerCapability(
+		MANAGED_ALBUM_DELETION_CAPABILITY,
+	);
 	return (
 		<>
 			<CollectionGrid>
@@ -57,14 +64,18 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
 									Open album
 								</Link>
 							</ContextMenuItem>
-							<ContextMenuSeparator />
-							<ContextMenuItem
-								variant="destructive"
-								onSelect={() => albumDeletion.open(album)}
-							>
-								<Trash2 className="size-4" />
-								Delete album
-							</ContextMenuItem>
+							{canDeleteAlbums ? (
+								<>
+									<ContextMenuSeparator />
+									<ContextMenuItem
+										variant="destructive"
+										onSelect={() => albumDeletion.open(album)}
+									>
+										<Trash2 className="size-4" />
+										Delete album
+									</ContextMenuItem>
+								</>
+							) : null}
 						</ContextMenuContent>
 					</ContextMenu>
 				))}

@@ -8,7 +8,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { matchesLocalStationFilter, RadioPage } from "./-radio-page";
+import { matchesLocalStationFilter } from "#/lib/radio-station-filter";
+import { RadioPage } from "./-radio-page";
 
 const mocks = vi.hoisted(() => ({
 	listRadioStations: vi.fn(),

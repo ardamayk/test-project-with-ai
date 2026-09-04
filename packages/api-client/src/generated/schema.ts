@@ -718,7 +718,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, and explicit Track Replacement as managed-track-replacement.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
+            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, and Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
             capabilities: string[];
         };
         User: {
@@ -1294,8 +1294,8 @@ export interface components {
         };
         AlbumDeletionResult: {
             deleted: components["schemas"]["AlbumDeletionTrack"][];
-            /** @description Empty when every Track was deleted; otherwise the Track that stopped the run */
-            failed: components["schemas"]["AlbumDeletionFailed"][];
+            /** @description Null when every Track was deleted; otherwise the Track whose failure stopped the run */
+            stoppedAt: components["schemas"]["AlbumDeletionFailed"] | null;
             deletedFiles: number;
         };
         TrackDeletionPreview: {

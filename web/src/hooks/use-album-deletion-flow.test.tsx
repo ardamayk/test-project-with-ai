@@ -35,6 +35,7 @@ vi.mock("@repo/ui", () => ({
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigate,
+	useLocation: () => ({ pathname: "/library/albums" }),
 }));
 
 const preview: AlbumDeletionPreview = {
@@ -70,7 +71,7 @@ describe("useAlbumDeletionFlow", () => {
 	it("loads the album preview on open and confirms with its token", async () => {
 		deleteAlbum.mockResolvedValue({
 			deleted: preview.tracks,
-			failed: [],
+			stoppedAt: null,
 			deletedFiles: 2,
 		});
 		const onDeleted = vi.fn();
@@ -88,7 +89,7 @@ describe("useAlbumDeletionFlow", () => {
 		expect(onDeleted).toHaveBeenCalledWith({ id: "album-1", title: "1989" });
 		expect(refreshQueue).toHaveBeenCalled();
 		expect(toastSuccess).toHaveBeenCalledWith(
-			"Album deleted",
+			"All tracks deleted",
 			expect.objectContaining({ description: "2 tracks deleted" }),
 		);
 	});
@@ -97,7 +98,7 @@ describe("useAlbumDeletionFlow", () => {
 		currentTrackId = "track-2";
 		deleteAlbum.mockResolvedValue({
 			deleted: preview.tracks,
-			failed: [],
+			stoppedAt: null,
 			deletedFiles: 2,
 		});
 		const { result } = renderHook(() => useAlbumDeletionFlow(), {
@@ -115,9 +116,11 @@ describe("useAlbumDeletionFlow", () => {
 	it("reports a partial run as a stopped deletion, not a success", async () => {
 		deleteAlbum.mockResolvedValue({
 			deleted: [preview.tracks[0]],
-			failed: [
-				{ trackId: "track-2", trackTitle: "Style", reason: "file changed" },
-			],
+			stoppedAt: {
+				trackId: "track-2",
+				trackTitle: "Style",
+				reason: "file changed",
+			},
 			deletedFiles: 1,
 		});
 		const { result } = renderHook(() => useAlbumDeletionFlow(), {
@@ -129,7 +132,7 @@ describe("useAlbumDeletionFlow", () => {
 		act(() => result.current.confirm());
 		await waitFor(() => expect(toastError).toHaveBeenCalled());
 		expect(toastError).toHaveBeenCalledWith(
-			"Album deletion stopped",
+			"Deletion stopped",
 			expect.objectContaining({
 				description: '1 track deleted; stopped at "Style": file changed',
 			}),
@@ -164,7 +167,7 @@ describe("useAlbumDeletionFlow", () => {
 			expect(result.current.error).toBe("album deletion preview changed"),
 		);
 		expect(toastError).toHaveBeenCalledWith(
-			"Album could not be deleted",
+			"Tracks could not be deleted",
 			expect.objectContaining({
 				description: "album deletion preview changed",
 			}),

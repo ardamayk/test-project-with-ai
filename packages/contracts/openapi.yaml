@@ -1404,8 +1404,10 @@ components:
             is advertised as playback.queue-events.v1 and the first strict FLAC
             Managed Import tracer bullet as managed-import.v1. Multi-file Managed
             Import Batches are advertised as managed-import-batches.v1, Permanent
-            Track Deletion as managed-track-deletion.v1, and explicit Track
-            Replacement as managed-track-replacement.v1. Clients gate optional
+            Track Deletion as managed-track-deletion.v1, explicit Track
+            Replacement as managed-track-replacement.v1, and Album deletion
+            (one Permanent Track Deletion per Track, previewed once) as
+            managed-album-deletion.v1. Clients gate optional
             behavior on the exact capability name and must ignore unknown
             entries so newer servers stay compatible with older clients.
     User:
@@ -2516,17 +2518,17 @@ components:
           type: string
     AlbumDeletionResult:
       type: object
-      required: [deleted, failed, deletedFiles]
+      required: [deleted, stoppedAt, deletedFiles]
       properties:
         deleted:
           type: array
           items:
             $ref: "#/components/schemas/AlbumDeletionTrack"
-        failed:
-          type: array
-          description: Empty when every Track was deleted; otherwise the Track that stopped the run
-          items:
-            $ref: "#/components/schemas/AlbumDeletionFailed"
+        stoppedAt:
+          nullable: true
+          description: Null when every Track was deleted; otherwise the Track whose failure stopped the run
+          allOf:
+            - $ref: "#/components/schemas/AlbumDeletionFailed"
         deletedFiles:
           type: integer
           minimum: 0

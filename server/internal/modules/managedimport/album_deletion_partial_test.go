@@ -38,8 +38,8 @@ func TestAlbumDeletionStopsAtFirstFailureAndReportsBothLists(t *testing.T) {
 	if len(result.Deleted) != 1 || result.Deleted[0].TrackID != "track-1" || result.DeletedFiles != 1 {
 		t.Fatalf("deleted = %+v (files %d)", result.Deleted, result.DeletedFiles)
 	}
-	if len(result.Failed) != 1 || result.Failed[0].TrackID != "track-2" || result.Failed[0].Reason != "injected failure before the second Track" {
-		t.Fatalf("failed = %+v", result.Failed)
+	if result.StoppedAt == nil || result.StoppedAt.TrackID != "track-2" || result.StoppedAt.Reason != "injected failure before the second Track" {
+		t.Fatalf("stoppedAt = %+v", result.StoppedAt)
 	}
 	if _, err := os.Stat(first); !os.IsNotExist(err) {
 		t.Fatalf("first file should be gone: %v", err)

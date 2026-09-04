@@ -1,6 +1,11 @@
 import type { Track, TrackDeletionPreview } from "@repo/api-client";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
+export const DELETION_DIALOG_OVERLAY_CLASS =
+	"fixed inset-0 z-50 bg-background/70";
+export const DELETION_DIALOG_CONTENT_CLASS =
+	"-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none";
+
 export function TrackDeletionDialog({
 	track,
 	preview,
@@ -26,10 +31,10 @@ export function TrackDeletionDialog({
 			onOpenChange={(open) => !open && onCancel()}
 		>
 			<DialogPrimitive.Portal>
-				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70" />
+				<DialogPrimitive.Overlay className={DELETION_DIALOG_OVERLAY_CLASS} />
 				<DialogPrimitive.Content
 					onCloseAutoFocus={onCloseAutoFocus}
-					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none"
+					className={DELETION_DIALOG_CONTENT_CLASS}
 				>
 					<DeletionHeading track={track} />
 					{isLoading ? (
@@ -66,6 +71,19 @@ function DeletionHeading({ track }: { track: Track | null }) {
 	);
 }
 
+export function DeletionRows({ rows }: { rows: string[][] }) {
+	return (
+		<dl className="mt-4 space-y-3 text-sm">
+			{rows.map(([label, value]) => (
+				<div key={label} className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
+					<dt className="text-caption">{label}</dt>
+					<dd className="break-all text-foreground">{value}</dd>
+				</div>
+			))}
+		</dl>
+	);
+}
+
 function DeletionPreviewDetails({
 	preview,
 }: {
@@ -91,19 +109,10 @@ function DeletionPreviewDetails({
 				: `${queueCount} Queue item${queueCount === 1 ? "" : "s"}`,
 		],
 	];
-	return (
-		<dl className="mt-4 space-y-3 text-sm">
-			{rows.map(([label, value]) => (
-				<div key={label} className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
-					<dt className="text-caption">{label}</dt>
-					<dd className="break-all text-foreground">{value}</dd>
-				</div>
-			))}
-		</dl>
-	);
+	return <DeletionRows rows={rows} />;
 }
 
-function DeletionActions({
+export function DeletionActions({
 	isReady,
 	isDeleting,
 	onCancel,
@@ -136,7 +145,7 @@ function DeletionActions({
 	);
 }
 
-function formatDeletionBytes(bytes: number): string {
+export function formatDeletionBytes(bytes: number): string {
 	if (bytes === 0) return "0 bytes";
 	return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
 }

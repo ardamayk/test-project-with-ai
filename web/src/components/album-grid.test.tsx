@@ -21,6 +21,10 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => vi.fn(),
 }));
 
+vi.mock("#/hooks/use-server-capability", () => ({
+	useServerCapability: () => true,
+}));
+
 vi.mock("#/hooks/use-delete-library", () => ({
 	useDeleteAlbum: () => ({ mutate: vi.fn(), isPending: false }),
 	usePreviewAlbumDeletion: () => ({ mutate: vi.fn(), isPending: false }),
