@@ -18,6 +18,13 @@ func TestManagedAlbumDeletionPreviewsEveryTrackAndDeletesThemAll(t *testing.T) {
 	if _, err := database.Exec(`INSERT INTO playback_queue (id, user_id, position, track_id) VALUES ('queue-2', 'user-1', 1, 'track-2')`); err != nil {
 		t.Fatal(err)
 	}
+	// Rejected duplicate jobs retain the existing Track ID for diagnostics.
+	// They must be archived with committed jobs before the Track is removed.
+	if _, err := database.Exec(`
+		INSERT INTO managed_import_jobs (id, status, track_id, error_code)
+		VALUES ('failed-duplicate', 'failed', 'track-1', 'exact_duplicate')`); err != nil {
+		t.Fatal(err)
+	}
 
 	previewResponse := performTrackDeletionRequest(t, router, http.MethodGet, "/api/v1/library/albums/album-1/deletion", nil, false)
 	if previewResponse.Code != http.StatusOK {
@@ -67,6 +74,7 @@ func TestManagedAlbumDeletionPreviewsEveryTrackAndDeletesThemAll(t *testing.T) {
 	assertDeletionCount(t, database, `SELECT COUNT(*) FROM artists WHERE id = 'artist-1'`, 0)
 	assertDeletionCount(t, database, `SELECT COUNT(*) FROM playback_queue`, 0)
 	assertDeletionCount(t, database, `SELECT COUNT(*) FROM playlists WHERE id = 'playlist-1'`, 1)
+	assertDeletionCount(t, database, `SELECT COUNT(*) FROM managed_import_jobs WHERE id = 'failed-duplicate'`, 0)
 	assertDeletionCount(t, database, `SELECT revision FROM playback_queue_state WHERE user_id = 'user-1'`, 2)
 }
 

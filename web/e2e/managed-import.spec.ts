@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -169,6 +175,18 @@ async function expectFocusInside(dialog: Locator): Promise<void> {
 function stagingFiles(): string[] {
 	const staging = path.join(MANAGED_STORAGE_DIR, ".staging");
 	return existsSync(staging) ? readdirSync(staging) : [];
+}
+
+function managedFiles(directory = MANAGED_STORAGE_DIR): string[] {
+	if (!existsSync(directory)) return [];
+	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+		const entryPath = path.join(directory, entry.name);
+		return entry.isDirectory() ? managedFiles(entryPath) : [entryPath];
+	});
+}
+
+function managedFileHashes(): Set<string> {
+	return new Set(managedFiles().map((file) => sha256(readFileSync(file))));
 }
 
 // Staging files abandoned by earlier (possibly failed) runs are reaped by the
@@ -601,4 +619,60 @@ test("Import Music dialog is keyboard accessible and cancelling cleans staging",
 	await expect(
 		history.locator("details").filter({ hasText: "Canceled" }).first(),
 	).toBeVisible();
+});
+
+test("Album deletion previews and permanently deletes every remaining Track", async ({
+	page,
+	request,
+}) => {
+	const targets = await listRunTracks(request);
+	expect(targets.map((track) => track.title).sort()).toEqual([ALPHA, BETA]);
+	const targetHashes = [fixtures.alphaReplacement.sha256, fixtures.beta.sha256];
+	for (const hash of targetHashes) {
+		expect(managedFileHashes(), `managed file ${hash} should exist`).toContain(
+			hash,
+		);
+	}
+
+	await page.goto("/library/albums");
+	await page.getByPlaceholder("Search albums...").fill(RUN_ID);
+	const albumCard = page.getByRole("link").filter({ hasText: ALBUM }).first();
+	await expect(albumCard).toBeVisible({ timeout: 15_000 });
+	await albumCard.click({ button: "right" });
+	await page.getByRole("menuitem", { name: "Delete album" }).click();
+
+	const dialog = page.getByRole("dialog", {
+		name: `Permanently delete every track of ${ALBUM}?`,
+	});
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByText("2 tracks")).toBeVisible();
+	const deleteButton = dialog.getByRole("button", {
+		name: "Delete permanently",
+	});
+	await expect(deleteButton).toBeEnabled();
+	const deletionResponse = page.waitForResponse(
+		(response) =>
+			/\/api\/v1\/library\/albums\/[^/]+$/.test(response.url()) &&
+			response.request().method() === "DELETE",
+	);
+	await deleteButton.click();
+	const deletionResult = await deletionResponse;
+	expect(deletionResult.status()).toBe(200);
+	expect(await deletionResult.json()).toMatchObject({ stoppedAt: null });
+
+	await expect(dialog).toBeHidden();
+	await expect(page.getByText("All tracks deleted")).toBeVisible();
+	await expect(albumCard).toHaveCount(0);
+	await expect.poll(() => listRunTracks(request)).toEqual([]);
+	for (const target of targets) {
+		expect(
+			(await request.get(`/api/v1/tracks/${target.id}/stream`)).status(),
+		).toBe(404);
+	}
+	for (const hash of targetHashes) {
+		expect(
+			managedFileHashes(),
+			`managed file ${hash} should be deleted`,
+		).not.toContain(hash);
+	}
 });

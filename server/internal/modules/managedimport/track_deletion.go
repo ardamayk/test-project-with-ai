@@ -460,8 +460,8 @@ func deleteTrackRelationships(ctx context.Context, transaction *sql.Tx, state tr
 	if _, err := transaction.ExecContext(ctx, `DELETE FROM playlist_tracks WHERE track_id = ?`, state.Preview.TrackID); err != nil {
 		return nil, fmt.Errorf("delete Playlist references: %w", err)
 	}
-	if _, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE track_id = ? AND status = 'committed'`, state.Preview.TrackID); err != nil {
-		return nil, fmt.Errorf("archive completed Managed Import Job before Track deletion: %w", err)
+	if _, err := transaction.ExecContext(ctx, `DELETE FROM managed_import_jobs WHERE track_id = ?`, state.Preview.TrackID); err != nil {
+		return nil, fmt.Errorf("archive terminal Managed Import Jobs before Track deletion: %w", err)
 	}
 	if err := moveOrDeleteArtworkReference(ctx, transaction, state.Preview.TrackID, state.AlbumID); err != nil {
 		return nil, err
