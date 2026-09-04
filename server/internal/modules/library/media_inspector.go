@@ -421,6 +421,9 @@ func inspectVorbisNames(tags map[string][]string) (normalizedMediaNames, error) 
 	if names.Genres, err = requiredTags(tags, "GENRE"); err != nil {
 		return normalizedMediaNames{}, err
 	}
+	if names.Genres = splitGenreTagValues(names.Genres); len(names.Genres) == 0 {
+		return normalizedMediaNames{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "GENRE", errors.New("tag holds no Genre once delimiters are removed"))
+	}
 	return names, nil
 }
 

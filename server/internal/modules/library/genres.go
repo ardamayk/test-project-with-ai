@@ -34,6 +34,27 @@ func splitGenres(raw string) []string {
 	return out
 }
 
+// splitGenreTagValues expands raw GENRE tag values into individual Genres.
+// Taggers record multiple Genres either as repeated tags or as one tag holding
+// a delimited list ("Pop, Rock", "Symphonic Metal; Gothic Metal"), so every
+// Media Inspector runs both forms through the same delimiters the Legacy
+// scanner uses. Input order is kept and duplicates are dropped.
+func splitGenreTagValues(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		for _, genre := range splitGenres(value) {
+			key := strings.ToLower(genre)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, genre)
+		}
+	}
+	return out
+}
+
 func mergeGenres(genres ...[]string) []string {
 	seen := make(map[string]string)
 	for _, list := range genres {

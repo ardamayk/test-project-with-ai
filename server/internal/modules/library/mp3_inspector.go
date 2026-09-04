@@ -296,7 +296,7 @@ func collectID3Values(frames []id3Frame, version byte) (id3Values, error) {
 				return id3Values{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, err)
 			}
 			if key == "GENRE" {
-				frameValues = splitStructuredID3Genres(frameValues)
+				frameValues = splitGenreTagValues(frameValues)
 			}
 			values.tags[key] = append(values.tags[key], frameValues...)
 			continue
@@ -427,20 +427,6 @@ func selectID3FrontCover(pictures []taggedID3Picture) (id3Picture, error) {
 		return id3Picture{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("embedded picture is not a front cover"))
 	}
 	return id3Picture{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
-}
-
-func splitStructuredID3Genres(values []string) []string {
-	var genres []string
-	for _, value := range values {
-		for _, genre := range strings.FieldsFunc(value, func(character rune) bool {
-			return character == ';' || character == '/' || character == '|'
-		}) {
-			if genre = strings.TrimSpace(genre); genre != "" {
-				genres = append(genres, genre)
-			}
-		}
-	}
-	return genres
 }
 
 func decodeID3Picture(payload []byte, version byte) (id3Picture, byte, error) {
