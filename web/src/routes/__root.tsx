@@ -10,6 +10,7 @@ import {
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
+import { RootErrorComponent } from "#/components/root-error";
 import { ThemeSync } from "#/components/theme-sync";
 import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
 import { apiClient } from "#/lib/api";
@@ -47,6 +48,7 @@ const playbackApi: PlaybackApi = {
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 	{
 		component: RootLayout,
+		errorComponent: RootErrorComponent,
 	},
 );
 

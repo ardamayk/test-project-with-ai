@@ -30,7 +30,7 @@ Managed imports use one server-owned storage root. The server keeps a 2 GiB safe
 export MANAGED_STORAGE_PATH=./data/managed
 export MANAGED_STORAGE_RESERVE_BYTES=2147483648
 export MANAGED_IMPORT_FILE_LIMIT_BYTES=2147483648
-export MANAGED_IMPORT_BATCH_LIMIT_BYTES=2147483648
+export MANAGED_IMPORT_BATCH_LIMIT_BYTES=4294967296
 ```
 
 All byte-count settings use base-10 integer strings. Set `MANAGED_STORAGE_RESERVE_BYTES=0` only when intentionally disabling the safety reserve.

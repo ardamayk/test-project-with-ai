@@ -8,11 +8,11 @@ import { DetailPageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
+import { trackHasGenre } from "#/lib/genre-filter";
 import {
 	formatTrackCollectionDuration,
 	useTrackCollectionViewState,
 } from "#/lib/track-collection-view-state";
-import { trackHasGenre } from "./-genres-page";
 
 export const Route = createFileRoute("/library/genres/$genre")({
 	component: GenreDetailPage,

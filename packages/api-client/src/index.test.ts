@@ -118,6 +118,59 @@ describe('createApiClient', () => {
     expect(headers.get('X-Permanent-Delete')).toBe('1');
   });
 
+  it('previews and explicitly confirms an Album deletion as per-Track deletions', async () => {
+    const preview = {
+      albumId: 'album-1',
+      albumTitle: '1989',
+      trackCount: 2,
+      totalSizeBytes: 22,
+      tracks: [
+        { trackId: 'track-1', trackTitle: 'First', sizeBytes: 11 },
+        { trackId: 'track-2', trackTitle: 'Second', sizeBytes: 11 },
+      ],
+      playlistReferences: [],
+      queueReferences: [{ userId: 'user-1', itemCount: 2 }],
+      confirmationToken: 'album-token',
+    };
+    const result = {
+      deleted: preview.tracks,
+      stoppedAt: null,
+      deletedFiles: 2,
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(preview), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(result), { status: 200 }),
+      );
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    await expect(client.previewAlbumDeletion('album-1')).resolves.toEqual(
+      preview,
+    );
+    await expect(client.deleteAlbum('album-1', 'album-token')).resolves.toEqual(
+      result,
+    );
+
+    expect(transport).toHaveBeenNthCalledWith(
+      1,
+      'http://music.test/api/v1/library/albums/album-1/deletion',
+      expect.anything(),
+    );
+    expect(transport).toHaveBeenNthCalledWith(
+      2,
+      'http://music.test/api/v1/library/albums/album-1',
+      expect.objectContaining({
+        method: 'DELETE',
+        body: JSON.stringify({ confirmationToken: 'album-token' }),
+      }),
+    );
+    const headers = new Headers(transport.mock.calls[1]?.[1]?.headers);
+    expect(headers.get('X-Permanent-Delete')).toBe('1');
+  });
+
   it('creates and confirms a multi-file Managed Import Batch', async () => {
     const createdBatch = {
       id: 'batch-1',

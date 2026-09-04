@@ -99,6 +99,7 @@ var (
 	ErrInsufficientStorage = errors.New("managed storage capacity is insufficient")
 	ErrUnsafeStoragePath   = errors.New("managed storage path is unsafe")
 	ErrTrackNotFound       = errors.New("track not found")
+	ErrAlbumNotFound       = errors.New("album not found")
 	ErrNotManagedTrack     = errors.New("track is not managed")
 	ErrDeletionConflict    = errors.New("permanent track deletion preview changed")
 	ErrReplacementConflict = errors.New("track replacement preview changed")

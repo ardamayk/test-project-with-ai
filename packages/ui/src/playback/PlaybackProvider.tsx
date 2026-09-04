@@ -18,6 +18,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { toast } from "sonner";
 import type {
 	PlaybackEngine,
 	PlaybackError,
@@ -289,9 +290,7 @@ export function PlaybackProvider({
 		engine.cycleRepeatMode();
 	}, [engine, queue.length, session.repeatMode, session.source]);
 
-	useEffect(() => {
-		if (engine.syncQueueContext) return;
-		if (session.status !== "ended" || session.source?.type !== "track") return;
+	const advanceToNextQueueItem = useCallback(() => {
 		const index = queueRef.current.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
 		);
@@ -303,7 +302,41 @@ export function PlaybackProvider({
 			return;
 		}
 		engine.stop();
-	}, [engine, playQueueItemInternal, session]);
+	}, [engine, playQueueItemInternal]);
+
+	useEffect(() => {
+		if (engine.syncQueueContext) return;
+		if (session.status !== "ended" || session.source?.type !== "track") return;
+		advanceToNextQueueItem();
+	}, [advanceToNextQueueItem, engine, session]);
+
+	// A Track can stop being playable while it sits in the Queue: ADR 0010 lets
+	// a deletion elsewhere leave the playing source in place, so its next play
+	// fails. Announce the failure and move on instead of leaving the Player
+	// stuck; a native engine that owns Queue advancement is only told.
+	const announcedErrorRef = useRef<PlaybackError | null>(null);
+	useEffect(() => {
+		if (session.status !== "error" || session.source?.type !== "track") {
+			announcedErrorRef.current = null;
+			return;
+		}
+		if (!session.error || announcedErrorRef.current === session.error) return;
+		announcedErrorRef.current = session.error;
+		const currentIndex = queueRef.current.findIndex(
+			(item) => item.id === currentQueueItemIdRef.current,
+		);
+		const hasNext =
+			!engine.syncQueueContext && currentIndex >= 0
+				? currentIndex + 1 < queueRef.current.length
+				: false;
+		toast.error(`Couldn't play ${session.source.track.title}`, {
+			description: hasNext
+				? `${session.error.message}. Skipping to the next track.`
+				: session.error.message,
+		});
+		if (engine.syncQueueContext) return;
+		advanceToNextQueueItem();
+	}, [advanceToNextQueueItem, engine, session]);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {

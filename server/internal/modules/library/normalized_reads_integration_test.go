@@ -59,24 +59,32 @@ func TestHandlersListTracksSearchesNormalizedCreditsAndGenres(t *testing.T) {
 	}
 }
 
-func TestHandlersListAlbumsFiltersByTrackArtistCredit(t *testing.T) {
+func TestHandlersListAlbumsFilterByArtistUsesAlbumCreditsOnly(t *testing.T) {
 	handlers, database := setupHandlerFixture(t)
 	albumID, trackID := seedTrack(t, database)
 	seedExpandedReadFixture(t, database, albumID, trackID)
 
-	request := httptest.NewRequest(http.MethodGet, "/?artistId=guest-artist", nil)
-	response := httptest.NewRecorder()
-	handlers.ListAlbums(response, request)
+	listAlbumsFor := func(artistID string) AlbumList {
+		request := httptest.NewRequest(http.MethodGet, "/?artistId="+artistID, nil)
+		response := httptest.NewRecorder()
+		handlers.ListAlbums(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", response.Code)
+		}
+		var albums AlbumList
+		if err := json.NewDecoder(response.Body).Decode(&albums); err != nil {
+			t.Fatal(err)
+		}
+		return albums
+	}
 
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", response.Code)
+	// A guest credited on one track does not own the album.
+	if albums := listAlbumsFor("guest-artist"); albums.Total != 0 || len(albums.Items) != 0 {
+		t.Fatalf("track-only guest surfaced Albums = %#v, want none", albums)
 	}
-	var albums AlbumList
-	if err := json.NewDecoder(response.Body).Decode(&albums); err != nil {
-		t.Fatal(err)
-	}
-	if albums.Total != 1 || len(albums.Items) != 1 || albums.Items[0].ID != albumID {
-		t.Fatalf("Albums = %#v, want Track Artist Album %q", albums, albumID)
+	// An Album Artist credit does, even as a secondary credit.
+	if albums := listAlbumsFor("album-guest"); albums.Total != 1 || len(albums.Items) != 1 || albums.Items[0].ID != albumID {
+		t.Fatalf("album credit Albums = %#v, want %q", albums, albumID)
 	}
 }
 
@@ -113,6 +121,14 @@ func TestHandlersListArtistsCountsDistinctArtistsAndPreservesAlbumGenreSummary(t
 	}
 	if artists.Total == 0 {
 		t.Fatal("list Artists returned no Artists for the seeded library")
+	}
+	for _, artist := range artists.Items {
+		if artist.ID == "guest-artist" {
+			t.Fatalf("list Artists included track-only Artist %q; only Album Artists belong in the list", artist.Name)
+		}
+		if artist.ID == "album-guest" && artist.AlbumCount != 2 {
+			t.Fatalf("Album Artist %q album count = %d, want 2", artist.Name, artist.AlbumCount)
+		}
 	}
 
 	albumsRequest := httptest.NewRequest(http.MethodGet, "/", nil)

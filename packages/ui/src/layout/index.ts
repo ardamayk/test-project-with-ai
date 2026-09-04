@@ -8,4 +8,5 @@ export { PlayerBar } from "./PlayerBar";
 export { QueuePanel } from "./QueuePanel";
 export { SidebarNav } from "./SidebarNav";
 export { Panel, Slot } from "./Slot";
+export { Toaster } from "./Toaster";
 export { WidgetDndProvider, WidgetDock } from "./WidgetDock";

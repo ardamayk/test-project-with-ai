@@ -145,6 +145,8 @@ describe('generated Managed Import contract', () => {
         | 'listImportHistory'
         | 'previewTrackDeletion'
         | 'deleteTrack'
+        | 'previewAlbumDeletion'
+        | 'deleteAlbum'
         | 'createTrackReplacement'
         | 'confirmTrackReplacement'
       >,
@@ -162,6 +164,8 @@ describe('generated Managed Import contract', () => {
       listImportHistory: 'listImportHistory',
       previewTrackDeletion: 'previewTrackDeletion',
       deleteTrack: 'deleteTrack',
+      previewAlbumDeletion: 'previewAlbumDeletion',
+      deleteAlbum: 'deleteAlbum',
       createTrackReplacement: 'createTrackReplacement',
       confirmTrackReplacement: 'confirmTrackReplacement',
     };

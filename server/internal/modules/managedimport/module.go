@@ -76,6 +76,8 @@ func (module *Module) cleanupInactive(ctx context.Context) {
 }
 
 func (module *Module) RegisterRoutes(router chi.Router) {
+	router.Get("/api/v1/library/albums/{albumId}/deletion", module.handlers.PreviewAlbumDeletion)
+	router.Delete("/api/v1/library/albums/{albumId}", module.handlers.DeleteAlbum)
 	router.Get("/api/v1/library/tracks/{trackId}/deletion", module.handlers.PreviewTrackDeletion)
 	router.Delete("/api/v1/library/tracks/{trackId}", module.handlers.DeleteTrack)
 	router.Post("/api/v1/library/tracks/{trackId}/replacement", module.handlers.CreateTrackReplacement)

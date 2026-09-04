@@ -165,16 +165,13 @@ func (s *Store) ListAlbums(ctx context.Context, limit, offset int, artistID, q s
 	where := "WHERE 1 = 1"
 	args := []any{}
 	if artistID != "" {
-		where += ` AND (EXISTS (
+		// Only Album Artist credits place an album under an artist; a guest
+		// credited on a single track does not own the album.
+		where += ` AND EXISTS (
 			SELECT 1 FROM album_artists filter_credit
 			WHERE filter_credit.album_id = al.id AND filter_credit.artist_id = ?
-		) OR EXISTS (
-			SELECT 1 FROM visible_tracks filter_track
-			INNER JOIN track_artists filter_track_credit ON filter_track_credit.track_id = filter_track.id
-			WHERE filter_track.album_id = al.id
-				AND filter_track_credit.artist_id = ?
-		))`
-		args = append(args, artistID, artistID)
+		)`
+		args = append(args, artistID)
 	}
 	if q != "" {
 		where += ` AND (al.title LIKE ? OR EXISTS (

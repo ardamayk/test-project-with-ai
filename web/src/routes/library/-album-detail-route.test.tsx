@@ -9,6 +9,20 @@ const mocks = vi.hoisted(() => ({
 	queueTracks: vi.fn(),
 }));
 
+vi.mock("#/hooks/use-server-capability", () => ({
+	useServerCapability: () => true,
+}));
+
+vi.mock("#/hooks/use-delete-library", () => {
+	const idle = () => ({ mutate: vi.fn(), isPending: false });
+	return {
+		useDeleteTrack: idle,
+		usePreviewTrackDeletion: idle,
+		useDeleteAlbum: idle,
+		usePreviewAlbumDeletion: idle,
+	};
+});
+
 vi.mock("#/lib/api", () => ({
 	apiClient: {
 		getAlbum: mocks.getAlbum,

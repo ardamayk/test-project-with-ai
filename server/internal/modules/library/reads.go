@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// activeArtistAlbumsCTE lists Artists through their Album Artist credits only.
+// Track-level credits (featured Artists) deliberately do not surface an Artist
+// in the Artist list.
 const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 	SELECT album_artists.artist_id, album_artists.album_id
 	FROM album_artists
@@ -14,10 +17,6 @@ const activeArtistAlbumsCTE = `WITH active_artist_albums AS (
 		SELECT 1 FROM visible_tracks
 		WHERE visible_tracks.album_id = album_artists.album_id
 	)
-	UNION
-	SELECT track_artists.artist_id, visible_tracks.album_id
-	FROM track_artists
-	INNER JOIN visible_tracks ON visible_tracks.id = track_artists.track_id
 )
 `
 

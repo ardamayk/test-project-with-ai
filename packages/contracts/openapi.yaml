@@ -144,6 +144,63 @@ paths:
                 $ref: "#/components/schemas/AlbumDetail"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [library]
+      operationId: deleteAlbum
+      summary: Permanently delete every Managed Track of an Album after reviewing the album deletion preview
+      description: >-
+        Runs one Permanent Track Deletion per Track in album order. Each Track
+        commits on its own: a failure stops the run, Tracks already deleted stay
+        deleted, and the result lists both outcomes. The Album and its artwork
+        disappear with their last Track.
+      parameters:
+        - $ref: "#/components/parameters/albumId"
+        - name: X-Permanent-Delete
+          in: header
+          required: true
+          description: Explicit application confirmation required for irreversible deletion
+          schema:
+            type: string
+            enum: ["1"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackDeletionConfirmation"
+      responses:
+        "200":
+          description: Per-Track outcome of the album deletion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumDeletionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/library/albums/{albumId}/deletion:
+    get:
+      tags: [library]
+      operationId: previewAlbumDeletion
+      summary: Review the irreversible deletion of every Managed Track of an Album and all affected references
+      parameters:
+        - $ref: "#/components/parameters/albumId"
+      responses:
+        "200":
+          description: Current album deletion preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumDeletionPreview"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/library/albums/{albumId}/cover:
     get:
       tags: [library]
@@ -1347,8 +1404,10 @@ components:
             is advertised as playback.queue-events.v1 and the first strict FLAC
             Managed Import tracer bullet as managed-import.v1. Multi-file Managed
             Import Batches are advertised as managed-import-batches.v1, Permanent
-            Track Deletion as managed-track-deletion.v1, and explicit Track
-            Replacement as managed-track-replacement.v1. Clients gate optional
+            Track Deletion as managed-track-deletion.v1, explicit Track
+            Replacement as managed-track-replacement.v1, and Album deletion
+            (one Permanent Track Deletion per Track, previewed once) as
+            managed-album-deletion.v1. Clients gate optional
             behavior on the exact capability name and must ignore unknown
             entries so newer servers stay compatible with older clients.
     User:
@@ -2404,6 +2463,75 @@ components:
       properties:
         deletedFiles:
           type: integer
+    AlbumDeletionPreview:
+      type: object
+      required: [albumId, albumTitle, trackCount, totalSizeBytes, tracks, playlistReferences, queueReferences, confirmationToken]
+      properties:
+        albumId:
+          type: string
+          format: uuid
+        albumTitle:
+          type: string
+        trackCount:
+          type: integer
+          minimum: 1
+        totalSizeBytes:
+          type: integer
+          minimum: 0
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlbumDeletionTrack"
+        playlistReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackDeletionPlaylistReference"
+        queueReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackDeletionQueueReference"
+        confirmationToken:
+          type: string
+          description: Opaque token binding confirmation to the reviewed Album, its Tracks, managed files, and relationships
+    AlbumDeletionTrack:
+      type: object
+      required: [trackId, trackTitle, sizeBytes]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        trackTitle:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+    AlbumDeletionFailed:
+      type: object
+      required: [trackId, trackTitle, reason]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        trackTitle:
+          type: string
+        reason:
+          type: string
+    AlbumDeletionResult:
+      type: object
+      required: [deleted, stoppedAt, deletedFiles]
+      properties:
+        deleted:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlbumDeletionTrack"
+        stoppedAt:
+          nullable: true
+          description: Null when every Track was deleted; otherwise the Track whose failure stopped the run
+          allOf:
+            - $ref: "#/components/schemas/AlbumDeletionFailed"
+        deletedFiles:
+          type: integer
+          minimum: 0
     TrackDeletionPreview:
       type: object
       required: [trackId, trackTitle, managedFile, playlistReferences, queueReferences, confirmationToken]

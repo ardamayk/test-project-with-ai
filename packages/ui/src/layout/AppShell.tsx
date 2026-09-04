@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { getNavPanel, getQueuePanel } from "../widgets/layout-utils";
 import { useLayout } from "./LayoutProvider";
 import { QueuePanel } from "./QueuePanel";
+import { Toaster } from "./Toaster";
 import { WidgetDndProvider, WidgetDock } from "./WidgetDock";
 
 export function AppShell({
@@ -77,6 +78,7 @@ export function AppShell({
 				{bottom ? (
 					<div className="shrink-0 border-border border-t">{bottom}</div>
 				) : null}
+				<Toaster />
 			</div>
 		</WidgetDndProvider>
 	);

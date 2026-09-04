@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -128,12 +129,16 @@ func isStreamPath(path string) bool {
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
-	return &http.Server{
+	requestCtx, cancelRequests := context.WithCancel(context.Background())
+	server := &http.Server{
 		Addr:        addr,
 		Handler:     handler,
 		ReadTimeout: 15 * time.Second,
 		// Streaming audio responses can run for the full track duration.
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
+		BaseContext:  func(net.Listener) context.Context { return requestCtx },
 	}
+	server.RegisterOnShutdown(cancelRequests)
+	return server
 }

@@ -21,7 +21,14 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => vi.fn(),
 }));
 
-vi.mock("#/hooks/use-delete-library", () => ({}));
+vi.mock("#/hooks/use-server-capability", () => ({
+	useServerCapability: () => true,
+}));
+
+vi.mock("#/hooks/use-delete-library", () => ({
+	useDeleteAlbum: () => ({ mutate: vi.fn(), isPending: false }),
+	usePreviewAlbumDeletion: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 
 describe("AlbumGrid", () => {
 	it("uses the shared collection grid without changing album card behavior", () => {

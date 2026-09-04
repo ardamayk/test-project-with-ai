@@ -49,6 +49,19 @@ func TestLoadUsesTwoGiBManagedStorageReserveByDefault(t *testing.T) {
 	}
 }
 
+func TestLoadUsesFourGiBManagedImportBatchLimitByDefault(t *testing.T) {
+	t.Setenv("MANAGED_IMPORT_BATCH_LIMIT_BYTES", "")
+
+	configuration, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if configuration.ManagedImportBatchLimitBytes != 4*1024*1024*1024 {
+		t.Fatalf("ManagedImportBatchLimitBytes = %d", configuration.ManagedImportBatchLimitBytes)
+	}
+}
+
 func TestLoadRejectsInvalidManagedStorageSafetyLimit(t *testing.T) {
 	tests := []struct {
 		name  string

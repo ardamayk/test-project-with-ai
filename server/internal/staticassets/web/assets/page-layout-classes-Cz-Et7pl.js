@@ -1,0 +1,1 @@
+var e=`px-6 py-5 md:px-8`,t=`w-full min-[1801px]:mx-auto min-[1801px]:max-w-[1476px]`,n=`relative w-full sm:w-[28rem]`,r=`h-11 rounded-xl bg-[var(--player)] pl-10 text-sm`;export{t as i,r as n,e as r,n as t};
