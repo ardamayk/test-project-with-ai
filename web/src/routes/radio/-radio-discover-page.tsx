@@ -25,6 +25,10 @@ import {
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+	COLLECTION_PAGE_CONTAINER_CLASS,
+	CollectionPageContainer,
+} from "#/components/collection-grid-layout";
+import {
 	HEADER_SEARCH_CONTAINER_CLASS,
 	HEADER_SEARCH_INPUT_CLASS,
 } from "#/components/page-layout";
@@ -473,7 +477,9 @@ export function RadioDiscoverPage() {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 			<header className="sticky top-0 z-40 shrink-0 border-border border-b bg-background/80 px-6 py-3 backdrop-blur md:px-8">
-				<div className="flex flex-col gap-2">
+				<div
+					className={`flex flex-col gap-2 ${COLLECTION_PAGE_CONTAINER_CLASS}`}
+				>
 					<div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
 						<div className="min-w-0">
 							<h1 className="font-semibold text-2xl text-heading tracking-normal">
@@ -523,65 +529,70 @@ export function RadioDiscoverPage() {
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 [scrollbar-width:none] md:px-8 [&::-webkit-scrollbar]:hidden">
-				{catalog.isLoading ? (
-					<div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,620px),1fr))] gap-4">
-						{SKELETON_CARD_KEYS.map((key) => (
-							<SkeletonCard key={key} />
-						))}
-					</div>
-				) : null}
+				<CollectionPageContainer>
+					{catalog.isLoading ? (
+						<div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,620px),1fr))] gap-4">
+							{SKELETON_CARD_KEYS.map((key) => (
+								<SkeletonCard key={key} />
+							))}
+						</div>
+					) : null}
 
-				{catalog.isError ? (
-					<div className="rounded-lg border border-destructive/40 p-6 text-destructive text-sm">
-						Failed to load Radio Browser catalog.
-					</div>
-				) : null}
+					{catalog.isError ? (
+						<div className="rounded-lg border border-destructive/40 p-6 text-destructive text-sm">
+							Failed to load Radio Browser catalog.
+						</div>
+					) : null}
 
-				{!catalog.isLoading && entries.length === 0 ? (
-					<div className="rounded-lg border border-dashed border-border p-6 text-caption text-sm">
-						No catalog entries match these filters.
-					</div>
-				) : null}
+					{!catalog.isLoading && entries.length === 0 ? (
+						<div className="rounded-lg border border-dashed border-border p-6 text-caption text-sm">
+							No catalog entries match these filters.
+						</div>
+					) : null}
 
-				{viewMode === "grid" ? (
-					<div
-						data-testid="radio-catalog-grid"
-						className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,560px),1fr))] gap-3"
-					>
-						{entries.map((entry) => (
-							<CatalogCard
-								key={entry.stationUuid}
-								entry={entry}
-								isImporting={importStation.isPending}
-								hasPreviewError={previewErrorUuid === entry.stationUuid}
-								onImport={() => importStation.mutate(entry)}
-								onPreview={() => void handlePreview(entry)}
-								onDetails={() => setSelectedEntry(entry)}
-								onVisibilityChange={handleVisibilityChange}
-							/>
-						))}
-					</div>
-				) : (
-					<div data-testid="radio-catalog-list" className="flex flex-col gap-2">
-						{entries.map((entry) => (
-							<CatalogRow
-								key={entry.stationUuid}
-								entry={entry}
-								isImporting={importStation.isPending}
-								hasPreviewError={previewErrorUuid === entry.stationUuid}
-								onImport={() => importStation.mutate(entry)}
-								onPreview={() => void handlePreview(entry)}
-								onDetails={() => setSelectedEntry(entry)}
-								onVisibilityChange={handleVisibilityChange}
-							/>
-						))}
-					</div>
-				)}
+					{viewMode === "grid" ? (
+						<div
+							data-testid="radio-catalog-grid"
+							className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,560px),1fr))] gap-3"
+						>
+							{entries.map((entry) => (
+								<CatalogCard
+									key={entry.stationUuid}
+									entry={entry}
+									isImporting={importStation.isPending}
+									hasPreviewError={previewErrorUuid === entry.stationUuid}
+									onImport={() => importStation.mutate(entry)}
+									onPreview={() => void handlePreview(entry)}
+									onDetails={() => setSelectedEntry(entry)}
+									onVisibilityChange={handleVisibilityChange}
+								/>
+							))}
+						</div>
+					) : (
+						<div
+							data-testid="radio-catalog-list"
+							className="flex flex-col gap-2"
+						>
+							{entries.map((entry) => (
+								<CatalogRow
+									key={entry.stationUuid}
+									entry={entry}
+									isImporting={importStation.isPending}
+									hasPreviewError={previewErrorUuid === entry.stationUuid}
+									onImport={() => importStation.mutate(entry)}
+									onPreview={() => void handlePreview(entry)}
+									onDetails={() => setSelectedEntry(entry)}
+									onVisibilityChange={handleVisibilityChange}
+								/>
+							))}
+						</div>
+					)}
 
-				<div ref={loadMoreRef} className="h-10" />
-				{catalog.isFetchingNextPage ? (
-					<p className="py-4 text-center text-caption text-sm">Loading...</p>
-				) : null}
+					<div ref={loadMoreRef} className="h-10" />
+					{catalog.isFetchingNextPage ? (
+						<p className="py-4 text-center text-caption text-sm">Loading...</p>
+					) : null}
+				</CollectionPageContainer>
 			</div>
 
 			<StationDetailsDialog

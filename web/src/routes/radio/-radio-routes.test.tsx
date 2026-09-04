@@ -187,6 +187,21 @@ describe("radio routes", () => {
 		expect(screen.getByText("Rock Hits")).toBeTruthy();
 	});
 
+	it("aligns its header and content with the other collection pages", async () => {
+		renderWithQuery(<RadioPage />);
+
+		await screen.findByRole("heading", { name: "Radio Stations" });
+		const headerInner = screen
+			.getByRole("heading", { name: "Radio Stations" })
+			.closest("header")
+			?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]");
+		const content = screen
+			.getByTestId("radio-page-content")
+			.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]");
+		expect(headerInner).toBeTruthy();
+		expect(content).toBeTruthy();
+	});
+
 	it("filters saved stations locally", async () => {
 		renderWithQuery(<RadioPage />);
 

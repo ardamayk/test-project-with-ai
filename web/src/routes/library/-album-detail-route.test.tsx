@@ -83,4 +83,14 @@ describe("album detail route", () => {
 		expect(screen.queryByText("Legacy Album Artist")).toBeNull();
 		expect(screen.queryByRole("link", { name: /Back to library/ })).toBeNull();
 	});
+
+	it("aligns its content with the Albums list page width", async () => {
+		renderWithQuery(<AlbumDetailContent albumId="album-1" />);
+
+		await screen.findByRole("heading", { name: "1989" });
+		const content = screen.getByTestId("album-detail-content");
+		expect(content.className).toContain("min-[1801px]:mx-auto");
+		expect(content.className).toContain("min-[1801px]:max-w-[1476px]");
+		expect(content.parentElement?.className).toContain("md:px-8");
+	});
 });

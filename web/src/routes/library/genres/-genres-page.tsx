@@ -3,12 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { CollectionCoverCardStack } from "#/components/collection-cover-strip";
+import { COLLECTION_PAGE_CONTAINER_CLASS } from "#/components/collection-grid-layout";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { apiClient } from "#/lib/api";
 import { getTrackGenreNames } from "#/lib/library-display";
-
-const GENRES_WIDE_CENTER_CLASS =
-	"min-[1801px]:mx-auto min-[1801px]:w-full min-[1801px]:max-w-[1476px]";
 
 export function trackHasGenre(track: Track, genre: string): boolean {
 	const target = genre.toLowerCase();
@@ -69,7 +67,7 @@ export function GenresPage() {
 				<PageHeader
 					title="Genres"
 					description="Browse tracks by genre."
-					innerClassName={GENRES_WIDE_CENTER_CLASS}
+					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 				/>
 			}
 		>
@@ -77,7 +75,7 @@ export function GenresPage() {
 				<p className="text-foreground text-sm">No tagged genres yet.</p>
 			) : (
 				<div
-					className={`${GENRES_WIDE_CENTER_CLASS} grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5`}
+					className={`${COLLECTION_PAGE_CONTAINER_CLASS} grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5`}
 				>
 					{genres.map((genre) => (
 						<Link
