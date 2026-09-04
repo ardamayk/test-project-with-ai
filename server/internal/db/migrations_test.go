@@ -640,7 +640,7 @@ func TestRemoveLegacyLibraryMigrationDeletesLegacyRowsAndRollsBack(t *testing.T)
 		t.Fatalf("roll back remove legacy library migration: %v", err)
 	}
 	assertMigrationVersion(t, sqlDB, RETIRE_LEGACY_SCAN_JOBS_VERSION)
-	assertTableExists(t, sqlDB, "legacy_migration_sources")
-	assertTableExists(t, sqlDB, "legacy_library_backfill_state")
+	// The Down step is documented as non-reversible: nothing is recreated.
+	assertTableMissing(t, sqlDB, "legacy_migration_sources")
 	assertRowCount(t, sqlDB, "tracks", 1)
 }

@@ -80,11 +80,11 @@ func TestHandlersListAlbumsFiltersByTrackArtistCredit(t *testing.T) {
 	}
 }
 
-func TestHandlersListArtistsCountsDistinctArtistsAndPreservesLegacyAlbumGenres(t *testing.T) {
+func TestHandlersListArtistsCountsDistinctArtistsAndPreservesAlbumGenreSummary(t *testing.T) {
 	handlers, database := setupHandlerFixture(t)
 	firstAlbumID, firstTrackID := seedTrack(t, database)
 	seedExpandedReadFixture(t, database, firstAlbumID, firstTrackID)
-	executeFixtureStatement(t, database, `UPDATE albums SET genres = '["Legacy Album Genre"]' WHERE id = ?`, firstAlbumID)
+	executeFixtureStatement(t, database, `UPDATE albums SET genres = '["Album Genre Summary"]' WHERE id = ?`, firstAlbumID)
 	executeFixtureStatement(t, database, `
 		INSERT INTO albums (id, artist_id, title, title_sort, genres)
 		SELECT 'second-album', artist_id, 'Second Album', 'second album', '[]'
@@ -94,7 +94,7 @@ func TestHandlersListArtistsCountsDistinctArtistsAndPreservesLegacyAlbumGenres(t
 		SELECT 'second-album', artist_id, position FROM album_artists WHERE album_id = ?`, firstAlbumID)
 	executeFixtureStatement(t, database, `
 		INSERT INTO tracks (id, album_id, title, title_sort, artist_name, duration_ms, format, file_path)
-		VALUES ('second-track', 'second-album', 'Second Track', 'second track', 'Legacy Artist', 1000, 'flac', '/music/second.flac')`)
+		VALUES ('second-track', 'second-album', 'Second Track', 'second track', 'Credited Artist', 1000, 'flac', '/music/second.flac')`)
 
 	artistsRequest := httptest.NewRequest(http.MethodGet, "/", nil)
 	artistsResponse := httptest.NewRecorder()
@@ -123,8 +123,8 @@ func TestHandlersListArtistsCountsDistinctArtistsAndPreservesLegacyAlbumGenres(t
 		t.Fatal(err)
 	}
 	for _, album := range albums.Items {
-		if album.ID == firstAlbumID && (len(album.Genres) != 1 || album.Genres[0] != "Legacy Album Genre") {
-			t.Fatalf("legacy Album Genres = %#v", album.Genres)
+		if album.ID == firstAlbumID && (len(album.Genres) != 1 || album.Genres[0] != "Album Genre Summary") {
+			t.Fatalf("Album Genre summary = %#v", album.Genres)
 		}
 	}
 }
@@ -186,7 +186,7 @@ func seedExpandedReadFixture(t *testing.T, database *sql.DB, albumID, trackID st
 		INSERT INTO track_genres (track_id, genre_id, position) VALUES
 			(?, 'electronic-ambient', 1)`, trackID)
 	executeFixtureStatement(t, database, `
-		UPDATE tracks SET artist_name = 'Legacy Artist', genre = 'Legacy, Guess', disc_no = 2,
+		UPDATE tracks SET artist_name = 'Credited Artist', genre = 'Summary, Guess', disc_no = 2,
 			track_total = 9, disc_total = 2, channel_count = 2, bitrate_bps = 2304000,
 			codec = 'flac', container = 'flac', sample_format = 's24'
 		WHERE id = ?`, trackID)

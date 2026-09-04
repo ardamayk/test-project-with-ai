@@ -403,14 +403,14 @@ describe('createApiClient', () => {
       if (input.toString().includes('/library/albums/')) {
         return Response.json({
           id: 'album-1',
-          title: 'Legacy Album',
+          title: 'Deprecated-shape Album',
           artistId: 'artist-1',
-          artistName: 'Legacy Artist',
+          artistName: 'Deprecated-shape Artist',
           genres: ['Rock'],
           tracks: [
             {
               id: 'track-1',
-              title: 'Legacy Track',
+              title: 'Deprecated-shape Track',
               artistName: 'Track Artist',
               albumId: 'album-1',
               durationMs: 1000,
@@ -424,7 +424,7 @@ describe('createApiClient', () => {
         items: [
           {
             id: 'track-1',
-            title: 'Legacy Track',
+            title: 'Deprecated-shape Track',
             artistName: 'Track Artist',
             albumId: 'album-1',
             durationMs: 1000,
@@ -441,7 +441,7 @@ describe('createApiClient', () => {
     const tracks = await client.listTracks();
 
     expect(album.albumArtists).toEqual([
-      { id: 'artist-1', name: 'Legacy Artist' },
+      { id: 'artist-1', name: 'Deprecated-shape Artist' },
     ]);
     expect(album.genreItems).toEqual([
       { id: 'legacy-genre:Rock', name: 'Rock' },
@@ -671,7 +671,6 @@ describe('createApiClient', () => {
     expect(client.createPlaylist).toBeTypeOf('function');
     expect(client.addPlaylistTrack).toBeTypeOf('function');
     expect(client.removePlaylistTrack).toBeTypeOf('function');
-    expect(client.deleteAlbum).toBeTypeOf('function');
     expect(client.deleteTrack).toBeTypeOf('function');
     expect(client.previewTrackDeletion).toBeTypeOf('function');
     expect(client.createTrackReplacement).toBeTypeOf('function');

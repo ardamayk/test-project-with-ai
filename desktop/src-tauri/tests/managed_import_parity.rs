@@ -92,7 +92,6 @@ struct Track {
     id: String,
     title: String,
     format: String,
-    source_kind: String,
     size_bytes: u64,
 }
 
@@ -273,7 +272,6 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
             .unwrap_or_else(|| panic!("Track {track_id} missing from library"));
         assert_eq!(&track.title, title);
         assert_eq!(&track.format, format);
-        assert_eq!(track.source_kind, "managed");
         assert_eq!(track.size_bytes, bytes.len() as u64);
     }
 

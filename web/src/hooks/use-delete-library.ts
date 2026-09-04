@@ -1,6 +1,5 @@
 import { usePlayback } from "@repo/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import { apiClient } from "#/lib/api";
 import { invalidateLibraryCache } from "#/lib/invalidate-library-cache";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
@@ -14,40 +13,6 @@ async function syncPlaybackAfterDelete(
 	if (trackId && playback.currentTrack?.id === trackId) {
 		await playback.clearQueue();
 	}
-}
-
-export function useDeleteAlbum() {
-	const queryClient = useQueryClient();
-	const navigate = useNavigate();
-	const playback = usePlayback();
-
-	return useMutation({
-		mutationFn: (albumId: string) => apiClient.deleteAlbum(albumId),
-		onSuccess: async (_result, albumId) => {
-			const deletedTrackIds = queryClient
-				.getQueryData<{ tracks: { id: string }[] }>([
-					"library",
-					"album",
-					albumId,
-				])
-				?.tracks.map((track) => track.id);
-
-			if (
-				playback.currentTrack &&
-				deletedTrackIds?.includes(playback.currentTrack.id)
-			) {
-				await playback.clearQueue();
-			} else {
-				await playback.refreshQueue();
-			}
-
-			await invalidateLibraryCache(queryClient, { albumId });
-
-			if (window.location.pathname.includes(albumId)) {
-				void navigate({ to: "/library/albums" });
-			}
-		},
-	});
 }
 
 export function useDeleteTrack() {
@@ -74,8 +39,4 @@ export function usePreviewTrackDeletion() {
 	return useMutation({
 		mutationFn: (trackId: string) => apiClient.previewTrackDeletion(trackId),
 	});
-}
-
-export function confirmDelete(message: string): boolean {
-	return window.confirm(message);
 }

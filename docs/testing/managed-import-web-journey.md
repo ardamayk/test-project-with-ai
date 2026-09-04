@@ -22,6 +22,9 @@ job; no extra CI wiring is needed.
    details.
 6. Permanent Track Deletion requires the destructive confirmation dialog;
    cancelling leaves the Track playable.
+7. Keyboard access: Enter opens the modal, Tab stays trapped inside, Escape
+   closes and returns focus to the opener, closing an uncommitted batch asks
+   `window.confirm`, and accepting it deletes the batch and its staging files.
 
 ## Fixtures
 

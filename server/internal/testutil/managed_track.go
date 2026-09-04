@@ -14,8 +14,10 @@ import (
 )
 
 // ManagedTrackSpec describes one Managed Track to seed directly into the
-// expanded library model, the way a committed Managed Import leaves it. Tests
-// use it instead of the retired legacy scanner path.
+// expanded library model, the way a committed Managed Import leaves it.
+// Zero-valued fields get defaults (see withManagedTrackDefaults); the managed
+// source row receives a stable per-track content hash so several specs can
+// coexist under the unique content constraint.
 type ManagedTrackSpec struct {
 	TrackID      string
 	AlbumID      string
@@ -64,7 +66,7 @@ func SeedManagedTrack(t *testing.T, db *sql.DB, spec ManagedTrackSpec) (albumID,
 			replaygain_track_gain_db, replaygain_track_peak, replaygain_album_gain_db, replaygain_album_peak
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
 		trackID, albumID, spec.Title, sortSeedName(spec.Title), spec.Artist, nullablePositive(spec.TrackNo),
-		spec.DiscNo, spec.DurationMs, spec.Format, spec.SizeBytes, spec.FilePath,
+		nullablePositive(spec.DiscNo), spec.DurationMs, spec.Format, spec.SizeBytes, spec.FilePath,
 		nullableString(strings.Join(spec.Genres, ", ")), nullablePositive(spec.SampleRateHz), nullablePositive(spec.BitDepth),
 		spec.ReplayGain.TrackGainDB, spec.ReplayGain.TrackPeak, spec.ReplayGain.AlbumGainDB, spec.ReplayGain.AlbumPeak,
 	)
@@ -99,7 +101,9 @@ func withManagedTrackDefaults(spec ManagedTrackSpec) ManagedTrackSpec {
 	if spec.Album == "" {
 		spec.Album = "Album"
 	}
-	if spec.DiscNo <= 0 {
+	// The strict position triggers reject a disc without a track number, so a
+	// disc is only assumed when the spec places the track.
+	if spec.DiscNo <= 0 && spec.TrackNo > 0 {
 		spec.DiscNo = 1
 	}
 	if spec.Format == "" {
@@ -204,10 +208,13 @@ func seedExec(t *testing.T, db *sql.DB, query string, args ...any) {
 	}
 }
 
+// normalizeSeedIdentity mirrors managedimport.normalizeIdentity, which cannot
+// be imported here without a cycle; keep the two in step.
 func normalizeSeedIdentity(value string) string {
 	return cases.Fold().String(strings.Join(strings.Fields(norm.NFC.String(value)), " "))
 }
 
+// sortSeedName mirrors library.sortKey for the same reason.
 func sortSeedName(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }

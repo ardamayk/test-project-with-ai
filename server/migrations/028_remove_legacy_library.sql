@@ -3,9 +3,10 @@
 -- that carried legacy rows into Managed Storage has run to completion, so the
 -- remaining hidden Legacy Track rows and every legacy-only table go away.
 
--- Legacy Track rows were hidden by the migration cutover (missing_at set) and
--- their audio files were removed by Legacy Source Cleanup. Cascades clear
--- track_sources, track_artists, track_genres, playlist_tracks and playback_queue.
+-- Every Legacy Track row goes, hidden by the migration cutover or not: the
+-- Music Server no longer locates legacy files, so none of them is playable.
+-- Cascades clear track_sources, track_artists, track_genres, playlist_tracks
+-- and playback_queue.
 DELETE FROM tracks WHERE id IN (
     SELECT track_id FROM track_sources WHERE source_kind = 'legacy'
 );
@@ -34,18 +35,6 @@ DROP TABLE IF EXISTS legacy_migration_copies;
 DROP TABLE IF EXISTS legacy_migration_sources;
 
 -- +goose Down
--- The legacy subsystem is not restorable: its rows were derived from files the
--- Music Server no longer locates. Rolling back only recreates the empty tables
--- so older binaries can start.
-CREATE TABLE IF NOT EXISTS legacy_migration_sources (
-    track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
-    source_track_id TEXT NOT NULL,
-    source_file_path TEXT NOT NULL,
-    source_sha256 TEXT NOT NULL,
-    migrated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    cleaned_at DATETIME
-);
-CREATE TABLE IF NOT EXISTS legacy_library_backfill_state (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    completed_at DATETIME
-);
+-- Not reversible. The dropped tables held rows derived from files the Music
+-- Server no longer locates, and the previous binary needs all of them (plus
+-- their triggers) to start. Restore a pre-028 database backup instead.

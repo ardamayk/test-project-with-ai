@@ -392,10 +392,6 @@ export function createApiClient(config: ApiClientConfig) {
       request<WireAlbumDetail>(`/api/v1/library/albums/${albumId}`).then(
         normalizeAlbumDetail,
       ),
-    deleteAlbum: (albumId: string) =>
-      request<DeleteResult>(`/api/v1/library/albums/${albumId}`, {
-        method: 'DELETE',
-      }),
     listTracks: (params?: ListParams) =>
       request<WireTrackList>(
         `/api/v1/library/tracks${buildQuery(params)}`,

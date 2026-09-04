@@ -40,7 +40,7 @@ func setupPlaylistStoreWithTrackAccess(t *testing.T, tracks map[string]library.T
 	t.Helper()
 	db := testutil.OpenMigratedDB(t)
 	for trackID := range tracks {
-		testutil.InsertTrack(t, db, trackID)
+		testutil.SeedManagedTrack(t, db, testutil.ManagedTrackSpec{TrackID: trackID})
 	}
 	return NewStore(db, fakeTrackAccess{tracks: tracks})
 }

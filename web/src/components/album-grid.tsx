@@ -1,31 +1,17 @@
 import type { Album } from "@repo/api-client";
 import { AlbumArt } from "@repo/ui";
 import { Link } from "@tanstack/react-router";
-import { Trash2 } from "lucide-react";
 import { CollectionGrid } from "#/components/collection-grid-layout";
 import {
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
-	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
-import { confirmDelete, useDeleteAlbum } from "#/hooks/use-delete-library";
 import { apiClient } from "#/lib/api";
 import { getAlbumArtistName } from "#/lib/library-display";
 
 export function AlbumGrid({ albums }: { albums: Album[] }) {
-	const deleteAlbum = useDeleteAlbum();
-
-	const handleDelete = (album: Album) => {
-		const artistName = getAlbumArtistName(album);
-		const confirmed = confirmDelete(
-			`Delete "${album.title}" by ${artistName}?\n\nThis removes the album, all of its tracks, and their files from disk.`,
-		);
-		if (!confirmed) return;
-		deleteAlbum.mutate(album.id);
-	};
-
 	return (
 		<CollectionGrid>
 			{albums.map((album) => (
@@ -60,15 +46,6 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
 						</Link>
 					</ContextMenuTrigger>
 					<ContextMenuContent>
-						<ContextMenuItem
-							variant="destructive"
-							disabled={deleteAlbum.isPending}
-							onSelect={() => handleDelete(album)}
-						>
-							<Trash2 className="size-4" />
-							Delete album
-						</ContextMenuItem>
-						<ContextMenuSeparator />
 						<ContextMenuItem asChild>
 							<Link to="/library/$albumId" params={{ albumId: album.id }}>
 								Open album
