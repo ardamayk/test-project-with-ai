@@ -1,12 +1,23 @@
-import { X } from "lucide-react";
+import {
+	Check,
+	CircleAlert,
+	CircleCheck,
+	CircleX,
+	LoaderCircle,
+	X,
+} from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
+import { memo } from "react";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { isDesktopClient } from "#/desktop/bridge";
+import { cn } from "#/lib/utils.ts";
 import {
 	type DuplicateDecision,
 	type ImportFileEntry,
 	type ImportState,
 	SUPPORTED_AUDIO_FILE_ACCEPT,
+	summarizeImportEntries,
 	useManagedImportWorkflow,
 } from "./-managed-import-workflow";
 
@@ -30,7 +41,17 @@ export function ImportMusicDialog({
 			onOpenChange={workflow.handleOpenChange}
 		>
 			<DialogPrimitive.Portal>
-				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
+				{/*
+				 * The desktop client skips backdrop-blur: the dialog repaints on
+				 * every progress tick, and a blurred full-screen backdrop makes
+				 * WebKitGTK re-rasterize the whole window for each repaint.
+				 */}
+				<DialogPrimitive.Overlay
+					className={cn(
+						"fixed inset-0 z-50 bg-background/80",
+						!isDesktopClient() && "backdrop-blur-sm",
+					)}
+				/>
 				<DialogPrimitive.Content
 					aria-describedby="import-music-description"
 					onCloseAutoFocus={onCloseAutoFocus}
@@ -45,6 +66,10 @@ export function ImportMusicDialog({
 					<ImportActivity
 						importState={workflow.importState}
 						errorMessage={workflow.errorMessage}
+					/>
+					<ImportSummary
+						entries={workflow.entries}
+						importState={workflow.importState}
 					/>
 					<ImportFileList
 						entries={workflow.entries}
@@ -197,6 +222,96 @@ function ImportActivity({
 	);
 }
 
+function ImportSummary({
+	entries,
+	importState,
+}: {
+	entries: ImportFileEntry[];
+	importState: ImportState;
+}) {
+	if (entries.length === 0) return null;
+	const summary = summarizeImportEntries(entries);
+	const isUploading = importState === "uploading" && summary.unresolved > 0;
+	return (
+		<section
+			aria-label="Import progress"
+			className="grid gap-2 rounded-lg border border-border bg-muted/30 p-4"
+		>
+			<div className="flex items-baseline justify-between gap-3">
+				<span className="font-medium text-heading text-sm">
+					{isUploading
+						? `Processing ${summary.processed} of ${summary.total} files`
+						: `${summary.total} ${summary.total === 1 ? "file" : "files"} reviewed`}
+				</span>
+				<span className="font-semibold text-heading text-lg tabular-nums">
+					{summary.percent}%
+				</span>
+			</div>
+			<ProgressBar label="Overall import progress" percent={summary.percent} />
+			<div className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-xs">
+				{summary.unresolved > 0 ? (
+					<SummaryCount count={summary.unresolved} label="in progress" />
+				) : null}
+				{summary.accepted > 0 ? (
+					<SummaryCount count={summary.accepted} label="ready" />
+				) : null}
+				{summary.needsReview > 0 ? (
+					<SummaryCount count={summary.needsReview} label="need review" />
+				) : null}
+				{summary.rejected > 0 ? (
+					<SummaryCount count={summary.rejected} label="rejected" />
+				) : null}
+				{summary.completed > 0 ? (
+					<SummaryCount count={summary.completed} label="imported" />
+				) : null}
+			</div>
+		</section>
+	);
+}
+
+function ProgressBar({
+	label,
+	percent,
+	isIndeterminate = false,
+	className,
+}: {
+	label: string;
+	percent: number;
+	isIndeterminate?: boolean;
+	className?: string;
+}) {
+	return (
+		<div
+			className={cn(
+				"h-2 overflow-hidden rounded-full bg-primary/15",
+				className,
+			)}
+			role="progressbar"
+			aria-label={label}
+			aria-valuenow={percent}
+			aria-valuemin={0}
+			aria-valuemax={100}
+		>
+			<div
+				className={cn(
+					"h-full rounded-full bg-primary transition-[width] duration-200",
+					isIndeterminate && "animate-pulse",
+				)}
+				style={{ width: `${percent}%` }}
+			/>
+		</div>
+	);
+}
+
+function SummaryCount({ count, label }: { count: number; label: string }) {
+	return (
+		<span>
+			<span className="font-medium text-heading tabular-nums">{count}</span>{" "}
+			{label}
+		</span>
+	);
+}
+
 function ImportFileList({
 	entries,
 	isBusy,
@@ -210,7 +325,7 @@ function ImportFileList({
 }) {
 	if (entries.length === 0) return null;
 	return (
-		<section aria-label="Import Preview" className="grid gap-3">
+		<section aria-label="Import Preview" className="grid gap-2">
 			<h3 className="font-semibold text-heading">Import Preview</h3>
 			{entries.map((entry) => (
 				<ImportFileRow
@@ -225,7 +340,8 @@ function ImportFileList({
 	);
 }
 
-function ImportFileRow({
+// Memoized so a progress tick on one upload only re-renders that row.
+const ImportFileRow = memo(function ImportFileRow({
 	entry,
 	isBusy,
 	onSelectionChange,
@@ -239,66 +355,171 @@ function ImportFileRow({
 	const filename = entry.preview?.file.originalFilename ?? entry.file.name;
 	const duplicateClassification =
 		entry.preview?.duplicateClassification ?? "none";
+	const isUnresolved = entry.state === "unresolved";
+	const isValidating = isValidatingOnServer(entry);
 	return (
-		<article className="grid gap-2 rounded-lg border border-border bg-muted/30 p-4">
-			<div className="flex items-start justify-between gap-3">
-				<div className="flex min-w-0 items-start gap-3">
-					{duplicateClassification === "none" ? (
-						<input
-							type="checkbox"
-							aria-label={`Select ${filename}`}
-							checked={entry.selected}
-							disabled={isBusy || entry.state !== "accepted"}
-							onChange={(event) =>
-								onSelectionChange(entry.key, event.target.checked)
-							}
-						/>
-					) : null}
-					<span className="min-w-0">
-						<span className="block truncate font-medium text-heading">
-							{entry.preview?.file.title ?? filename}
-						</span>
-						{entry.preview ? (
-							<span className="block text-caption text-sm">
-								<span>{entry.preview.file.artists.join(", ")}</span>
-								{" · "}
-								<span>{entry.preview.file.album}</span>
-							</span>
-						) : null}
+		<article className="grid gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+			<div className="flex items-center gap-3">
+				{duplicateClassification === "none" ? (
+					<SelectionCheckbox
+						label={`Select ${filename}`}
+						checked={entry.selected}
+						disabled={isBusy || entry.state !== "accepted"}
+						onChange={(selected) => onSelectionChange(entry.key, selected)}
+					/>
+				) : (
+					<DuplicateMarker classification={duplicateClassification} />
+				)}
+				<span className="min-w-0 flex-1">
+					<span className="block truncate font-medium text-heading text-sm">
+						{entry.preview?.file.title ?? filename}
 					</span>
-				</div>
-				<span className="rounded-full bg-secondary px-2 py-1 font-medium text-xs">
-					{entry.outcome
-						? outcomeLabel(entry.outcome)
-						: stateLabel(entry.state)}
+					<RowCaption entry={entry} />
+				</span>
+				<span className="flex shrink-0 items-center gap-2">
+					{isUnresolved ? (
+						<span className="text-caption text-xs tabular-nums">
+							{entry.progress}%
+						</span>
+					) : null}
+					<StatusBadge entry={entry} />
 				</span>
 			</div>
+			{isUnresolved ? (
+				<ProgressBar
+					label={`${filename} upload progress`}
+					percent={entry.progress}
+					isIndeterminate={isValidating}
+					className="h-1.5"
+				/>
+			) : null}
 			<DuplicateReview
 				entry={entry}
 				isBusy={isBusy}
 				onDecisionChange={onDuplicateDecisionChange}
 			/>
-			{entry.state === "unresolved" ? (
-				<div
-					className="h-2 overflow-hidden rounded-full bg-secondary"
-					role="progressbar"
-					aria-label={`${filename} upload progress`}
-					aria-valuenow={entry.progress}
-					aria-valuemin={0}
-					aria-valuemax={100}
-				>
-					<div
-						className="h-full bg-primary transition-[width]"
-						style={{ width: `${entry.progress}%` }}
-					/>
-				</div>
-			) : null}
 			{entry.errorMessage ? (
 				<p className="text-destructive text-sm">{entry.errorMessage}</p>
 			) : null}
 		</article>
 	);
+});
+
+function isValidatingOnServer(entry: ImportFileEntry): boolean {
+	return entry.state === "unresolved" && entry.progress >= 100;
 }
+
+function RowCaption({ entry }: { entry: ImportFileEntry }) {
+	if (entry.preview) {
+		return (
+			<span className="block truncate text-caption text-xs">
+				<span>{entry.preview.file.artists.join(", ")}</span>
+				{" · "}
+				<span>{entry.preview.file.album}</span>
+			</span>
+		);
+	}
+	if (entry.state !== "unresolved") return null;
+	return (
+		<span className="block truncate text-caption text-xs">
+			{isValidatingOnServer(entry) ? "Validating on the server…" : "Uploading…"}
+		</span>
+	);
+}
+
+function SelectionCheckbox({
+	label,
+	checked,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	checked: boolean;
+	disabled: boolean;
+	onChange: (checked: boolean) => void;
+}) {
+	return (
+		<span className="relative flex size-4 shrink-0 items-center justify-center">
+			<input
+				type="checkbox"
+				aria-label={label}
+				checked={checked}
+				disabled={disabled}
+				onChange={(event) => onChange(event.target.checked)}
+				className="peer size-4 cursor-pointer appearance-none rounded border border-input bg-background transition-colors checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40"
+			/>
+			<Check
+				aria-hidden="true"
+				className="pointer-events-none absolute size-3 text-primary-foreground opacity-0 peer-checked:opacity-100"
+			/>
+		</span>
+	);
+}
+
+function DuplicateMarker({
+	classification,
+}: {
+	classification: "exact_duplicate" | "possible_duplicate";
+}) {
+	const Icon = classification === "exact_duplicate" ? CircleX : CircleAlert;
+	return (
+		<Icon
+			aria-hidden="true"
+			className={cn(
+				"size-4 shrink-0",
+				classification === "exact_duplicate"
+					? "text-destructive"
+					: "text-caption",
+			)}
+		/>
+	);
+}
+
+function StatusBadge({ entry }: { entry: ImportFileEntry }) {
+	const badge = entry.outcome
+		? outcomeBadges[entry.outcome]
+		: stateBadges[entry.state];
+	return (
+		<Badge variant={badge.variant}>
+			<badge.Icon aria-hidden="true" className={badge.iconClassName} />
+			{badge.label}
+		</Badge>
+	);
+}
+
+type StatusBadgeSpec = {
+	label: string;
+	variant: "default" | "secondary" | "destructive" | "outline";
+	iconClassName?: string;
+	Icon: typeof Check;
+};
+
+const stateBadges: Record<ImportFileEntry["state"], StatusBadgeSpec> = {
+	accepted: { label: "Accepted", variant: "outline", Icon: CircleCheck },
+	rejected: { label: "Rejected", variant: "destructive", Icon: CircleX },
+	unresolved: {
+		label: "Unresolved",
+		variant: "secondary",
+		Icon: LoaderCircle,
+		iconClassName: "animate-spin",
+	},
+	completed: { label: "Completed", variant: "default", Icon: CircleCheck },
+};
+
+const outcomeBadges: Record<
+	NonNullable<ImportFileEntry["outcome"]>,
+	StatusBadgeSpec
+> = {
+	imported: { label: "Imported", variant: "default", Icon: CircleCheck },
+	replaced: { label: "Replaced", variant: "default", Icon: CircleCheck },
+	rejected: { label: "Rejected", variant: "destructive", Icon: CircleX },
+	failed: { label: "Failed", variant: "destructive", Icon: CircleX },
+	not_attempted: {
+		label: "Not attempted",
+		variant: "secondary",
+		Icon: CircleAlert,
+	},
+};
 
 function DuplicateReview({
 	entry,
@@ -446,25 +667,4 @@ function ImportDialogFooter({
 			) : null}
 		</div>
 	);
-}
-
-function stateLabel(state: ImportFileEntry["state"]): string {
-	return {
-		accepted: "Accepted",
-		rejected: "Rejected",
-		unresolved: "Unresolved",
-		completed: "Completed",
-	}[state];
-}
-
-function outcomeLabel(
-	outcome: NonNullable<ImportFileEntry["outcome"]>,
-): string {
-	return {
-		imported: "Imported",
-		rejected: "Rejected",
-		failed: "Failed",
-		replaced: "Replaced",
-		not_attempted: "Not attempted",
-	}[outcome];
 }

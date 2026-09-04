@@ -5,7 +5,7 @@ import {
 	type ManagedImportDuplicateDecision,
 	type ManagedImportPreview,
 } from "@repo/api-client";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
 	type DesktopImportSelection,
 	desktopUploadImportFile,
@@ -50,6 +50,55 @@ export type ImportFileEntry = {
 
 export type DuplicateDecision = ManagedImportDuplicateDecision["action"];
 
+export type ImportEntrySummary = {
+	total: number;
+	processed: number;
+	unresolved: number;
+	accepted: number;
+	/** Possible Duplicates still waiting for a decision. */
+	needsReview: number;
+	rejected: number;
+	completed: number;
+	/** Whole-batch percentage; unresolved rows never count as finished. */
+	percent: number;
+};
+
+export function summarizeImportEntries(
+	entries: ImportFileEntry[],
+): ImportEntrySummary {
+	const summary: ImportEntrySummary = {
+		total: entries.length,
+		processed: 0,
+		unresolved: 0,
+		accepted: 0,
+		needsReview: 0,
+		rejected: 0,
+		completed: 0,
+		percent: 0,
+	};
+	let progressTotal = 0;
+	for (const entry of entries) {
+		if (entry.state === "unresolved") {
+			summary.unresolved += 1;
+			progressTotal += Math.max(0, Math.min(99, entry.progress));
+			continue;
+		}
+		summary.processed += 1;
+		progressTotal += 100;
+		if (entry.state === "rejected") summary.rejected += 1;
+		else if (entry.state === "completed") summary.completed += 1;
+		else if (
+			entry.preview?.duplicateClassification === "possible_duplicate" &&
+			!entry.duplicateDecision
+		)
+			summary.needsReview += 1;
+		else summary.accepted += 1;
+	}
+	summary.percent =
+		entries.length === 0 ? 0 : Math.round(progressTotal / entries.length);
+	return summary;
+}
+
 export function useManagedImportWorkflow({
 	onOpenChange,
 	onCommitted,
@@ -81,6 +130,21 @@ export function useManagedImportWorkflow({
 						Boolean(entry.duplicateDecision)),
 			),
 	);
+	const { updateEntry } = state;
+	const handleSelectionChange = useCallback(
+		(key: string, selected: boolean) =>
+			updateEntry(key, { selected, hasSelectionOverride: true }),
+		[updateEntry],
+	);
+	const handleDuplicateDecisionChange = useCallback(
+		(key: string, duplicateDecision: DuplicateDecision) =>
+			updateEntry(key, {
+				duplicateDecision,
+				selected: duplicateDecision !== "do_not_import",
+				hasSelectionOverride: true,
+			}),
+		[updateEntry],
+	);
 	return {
 		importState: state.importState,
 		entries: state.entries,
@@ -94,17 +158,8 @@ export function useManagedImportWorkflow({
 		handleFiles: createFileHandler(state),
 		handleDesktopSelection: createDesktopSelectionHandler(state),
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
-		handleSelectionChange: (key: string, selected: boolean) =>
-			state.updateEntry(key, { selected, hasSelectionOverride: true }),
-		handleDuplicateDecisionChange: (
-			key: string,
-			duplicateDecision: DuplicateDecision,
-		) =>
-			state.updateEntry(key, {
-				duplicateDecision,
-				selected: duplicateDecision !== "do_not_import",
-				hasSelectionOverride: true,
-			}),
+		handleSelectionChange,
+		handleDuplicateDecisionChange,
 		handleOpenChange: createOpenHandler(state, isCloseLocked, onOpenChange),
 	};
 }
@@ -116,13 +171,18 @@ function useImportWorkflowState() {
 	const [errorMessage, setErrorMessage] = useState("");
 	const activeUploadController = useRef<AbortController | undefined>(undefined);
 	const isDesktopSelectionPending = useRef(false);
-	function updateEntry(key: string, patch: Partial<ImportFileEntry>) {
-		setEntries((current) =>
-			current.map((entry) =>
-				entry.key === key ? { ...entry, ...patch } : entry,
-			),
-		);
-	}
+	// Stable identity lets memoized rows skip re-rendering when a sibling's
+	// upload progress changes.
+	const updateEntry = useCallback(
+		(key: string, patch: Partial<ImportFileEntry>) => {
+			setEntries((current) =>
+				current.map((entry) =>
+					entry.key === key ? { ...entry, ...patch } : entry,
+				),
+			);
+		},
+		[],
+	);
 	function reset() {
 		setBatch(undefined);
 		setEntries([]);
@@ -411,8 +471,15 @@ async function uploadFile(
 	signal?: AbortSignal,
 ) {
 	try {
-		const onProgress = (progress: number) =>
+		// Transports fire many progress events per second; only publish a state
+		// update when the rounded percentage actually changes so the dialog does
+		// not re-render on every network chunk.
+		let lastProgress = -1;
+		const onProgress = (progress: number) => {
+			if (progress === lastProgress) return;
+			lastProgress = progress;
 			updateEntry(entry.key, { progress });
+		};
 		const preview = isDesktopImportSelection(entry.file)
 			? await uploadDesktopFile(entry.file, jobId, onProgress, signal)
 			: await apiClient.uploadManagedImportFile(

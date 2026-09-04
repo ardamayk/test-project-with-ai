@@ -136,7 +136,7 @@ func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader, conte
 	hash := sha256.New()
 	streamLimit, limitErr := storage.streamLimit()
 	destination := io.MultiWriter(file, hash)
-	written, copyErr := io.Copy(&capacityWriter{storage: storage, destination: destination}, io.LimitReader(source, streamLimit+1))
+	written, copyErr := io.Copy(&capacityWriter{storage: storage, destination: destination, remainingBytes: contentLength}, io.LimitReader(source, streamLimit+1))
 	closeErr := closeManagedStorageFile(file, "Managed Import staging file")
 	isShortUpload := contentLength >= 0 && written < contentLength
 	if copyErr != nil || closeErr != nil || written > streamLimit || isShortUpload {
@@ -773,16 +773,43 @@ func addByteCounts(values ...int64) (int64, error) {
 	return total, nil
 }
 
+// CAPACITY_CHECK_INTERVAL_BYTES bounds how much of an upload may be written
+// between two capacity probes. Probing on every io.Copy chunk (32 KiB) costs an
+// open/stat/statfs round trip per chunk, which is pure overhead for a multi-MiB
+// audio file. Each probe asks for the bytes that will land before the next
+// probe, so the safety reserve is never silently consumed between probes.
+const CAPACITY_CHECK_INTERVAL_BYTES = 4 << 20
+
 type capacityWriter struct {
-	storage     *Storage
-	destination io.Writer
+	storage         *Storage
+	destination     io.Writer
+	remainingBytes  int64 // negative when the upload length is unknown
+	bytesSinceCheck int64
+	hasCheckedOnce  bool
 }
 
 func (writer *capacityWriter) Write(buffer []byte) (int, error) {
-	if err := writer.storage.Preflight(StorageRequirement{SelectedBytes: int64(len(buffer))}); err != nil {
-		return 0, err
+	if !writer.hasCheckedOnce || writer.bytesSinceCheck+int64(len(buffer)) >= CAPACITY_CHECK_INTERVAL_BYTES {
+		if err := writer.storage.Preflight(StorageRequirement{SelectedBytes: writer.nextProbeBytes(len(buffer))}); err != nil {
+			return 0, err
+		}
+		writer.hasCheckedOnce = true
+		writer.bytesSinceCheck = 0
 	}
-	return writer.destination.Write(buffer)
+	written, err := writer.destination.Write(buffer)
+	writer.bytesSinceCheck += int64(written)
+	if writer.remainingBytes >= 0 {
+		writer.remainingBytes -= int64(written)
+	}
+	return written, err
+}
+
+func (writer *capacityWriter) nextProbeBytes(bufferLength int) int64 {
+	probeBytes := int64(CAPACITY_CHECK_INTERVAL_BYTES)
+	if writer.remainingBytes >= 0 && writer.remainingBytes < probeBytes {
+		probeBytes = writer.remainingBytes
+	}
+	return max(probeBytes, int64(bufferLength))
 }
 
 func (storage *Storage) streamLimit() (int64, error) {

@@ -1431,17 +1431,26 @@ func failureDetails(err error) (string, string) {
 	}
 }
 
+// VALIDATION_PROGRESS_PERSIST_STEP_PERCENT is the minimum advance between two
+// persisted validation progress values. Decoders report progress per frame, so
+// persisting every percent would issue up to 100 UPDATE statements per file.
+const VALIDATION_PROGRESS_PERSIST_STEP_PERCENT = 5
+
 func (service *Service) validationProgressReporter(ctx context.Context, jobID string) library.InspectionProgressReporter {
-	lastProgress := 0
+	lastPersistedPercent := -1
 	return func(progress library.InspectionProgress) error {
 		service.recordUploadActivity(jobID)
-		if progress.Percent <= lastProgress {
+		if progress.Percent <= lastPersistedPercent {
+			return nil
+		}
+		isMilestone := progress.Percent >= 100 || progress.Percent-lastPersistedPercent >= VALIDATION_PROGRESS_PERSIST_STEP_PERCENT
+		if lastPersistedPercent >= 0 && !isMilestone {
 			return nil
 		}
 		if err := service.store.UpdateValidationProgress(ctx, jobID, progress.Percent); err != nil {
 			return err
 		}
-		lastProgress = progress.Percent
+		lastPersistedPercent = progress.Percent
 		return nil
 	}
 }
