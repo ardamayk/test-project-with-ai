@@ -8,14 +8,13 @@ import {
 	CollectionGridState,
 	CollectionPageContainer,
 } from "#/components/collection-grid-layout";
+import { PageHeader, PageShell } from "#/components/page-layout";
+import { Input } from "#/components/ui/input";
+import { apiClient } from "#/lib/api";
 import {
 	HEADER_SEARCH_CONTAINER_CLASS,
 	HEADER_SEARCH_INPUT_CLASS,
-	PageHeader,
-	PageShell,
-} from "#/components/page-layout";
-import { Input } from "#/components/ui/input";
-import { apiClient } from "#/lib/api";
+} from "#/lib/page-layout-classes";
 
 export function ArtistsPage({
 	initialSearch = "",

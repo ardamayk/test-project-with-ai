@@ -31,6 +31,9 @@ type Service struct {
 	queueEvents      QueueInvalidationPublisher
 
 	replacementPhaseHook func(replacementPhase) error
+	// albumDeletionTrackHook runs before each per-Track deletion of an Album
+	// deletion; tests use it to inject a failure part-way through the run.
+	albumDeletionTrackHook func(trackID string) error
 }
 
 var managedImportCommitMu sync.Mutex

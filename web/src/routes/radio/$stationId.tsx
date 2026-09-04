@@ -9,6 +9,7 @@ import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
+import { parseStationTags } from "#/lib/radio-station-tags";
 
 const radioQueryKeys = {
 	stations: ["radio", "stations"] as const,
@@ -18,13 +19,6 @@ const radioQueryKeys = {
 export const Route = createFileRoute("/radio/$stationId")({
 	component: RadioStationDetailPage,
 });
-
-export function parseStationTags(value: string): string[] {
-	return value
-		.split(",")
-		.map((tag) => tag.trim())
-		.filter(Boolean);
-}
 
 function RadioStationDetailPage() {
 	const { stationId } = Route.useParams();

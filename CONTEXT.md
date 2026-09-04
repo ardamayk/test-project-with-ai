@@ -95,8 +95,8 @@ A user-created named collection of library Tracks. Managed Imports do not create
 _Avoid_: Album, genre, import batch, Queue
 
 **Permanent Track Deletion**:
-An irreversible removal of both a Track and its managed audio file from the Music Server.
-_Avoid_: Remove from Playlist, hide Track, trash
+An irreversible removal of both a Track and its managed audio file from the Music Server. Deleting an Album is not a separate concept: it is one Permanent Track Deletion per Track in that Album, previewed and confirmed once at the Album level, with each Track committing independently so one failure stops the run without undoing the Tracks already deleted. The Album record and its artwork disappear when their last Track does.
+_Avoid_: Remove from Playlist, hide Track, trash, Album delete as an atomic unit
 
 ### Playback
 

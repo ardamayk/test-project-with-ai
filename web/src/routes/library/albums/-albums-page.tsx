@@ -21,15 +21,14 @@ import {
 	CollectionGridState,
 	CollectionPageContainer,
 } from "#/components/collection-grid-layout";
-import {
-	HEADER_SEARCH_CONTAINER_CLASS,
-	HEADER_SEARCH_INPUT_CLASS,
-	PageHeader,
-	PageShell,
-} from "#/components/page-layout";
+import { PageHeader, PageShell } from "#/components/page-layout";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
+import {
+	HEADER_SEARCH_CONTAINER_CLASS,
+	HEADER_SEARCH_INPUT_CLASS,
+} from "#/lib/page-layout-classes";
 
 const defaultFilters: AlbumFilterState = {
 	albumQuery: "",

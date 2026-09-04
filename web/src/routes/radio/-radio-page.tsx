@@ -8,12 +8,7 @@ import {
 	COLLECTION_PAGE_CONTAINER_CLASS,
 	CollectionPageContainer,
 } from "#/components/collection-grid-layout";
-import {
-	HEADER_SEARCH_CONTAINER_CLASS,
-	HEADER_SEARCH_INPUT_CLASS,
-	PageHeader,
-	PageShell,
-} from "#/components/page-layout";
+import { PageHeader, PageShell } from "#/components/page-layout";
 import { Button } from "#/components/ui/button";
 import {
 	ContextMenu,
@@ -23,6 +18,10 @@ import {
 } from "#/components/ui/context-menu";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
+import {
+	HEADER_SEARCH_CONTAINER_CLASS,
+	HEADER_SEARCH_INPUT_CLASS,
+} from "#/lib/page-layout-classes";
 import { cn } from "#/lib/utils";
 
 const radioQueryKeys = {

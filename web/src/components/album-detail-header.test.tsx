@@ -3,7 +3,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AlbumDetailHeader } from "./album-detail-header";
 
-vi.mock("#/hooks/use-delete-library", () => ({}));
+vi.mock("#/hooks/use-delete-library", () => ({
+	useDeleteAlbum: () => ({ mutate: vi.fn(), isPending: false }),
+	usePreviewAlbumDeletion: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 
 vi.mock("#/lib/api", () => ({
 	apiClient: {

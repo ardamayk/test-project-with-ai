@@ -8,7 +8,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseStationTags, RadioStationDetailContent } from "./$stationId";
+import { parseStationTags } from "#/lib/radio-station-tags";
+import { RadioStationDetailContent } from "./$stationId";
 
 const mocks = vi.hoisted(() => ({
 	getRadioStation: vi.fn(),

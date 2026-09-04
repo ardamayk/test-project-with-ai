@@ -101,6 +101,27 @@ export interface paths {
         get: operations["getAlbum"];
         put?: never;
         post?: never;
+        /**
+         * Permanently delete every Managed Track of an Album after reviewing the album deletion preview
+         * @description Runs one Permanent Track Deletion per Track in album order. Each Track commits on its own: a failure stops the run, Tracks already deleted stay deleted, and the result lists both outcomes. The Album and its artwork disappear with their last Track.
+         */
+        delete: operations["deleteAlbum"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{albumId}/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review the irreversible deletion of every Managed Track of an Album and all affected references */
+        get: operations["previewAlbumDeletion"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1247,6 +1268,36 @@ export interface components {
         DeleteResult: {
             deletedFiles: number;
         };
+        AlbumDeletionPreview: {
+            /** Format: uuid */
+            albumId: string;
+            albumTitle: string;
+            trackCount: number;
+            totalSizeBytes: number;
+            tracks: components["schemas"]["AlbumDeletionTrack"][];
+            playlistReferences: components["schemas"]["TrackDeletionPlaylistReference"][];
+            queueReferences: components["schemas"]["TrackDeletionQueueReference"][];
+            /** @description Opaque token binding confirmation to the reviewed Album, its Tracks, managed files, and relationships */
+            confirmationToken: string;
+        };
+        AlbumDeletionTrack: {
+            /** Format: uuid */
+            trackId: string;
+            trackTitle: string;
+            sizeBytes: number;
+        };
+        AlbumDeletionFailed: {
+            /** Format: uuid */
+            trackId: string;
+            trackTitle: string;
+            reason: string;
+        };
+        AlbumDeletionResult: {
+            deleted: components["schemas"]["AlbumDeletionTrack"][];
+            /** @description Empty when every Track was deleted; otherwise the Track that stopped the run */
+            failed: components["schemas"]["AlbumDeletionFailed"][];
+            deletedFiles: number;
+        };
         TrackDeletionPreview: {
             /** Format: uuid */
             trackId: string;
@@ -1622,6 +1673,63 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    deleteAlbum: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Explicit application confirmation required for irreversible deletion */
+                "X-Permanent-Delete": "1";
+            };
+            path: {
+                albumId: components["parameters"]["albumId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackDeletionConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Per-Track outcome of the album deletion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumDeletionResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    previewAlbumDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                albumId: components["parameters"]["albumId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current album deletion preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumDeletionPreview"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getAlbumCover: {

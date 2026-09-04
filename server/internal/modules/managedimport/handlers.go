@@ -103,6 +103,38 @@ func (handlers *Handlers) GetJob(writer http.ResponseWriter, request *http.Reque
 	respond.JSON(writer, http.StatusOK, job)
 }
 
+func (handlers *Handlers) PreviewAlbumDeletion(writer http.ResponseWriter, request *http.Request) {
+	preview, err := handlers.service.PreviewAlbumDeletion(request.Context(), chi.URLParam(request, "albumId"))
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, preview)
+}
+
+func (handlers *Handlers) DeleteAlbum(writer http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(PERMANENT_DELETE_CONFIRMATION_HEADER) != "1" {
+		respond.Error(writer, http.StatusForbidden, "permanent_deletion_forbidden", "Permanent Track Deletion requires explicit confirmation")
+		return
+	}
+	var confirmation TrackDeletionConfirmation
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_TRACK_DELETION_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&confirmation); err != nil || confirmation.ConfirmationToken == "" {
+		respond.Error(writer, http.StatusBadRequest, "invalid_deletion_confirmation", "Album deletion requires the preview confirmation token")
+		return
+	}
+	result, err := handlers.service.DeleteAlbum(request.Context(), AlbumDeletionRequest{
+		AlbumID:           chi.URLParam(request, "albumId"),
+		ConfirmationToken: confirmation.ConfirmationToken,
+	})
+	if err != nil {
+		handleError(writer, request, err)
+		return
+	}
+	respond.JSON(writer, http.StatusOK, result)
+}
+
 func (handlers *Handlers) PreviewTrackDeletion(writer http.ResponseWriter, request *http.Request) {
 	preview, err := handlers.service.PreviewTrackDeletion(request.Context(), chi.URLParam(request, "trackId"))
 	if err != nil {
@@ -224,6 +256,8 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrTrackNotFound):
 		respond.Error(writer, http.StatusNotFound, "track_not_found", "Track not found")
+	case errors.Is(err, ErrAlbumNotFound):
+		respond.Error(writer, http.StatusNotFound, "album_not_found", "Album not found")
 	case errors.Is(err, ErrNotManagedTrack):
 		respond.Error(writer, http.StatusConflict, "not_managed_track", "Only Managed Tracks can be permanently deleted or replaced")
 	case errors.Is(err, ErrDeletionConflict):

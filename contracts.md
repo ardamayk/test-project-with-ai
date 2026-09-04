@@ -101,7 +101,7 @@ mise run generate
 | `playback.queue-events.v1` | Shared Queue server-sent events |
 | `managed-import.v1` | Single-file Managed Import (upload, Import Preview, confirm) |
 | `managed-import-batches.v1` | Multi-file Import Batches with per-file status and duplicate decisions |
-| `managed-track-deletion.v1` | Permanent Track Deletion preview and confirmation |
+| `managed-track-deletion.v1` | Permanent Track Deletion preview and confirmation, per Track or for every Track of an Album |
 | `managed-track-replacement.v1` | Explicit Track Replacement |
 
 `@repo/api-client` exports one constant per capability plus `hasServerCapability` and `missingServerCapabilities`; the Web Client's `useServerCapabilityState` hook wraps them.

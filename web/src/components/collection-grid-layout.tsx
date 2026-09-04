@@ -1,5 +1,4 @@
 import type { ComponentProps, ReactNode } from "react";
-import { PAGE_CONTENT_WIDTH_CLASS } from "#/components/page-layout";
 import { Button } from "#/components/ui/button";
 import {
 	Empty,
@@ -9,6 +8,7 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "#/components/ui/empty";
+import { PAGE_CONTENT_WIDTH_CLASS } from "#/lib/page-layout-classes";
 import { cn } from "#/lib/utils";
 
 const SKELETON_CARD_KEYS = [

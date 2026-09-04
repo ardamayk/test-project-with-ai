@@ -18,6 +18,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { toast } from "sonner";
 import type {
 	PlaybackEngine,
 	PlaybackError,
@@ -289,9 +290,7 @@ export function PlaybackProvider({
 		engine.cycleRepeatMode();
 	}, [engine, queue.length, session.repeatMode, session.source]);
 
-	useEffect(() => {
-		if (engine.syncQueueContext) return;
-		if (session.status !== "ended" || session.source?.type !== "track") return;
+	const advanceToNextQueueItem = useCallback(() => {
 		const index = queueRef.current.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
 		);
@@ -303,7 +302,30 @@ export function PlaybackProvider({
 			return;
 		}
 		engine.stop();
-	}, [engine, playQueueItemInternal, session]);
+	}, [engine, playQueueItemInternal]);
+
+	useEffect(() => {
+		if (engine.syncQueueContext) return;
+		if (session.status !== "ended" || session.source?.type !== "track") return;
+		advanceToNextQueueItem();
+	}, [advanceToNextQueueItem, engine, session]);
+
+	// A Track that fails to play (typically because it was deleted from the
+	// library while queued, per ADR 0010) is announced and skipped instead of
+	// leaving the Player stuck on a dead source.
+	const announcedErrorRef = useRef<PlaybackError | null>(null);
+	useEffect(() => {
+		if (session.status !== "error" || session.source?.type !== "track") {
+			announcedErrorRef.current = null;
+			return;
+		}
+		if (!session.error || announcedErrorRef.current === session.error) return;
+		announcedErrorRef.current = session.error;
+		toast.error(`Couldn't play ${session.source.track.title}`, {
+			description: `${session.error.message}. Skipping to the next track.`,
+		});
+		advanceToNextQueueItem();
+	}, [advanceToNextQueueItem, session]);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {

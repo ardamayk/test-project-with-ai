@@ -88,6 +88,8 @@ export type ManagedImportResult = Schemas['ManagedImportResult'];
 export type ManagedImportHistoryList = Schemas['ManagedImportHistoryList'];
 export type ManagedImportHistoryItem = Schemas['ManagedImportHistoryItem'];
 export type ManagedImportHistoryFile = Schemas['ManagedImportHistoryFile'];
+export type AlbumDeletionPreview = Schemas['AlbumDeletionPreview'];
+export type AlbumDeletionResult = Schemas['AlbumDeletionResult'];
 export type ManagedImportUploadProgress = (progress: number) => void;
 export type QueueConflictResponse = Omit<
   Schemas['QueueConflictResponse'],
@@ -400,6 +402,16 @@ export function createApiClient(config: ApiClientConfig) {
       request<WireTrack>(`/api/v1/library/tracks/${trackId}`).then(
         normalizeTrack,
       ),
+    previewAlbumDeletion: (albumId: string) =>
+      request<AlbumDeletionPreview>(
+        `/api/v1/library/albums/${albumId}/deletion`,
+      ),
+    deleteAlbum: (albumId: string, confirmationToken: string) =>
+      request<AlbumDeletionResult>(`/api/v1/library/albums/${albumId}`, {
+        method: 'DELETE',
+        headers: { 'X-Permanent-Delete': '1' },
+        body: JSON.stringify({ confirmationToken }),
+      }),
     previewTrackDeletion: (trackId: string) =>
       request<TrackDeletionPreview>(
         `/api/v1/library/tracks/${trackId}/deletion`,

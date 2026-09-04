@@ -8,13 +8,6 @@ import { PageHeader, PageShell } from "#/components/page-layout";
 import { apiClient } from "#/lib/api";
 import { getTrackGenreNames } from "#/lib/library-display";
 
-export function trackHasGenre(track: Track, genre: string): boolean {
-	const target = genre.toLowerCase();
-	return getTrackGenreNames(track).some(
-		(item) => item.toLowerCase() === target,
-	);
-}
-
 function collectGenres(tracks: Track[]) {
 	const byKey = new Map<
 		string,

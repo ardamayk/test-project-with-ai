@@ -13,6 +13,14 @@ import {
 } from "./PlaybackProvider";
 import { InMemoryPlaybackEngine } from "./testing/InMemoryPlaybackEngine";
 
+const toastError = vi.fn();
+vi.mock("sonner", () => ({
+	toast: {
+		error: (...args: unknown[]) => toastError(...args),
+		success: vi.fn(),
+	},
+}));
+
 const track = {
 	id: "track-1",
 	title: "Track 1",
@@ -200,6 +208,31 @@ function renderPlayback(
 afterEach(cleanup);
 
 describe("PlaybackProvider", () => {
+	it("announces a Track that fails to play and skips to the next Queue item", async () => {
+		const { engine } = renderPlayback();
+		await act(async () => {});
+		await act(async () =>
+			screen.getByRole("button", { name: "Track" }).click(),
+		);
+		expect(engine.getState().source).toMatchObject({
+			track: { id: "track-1" },
+		});
+
+		await act(async () =>
+			engine.fail({ code: "playback-failed", message: "Playback failed" }),
+		);
+
+		expect(toastError).toHaveBeenCalledWith(
+			expect.stringContaining("Couldn't play"),
+			expect.objectContaining({
+				description: expect.stringContaining("Skipping to the next track"),
+			}),
+		);
+		expect(engine.getState().source).toMatchObject({
+			track: { id: "track-2" },
+		});
+	});
+
 	it("plays previous and next Queue items from native tray navigation", async () => {
 		const { engine } = renderPlayback();
 		await act(async () => {});
