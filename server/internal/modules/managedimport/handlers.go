@@ -51,7 +51,7 @@ func (handlers *Handlers) CreateBatch(writer http.ResponseWriter, request *http.
 		respond.Error(writer, http.StatusBadRequest, "invalid_import_batch", "Managed Import Batch request is invalid")
 		return
 	}
-	batch, err := handlers.service.CreateBatch(request.Context(), BatchOptions{RecordingIdentification: creation.RecordingIdentification})
+	batch, err := handlers.service.CreateBatch(request.Context(), BatchOptions(creation))
 	if err != nil {
 		handleError(writer, request, err)
 		return

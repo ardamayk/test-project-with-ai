@@ -1248,7 +1248,8 @@ func (store *Store) ClassifyDuplicateExcluding(ctx context.Context, inspection l
 		return DUPLICATE_EXACT, []DuplicateCandidate{candidate}, nil
 	}
 	if recordingID != "" {
-		recordingTrackIDs, err := store.findDuplicatesByRecording(ctx, recordingID, excludedTrackID)
+		var recordingTrackIDs []string
+		recordingTrackIDs, err = store.findDuplicatesByRecording(ctx, recordingID, excludedTrackID)
 		if err != nil {
 			return "", nil, err
 		}

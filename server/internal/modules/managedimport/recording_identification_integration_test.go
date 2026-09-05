@@ -389,14 +389,13 @@ func TestTaggedRecordingIDFlagsRecordingDuplicateOffline(t *testing.T) {
 	}
 	confirmBatchJob(t, service, batch.ID, first.ID)
 
-	second, _ := service.CreateJob(ctx, batch.ID, "00000000-0000-4000-8000-000000000002")
 	flacWithSameTag := strictFLAC(t)
 	_ = flacWithSameTag
 	other := testutil.StrictMP3FixtureWithExtraFrames(3,
 		testutil.ID3UFIDFrame(3, "http://musicbrainz.org", "2872b086-7c8d-4b3a-9b91-55805cd912b0"),
 	)
 	secondBatch, _ := service.CreateBatch(ctx, BatchOptions{})
-	second, _ = service.CreateJob(ctx, secondBatch.ID, "00000000-0000-4000-8000-000000000003")
+	second, _ := service.CreateJob(ctx, secondBatch.ID, "00000000-0000-4000-8000-000000000003")
 	preview, err := service.Upload(ctx, second.ID, "other.mp3", bytes.NewReader(other), int64(len(other)))
 	if err != nil {
 		t.Fatalf("second Upload() error = %v", err)
