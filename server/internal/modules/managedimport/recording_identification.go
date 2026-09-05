@@ -99,6 +99,14 @@ func (service *Service) identifyStagedUpload(ctx context.Context, job importJob,
 		record.Reason = "Recording Identification is not active on this Music Server"
 		return record, inspection, nil
 	}
+	service.setUploadPhase(job.ID, "identifying")
+	ctx = identification.WithProgress(ctx, func(isWaiting bool) {
+		phase := "identifying"
+		if isWaiting {
+			phase = "waiting_identification"
+		}
+		service.setUploadPhase(job.ID, phase)
+	})
 	result := service.identifier.Identify(ctx, stagedPath, identification.Hint{
 		RecordingID: inspection.Metadata.MusicBrainzRecordingID,
 		ISRC:        inspection.Metadata.ISRC,

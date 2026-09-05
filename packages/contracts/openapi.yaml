@@ -392,6 +392,18 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/import-batches/{batchId}/heartbeat:
+    post:
+      tags: [imports]
+      operationId: heartbeatManagedImportBatch
+      summary: Keep an unfinished import alive without changing its preview revision
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+      responses:
+        "204":
+          description: Client liveness recorded
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/import-batches/{batchId}/confirm:
     post:
       tags: [imports]
@@ -1657,6 +1669,19 @@ components:
       type: object
       required: [jobId, state, status, revision, validationProgress, selected]
       properties:
+        phase:
+          type: string
+          enum: [queued, uploading, validating, waiting_identification, identifying, ready, failed, committing, completed]
+          description: Current server processing phase, separate from byte transfer progress.
+        transferredBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        totalBytes:
+          type: integer
+          format: int64
+          minimum: 0
+
         issues:
           type: array
           description: All independently detectable validation failures, in check order.

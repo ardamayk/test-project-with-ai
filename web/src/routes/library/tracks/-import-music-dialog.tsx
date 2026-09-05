@@ -14,6 +14,7 @@ import { Button } from "#/components/ui/button";
 import { isDesktopClient } from "#/desktop/bridge";
 import { cn } from "#/lib/utils.ts";
 import { ImportErrors } from "./-import-errors";
+import { ImportTransferDetails, importPhaseLabel } from "./-import-progress";
 import {
 	type DuplicateDecision,
 	type ImportFileEntry,
@@ -39,61 +40,100 @@ export function ImportMusicDialog({
 	const workflow = useManagedImportWorkflow({ onOpenChange, onCommitted });
 
 	return (
-		<DialogPrimitive.Root
-			open={isOpen}
-			onOpenChange={workflow.handleOpenChange}
-		>
-			<DialogPrimitive.Portal>
-				{/*
-				 * The desktop client skips backdrop-blur: the dialog repaints on
-				 * every progress tick, and a blurred full-screen backdrop makes
-				 * WebKitGTK re-rasterize the whole window for each repaint.
-				 */}
-				<DialogPrimitive.Overlay
-					className={cn(
-						"fixed inset-0 z-50 bg-background/80",
-						!isDesktopClient() && "backdrop-blur-sm",
-					)}
-				/>
-				<DialogPrimitive.Content
-					aria-describedby="import-music-description"
-					onCloseAutoFocus={onCloseAutoFocus}
-					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 grid max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl gap-5 overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl outline-none"
+		<>
+			{!isOpen && workflow.entries.length > 0 ? (
+				<Button
+					type="button"
+					onClick={() => onOpenChange(true)}
+					className="fixed bottom-24 right-6 z-40 shadow-lg"
+					aria-label="Open current import"
 				>
-					<ImportDialogHeader isBusy={workflow.isCloseLocked} />
-					<RecordingIdentificationSwitch
-						isDisabled={workflow.isPickerLocked}
-						onChange={workflow.handleRecordingIdentificationChange}
+					{workflow.isCompleted
+						? "Import results"
+						: workflow.isBusy
+							? "Import in progress"
+							: "Ready for review"}
+				</Button>
+			) : null}
+			<DialogPrimitive.Root
+				open={isOpen}
+				onOpenChange={workflow.handleOpenChange}
+			>
+				<DialogPrimitive.Portal>
+					{/*
+					 * The desktop client skips backdrop-blur: the dialog repaints on
+					 * every progress tick, and a blurred full-screen backdrop makes
+					 * WebKitGTK re-rasterize the whole window for each repaint.
+					 */}
+					<DialogPrimitive.Overlay
+						className={cn(
+							"fixed inset-0 z-50 bg-background/80",
+							!isDesktopClient() && "backdrop-blur-sm",
+						)}
 					/>
-					<ImportFilePicker
-						isBusy={workflow.isPickerLocked}
-						onFiles={workflow.handleFiles}
-						onDesktopSelection={workflow.handleDesktopSelection}
-					/>
-					<ImportActivity
-						importState={workflow.importState}
-						errorMessage={workflow.errorMessage}
-					/>
-					<ImportSummary
-						entries={workflow.entries}
-						importState={workflow.importState}
-					/>
-					<ImportFileList
-						entries={workflow.entries}
-						isBusy={workflow.isSelectionLocked}
-						onSelectionChange={workflow.handleSelectionChange}
-						onDuplicateDecisionChange={workflow.handleDuplicateDecisionChange}
-					/>
-					<ImportDialogFooter
-						canConfirm={workflow.canConfirm}
-						isBusy={workflow.isCloseLocked}
-						isCompleted={workflow.isCompleted}
-						onCancel={() => workflow.handleOpenChange(false)}
-						onConfirm={workflow.handleConfirm}
-					/>
-				</DialogPrimitive.Content>
-			</DialogPrimitive.Portal>
-		</DialogPrimitive.Root>
+					<DialogPrimitive.Content
+						aria-describedby="import-music-description"
+						onCloseAutoFocus={onCloseAutoFocus}
+						className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 grid max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl gap-5 overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl outline-none"
+					>
+						<ImportDialogHeader isBusy={false} />
+						<RecordingIdentificationSwitch
+							isDisabled={workflow.isPickerLocked}
+							onChange={workflow.handleRecordingIdentificationChange}
+						/>
+						<ImportFilePicker
+							isBusy={workflow.isPickerLocked}
+							onFiles={workflow.handleFiles}
+							onDesktopSelection={workflow.handleDesktopSelection}
+						/>
+						<ImportActivity
+							importState={workflow.importState}
+							errorMessage={workflow.errorMessage}
+						/>
+						<ImportSummary
+							entries={workflow.entries}
+							importState={workflow.importState}
+						/>
+						<ImportFileList
+							entries={workflow.entries}
+							isBusy={workflow.isSelectionLocked}
+							onSelectionChange={workflow.handleSelectionChange}
+							onDuplicateDecisionChange={workflow.handleDuplicateDecisionChange}
+						/>
+						{workflow.canRetry ? (
+							<Button
+								type="button"
+								variant="outline"
+								onClick={() => void workflow.handleRetry()}
+							>
+								Retry failed uploads
+							</Button>
+						) : null}
+						{workflow.canConfirm &&
+						workflow.entries.some((entry) => entry.state !== "accepted") ? (
+							<p className="text-caption text-sm">
+								{
+									workflow.entries.filter((entry) => entry.state !== "accepted")
+										.length
+								}{" "}
+								unsuccessful files will not be imported.
+							</p>
+						) : null}
+						<ImportDialogFooter
+							canConfirm={workflow.canConfirm}
+							isBusy={workflow.isCloseLocked}
+							isCompleted={workflow.isCompleted}
+							onCancel={
+								workflow.isCompleted
+									? () => workflow.handleOpenChange(false)
+									: workflow.handleCancel
+							}
+							onConfirm={workflow.handleConfirm}
+						/>
+					</DialogPrimitive.Content>
+				</DialogPrimitive.Portal>
+			</DialogPrimitive.Root>
+		</>
 	);
 }
 
@@ -238,35 +278,26 @@ function ImportSummary({
 }) {
 	if (entries.length === 0) return null;
 	const summary = summarizeImportEntries(entries);
-	const isUploading = importState === "uploading" && summary.unresolved > 0;
+	const queued = entries.filter((entry) => entry.phase === "queued").length;
+	const processing = entries.filter(
+		(entry) => entry.state === "unresolved" && entry.phase !== "queued",
+	).length;
 	return (
 		<section
 			aria-label="Import progress"
 			className="grid gap-2 rounded-lg border border-border bg-muted/30 p-4"
 		>
-			<div className="flex items-baseline justify-between gap-3">
-				<span className="font-medium text-heading text-sm">
-					{isUploading
-						? `Processing ${summary.processed} of ${summary.total} files`
-						: `${summary.total} ${summary.total === 1 ? "file" : "files"} reviewed`}
-				</span>
-				<span className="font-semibold text-heading text-lg tabular-nums">
-					{summary.percent}%
-				</span>
-			</div>
-			<ProgressBar label="Overall import progress" percent={summary.percent} />
+			<p className="font-medium text-heading text-sm">
+				{importState === "confirming"
+					? `Importing ${summary.completed} of ${entries.filter((entry) => entry.selected).length}`
+					: `${summary.accepted} of ${summary.total} ready · ${processing} processing · ${queued} queued`}
+			</p>
 			<div className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-xs">
-				{summary.unresolved > 0 ? (
-					<SummaryCount count={summary.unresolved} label="in progress" />
-				) : null}
-				{summary.accepted > 0 ? (
-					<SummaryCount count={summary.accepted} label="ready" />
-				) : null}
 				{summary.needsReview > 0 ? (
 					<SummaryCount count={summary.needsReview} label="need review" />
 				) : null}
 				{summary.rejected > 0 ? (
-					<SummaryCount count={summary.rejected} label="rejected" />
+					<SummaryCount count={summary.rejected} label="unsuccessful" />
 				) : null}
 				{summary.completed > 0 ? (
 					<SummaryCount count={summary.completed} label="imported" />
@@ -362,8 +393,9 @@ const ImportFileRow = memo(function ImportFileRow({
 	const filename = entry.preview?.file.originalFilename ?? entry.file.name;
 	const duplicateClassification =
 		entry.preview?.duplicateClassification ?? "none";
-	const isUnresolved = entry.state === "unresolved";
-	const isValidating = isValidatingOnServer(entry);
+	const isUploading =
+		entry.phase === "uploading" ||
+		(!entry.phase && entry.state === "unresolved" && entry.progress < 100);
 	return (
 		<article className="grid gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
 			<div className="flex items-center gap-3">
@@ -384,7 +416,7 @@ const ImportFileRow = memo(function ImportFileRow({
 					<RowCaption entry={entry} />
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
-					{isUnresolved ? (
+					{isUploading ? (
 						<span className="text-caption text-xs tabular-nums">
 							{entry.progress}%
 						</span>
@@ -392,14 +424,14 @@ const ImportFileRow = memo(function ImportFileRow({
 					<StatusBadge entry={entry} />
 				</span>
 			</div>
-			{isUnresolved ? (
+			{isUploading ? (
 				<ProgressBar
 					label={`${filename} upload progress`}
 					percent={entry.progress}
-					isIndeterminate={isValidating}
 					className="h-1.5"
 				/>
 			) : null}
+			<ImportTransferDetails entry={entry} />
 			<DuplicateReview
 				entry={entry}
 				isBusy={isBusy}
@@ -409,10 +441,6 @@ const ImportFileRow = memo(function ImportFileRow({
 		</article>
 	);
 });
-
-function isValidatingOnServer(entry: ImportFileEntry): boolean {
-	return entry.state === "unresolved" && entry.progress >= 100;
-}
 
 function RowCaption({ entry }: { entry: ImportFileEntry }) {
 	if (entry.preview) {
@@ -430,7 +458,7 @@ function RowCaption({ entry }: { entry: ImportFileEntry }) {
 	if (entry.state !== "unresolved") return null;
 	return (
 		<span className="block truncate text-caption text-xs">
-			{isValidatingOnServer(entry) ? "Validating on the server…" : "Uploading…"}
+			{importPhaseLabel(entry)}
 		</span>
 	);
 }
@@ -541,7 +569,7 @@ function StatusBadge({ entry }: { entry: ImportFileEntry }) {
 	return (
 		<Badge variant={badge.variant}>
 			<badge.Icon aria-hidden="true" className={badge.iconClassName} />
-			{badge.label}
+			{entry.state === "unresolved" ? importPhaseLabel(entry) : badge.label}
 		</Badge>
 	);
 }

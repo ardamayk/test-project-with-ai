@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -47,15 +48,18 @@ type uploadLock struct {
 }
 
 type activeUpload struct {
-	cancel       context.CancelFunc
-	done         chan struct{}
-	lastActivity time.Time
+	cancel           context.CancelFunc
+	done             chan struct{}
+	lastActivity     time.Time
+	phase            string
+	transferredBytes int64
+	totalBytes       int64
 }
 
 type uploadActivityReader struct {
 	ctx    context.Context
 	source io.Reader
-	onRead func()
+	onRead func(int)
 }
 
 func (reader *uploadActivityReader) Read(buffer []byte) (int, error) {
@@ -64,7 +68,7 @@ func (reader *uploadActivityReader) Read(buffer []byte) (int, error) {
 	}
 	read, err := reader.source.Read(buffer)
 	if read > 0 {
-		reader.onRead()
+		reader.onRead(read)
 	}
 	return read, err
 }
@@ -97,7 +101,11 @@ func (service *Service) CreateBatch(ctx context.Context, options BatchOptions) (
 }
 
 func (service *Service) GetBatch(ctx context.Context, batchID string) (Batch, error) {
-	return service.store.GetBatch(ctx, batchID)
+	batch, err := service.store.GetBatch(ctx, batchID)
+	if err == nil {
+		service.addBatchProgress(&batch)
+	}
+	return batch, err
 }
 
 func (service *Service) ListHistory(ctx context.Context) (HistoryList, error) {
@@ -254,7 +262,7 @@ func (service *Service) clearCancelingJobs(jobs []importJob) {
 
 func (service *Service) startActiveUpload(ctx context.Context, jobID string) (context.Context, *activeUpload) {
 	uploadCtx, cancel := context.WithCancel(ctx)
-	active := &activeUpload{cancel: cancel, done: make(chan struct{}), lastActivity: time.Now()}
+	active := &activeUpload{cancel: cancel, done: make(chan struct{}), lastActivity: time.Now(), phase: "uploading"}
 	service.activeUploadsMu.Lock()
 	service.activeUploads[jobID] = active
 	if service.cancelingJobs[jobID] {
@@ -274,11 +282,12 @@ func (service *Service) finishActiveUpload(jobID string, active *activeUpload) {
 	service.activeUploadsMu.Unlock()
 }
 
-func (service *Service) recordUploadActivity(jobID string) {
+func (service *Service) recordUploadActivity(jobID string, count int) {
 	service.activeUploadsMu.Lock()
 	defer service.activeUploadsMu.Unlock()
 	if active := service.activeUploads[jobID]; active != nil {
 		active.lastActivity = time.Now()
+		active.transferredBytes += int64(count)
 	}
 }
 
@@ -296,7 +305,7 @@ func (service *Service) removeUncommittedStaging(jobs []importJob) error {
 }
 
 func (service *Service) CleanupInactive(ctx context.Context, now time.Time) error {
-	cutoff := now.Add(-IMPORT_INACTIVITY_TIMEOUT)
+	cutoff := now.UTC().Add(-IMPORT_INACTIVITY_TIMEOUT)
 	return service.cleanupUncommitted(ctx, &cutoff)
 }
 
@@ -423,9 +432,20 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 		unlock()
 		service.finishActiveUpload(jobID, active)
 	}()
+	if source, ok := body.(interface{ Interrupt() error }); ok {
+		stopInterrupt := context.AfterFunc(ctx, func() {
+			if err := source.Interrupt(); err != nil {
+				slog.ErrorContext(ctx, "interrupt Managed Import upload read", "jobId", jobID, "error", err)
+			}
+		})
+		defer stopInterrupt()
+	}
 	if err := ctx.Err(); err != nil {
 		return Preview{}, err
 	}
+	service.activeUploadsMu.Lock()
+	active.totalBytes = max(0, contentLength)
+	service.activeUploadsMu.Unlock()
 	job, err := service.getUploadingJob(ctx, jobID)
 	if err != nil {
 		return Preview{}, err
@@ -438,7 +458,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, "", err)
 	}
-	body = &uploadActivityReader{ctx: ctx, source: body, onRead: func() { service.recordUploadActivity(jobID) }}
+	body = &uploadActivityReader{ctx: ctx, source: body, onRead: func(count int) { service.recordUploadActivity(jobID, count) }}
 	body = service.batchUploadReader(ctx, job, body, contentLength)
 	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
@@ -450,6 +470,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 		}
 	}
+	service.setUploadPhase(job.ID, "validating")
 	inspection, err := service.validateStagedUpload(ctx, job, upload)
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
@@ -1172,7 +1193,7 @@ func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob, 
 			continue
 		}
 		if !job.Selected {
-			if err := service.finishUncommittedBatchFile(ctx, job, OUTCOME_NOT_ATTEMPTED, "", ""); err != nil {
+			if err := service.finishUncommittedBatchFile(ctx, job, OUTCOME_NOT_ATTEMPTED, job.ErrorCode, job.ErrorReason); err != nil {
 				return err
 			}
 			continue
@@ -1475,7 +1496,7 @@ const VALIDATION_PROGRESS_PERSIST_STEP_PERCENT = 5
 func (service *Service) validationProgressReporter(ctx context.Context, jobID string) library.InspectionProgressReporter {
 	lastPersistedPercent := -1
 	return func(progress library.InspectionProgress) error {
-		service.recordUploadActivity(jobID)
+		service.recordUploadActivity(jobID, 0)
 		if progress.Percent <= lastPersistedPercent {
 			return nil
 		}

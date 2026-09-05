@@ -147,6 +147,9 @@ type BatchCreate struct {
 }
 
 type BatchFile struct {
+	Phase              string           `json:"phase,omitempty"`
+	TransferredBytes   int64            `json:"transferredBytes,omitempty"`
+	TotalBytes         int64            `json:"totalBytes,omitempty"`
 	Issues             ValidationIssues `json:"issues,omitempty"`
 	JobID              string           `json:"jobId"`
 	ClientFileID       string           `json:"clientFileId,omitempty"`

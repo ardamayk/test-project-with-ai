@@ -86,7 +86,7 @@ export function releaseDesktopImportSelections(
 export async function desktopUploadImportFile(
 	selectionId: string,
 	jobId: string,
-	onProgress?: (progress: number) => void,
+	onProgress?: (progress: number, transferredBytes?: number) => void,
 	signal?: AbortSignal,
 ): Promise<Response> {
 	if (signal?.aborted) {
@@ -96,7 +96,7 @@ export async function desktopUploadImportFile(
 	const progressChannel = new Channel<DesktopImportProgress>();
 	progressChannel.onmessage = ({ sentBytes, totalBytes }) => {
 		if (totalBytes > 0) {
-			onProgress?.(Math.round((sentBytes / totalBytes) * 100));
+			onProgress?.(Math.round((sentBytes / totalBytes) * 100), sentBytes);
 		}
 	};
 	const handleAbort = () => {

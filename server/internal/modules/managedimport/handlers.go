@@ -221,11 +221,13 @@ func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.R
 		respond.Error(writer, http.StatusBadRequest, "invalid_import_filename", "Managed Import filename encoding is invalid")
 		return
 	}
+	controller := http.NewResponseController(writer)
+
 	preview, err := handlers.service.Upload(
 		request.Context(),
 		chi.URLParam(request, "importId"),
 		filename,
-		request.Body,
+		&uploadDeadlineReader{source: request.Body, controller: controller},
 		request.ContentLength,
 	)
 	if err != nil {

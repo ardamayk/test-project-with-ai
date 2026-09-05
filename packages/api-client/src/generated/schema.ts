@@ -269,6 +269,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import-batches/{batchId}/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Keep an unfinished import alive without changing its preview revision */
+        post: operations["heartbeatManagedImportBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches/{batchId}/confirm": {
         parameters: {
             query?: never;
@@ -847,6 +864,15 @@ export interface components {
             files: components["schemas"]["ManagedImportBatchFile"][];
         };
         ManagedImportBatchFile: {
+            /**
+             * @description Current server processing phase, separate from byte transfer progress.
+             * @enum {string}
+             */
+            phase?: "queued" | "uploading" | "validating" | "waiting_identification" | "identifying" | "ready" | "failed" | "committing" | "completed";
+            /** Format: int64 */
+            transferredBytes?: number;
+            /** Format: int64 */
+            totalBytes?: number;
             /** @description All independently detectable validation failures, in check order. */
             issues?: components["schemas"]["ValidationIssue"][];
             /** Format: uuid */
@@ -2076,6 +2102,27 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    heartbeatManagedImportBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client liveness recorded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     confirmManagedImportBatch: {

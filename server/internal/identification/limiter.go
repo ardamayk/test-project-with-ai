@@ -24,6 +24,8 @@ func NewLimiter(interval time.Duration) *Limiter {
 // its slot back when it was the last reservation, so a cancelled Import
 // Batch does not leave later callers idling behind empty slots.
 func (limiter *Limiter) Wait(ctx context.Context) error {
+	reportProgress(ctx, true)
+	defer reportProgress(ctx, false)
 	limiter.mutex.Lock()
 	now := time.Now()
 	startAt := limiter.nextAt

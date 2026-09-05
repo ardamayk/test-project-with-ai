@@ -87,3 +87,33 @@ row still carried the `awaiting_confirmation` status, violating the table CHECK
 constraint. The archive now clears payloads only for committed and failed
 rows; the canceled row is deleted in the same transaction. The regression test is
 `TestManagedImportStandaloneCancellationRemovesStagingAndRecordsHistory`.
+
+
+## Running-client import sessions (ADR 0018)
+
+`import_session_integration_test.go` covers heartbeat liveness without preview
+revision changes, ready-preview expiry after a lost lease, progressing uploads
+outliving the server's total read timeout, the real 30-second byte-inactivity
+limit, cancellation of a blocked network upload, HTTP phase/byte visibility,
+and confirmation of ready files alongside an interrupted transfer.
+
+The import route tests cover two concurrent Web and Desktop uploads, the
+2/5/10-second retry cycle and manual reset, release of concurrency slots during
+retry waits, response-loss reconciliation, cancellation, minimization, route
+navigation, and heartbeat retention. Desktop selection failures do not retry.
+The Desktop bridge tests also verify byte progress from the native transport.
+
+Verification on 2026-09-05 passed `mise run test`, workspace typechecking,
+OpenAPI generation verification, and all eight Managed Import Playwright
+journeys against an isolated server and storage directory. Browser tests accept
+`MANAGED_IMPORT_TEST_STORAGE_PATH` when their server uses isolated storage.
+The full test task took 43 seconds; the browser journeys took 18 seconds.
+These are test runtimes, not an import-throughput or CPU/memory benchmark.
+Provider rate limits are shared service limits; two-file concurrency does not
+raise those limits. Large-library responsiveness and production CPU/memory
+measurements remain follow-up performance validation.
+
+Server lint still reports three pre-existing findings present at the review
+baseline: shadowed `err` in duplicate classification, an unused assignment in
+recording-identification integration tests, and the convertible batch-options
+struct literal in the create-batch handler.

@@ -39,7 +39,9 @@ const BETA_REMASTER = `${RUN_ID} Beta Remaster`;
 // Paths must match the webServer env in playwright.config.ts, which the Go
 // server resolves relative to its own working directory (../server).
 const SERVER_DIR = fileURLToPath(new URL("../../server", import.meta.url));
-const MANAGED_STORAGE_DIR = path.join(SERVER_DIR, "data/e2e-managed");
+const MANAGED_STORAGE_DIR =
+	process.env.MANAGED_IMPORT_TEST_STORAGE_PATH ??
+	path.join(SERVER_DIR, "data/e2e-managed");
 const FIXTURE_DIR = path.join(tmpdir(), `managed-import-${RUN_ID}`);
 
 const STREAM_PATTERN = /\/api\/v1\/tracks\/[^/]+\/stream/;
@@ -251,10 +253,12 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 	await expect(betaRow.getByText("Accepted")).toBeVisible();
 	await expect(untitledRow.getByText("Rejected")).toBeVisible();
 	await expect(artlessRow.getByText("Rejected")).toBeVisible();
-	await expect(untitledRow.locator("p.text-destructive")).not.toBeEmpty();
-	await expect(artlessRow.locator("p.text-destructive")).toContainText(
-		/artwork|cover/i,
-	);
+	await expect(
+		untitledRow.getByRole("list", { name: "Import errors" }),
+	).not.toBeEmpty();
+	await expect(
+		artlessRow.getByRole("list", { name: "Import errors" }),
+	).toContainText(/artwork|cover/i);
 	await expect(untitledRow.getByRole("checkbox")).toBeDisabled();
 	await expect(
 		alphaRow.getByRole("checkbox", { name: "Select alpha.mp3" }),

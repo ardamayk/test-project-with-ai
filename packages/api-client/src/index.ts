@@ -91,7 +91,10 @@ export type ManagedImportHistoryItem = Schemas['ManagedImportHistoryItem'];
 export type ManagedImportHistoryFile = Schemas['ManagedImportHistoryFile'];
 export type AlbumDeletionPreview = Schemas['AlbumDeletionPreview'];
 export type AlbumDeletionResult = Schemas['AlbumDeletionResult'];
-export type ManagedImportUploadProgress = (progress: number) => void;
+export type ManagedImportUploadProgress = (
+  progress: number,
+  transferredBytes?: number,
+) => void;
 export type QueueConflictResponse = Omit<
   Schemas['QueueConflictResponse'],
   'queue'
@@ -282,7 +285,10 @@ export function createApiClient(config: ApiClientConfig) {
       if (token) upload.setRequestHeader('Authorization', `Bearer ${token}`);
       upload.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && event.total > 0) {
-          onProgress?.(Math.round((event.loaded / event.total) * 100));
+          onProgress?.(
+            Math.round((event.loaded / event.total) * 100),
+            event.loaded,
+          );
         }
       });
       upload.addEventListener('load', () => {
@@ -448,11 +454,16 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'POST',
         body: options ? JSON.stringify(options) : undefined,
       }),
+    heartbeatManagedImportBatch: (batchId: string) =>
+      request<void>(`/api/v1/import-batches/${batchId}/heartbeat`, {
+        method: 'POST',
+      }),
     getManagedImportBatch: (batchId: string) =>
       request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}`),
-    cancelManagedImportBatch: (batchId: string) =>
+    cancelManagedImportBatch: (batchId: string, keepalive = false) =>
       request<void>(`/api/v1/import-batches/${batchId}`, {
         method: 'DELETE',
+        keepalive,
       }),
     confirmManagedImportBatch: (
       batchId: string,

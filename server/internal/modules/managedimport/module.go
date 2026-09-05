@@ -88,6 +88,7 @@ func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Get("/api/v1/import-history", module.handlers.ListHistory)
 	router.Post("/api/v1/import-batches", module.handlers.CreateBatch)
 	router.Get("/api/v1/import-batches/{batchId}", module.handlers.GetBatch)
+	router.Post("/api/v1/import-batches/{batchId}/heartbeat", module.handlers.HeartbeatBatch)
 	router.Delete("/api/v1/import-batches/{batchId}", module.handlers.CancelBatch)
 	router.Post("/api/v1/import-batches/{batchId}/confirm", module.handlers.ConfirmBatch)
 	router.Post("/api/v1/imports", module.handlers.CreateJob)

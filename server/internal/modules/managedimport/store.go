@@ -466,25 +466,20 @@ func queryIDs(ctx context.Context, database *sql.DB, query string, arguments ...
 	return ids, rows.Err()
 }
 
-func (store *Store) ListBatchJobs(ctx context.Context, batchID string) (jobs []importJob, returnErr error) {
-	rows, err := store.database.QueryContext(ctx, `SELECT id FROM managed_import_jobs WHERE batch_id = ? ORDER BY batch_position`, batchID)
+func (store *Store) ListBatchJobs(ctx context.Context, batchID string) ([]importJob, error) {
+	// Release the ID query before loading files: a pending SQLite writer must
+	// not wait for a read cursor whose next query waits for that writer.
+	ids, err := queryIDs(ctx, store.database, `SELECT id FROM managed_import_jobs WHERE batch_id = ? ORDER BY batch_position`, batchID)
 	if err != nil {
 		return nil, fmt.Errorf("list Managed Import Batch files: %w", err)
 	}
-	defer func() { returnErr = errors.Join(returnErr, rows.Close()) }()
-	for rows.Next() {
-		var jobID string
-		if err := rows.Scan(&jobID); err != nil {
-			return nil, fmt.Errorf("scan Managed Import Batch file: %w", err)
-		}
+	jobs := make([]importJob, 0, len(ids))
+	for _, jobID := range ids {
 		job, err := store.GetJob(ctx, jobID)
 		if err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate Managed Import Batch files: %w", err)
 	}
 	return jobs, nil
 }
@@ -521,7 +516,7 @@ func (store *Store) UpdateValidationProgress(ctx context.Context, jobID string, 
 func (store *Store) ReserveBatchUpload(ctx context.Context, jobID string, uploadSize, batchLimit int64) error {
 	result, err := store.database.ExecContext(ctx, `
 		UPDATE managed_import_jobs
-		SET upload_size_bytes = ?, updated_at = CURRENT_TIMESTAMP
+		SET upload_size_bytes = ?, error_code = NULL, error_field = NULL, error_reason = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ? AND batch_id IS NOT NULL AND ? + COALESCE((
 			SELECT SUM(sibling.upload_size_bytes) FROM managed_import_jobs AS sibling
 			WHERE sibling.batch_id = managed_import_jobs.batch_id AND sibling.id != managed_import_jobs.id
@@ -809,7 +804,7 @@ func (store *Store) StartBatchConfirmation(ctx context.Context, batchID string, 
 
 func ensureBatchResolved(ctx context.Context, transaction *sql.Tx, batchID string) error {
 	var unresolvedCount int
-	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_import_jobs WHERE batch_id = ? AND status = ?`, batchID, STATUS_UPLOADING).Scan(&unresolvedCount); err != nil {
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_import_jobs WHERE batch_id = ? AND status = ? AND COALESCE(error_code, '') <> ?`, batchID, STATUS_UPLOADING, UPLOAD_INTERRUPTED_ERROR_CODE).Scan(&unresolvedCount); err != nil {
 		return fmt.Errorf("count unresolved Managed Import Batch files: %w", err)
 	}
 	if unresolvedCount > 0 {
@@ -866,8 +861,8 @@ func (store *Store) MarkBatchFileOutcome(ctx context.Context, jobID string, outc
 	if outcome == OUTCOME_IMPORTED || outcome == OUTCOME_REPLACED {
 		status = STATUS_COMMITTED
 	}
-	result, err := store.database.ExecContext(ctx, `UPDATE managed_import_jobs SET status = ?, outcome = ?, error_code = NULLIF(?, ''), error_reason = NULLIF(?, ''), staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ? AND outcome IS NULL`,
-		status, outcome, errorCode, errorReason, jobID, STATUS_AWAITING_CONFIRMATION)
+	result, err := store.database.ExecContext(ctx, `UPDATE managed_import_jobs SET status = ?, outcome = ?, error_code = NULLIF(?, ''), error_reason = NULLIF(?, ''), staged_file_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND (status = ? OR (status = ? AND error_code = ?)) AND outcome IS NULL`,
+		status, outcome, errorCode, errorReason, jobID, STATUS_AWAITING_CONFIRMATION, STATUS_UPLOADING, UPLOAD_INTERRUPTED_ERROR_CODE)
 	if err != nil {
 		return fmt.Errorf("record Managed Import Batch file outcome: %w", err)
 	}
