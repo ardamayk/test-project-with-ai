@@ -1407,11 +1407,9 @@ components:
             Track Deletion as managed-track-deletion.v1, explicit Track
             Replacement as managed-track-replacement.v1, Album deletion
             (one Permanent Track Deletion per Track, previewed once) as
-            managed-album-deletion.v1, and Recording Identification through
-            AcoustID and MusicBrainz (ADR 0017) as recording-identification.v1.
-            A capability describes the release, never the deployment: whether
-            recording-identification.v1 is usable on this installation is
-            reported separately by recordingIdentification. Clients gate optional
+            managed-album-deletion.v1. A capability describes the release,
+            never the deployment: what the installation supports is reported
+            separately by dependencies and recordingIdentification. Clients gate optional
             behavior on the exact capability name and must ignore unknown
             entries so newer servers stay compatible with older clients.
         dependencies:
@@ -1453,10 +1451,10 @@ components:
           enum: [enabled, disabled_by_config, missing_fpcalc, missing_api_key]
           description: >-
             Why Recording Identification is or is not active on this
-            installation. enabled means the Import Music switch may be turned
-            on; every other value keeps the switch unavailable and names the
-            reason in precedence order: RECORDING_IDENTIFICATION_ENABLED=false,
-            then a missing fpcalc program, then a missing AcoustID key.
+            installation. enabled means Recording Identification may run;
+            every other value names the reason it cannot, in precedence order:
+            RECORDING_IDENTIFICATION_ENABLED=false, then a missing fpcalc
+            program, then a missing AcoustID key.
         acoustIdKeySource:
           type: string
           enum: [embedded, operator, missing]

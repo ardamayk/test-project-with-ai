@@ -82,12 +82,7 @@ func TestProbeKeepsProgramAvailableWhenVersionCommandFails(t *testing.T) {
 
 func TestSystemProbeFindsProgramsOnThisHost(t *testing.T) {
 	report := dependencies.SystemProbe().Run(context.Background())
-	if len(report) != 3 {
+	if len(report) != 3 || report[0].Name != "ffmpeg" || report[2].Name != "fpcalc" {
 		t.Fatalf("report = %+v", report)
-	}
-	for _, dependency := range report {
-		if dependency.Available && dependency.Version == "" {
-			t.Fatalf("%s available but version empty", dependency.Name)
-		}
 	}
 }

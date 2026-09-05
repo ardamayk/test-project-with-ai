@@ -39,7 +39,10 @@ export function isDesktopClient(): boolean {
 }
 
 export type DesktopMpvStatus = {
+	/** The mpv executable starts and answers --version. */
 	available: boolean;
+	/** The found version equals the pinned version the Desktop Client requires. */
+	pinned: boolean;
 	pinnedVersion: string;
 	version?: string | null;
 	detail?: string | null;

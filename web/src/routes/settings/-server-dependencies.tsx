@@ -1,10 +1,5 @@
 import type { HealthResponse } from "@repo/api-client";
-
-export type DesktopMpvStatus = {
-	available: boolean;
-	version?: string;
-	detail?: string;
-};
+import type { DesktopMpvStatus } from "#/desktop/bridge";
 
 type Props = {
 	health: HealthResponse | undefined;
@@ -56,7 +51,9 @@ export function ServerDependenciesSection({ health, desktopMpv }: Props) {
 		);
 	}
 
-	const rows: Row[] = health.dependencies.map((dependency) => ({
+	const dependencies = health.dependencies ?? [];
+	const identification = health.recordingIdentification;
+	const rows: Row[] = dependencies.map((dependency) => ({
 		name: dependency.name,
 		scope: "Music Server",
 		requirement: dependency.required ? "Required" : "Optional",
@@ -69,8 +66,8 @@ export function ServerDependenciesSection({ health, desktopMpv }: Props) {
 			scope: "Desktop Client",
 			requirement: "Required",
 			available: desktopMpv.available,
-			version: desktopMpv.version,
-			detail: desktopMpv.detail,
+			version: desktopMpv.version ?? undefined,
+			detail: desktopMpv.detail ?? undefined,
 		});
 	}
 
@@ -104,16 +101,22 @@ export function ServerDependenciesSection({ health, desktopMpv }: Props) {
 					</tbody>
 				</table>
 			</div>
-			<dl className="grid gap-2 text-sm sm:grid-cols-[auto_1fr] sm:gap-x-6">
-				<dt className="font-medium">Recording Identification</dt>
-				<dd className="text-muted-foreground">
-					{recordingIdentificationLabels[health.recordingIdentification.status]}
-				</dd>
-				<dt className="font-medium">AcoustID key</dt>
-				<dd className="text-muted-foreground">
-					{acoustIdKeyLabels[health.recordingIdentification.acoustIdKeySource]}
-				</dd>
-			</dl>
+			{identification ? (
+				<dl className="grid gap-2 text-sm sm:grid-cols-[auto_1fr] sm:gap-x-6">
+					<dt className="font-medium">Recording Identification</dt>
+					<dd className="text-muted-foreground">
+						{recordingIdentificationLabels[identification.status]}
+					</dd>
+					<dt className="font-medium">AcoustID key</dt>
+					<dd className="text-muted-foreground">
+						{acoustIdKeyLabels[identification.acoustIdKeySource]}
+					</dd>
+				</dl>
+			) : (
+				<p className="text-muted-foreground text-sm">
+					This Music Server predates Recording Identification.
+				</p>
+			)}
 		</section>
 	);
 }

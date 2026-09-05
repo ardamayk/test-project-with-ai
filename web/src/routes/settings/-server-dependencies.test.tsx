@@ -5,7 +5,7 @@ import { ServerDependenciesSection } from "./-server-dependencies";
 const health = {
 	status: "ok" as const,
 	version: "0.1.0",
-	capabilities: ["api.v1", "recording-identification.v1"],
+	capabilities: ["api.v1"],
 	dependencies: [
 		{ name: "ffmpeg", required: true, available: true, version: "7.1.1" },
 		{ name: "ffprobe", required: true, available: true, version: "7.1.1" },
@@ -79,12 +79,54 @@ describe("ServerDependenciesSection", () => {
 		render(
 			<ServerDependenciesSection
 				health={health}
-				desktopMpv={{ available: true, version: "0.40.0" }}
+				desktopMpv={{
+					available: true,
+					pinned: true,
+					pinnedVersion: "0.40.0",
+					version: "0.40.0",
+				}}
 			/>,
 		);
 		const mpv = screen.getByRole("row", { name: /mpv/ });
 		expect(mpv.textContent).toContain("0.40.0");
 		expect(mpv.textContent).toContain("Desktop Client");
+	});
+
+	it("shows an installed but unpinned mpv as installed with the pin detail", () => {
+		render(
+			<ServerDependenciesSection
+				health={health}
+				desktopMpv={{
+					available: true,
+					pinned: false,
+					pinnedVersion: "0.40.0",
+					version: "0.39.0",
+					detail: "expected pinned mpv 0.40.0",
+				}}
+			/>,
+		);
+
+		const mpv = screen.getByRole("row", { name: /mpv/ });
+		expect(mpv.textContent).toContain("Installed");
+		expect(mpv.textContent).toContain("expected pinned mpv 0.40.0");
+	});
+
+	it("tolerates a Music Server that predates the dependency report", () => {
+		render(
+			<ServerDependenciesSection
+				health={
+					{
+						status: "ok",
+						version: "0.0.9",
+						capabilities: ["api.v1"],
+					} as unknown as typeof health
+				}
+				desktopMpv={null}
+			/>,
+		);
+
+		expect(screen.queryByRole("row", { name: /ffmpeg/ })).toBeNull();
+		expect(screen.getByText(/predates Recording Identification/)).toBeTruthy();
 	});
 
 	it("renders a loading state without health data", () => {

@@ -103,15 +103,15 @@ function SettingsPage() {
 			<ServerDependenciesSection
 				health={health.data}
 				desktopMpv={
-					isDesktop
+					desktopMpv.data ??
+					(desktopMpv.isError
 						? {
-								available: desktopMpv.data?.available ?? false,
-								version: desktopMpv.data?.version ?? undefined,
-								detail: desktopMpv.isError
-									? "status unavailable"
-									: (desktopMpv.data?.detail ?? undefined),
+								available: false,
+								pinned: false,
+								pinnedVersion: "",
+								detail: "status unavailable",
 							}
-						: null
+						: null)
 				}
 			/>
 		</div>

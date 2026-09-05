@@ -43,21 +43,25 @@ type dependencyResponse struct {
 // recordingIdentificationStatus tells an operator why Recording
 // Identification is or is not active on this installation (ADR 0017).
 type recordingIdentificationStatus struct {
-	Status            string `json:"status"`
-	AcoustIDKeySource string `json:"acoustIdKeySource"`
+	Status            RecordingIdentificationStatus `json:"status"`
+	AcoustIDKeySource config.AcoustIDAPIKeySource   `json:"acoustIdKeySource"`
 }
 
+// RecordingIdentificationStatus names why Recording Identification is or is
+// not active, in the precedence order documented on the health contract.
+type RecordingIdentificationStatus string
+
 const (
-	RECORDING_IDENTIFICATION_ENABLED            = "enabled"
-	RECORDING_IDENTIFICATION_DISABLED_BY_CONFIG = "disabled_by_config"
-	RECORDING_IDENTIFICATION_MISSING_FPCALC     = "missing_fpcalc"
-	RECORDING_IDENTIFICATION_MISSING_API_KEY    = "missing_api_key"
+	RECORDING_IDENTIFICATION_ENABLED            RecordingIdentificationStatus = "enabled"
+	RECORDING_IDENTIFICATION_DISABLED_BY_CONFIG RecordingIdentificationStatus = "disabled_by_config"
+	RECORDING_IDENTIFICATION_MISSING_FPCALC     RecordingIdentificationStatus = "missing_fpcalc"
+	RECORDING_IDENTIFICATION_MISSING_API_KEY    RecordingIdentificationStatus = "missing_api_key"
 )
 
 func resolveRecordingIdentificationStatus(cfg config.RecordingIdentificationConfig, report dependencies.Report) recordingIdentificationStatus {
-	status := recordingIdentificationStatus{AcoustIDKeySource: string(cfg.AcoustIDAPIKeySource)}
+	status := recordingIdentificationStatus{AcoustIDKeySource: cfg.AcoustIDAPIKeySource}
 	if status.AcoustIDKeySource == "" {
-		status.AcoustIDKeySource = string(config.ACOUSTID_API_KEY_SOURCE_MISSING)
+		status.AcoustIDKeySource = config.ACOUSTID_API_KEY_SOURCE_MISSING
 	}
 	switch {
 	case !cfg.Enabled:
@@ -83,7 +87,6 @@ var serverCapabilities = []string{
 	"managed-track-deletion.v1",
 	"managed-track-replacement.v1",
 	"managed-album-deletion.v1",
-	"recording-identification.v1",
 }
 
 // ServerCapabilities returns a copy of the advertised Server Capabilities.

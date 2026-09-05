@@ -48,9 +48,9 @@ The Music Server calls these programs at runtime and reports each of them, with 
 | `ffmpeg` / `ffprobe` | yes | media inspection and full-stream decode during Managed Import |
 | `fpcalc` (Chromaprint) | no | Recording Identification: fingerprinting uploads for AcoustID and MusicBrainz lookup |
 
-Install them from your distribution (`ffmpeg` and `libchromaprint-tools` on Debian and Ubuntu, `ffmpeg` and `chromaprint` on Alpine and Arch). The container image installs both. Without `fpcalc` the server starts normally and Managed Import falls back to the file's tags; the Import Music modal shows the switch as unavailable.
+Install them from your distribution (`ffmpeg` and `libchromaprint-tools` on Debian and Ubuntu, `ffmpeg` and `chromaprint` on Alpine and Arch). The container image installs both. Without `fpcalc` the server starts normally and Recording Identification stays unavailable; the Settings page names the reason.
 
-Recording Identification is on by default and can be switched off per import in the Import Music modal. Environment overrides: `RECORDING_IDENTIFICATION_ENABLED`, `RECORDING_IDENTIFICATION_MIN_SCORE` (default `0.90`), `ACOUSTID_API_KEY`, `ACOUSTID_BASE_URL`, and `MUSICBRAINZ_BASE_URL`. See [ADR 0017](docs/adr/0017-recording-identification-via-acoustid-and-musicbrainz.md).
+Recording Identification is on by default. Environment overrides: `RECORDING_IDENTIFICATION_ENABLED`, `RECORDING_IDENTIFICATION_MIN_SCORE` (default `0.90`), `ACOUSTID_API_KEY`, `ACOUSTID_BASE_URL`, and `MUSICBRAINZ_BASE_URL`. See [ADR 0017](docs/adr/0017-recording-identification-via-acoustid-and-musicbrainz.md).
 
 ## Build
 

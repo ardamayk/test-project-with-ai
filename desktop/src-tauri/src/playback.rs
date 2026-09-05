@@ -359,20 +359,27 @@ fn remove_ipc_directory(path: &Path, context: &str) {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MpvStatus {
+    /// The executable starts and answers `--version`.
     pub available: bool,
+    /// The found version equals the pinned version this Desktop Client requires.
+    pub pinned: bool,
     pub pinned_version: String,
     pub version: Option<String>,
     pub detail: Option<String>,
 }
 
 pub fn probe_mpv_status() -> MpvStatus {
+    probe_mpv_binary(&resolve_mpv_binary())
+}
+
+fn probe_mpv_binary(binary: &Path) -> MpvStatus {
     let pinned_version = MPV_PINNED_VERSION.trim().to_owned();
-    let binary = resolve_mpv_binary();
-    let output = match Command::new(&binary).arg("--version").output() {
+    let output = match Command::new(binary).arg("--version").output() {
         Ok(output) => output,
         Err(error) => {
             return MpvStatus {
                 available: false,
+                pinned: false,
                 pinned_version,
                 version: None,
                 detail: Some(format!("{} could not start: {error}", binary.display())),
@@ -384,10 +391,12 @@ pub fn probe_mpv_status() -> MpvStatus {
         .next()
         .and_then(|line| line.strip_prefix("mpv v"))
         .map(|rest| rest.split_whitespace().next().unwrap_or(rest).to_owned());
-    let matches_pin = version.as_deref() == Some(pinned_version.as_str());
+    let available = output.status.success() && version.is_some();
+    let pinned = available && version.as_deref() == Some(pinned_version.as_str());
     MpvStatus {
-        available: output.status.success() && matches_pin,
-        detail: (!matches_pin).then(|| format!("expected pinned mpv {pinned_version}")),
+        available,
+        pinned,
+        detail: (!pinned).then(|| format!("expected pinned mpv {pinned_version}")),
         pinned_version,
         version,
     }
@@ -574,21 +583,17 @@ impl Drop for RealMpvProcess {
 }
 
 fn ensure_pinned_mpv(binary: &Path) -> Result<(), String> {
-    let output = Command::new(binary)
-        .arg("--version")
-        .output()
-        .map_err(|error| format!("Pinned mpv could not start: {error}"))?;
-    let version = String::from_utf8_lossy(&output.stdout);
-    let pinned_version = MPV_PINNED_VERSION.trim();
-    let expected = format!("mpv v{pinned_version}");
-    if !output.status.success()
-        || !version
-            .lines()
-            .next()
-            .is_some_and(|line| line.starts_with(&expected))
-    {
+    let status = probe_mpv_binary(binary);
+    if !status.available {
         return Err(format!(
-            "Desktop Client requires pinned mpv {pinned_version}; set EARTHLY_AUDIO_MPV_PATH to that executable."
+            "Pinned mpv could not start: {}",
+            status.detail.unwrap_or_default()
+        ));
+    }
+    if !status.pinned {
+        return Err(format!(
+            "Desktop Client requires pinned mpv {}; set EARTHLY_AUDIO_MPV_PATH to that executable.",
+            status.pinned_version
         ));
     }
     Ok(())
