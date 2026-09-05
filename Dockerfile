@@ -20,7 +20,7 @@ WORKDIR /src/server
 RUN go mod download && CGO_ENABLED=0 go build -o /server ./cmd/server
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates ffmpeg
+RUN apk add --no-cache ca-certificates ffmpeg chromaprint
 WORKDIR /app
 COPY --from=builder /server /app/server
 ENV SERVER_ADDR=127.0.0.1:8090

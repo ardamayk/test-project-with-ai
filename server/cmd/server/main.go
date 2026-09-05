@@ -14,6 +14,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/db"
+	"github.com/ardam/navidrome-replacement/server/internal/dependencies"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 )
@@ -50,7 +51,9 @@ func main() {
 		}
 	}()
 
-	assembled := newAssembledServer(cfg, sqlDB)
+	report := dependencies.SystemProbe().Run(ctx)
+	logServerDependencies(report)
+	assembled := newAssembledServer(cfg, sqlDB, report)
 	registry := assembled.registry
 
 	server := newHTTPServer(cfg.Addr, assembled.router)
@@ -141,4 +144,21 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 	server.RegisterOnShutdown(cancelRequests)
 	return server
+}
+
+// logServerDependencies records each probed Server Dependency once at startup
+// so an operator can see why an optional feature such as Recording
+// Identification is inactive without opening the Settings page.
+func logServerDependencies(report dependencies.Report) {
+	for _, dependency := range report {
+		attributes := []any{"name", dependency.Name, "required", dependency.Required, "version", dependency.Version}
+		switch {
+		case dependency.Available:
+			slog.Info("server dependency found", attributes...)
+		case dependency.Required:
+			slog.Error("required server dependency missing", attributes...)
+		default:
+			slog.Warn("optional server dependency missing; dependent features stay disabled", attributes...)
+		}
+	}
 }

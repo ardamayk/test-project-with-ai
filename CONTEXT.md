@@ -31,8 +31,12 @@ The validation result shown before a Managed Import is committed. It identifies 
 _Avoid_: Completed import, scan result
 
 **Strict Import Profile**:
-The fallback-free metadata, artwork, and audio-integrity contract used by Managed Import. A file that fails any required condition is rejected without synthesizing missing values or granting legacy exceptions.
-_Avoid_: Best-effort scan, legacy exception, filename fallback
+The fallback-free metadata, artwork, and audio-integrity contract used by Managed Import. Metadata is read from the file's own tags and then corrected or completed by Recording Identification when it succeeds; a file that still fails any required condition is rejected without synthesizing missing values or granting legacy exceptions.
+_Avoid_: Best-effort scan, legacy exception, filename fallback, tag rewriting
+
+**Recording Identification**:
+The Managed Import step that fingerprints an uploaded audio file, resolves it to a MusicBrainz Recording through AcoustID when the match score reaches the configured threshold, and uses that Recording's MusicBrainz metadata to correct or complete the metadata read from the file's tags. It never writes to the audio file, never fetches artwork, and leaves the tag metadata untouched when no confident match exists or the services are unreachable.
+_Avoid_: Tag lookup, Picard tagging, cover fetch, automatic replacement
 
 **Import Batch**:
 A user-selected group of files processed through one Import Preview. Each selected file commits independently, so one failure does not roll back files already imported successfully.
@@ -49,6 +53,10 @@ _Avoid_: Exact duplicate, automatic replacement
 **Exact Duplicate**:
 A proposed import whose full-file content hash matches an existing Track. It is rejected without changing library state, regardless of its client filename or source location.
 _Avoid_: Possible Duplicate, same title, same recording
+
+**Recording Duplicate**:
+A proposed import whose Recording Identification resolves to the same MusicBrainz Recording as an existing Track while its full-file content hash differs. Like a Possible Duplicate it requires an explicit user choice, but it is presented as the same recording rather than as merely similar metadata.
+_Avoid_: Exact Duplicate, Possible Duplicate, same title
 
 **Source Audio Format**:
 The audio file's existing supported format, which a Managed Import preserves without transcoding.
@@ -115,6 +123,10 @@ _Avoid_: LAN deployment, internet-ready deployment, trusted client identity
 **Server Capability**:
 A named behavior advertised by a Music Server so a Playback Client can adapt when their release versions differ.
 _Avoid_: Client version, feature assumption
+
+**Server Dependency**:
+An external program or configured service the Music Server relies on at runtime, such as ffmpeg or fpcalc, reported with whether it is required, present, and which version was found. It describes the deployment environment, not a Server Capability, and its absence never changes the advertised Server Capabilities.
+_Avoid_: Server Capability, feature flag, plugin
 
 **Playback Client**:
 An app instance on a user device that browses the Music Server and plays audio on that device. Web Client and Desktop Client are Playback Client variants.

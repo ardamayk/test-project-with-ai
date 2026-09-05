@@ -11,6 +11,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/api"
 	"github.com/ardam/navidrome-replacement/server/internal/config"
+	"github.com/ardam/navidrome-replacement/server/internal/dependencies"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	"github.com/go-chi/chi/v5"
 )
@@ -26,7 +27,7 @@ func newContractServer(t *testing.T) chi.Router {
 		CORSOrigins:        []string{CONTRACT_TEST_ORIGIN},
 		ManagedStoragePath: t.TempDir(),
 	}
-	return newAssembledServer(cfg, testutil.OpenMigratedDB(t)).router
+	return newAssembledServer(cfg, testutil.OpenMigratedDB(t), dependencies.SystemProbe().Run(t.Context())).router
 }
 
 // normalizeRoutePattern makes chi patterns and OpenAPI path templates

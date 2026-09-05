@@ -39,6 +39,19 @@ mise run dev    # Go :8090 + Vite :3000
 
 Open http://localhost:3000/library/tracks and use **Import Music** to upload files or a local folder. The Music Server validates every file, shows an Import Preview, and stores accepted files in Managed Storage only after you confirm.
 
+## Server dependencies
+
+The Music Server calls these programs at runtime and reports each of them, with its version, in the health response and on the Settings page.
+
+| Program | Required | Used for |
+|---------|----------|----------|
+| `ffmpeg` / `ffprobe` | yes | media inspection and full-stream decode during Managed Import |
+| `fpcalc` (Chromaprint) | no | Recording Identification: fingerprinting uploads for AcoustID and MusicBrainz lookup |
+
+Install them from your distribution (`ffmpeg` and `libchromaprint-tools` on Debian and Ubuntu, `ffmpeg` and `chromaprint` on Alpine and Arch). The container image installs both. Without `fpcalc` the server starts normally and Managed Import falls back to the file's tags; the Import Music modal shows the switch as unavailable.
+
+Recording Identification is on by default and can be switched off per import in the Import Music modal. Environment overrides: `RECORDING_IDENTIFICATION_ENABLED`, `RECORDING_IDENTIFICATION_MIN_SCORE` (default `0.90`), `ACOUSTID_API_KEY`, `ACOUSTID_BASE_URL`, and `MUSICBRAINZ_BASE_URL`. See [ADR 0017](docs/adr/0017-recording-identification-via-acoustid-and-musicbrainz.md).
+
 ## Build
 
 ```bash

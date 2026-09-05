@@ -354,6 +354,45 @@ fn remove_ipc_directory(path: &Path, context: &str) {
     }
 }
 
+/// Pinned mpv sidecar status shown on the Settings page. Reads the binary's
+/// version once without starting a playback session.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MpvStatus {
+    pub available: bool,
+    pub pinned_version: String,
+    pub version: Option<String>,
+    pub detail: Option<String>,
+}
+
+pub fn probe_mpv_status() -> MpvStatus {
+    let pinned_version = MPV_PINNED_VERSION.trim().to_owned();
+    let binary = resolve_mpv_binary();
+    let output = match Command::new(&binary).arg("--version").output() {
+        Ok(output) => output,
+        Err(error) => {
+            return MpvStatus {
+                available: false,
+                pinned_version,
+                version: None,
+                detail: Some(format!("{} could not start: {error}", binary.display())),
+            };
+        }
+    };
+    let version = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("mpv v"))
+        .map(|rest| rest.split_whitespace().next().unwrap_or(rest).to_owned());
+    let matches_pin = version.as_deref() == Some(pinned_version.as_str());
+    MpvStatus {
+        available: output.status.success() && matches_pin,
+        detail: (!matches_pin).then(|| format!("expected pinned mpv {pinned_version}")),
+        pinned_version,
+        version,
+    }
+}
+
 fn resolve_mpv_binary() -> PathBuf {
     if let Some(binary) = std::env::var_os("EARTHLY_AUDIO_MPV_PATH") {
         return PathBuf::from(binary);

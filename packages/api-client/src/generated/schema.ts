@@ -718,8 +718,33 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, and Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
+            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1, and Recording Identification through AcoustID and MusicBrainz (ADR 0017) as recording-identification.v1. A capability describes the release, never the deployment: whether recording-identification.v1 is usable on this installation is reported separately by recordingIdentification. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
             capabilities: string[];
+            /** @description Server Dependencies probed once at startup, in a stable order (ffmpeg, ffprobe, fpcalc). They describe the deployment environment so an operator can see what the installation supports. */
+            dependencies: components["schemas"]["ServerDependency"][];
+            recordingIdentification: components["schemas"]["RecordingIdentificationStatus"];
+        };
+        ServerDependency: {
+            /** @description Program name as invoked by the Music Server. */
+            name: string;
+            /** @description True when Managed Import cannot work without the program; false for an optional dependency whose absence only disables a feature. */
+            required: boolean;
+            /** @description True when the program was found on PATH at startup. */
+            available: boolean;
+            /** @description Version parsed from the program's own version output. Absent when the program is missing or its output could not be parsed. */
+            version?: string;
+        };
+        RecordingIdentificationStatus: {
+            /**
+             * @description Why Recording Identification is or is not active on this installation. enabled means the Import Music switch may be turned on; every other value keeps the switch unavailable and names the reason in precedence order: RECORDING_IDENTIFICATION_ENABLED=false, then a missing fpcalc program, then a missing AcoustID key.
+             * @enum {string}
+             */
+            status: "enabled" | "disabled_by_config" | "missing_fpcalc" | "missing_api_key";
+            /**
+             * @description Where the AcoustID application key came from: the key embedded in this release, the ACOUSTID_API_KEY environment variable, or neither.
+             * @enum {string}
+             */
+            acoustIdKeySource: "embedded" | "operator" | "missing";
         };
         User: {
             /** Format: uuid */

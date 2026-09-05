@@ -6,6 +6,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/api"
 	"github.com/ardam/navidrome-replacement/server/internal/config"
+	"github.com/ardam/navidrome-replacement/server/internal/dependencies"
 	"github.com/ardam/navidrome-replacement/server/internal/modules"
 	docsmodule "github.com/ardam/navidrome-replacement/server/internal/modules/docs"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -30,7 +31,7 @@ type assembledServer struct {
 	importModule *managedimport.Module
 }
 
-func newAssembledServer(cfg config.Config, sqlDB *sql.DB) assembledServer {
+func newAssembledServer(cfg config.Config, sqlDB *sql.DB, report dependencies.Report) assembledServer {
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB)
@@ -41,7 +42,7 @@ func newAssembledServer(cfg config.Config, sqlDB *sql.DB) assembledServer {
 	playlistModule := playlists.NewModule(sqlDB, trackAccess)
 	radioModule := radio.NewModule(sqlDB, cfg)
 	docsModule := docsmodule.NewModule()
-	apiHandler := api.NewHandler(cfg)
+	apiHandler := api.NewHandler(cfg, report)
 
 	registry := modules.NewRegistry(libModule, importModule, playModule, playlistModule, radioModule, prefModule, docsModule)
 

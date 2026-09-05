@@ -38,6 +38,18 @@ export function isDesktopClient(): boolean {
 	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export type DesktopMpvStatus = {
+	available: boolean;
+	pinnedVersion: string;
+	version?: string | null;
+	detail?: string | null;
+};
+
+/** Pinned mpv sidecar status for the Settings page; Desktop Client only. */
+export function getDesktopMpvStatus(): Promise<DesktopMpvStatus> {
+	return invoke("get_desktop_mpv_status");
+}
+
 export function getServerConnection(): Promise<ServerConnection | null> {
 	return invoke("get_server_connection");
 }

@@ -110,3 +110,83 @@ func TestValidateServerAddressRequiresLoopback(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadUsesRecordingIdentificationDefaults(t *testing.T) {
+	t.Setenv("RECORDING_IDENTIFICATION_ENABLED", "")
+	t.Setenv("RECORDING_IDENTIFICATION_MIN_SCORE", "")
+	t.Setenv("ACOUSTID_API_KEY", "")
+
+	configuration, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	identification := configuration.RecordingIdentification
+	if !identification.Enabled {
+		t.Fatalf("Enabled = false, want true by default")
+	}
+	if identification.MinScore != 0.90 {
+		t.Fatalf("MinScore = %v, want 0.90", identification.MinScore)
+	}
+	if identification.AcoustIDBaseURL != "https://api.acoustid.org" {
+		t.Fatalf("AcoustIDBaseURL = %q", identification.AcoustIDBaseURL)
+	}
+	if identification.MusicBrainzBaseURL != "https://musicbrainz.org" {
+		t.Fatalf("MusicBrainzBaseURL = %q", identification.MusicBrainzBaseURL)
+	}
+	if identification.AcoustIDAPIKey != DEFAULT_ACOUSTID_API_KEY {
+		t.Fatalf("AcoustIDAPIKey = %q, want embedded default", identification.AcoustIDAPIKey)
+	}
+	wantSource := ACOUSTID_API_KEY_SOURCE_MISSING
+	if DEFAULT_ACOUSTID_API_KEY != "" {
+		wantSource = ACOUSTID_API_KEY_SOURCE_EMBEDDED
+	}
+	if identification.AcoustIDAPIKeySource != wantSource {
+		t.Fatalf("AcoustIDAPIKeySource = %q, want %q", identification.AcoustIDAPIKeySource, wantSource)
+	}
+}
+
+func TestLoadConfiguresRecordingIdentificationOverrides(t *testing.T) {
+	t.Setenv("RECORDING_IDENTIFICATION_ENABLED", "false")
+	t.Setenv("RECORDING_IDENTIFICATION_MIN_SCORE", "0.75")
+	t.Setenv("ACOUSTID_API_KEY", "operator-key")
+	t.Setenv("ACOUSTID_BASE_URL", "http://127.0.0.1:9001")
+	t.Setenv("MUSICBRAINZ_BASE_URL", "http://127.0.0.1:9002")
+
+	configuration, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	identification := configuration.RecordingIdentification
+	if identification.Enabled {
+		t.Fatalf("Enabled = true, want false")
+	}
+	if identification.MinScore != 0.75 {
+		t.Fatalf("MinScore = %v", identification.MinScore)
+	}
+	if identification.AcoustIDAPIKey != "operator-key" || identification.AcoustIDAPIKeySource != ACOUSTID_API_KEY_SOURCE_OPERATOR {
+		t.Fatalf("AcoustID key = %q source %q", identification.AcoustIDAPIKey, identification.AcoustIDAPIKeySource)
+	}
+	if identification.AcoustIDBaseURL != "http://127.0.0.1:9001" || identification.MusicBrainzBaseURL != "http://127.0.0.1:9002" {
+		t.Fatalf("base URLs = %q %q", identification.AcoustIDBaseURL, identification.MusicBrainzBaseURL)
+	}
+}
+
+func TestLoadRejectsInvalidRecordingIdentificationSettings(t *testing.T) {
+	cases := map[string][2]string{
+		"enabled not boolean":  {"RECORDING_IDENTIFICATION_ENABLED", "maybe"},
+		"score above one":      {"RECORDING_IDENTIFICATION_MIN_SCORE", "1.5"},
+		"score negative":       {"RECORDING_IDENTIFICATION_MIN_SCORE", "-0.1"},
+		"score not a number":   {"RECORDING_IDENTIFICATION_MIN_SCORE", "high"},
+		"acoustid url invalid": {"ACOUSTID_BASE_URL", "not a url"},
+	}
+	for name, envPair := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(envPair[0], envPair[1])
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() error = nil, want error for %s=%q", envPair[0], envPair[1])
+			}
+		})
+	}
+}

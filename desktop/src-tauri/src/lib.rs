@@ -290,6 +290,11 @@ fn desktop_playback_renderer_ready(
 }
 
 #[tauri::command]
+fn get_desktop_mpv_status() -> playback::MpvStatus {
+    playback::probe_mpv_status()
+}
+
+#[tauri::command]
 fn desktop_playback_quit(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1022,6 +1027,7 @@ pub fn run() -> tauri::Result<()> {
             get_media_proxy_url,
             desktop_reconnect_queue_events,
             get_desktop_playback_state,
+            get_desktop_mpv_status,
             desktop_playback_renderer_ready,
             desktop_playback_quit,
             desktop_playback_play,
