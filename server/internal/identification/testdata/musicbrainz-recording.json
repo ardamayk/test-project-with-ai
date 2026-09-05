@@ -46,7 +46,7 @@
           "format": "Digital Media",
           "track-count": 21,
           "track-offset": 0,
-          "track": [
+          "tracks": [
             {
               "id": "t1",
               "number": "1",
@@ -84,7 +84,7 @@
           "format": "Digital Media",
           "track-count": 22,
           "track-offset": 0,
-          "track": [
+          "tracks": [
             {
               "id": "t2",
               "number": "1",

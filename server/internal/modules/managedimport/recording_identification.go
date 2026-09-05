@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/ardam/navidrome-replacement/server/internal/identification"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -161,6 +162,14 @@ func mergeRecording(tagged library.NormalizedMediaMetadata, recording identifica
 	return merged, changed
 }
 
+// normalizeReleaseTitle folds typographic apostrophes and quotes so a tag
+// written with ' matches a MusicBrainz title written with ’.
+func normalizeReleaseTitle(title string) string {
+	return normalizeIdentity(apostropheFolder.Replace(title))
+}
+
+var apostropheFolder = strings.NewReplacer("\u2019", "'", "\u2018", "'", "\u201c", "\"", "\u201d", "\"")
+
 func creditNames(credits []identification.Credit) []string {
 	names := make([]string, 0, len(credits))
 	for _, credit := range credits {
@@ -177,9 +186,9 @@ func chooseRelease(releases []identification.Release, taggedAlbum string) (ident
 	if len(releases) == 0 {
 		return identification.Release{}, false
 	}
-	if wanted := normalizeIdentity(taggedAlbum); wanted != "" {
+	if wanted := normalizeReleaseTitle(taggedAlbum); wanted != "" {
 		for _, release := range releases {
-			if normalizeIdentity(release.Title) == wanted {
+			if normalizeReleaseTitle(release.Title) == wanted {
 				return release, true
 			}
 		}

@@ -64,8 +64,9 @@ type ReleaseGroup struct {
 }
 
 // Position locates the recording on a release; zero values mean unknown.
-// A recording lookup only returns the medium carrying the recording, so the
-// release's disc count is not known here.
+// A recording lookup only returns the medium carrying the recording (its
+// "tracks" list holds just that track), so the release's disc count is not
+// known here.
 type Position struct {
 	DiscNumber  int
 	TrackNumber int
@@ -116,9 +117,9 @@ type musicBrainzRecording struct {
 		Media        []struct {
 			Position   int `json:"position"`
 			TrackCount int `json:"track-count"`
-			Track      []struct {
+			Tracks     []struct {
 				Position int `json:"position"`
-			} `json:"track"`
+			} `json:"tracks"`
 		} `json:"media"`
 	} `json:"releases"`
 }
@@ -182,12 +183,12 @@ func (parsed musicBrainzRecording) toRecording() Recording {
 			AlbumArtists: toCredits(release.ArtistCredit),
 		}
 		for _, medium := range release.Media {
-			if len(medium.Track) == 0 {
+			if len(medium.Tracks) == 0 {
 				continue
 			}
 			converted.Position.DiscNumber = medium.Position
 			converted.Position.TrackCount = medium.TrackCount
-			converted.Position.TrackNumber = medium.Track[0].Position
+			converted.Position.TrackNumber = medium.Tracks[0].Position
 			break
 		}
 		recording.Releases = append(recording.Releases, converted)

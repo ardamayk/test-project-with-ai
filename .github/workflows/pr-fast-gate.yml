@@ -193,7 +193,7 @@ jobs:
       - name: Install Music Server system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg libchromaprint-tools
 
       - name: Restore Go module and build caches
         id: go_cache
@@ -307,6 +307,7 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             ffmpeg \
+            libchromaprint-tools \
             libayatana-appindicator3-dev \
             libass-dev \
             libavcodec-dev \
