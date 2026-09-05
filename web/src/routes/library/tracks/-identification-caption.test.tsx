@@ -24,6 +24,23 @@ describe("IdentificationCaption", () => {
 		);
 	});
 
+	it("names the tagged MBID method without a fingerprint score", () => {
+		render(
+			<IdentificationCaption
+				identification={{
+					source: "musicbrainz",
+					outcome: "matched",
+					method: "tag_recording_id",
+					recordingId: "rec",
+					changedFields: [],
+				}}
+			/>,
+		);
+		expect(screen.getByTestId("identification-caption").textContent).toBe(
+			"MusicBrainz via tagged MBID · tags already matched",
+		);
+	});
+
 	it("names file tags with the reason identification did not apply", () => {
 		render(
 			<IdentificationCaption

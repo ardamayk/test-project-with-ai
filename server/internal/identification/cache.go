@@ -75,6 +75,12 @@ func NewCachedMusicBrainz(database *sql.DB, upstream RecordingSource) *CachedMus
 	return &CachedMusicBrainz{database: database, upstream: upstream}
 }
 
+// RecordingIDsByISRC is not cached: it is a small lookup that only runs for
+// files tagged with an ISRC but no recording MBID.
+func (cached *CachedMusicBrainz) RecordingIDsByISRC(ctx context.Context, isrc string) ([]string, error) {
+	return cached.upstream.RecordingIDsByISRC(ctx, isrc)
+}
+
 func (cached *CachedMusicBrainz) Recording(ctx context.Context, mbid string) (Recording, error) {
 	var stored string
 	err := cached.database.QueryRowContext(ctx, `SELECT recording_json FROM musicbrainz_recording_cache WHERE recording_id = ?`, mbid).Scan(&stored)

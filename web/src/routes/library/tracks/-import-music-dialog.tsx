@@ -447,8 +447,15 @@ export function IdentificationCaption({
 }) {
 	if (!identification) return null;
 	if (identification.source === "musicbrainz") {
+		const method =
+			identification.method === "tag_recording_id"
+				? " via tagged MBID"
+				: identification.method === "tag_isrc"
+					? " via tagged ISRC"
+					: "";
 		const score =
-			identification.acoustIdScore === undefined
+			identification.acoustIdScore === undefined ||
+			identification.acoustIdScore === 0
 				? ""
 				: ` · AcoustID ${identification.acoustIdScore.toFixed(2)}`;
 		const changed = identification.changedFields?.length
@@ -459,7 +466,8 @@ export function IdentificationCaption({
 				className="block truncate text-caption text-xs"
 				data-testid="identification-caption"
 			>
-				MusicBrainz{score}
+				MusicBrainz{method}
+				{score}
 				{changed}
 			</span>
 		);

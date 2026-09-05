@@ -30,6 +30,7 @@ const (
 type Identification struct {
 	Outcome     Outcome
 	Reason      string
+	Method      Method
 	Fingerprint Fingerprint
 	AcoustID    string
 	Score       float64
@@ -48,7 +49,24 @@ type AcoustIDLookup interface {
 
 type RecordingSource interface {
 	Recording(ctx context.Context, mbid string) (Recording, error)
+	RecordingIDsByISRC(ctx context.Context, isrc string) ([]string, error)
 }
+
+// Hint carries identifiers already present in the file's tags. A tagged
+// recording MBID or ISRC resolves the Recording without fingerprinting.
+type Hint struct {
+	RecordingID string
+	ISRC        string
+}
+
+// Method says which evidence resolved the Recording.
+type Method string
+
+const (
+	METHOD_TAG_RECORDING_ID Method = "tag_recording_id"
+	METHOD_TAG_ISRC         Method = "tag_isrc"
+	METHOD_FINGERPRINT      Method = "fingerprint"
+)
 
 // Identifier runs fingerprint, AcoustID lookup and MusicBrainz lookup in order.
 type Identifier struct {
@@ -97,13 +115,38 @@ func NewIdentifierWithSources(fingerprinter FingerprintSource, acoustID AcoustID
 
 // Identify never returns an error: every failure becomes an Outcome with a
 // Reason so Managed Import can fall back to the file's tags and tell the
-// user why.
-func (identifier *Identifier) Identify(ctx context.Context, path string) Identification {
+// user why. Evidence is tried cheapest first: a tagged recording MBID, then
+// a tagged ISRC, then the fingerprint. A tag that MusicBrainz does not know
+// falls through; a service failure stops.
+func (identifier *Identifier) Identify(ctx context.Context, path string, hint Hint) Identification {
+	if hint.RecordingID != "" {
+		recording, err := identifier.musicBrainz.Recording(ctx, hint.RecordingID)
+		switch {
+		case err == nil:
+			return Identification{Outcome: OUTCOME_MATCHED, Method: METHOD_TAG_RECORDING_ID, Recording: &recording}
+		case !errors.Is(err, ErrRecordingNotFound):
+			return Identification{Outcome: OUTCOME_UNAVAILABLE, Method: METHOD_TAG_RECORDING_ID, Reason: err.Error()}
+		}
+	}
+	if hint.ISRC != "" {
+		ids, err := identifier.musicBrainz.RecordingIDsByISRC(ctx, hint.ISRC)
+		if err == nil {
+			recording, fetchErr := identifier.musicBrainz.Recording(ctx, ids[0])
+			if fetchErr == nil {
+				return Identification{Outcome: OUTCOME_MATCHED, Method: METHOD_TAG_ISRC, Recording: &recording}
+			}
+			err = fetchErr
+		}
+		if !errors.Is(err, ErrRecordingNotFound) {
+			return Identification{Outcome: OUTCOME_UNAVAILABLE, Method: METHOD_TAG_ISRC, Reason: err.Error()}
+		}
+	}
+
 	fingerprint, err := identifier.fingerprinter.Fingerprint(ctx, path)
 	if err != nil {
-		return Identification{Outcome: OUTCOME_UNAVAILABLE, Reason: err.Error()}
+		return Identification{Outcome: OUTCOME_UNAVAILABLE, Method: METHOD_FINGERPRINT, Reason: err.Error()}
 	}
-	result := Identification{Fingerprint: fingerprint}
+	result := Identification{Method: METHOD_FINGERPRINT, Fingerprint: fingerprint}
 
 	results, err := identifier.acoustID.Lookup(ctx, fingerprint)
 	if err != nil {
@@ -181,4 +224,11 @@ func (limited limitedMusicBrainz) Recording(ctx context.Context, mbid string) (R
 		return Recording{}, fmt.Errorf("%w: %w", ErrServiceUnavailable, err)
 	}
 	return limited.client.Recording(ctx, mbid)
+}
+
+func (limited limitedMusicBrainz) RecordingIDsByISRC(ctx context.Context, isrc string) ([]string, error) {
+	if err := limited.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrServiceUnavailable, err)
+	}
+	return limited.client.RecordingIDsByISRC(ctx, isrc)
 }

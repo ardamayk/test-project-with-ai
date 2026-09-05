@@ -22,7 +22,7 @@ const (
 // recordingIdentifier is the seam Managed Import uses to identify a staged
 // file; the identification package provides the real one.
 type recordingIdentifier interface {
-	Identify(ctx context.Context, path string) identification.Identification
+	Identify(ctx context.Context, path string, hint identification.Hint) identification.Identification
 }
 
 // IdentificationPreview tells the user, per file, which system produced the
@@ -31,6 +31,7 @@ type recordingIdentifier interface {
 type IdentificationPreview struct {
 	Source        MetadataSource        `json:"source"`
 	Outcome       IdentificationOutcome `json:"outcome"`
+	Method        identification.Method `json:"method,omitempty"`
 	Reason        string                `json:"reason,omitempty"`
 	AcoustIDScore float64               `json:"acoustIdScore,omitempty"`
 	RecordingID   string                `json:"recordingId,omitempty"`
@@ -75,7 +76,13 @@ func decodeIdentificationRecord(encoded string) (identificationRecord, error) {
 // a confident match over the file's tags. It never fails: every reason the
 // tags stayed untouched is returned in the record.
 func (service *Service) identifyStagedUpload(ctx context.Context, job importJob, stagedPath string, inspection library.MediaInspection) (identificationRecord, library.MediaInspection, error) {
-	record := identificationRecord{IdentificationPreview: IdentificationPreview{Source: METADATA_SOURCE_FILE_TAGS}}
+	// Identifiers already in the tags are kept even when no lookup runs, so
+	// Recording Duplicates are found offline and the ISRC is stored.
+	record := identificationRecord{IdentificationPreview: IdentificationPreview{
+		Source:      METADATA_SOURCE_FILE_TAGS,
+		RecordingID: inspection.Metadata.MusicBrainzRecordingID,
+		ISRC:        inspection.Metadata.ISRC,
+	}}
 	if job.BatchID != "" {
 		batch, err := service.store.GetBatch(ctx, job.BatchID)
 		if err != nil {
@@ -92,8 +99,12 @@ func (service *Service) identifyStagedUpload(ctx context.Context, job importJob,
 		record.Reason = "Recording Identification is not active on this Music Server"
 		return record, inspection, nil
 	}
-	result := service.identifier.Identify(ctx, stagedPath)
+	result := service.identifier.Identify(ctx, stagedPath, identification.Hint{
+		RecordingID: inspection.Metadata.MusicBrainzRecordingID,
+		ISRC:        inspection.Metadata.ISRC,
+	})
 	record.Outcome = IdentificationOutcome(result.Outcome)
+	record.Method = result.Method
 	record.Reason = result.Reason
 	record.AcoustIDScore = result.Score
 	if result.Outcome != identification.OUTCOME_MATCHED || result.Recording == nil {

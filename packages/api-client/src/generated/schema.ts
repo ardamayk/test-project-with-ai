@@ -950,6 +950,11 @@ export interface components {
             source: "file_tags" | "musicbrainz";
             /** @description matched, no_match, below_threshold, unavailable, switched_off (the Import Batch switch was off) or inactive (the Music Server cannot identify recordings). */
             outcome: string;
+            /**
+             * @description Evidence that resolved (or was last tried for) the Recording: a MusicBrainz recording MBID already in the file's tags, an ISRC in the tags, or the Chromaprint fingerprint via AcoustID.
+             * @enum {string}
+             */
+            method?: "tag_recording_id" | "tag_isrc" | "fingerprint";
             /** @description Why the file's tags stayed untouched; absent when matched. */
             reason?: string;
             acoustIdScore?: number;

@@ -76,6 +76,10 @@ func StrictMP3FixtureWithID3Version(version byte) []byte {
 }
 
 func strictID3Tag(version byte) []byte {
+	return id3TagBytes(version, strictID3Frames(version))
+}
+
+func strictID3Frames(version byte) [][]byte {
 	names := strictID3FrameNames(version)
 	frames := [][]byte{id3TextFrame(version, names[0], "MP3 Inspection Fixture")}
 	frames = append(frames, structuredID3TextFrames(version, names[1], []string{"Primary Artist", "Guest Artist"})...)
@@ -87,7 +91,7 @@ func strictID3Tag(version byte) []byte {
 		frames = append(frames, id3UserTextFrame(version, replayGain[0], replayGain[1]))
 	}
 	frames = append(frames, id3ArtworkFrame(version, strictMP3Artwork()))
-	return id3TagBytes(version, frames)
+	return frames
 }
 
 func strictID3FrameNames(version byte) [8]string {
@@ -213,4 +217,34 @@ func strictMP3Artwork() []byte {
 		panic(err)
 	}
 	return encoded.Bytes()
+}
+
+// StrictMP3FixtureWithExtraFrames appends the given ID3 frames to the strict
+// fixture's tag so tests can add identifiers such as TSRC or UFID.
+func StrictMP3FixtureWithExtraFrames(version byte, extraFrames ...[]byte) []byte {
+	audio, err := base64.StdEncoding.DecodeString(strictMP3AudioBase64)
+	if err != nil {
+		panic(err)
+	}
+	audio = makeVBRMP3(audio)
+	frames := strictID3Frames(version)
+	frames = append(frames, extraFrames...)
+	return append(id3TagBytes(version, frames), audio...)
+}
+
+// ID3TextFrame builds one text frame (for example TSRC).
+func ID3TextFrame(version byte, name, value string) []byte {
+	return id3TextFrame(version, name, value)
+}
+
+// ID3UFIDFrame builds a UFID frame: owner, NUL, raw identifier. MusicBrainz
+// Picard stores the recording MBID under the owner "http://musicbrainz.org".
+func ID3UFIDFrame(version byte, owner, identifier string) []byte {
+	name := "UFID"
+	if version == 2 {
+		name = "UFI"
+	}
+	payload := append([]byte(owner), 0)
+	payload = append(payload, []byte(identifier)...)
+	return id3FrameBytes(version, name, payload)
 }

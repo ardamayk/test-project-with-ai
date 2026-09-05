@@ -17,10 +17,12 @@ import (
 type scriptedIdentifier struct {
 	result identification.Identification
 	paths  []string
+	hints  []identification.Hint
 }
 
-func (identifier *scriptedIdentifier) Identify(_ context.Context, path string) identification.Identification {
+func (identifier *scriptedIdentifier) Identify(_ context.Context, path string, hint identification.Hint) identification.Identification {
 	identifier.paths = append(identifier.paths, path)
+	identifier.hints = append(identifier.hints, hint)
 	return identifier.result
 }
 
@@ -314,5 +316,92 @@ func TestRecordingIdentificationCarriesIntoTrackReplacement(t *testing.T) {
 	}
 	if title != "Welcome to New York (Taylor's Version)" || source != "musicbrainz" || recordingID != "5bcd7ba9-3b1f-4f1a-8a5a-8b0c9d1e2f30" {
 		t.Fatalf("replaced Track = %q %q %q", title, source, recordingID)
+	}
+}
+
+func taggedMP3() []byte {
+	return testutil.StrictMP3FixtureWithExtraFrames(4,
+		testutil.ID3TextFrame(4, "TSRC", "USUG12306672"),
+		testutil.ID3UFIDFrame(4, "http://musicbrainz.org", "2872b086-7c8d-4b3a-9b91-55805cd912b0"),
+	)
+}
+
+func TestTaggedIdentifiersArePersistedWithoutRecordingIdentification(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	module := NewModule(database, config.Config{ManagedStoragePath: t.TempDir()}, library.NewMediaInspector())
+	module.service.identifier = nil
+	service := module.service
+	ctx := context.Background()
+
+	batch, _ := service.CreateBatch(ctx, BatchOptions{RecordingIdentification: true})
+	job, _ := service.CreateJob(ctx, batch.ID, "00000000-0000-4000-8000-000000000001")
+	mp3 := taggedMP3()
+	preview, err := service.Upload(ctx, job.ID, "tagged.mp3", bytes.NewReader(mp3), int64(len(mp3)))
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	if preview.Identification.Source != METADATA_SOURCE_FILE_TAGS || preview.Identification.RecordingID != "2872b086-7c8d-4b3a-9b91-55805cd912b0" || preview.Identification.ISRC != "USUG12306672" {
+		t.Fatalf("identification = %+v", preview.Identification)
+	}
+	trackID := confirmBatchJob(t, service, batch.ID, job.ID)
+
+	var source, recordingID, isrc string
+	if err := database.QueryRow(`SELECT metadata_source, musicbrainz_recording_id, isrc FROM tracks WHERE id = ?`, trackID).Scan(&source, &recordingID, &isrc); err != nil {
+		t.Fatal(err)
+	}
+	if source != "file_tags" || recordingID != "2872b086-7c8d-4b3a-9b91-55805cd912b0" || isrc != "USUG12306672" {
+		t.Fatalf("track = %s %s %s", source, recordingID, isrc)
+	}
+}
+
+func TestTaggedIdentifiersAreHandedToTheIdentifier(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	identifier := &scriptedIdentifier{result: matchedRecording()}
+	module := NewModule(database, config.Config{ManagedStoragePath: t.TempDir()}, library.NewMediaInspector())
+	module.service.identifier = identifier
+	service := module.service
+	ctx := context.Background()
+
+	batch, _ := service.CreateBatch(ctx, BatchOptions{RecordingIdentification: true})
+	job, _ := service.CreateJob(ctx, batch.ID, "00000000-0000-4000-8000-000000000001")
+	mp3 := taggedMP3()
+	if _, err := service.Upload(ctx, job.ID, "tagged.mp3", bytes.NewReader(mp3), int64(len(mp3))); err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+
+	if len(identifier.hints) != 1 || identifier.hints[0].RecordingID != "2872b086-7c8d-4b3a-9b91-55805cd912b0" || identifier.hints[0].ISRC != "USUG12306672" {
+		t.Fatalf("hints = %+v", identifier.hints)
+	}
+}
+
+func TestTaggedRecordingIDFlagsRecordingDuplicateOffline(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	module := NewModule(database, config.Config{ManagedStoragePath: t.TempDir()}, library.NewMediaInspector())
+	module.service.identifier = nil
+	service := module.service
+	ctx := context.Background()
+
+	batch, _ := service.CreateBatch(ctx, BatchOptions{})
+	first, _ := service.CreateJob(ctx, batch.ID, "00000000-0000-4000-8000-000000000001")
+	mp3 := taggedMP3()
+	if _, err := service.Upload(ctx, first.ID, "tagged.mp3", bytes.NewReader(mp3), int64(len(mp3))); err != nil {
+		t.Fatal(err)
+	}
+	confirmBatchJob(t, service, batch.ID, first.ID)
+
+	second, _ := service.CreateJob(ctx, batch.ID, "00000000-0000-4000-8000-000000000002")
+	flacWithSameTag := strictFLAC(t)
+	_ = flacWithSameTag
+	other := testutil.StrictMP3FixtureWithExtraFrames(3,
+		testutil.ID3UFIDFrame(3, "http://musicbrainz.org", "2872b086-7c8d-4b3a-9b91-55805cd912b0"),
+	)
+	secondBatch, _ := service.CreateBatch(ctx, BatchOptions{})
+	second, _ = service.CreateJob(ctx, secondBatch.ID, "00000000-0000-4000-8000-000000000003")
+	preview, err := service.Upload(ctx, second.ID, "other.mp3", bytes.NewReader(other), int64(len(other)))
+	if err != nil {
+		t.Fatalf("second Upload() error = %v", err)
+	}
+	if preview.DuplicateClassification != DUPLICATE_RECORDING {
+		t.Fatalf("classification = %s, want recording_duplicate from tagged MBIDs alone", preview.DuplicateClassification)
 	}
 }

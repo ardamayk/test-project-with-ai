@@ -14,6 +14,7 @@ import (
 	_ "image/png"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -137,6 +138,10 @@ type NormalizedMediaMetadata struct {
 	Genres        []string
 	Year          int
 	ReplayGain    ReplayGainMetadata
+	// ISRC and MusicBrainzRecordingID are optional identifiers written by
+	// taggers such as MusicBrainz Picard; malformed values are dropped.
+	ISRC                   string
+	MusicBrainzRecordingID string
 }
 
 type MediaPosition struct {
@@ -329,17 +334,59 @@ func normalizeMediaMetadata(tags map[string][]string, replayGain ReplayGainMetad
 		return NormalizedMediaMetadata{}, err
 	}
 	return NormalizedMediaMetadata{
-		Title:         names.Title,
-		Artists:       names.Artists,
-		AlbumArtists:  names.AlbumArtists,
-		Album:         names.Album,
-		TrackPosition: trackPosition,
-		DiscPosition:  discPosition,
-		HasDiscNumber: len(tags["DISCNUMBER"]) > 0,
-		Genres:        names.Genres,
-		Year:          year,
-		ReplayGain:    replayGain,
+		Title:                  names.Title,
+		Artists:                names.Artists,
+		AlbumArtists:           names.AlbumArtists,
+		Album:                  names.Album,
+		TrackPosition:          trackPosition,
+		DiscPosition:           discPosition,
+		HasDiscNumber:          len(tags["DISCNUMBER"]) > 0,
+		Genres:                 names.Genres,
+		Year:                   year,
+		ReplayGain:             replayGain,
+		ISRC:                   optionalISRC(tags),
+		MusicBrainzRecordingID: optionalMusicBrainzRecordingID(tags),
 	}, nil
+}
+
+// Tag names for the optional identifiers. Picard writes the recording MBID
+// as MUSICBRAINZ_TRACKID in Vorbis comments; the RECORDINGID spelling is an
+// accepted alias.
+const (
+	TAG_ISRC                    = "ISRC"
+	TAG_MUSICBRAINZ_TRACK_ID    = "MUSICBRAINZ_TRACKID"
+	TAG_MUSICBRAINZ_RECORDINGID = "MUSICBRAINZ_RECORDINGID"
+)
+
+var (
+	isrcPattern = regexp.MustCompile(`^[A-Z0-9]{5}[0-9]{7}$`)
+	mbidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+)
+
+// optionalISRC returns the first well-formed ISRC (12 alphanumerics,
+// dashes tolerated) or "" when the tag is absent or malformed.
+func optionalISRC(tags map[string][]string) string {
+	for _, raw := range tags[TAG_ISRC] {
+		candidate := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
+		if isrcPattern.MatchString(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// optionalMusicBrainzRecordingID returns the first well-formed recording
+// MBID, lower-cased, or "" when absent or malformed.
+func optionalMusicBrainzRecordingID(tags map[string][]string) string {
+	for _, key := range []string{TAG_MUSICBRAINZ_TRACK_ID, TAG_MUSICBRAINZ_RECORDINGID} {
+		for _, raw := range tags[key] {
+			candidate := strings.ToLower(strings.TrimSpace(raw))
+			if mbidPattern.MatchString(candidate) {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 func replayGainFromTags(tags map[string][]string) ReplayGainMetadata {

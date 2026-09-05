@@ -35,7 +35,7 @@ The fallback-free metadata, artwork, and audio-integrity contract used by Manage
 _Avoid_: Best-effort scan, legacy exception, filename fallback, tag rewriting
 
 **Recording Identification**:
-The Managed Import step that fingerprints an uploaded audio file, resolves it to a MusicBrainz Recording through AcoustID when the match score reaches the configured threshold, and uses that Recording's MusicBrainz metadata to correct or complete the metadata read from the file's tags. It never writes to the audio file, never fetches artwork, and leaves the tag metadata untouched when no confident match exists or the services are unreachable.
+The Managed Import step that resolves an uploaded audio file to a MusicBrainz Recording, using the cheapest evidence first: a recording MBID already in the file's tags, then a tagged ISRC, then a Chromaprint fingerprint matched through AcoustID when the score reaches the configured threshold. It uses that Recording's MusicBrainz metadata to correct or complete the metadata read from the file's tags. It never writes to the audio file, never fetches artwork, and leaves the tag metadata untouched when no confident match exists or the services are unreachable.
 _Avoid_: Tag lookup, Picard tagging, cover fetch, automatic replacement
 
 **Import Batch**:

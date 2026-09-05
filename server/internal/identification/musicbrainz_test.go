@@ -102,3 +102,34 @@ func TestMusicBrainzRecordingLookupMapsNotFoundAndFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestMusicBrainzRecordingIDsByISRCParsesRecordingsAndMapsNotFound(t *testing.T) {
+	var received *http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r
+		if r.URL.Path == "/ws/2/isrc/UNKNOWN00001" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"Not Found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"isrc":"USUG12306672","recordings":[{"id":"rec-a","title":"A"},{"id":"rec-b","title":"B"}]}`))
+	}))
+	defer server.Close()
+	client := identification.NewMusicBrainzClient(server.Client(), server.URL, "EarthlyAudio/test")
+
+	ids, err := client.RecordingIDsByISRC(context.Background(), "USUG12306672")
+	if err != nil {
+		t.Fatalf("RecordingIDsByISRC() error = %v", err)
+	}
+	if received.URL.Path != "/ws/2/isrc/USUG12306672" || received.URL.RawQuery != "fmt=json" {
+		t.Fatalf("request = %s?%s", received.URL.Path, received.URL.RawQuery)
+	}
+	if len(ids) != 2 || ids[0] != "rec-a" {
+		t.Fatalf("ids = %v", ids)
+	}
+
+	_, err = client.RecordingIDsByISRC(context.Background(), "UNKNOWN00001")
+	if !errors.Is(err, identification.ErrRecordingNotFound) {
+		t.Fatalf("error = %v, want ErrRecordingNotFound", err)
+	}
+}

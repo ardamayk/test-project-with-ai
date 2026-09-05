@@ -198,6 +198,8 @@ func m4aMetadataKey(key string) string {
 		return "TRACKNUMBER"
 	case "DISC":
 		return "DISCNUMBER"
+	case "MUSICBRAINZ TRACK ID", "MUSICBRAINZ_TRACKID":
+		return TAG_MUSICBRAINZ_TRACK_ID
 	default:
 		return strings.ToUpper(strings.TrimSpace(key))
 	}

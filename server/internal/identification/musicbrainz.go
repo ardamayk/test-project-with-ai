@@ -17,6 +17,7 @@ var ErrRecordingNotFound = errors.New("MusicBrainz recording not found")
 
 const (
 	musicBrainzRecordingPath = "/ws/2/recording/"
+	musicBrainzISRCPath      = "/ws/2/isrc/"
 	// musicBrainzRecordingInc lists everything Recording Identification reads
 	// in one call. "media" is deliberately absent: it multiplies the payload
 	// (127 KB and 27 s versus 58 KB and 8 s for a recording on 40 releases)
@@ -127,6 +128,43 @@ func (client *MusicBrainzClient) Recording(ctx context.Context, mbid string) (Re
 		return Recording{}, err
 	}
 	return parsed.toRecording(), nil
+}
+
+type musicBrainzISRC struct {
+	Recordings []struct {
+		ID string `json:"id"`
+	} `json:"recordings"`
+}
+
+// RecordingIDsByISRC lists the recordings MusicBrainz links to an ISRC, in
+// MusicBrainz order. An unknown ISRC maps to ErrRecordingNotFound.
+func (client *MusicBrainzClient) RecordingIDsByISRC(ctx context.Context, isrc string) ([]string, error) {
+	endpoint := client.baseURL + musicBrainzISRCPath + url.PathEscape(isrc) + "?fmt=json"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: build MusicBrainz ISRC request: %w", ErrServiceUnavailable, err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", client.userAgent)
+
+	var parsed musicBrainzISRC
+	if err := doJSON(client.httpClient, request, "MusicBrainz", &parsed); err != nil {
+		var status *httpStatusError
+		if errors.As(err, &status) && status.code == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: ISRC %s", ErrRecordingNotFound, isrc)
+		}
+		return nil, err
+	}
+	ids := make([]string, 0, len(parsed.Recordings))
+	for _, recording := range parsed.Recordings {
+		if recording.ID != "" {
+			ids = append(ids, recording.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%w: ISRC %s links no recording", ErrRecordingNotFound, isrc)
+	}
+	return ids, nil
 }
 
 func (parsed musicBrainzRecording) toRecording() Recording {

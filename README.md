@@ -50,7 +50,7 @@ The Music Server calls these programs at runtime and reports each of them, with 
 
 Install them from your distribution (`ffmpeg` and `libchromaprint-tools` on Debian and Ubuntu, `ffmpeg` and `chromaprint` on Alpine and Arch). The container image installs both. Without `fpcalc` the server starts normally and Recording Identification stays unavailable; the Settings page names the reason.
 
-Recording Identification is a per-import switch in the Import Music dialog, on by default whenever the Music Server reports it as available; each Import Preview row and Import History entry names the metadata source, the AcoustID score and the fields MusicBrainz changed. Environment overrides: `RECORDING_IDENTIFICATION_ENABLED`, `RECORDING_IDENTIFICATION_MIN_SCORE` (default `0.90`), `ACOUSTID_API_KEY`, `ACOUSTID_BASE_URL`, and `MUSICBRAINZ_BASE_URL`. See [ADR 0017](docs/adr/0017-recording-identification-via-acoustid-and-musicbrainz.md).
+Managed Import reads these tags: TITLE, ARTIST, ALBUMARTIST, ALBUM, TRACKNUMBER, DISCNUMBER, GENRE and the embedded front cover (all required), plus DATE, TOTALTRACKS, TOTALDISCS, ReplayGain, ISRC and the MusicBrainz recording MBID (optional). Everything else in the file is ignored. Recording Identification is a per-import switch in the Import Music dialog, on by default whenever the Music Server reports it as available; each Import Preview row and Import History entry names the metadata source, the AcoustID score and the fields MusicBrainz changed. Environment overrides: `RECORDING_IDENTIFICATION_ENABLED`, `RECORDING_IDENTIFICATION_MIN_SCORE` (default `0.90`), `ACOUSTID_API_KEY`, `ACOUSTID_BASE_URL`, and `MUSICBRAINZ_BASE_URL`. See [ADR 0017](docs/adr/0017-recording-identification-via-acoustid-and-musicbrainz.md).
 
 ## Build
 

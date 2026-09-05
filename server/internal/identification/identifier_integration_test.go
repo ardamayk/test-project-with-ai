@@ -42,7 +42,7 @@ func TestNewIdentifierRunsFpcalcAgainstFakeServices(t *testing.T) {
 		MusicBrainzBaseURL: musicBrainz.URL,
 	}
 
-	result := identification.NewIdentifier(cfg, "0.1.0-test", "fpcalc", nil).Identify(context.Background(), synthesizedTone(t))
+	result := identification.NewIdentifier(cfg, "0.1.0-test", "fpcalc", nil).Identify(context.Background(), synthesizedTone(t), identification.Hint{})
 
 	if result.Outcome != identification.OUTCOME_MATCHED {
 		t.Fatalf("outcome = %s (%s)", result.Outcome, result.Reason)
