@@ -142,6 +142,18 @@ function ImportHistoryFileRow({
 					Replaced Track {file.replacedTrackId}
 				</p>
 			) : null}
+			{file.metadataSource ? (
+				<p className="break-all text-caption">
+					Metadata{" "}
+					{file.metadataSource === "musicbrainz"
+						? `MusicBrainz${
+								file.acoustIdScore === undefined
+									? ""
+									: ` · AcoustID ${file.acoustIdScore.toFixed(2)}`
+							}${file.recordingId ? ` · Recording ${file.recordingId}` : ""}`
+						: "File tags"}
+				</p>
+			) : null}
 		</div>
 	);
 }

@@ -141,6 +141,11 @@ type BatchOptions struct {
 	RecordingIdentification bool
 }
 
+// BatchCreate is the optional request body of POST /api/v1/import-batches.
+type BatchCreate struct {
+	RecordingIdentification bool `json:"recordingIdentification"`
+}
+
 type BatchFile struct {
 	Issues             ValidationIssues `json:"issues,omitempty"`
 	JobID              string           `json:"jobId"`

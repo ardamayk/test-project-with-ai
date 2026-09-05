@@ -44,7 +44,14 @@ func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Re
 }
 
 func (handlers *Handlers) CreateBatch(writer http.ResponseWriter, request *http.Request) {
-	batch, err := handlers.service.CreateBatch(request.Context(), BatchOptions{})
+	var creation BatchCreate
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_JOB_CREATE_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&creation); err != nil && !errors.Is(err, io.EOF) {
+		respond.Error(writer, http.StatusBadRequest, "invalid_import_batch", "Managed Import Batch request is invalid")
+		return
+	}
+	batch, err := handlers.service.CreateBatch(request.Context(), BatchOptions{RecordingIdentification: creation.RecordingIdentification})
 	if err != nil {
 		handleError(writer, request, err)
 		return

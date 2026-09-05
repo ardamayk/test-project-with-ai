@@ -829,6 +829,13 @@ export interface components {
              */
             clientFileId: string;
         };
+        ManagedImportBatchCreate: {
+            /**
+             * @description Run Recording Identification (ADR 0017) for every file in the batch. Omitting the body keeps it off.
+             * @default false
+             */
+            recordingIdentification: boolean;
+        };
         ManagedImportBatch: {
             /** Format: uuid */
             id: string;
@@ -1954,7 +1961,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ManagedImportBatchCreate"];
+            };
+        };
         responses: {
             /** @description Managed Import Batch created */
             201: {

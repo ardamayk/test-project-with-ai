@@ -52,6 +52,19 @@ export type ImportFileEntry = {
 
 export type DuplicateDecision = ManagedImportDuplicateDecision["action"];
 
+/**
+ * Possible and Recording Duplicates share one decision set (ADR 0017): both
+ * block confirmation until the user chooses what to do.
+ */
+export function requiresDuplicateDecision(
+	classification: ManagedImportPreview["duplicateClassification"] | undefined,
+): boolean {
+	return (
+		classification === "possible_duplicate" ||
+		classification === "recording_duplicate"
+	);
+}
+
 export type ImportEntrySummary = {
 	total: number;
 	processed: number;
@@ -90,7 +103,7 @@ export function summarizeImportEntries(
 		if (entry.state === "rejected") summary.rejected += 1;
 		else if (entry.state === "completed") summary.completed += 1;
 		else if (
-			entry.preview?.duplicateClassification === "possible_duplicate" &&
+			requiresDuplicateDecision(entry.preview?.duplicateClassification) &&
 			!entry.duplicateDecision
 		)
 			summary.needsReview += 1;
@@ -128,7 +141,7 @@ export function useManagedImportWorkflow({
 			state.entries.every(
 				(entry) =>
 					(entry.state !== "unresolved" || Boolean(entry.jobId)) &&
-					(entry.preview?.duplicateClassification !== "possible_duplicate" ||
+					(!requiresDuplicateDecision(entry.preview?.duplicateClassification) ||
 						Boolean(entry.duplicateDecision)),
 			),
 	);
@@ -159,6 +172,12 @@ export function useManagedImportWorkflow({
 		canConfirm,
 		handleFiles: createFileHandler(state),
 		handleDesktopSelection: createDesktopSelectionHandler(state),
+		handleRecordingIdentificationChange: useCallback(
+			(isOn: boolean) => {
+				state.recordingIdentification.current = isOn;
+			},
+			[state.recordingIdentification],
+		),
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
 		handleSelectionChange,
 		handleDuplicateDecisionChange,
@@ -171,6 +190,8 @@ function useImportWorkflowState() {
 	const [batch, setBatch] = useState<ManagedImportBatch>();
 	const [entries, setEntries] = useState<ImportFileEntry[]>([]);
 	const [errorMessage, setErrorMessage] = useState("");
+	// Effective value of the Import Music switch; read when the batch is created.
+	const recordingIdentification = useRef(false);
 	const activeUploadController = useRef<AbortController | undefined>(undefined);
 	const isDesktopSelectionPending = useRef(false);
 	// Stable identity lets memoized rows skip re-rendering when a sibling's
@@ -201,6 +222,7 @@ function useImportWorkflowState() {
 		setErrorMessage,
 		activeUploadController,
 		isDesktopSelectionPending,
+		recordingIdentification,
 		updateEntry,
 		reset,
 	};
@@ -220,7 +242,9 @@ function createFileHandler(state: WorkflowState) {
 		const uploadController = new AbortController();
 		state.activeUploadController.current = uploadController;
 		try {
-			const createdBatch = await apiClient.createManagedImportBatch();
+			const createdBatch = await apiClient.createManagedImportBatch({
+				recordingIdentification: state.recordingIdentification.current,
+			});
 			state.setBatch(createdBatch);
 			const { batch: previewBatch, entries: uploadedEntries } =
 				await uploadImportBatch(
@@ -361,7 +385,7 @@ function createConfirmHandler(
 function hasUndecidedPossibleDuplicate(entries: ImportFileEntry[]): boolean {
 	return entries.some(
 		(entry) =>
-			entry.preview?.duplicateClassification === "possible_duplicate" &&
+			requiresDuplicateDecision(entry.preview?.duplicateClassification) &&
 			!entry.duplicateDecision,
 	);
 }

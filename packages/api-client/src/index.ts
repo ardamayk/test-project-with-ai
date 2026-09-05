@@ -79,6 +79,7 @@ export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] };
 export type ErrorResponse = Schemas['ErrorResponse'];
 export type ManagedImportJob = Schemas['ManagedImportJob'];
 export type ManagedImportBatch = Schemas['ManagedImportBatch'];
+export type ManagedImportBatchCreate = Schemas['ManagedImportBatchCreate'];
 export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile'];
 export type ManagedImportDuplicateDecision =
   Schemas['ManagedImportDuplicateDecision'];
@@ -442,8 +443,11 @@ export function createApiClient(config: ApiClientConfig) {
       ),
     listImportHistory: () =>
       request<ManagedImportHistoryList>('/api/v1/import-history'),
-    createManagedImportBatch: () =>
-      request<ManagedImportBatch>('/api/v1/import-batches', { method: 'POST' }),
+    createManagedImportBatch: (options?: ManagedImportBatchCreate) =>
+      request<ManagedImportBatch>('/api/v1/import-batches', {
+        method: 'POST',
+        body: options ? JSON.stringify(options) : undefined,
+      }),
     getManagedImportBatch: (batchId: string) =>
       request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}`),
     cancelManagedImportBatch: (batchId: string) =>

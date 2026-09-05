@@ -1,3 +1,4 @@
+import type { ManagedImportPreview } from "@repo/api-client";
 import {
 	Check,
 	CircleAlert,
@@ -21,6 +22,7 @@ import {
 	summarizeImportEntries,
 	useManagedImportWorkflow,
 } from "./-managed-import-workflow";
+import { RecordingIdentificationSwitch } from "./-recording-identification-switch";
 
 export function ImportMusicDialog({
 	isOpen,
@@ -59,6 +61,10 @@ export function ImportMusicDialog({
 					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 grid max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl gap-5 overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl outline-none"
 				>
 					<ImportDialogHeader isBusy={workflow.isCloseLocked} />
+					<RecordingIdentificationSwitch
+						isDisabled={workflow.isPickerLocked}
+						onChange={workflow.handleRecordingIdentificationChange}
+					/>
 					<ImportFilePicker
 						isBusy={workflow.isPickerLocked}
 						onFiles={workflow.handleFiles}
@@ -411,17 +417,60 @@ function isValidatingOnServer(entry: ImportFileEntry): boolean {
 function RowCaption({ entry }: { entry: ImportFileEntry }) {
 	if (entry.preview) {
 		return (
-			<span className="block truncate text-caption text-xs">
-				<span>{entry.preview.file.artists.join(", ")}</span>
-				{" · "}
-				<span>{entry.preview.file.album}</span>
-			</span>
+			<>
+				<span className="block truncate text-caption text-xs">
+					<span>{entry.preview.file.artists.join(", ")}</span>
+					{" · "}
+					<span>{entry.preview.file.album}</span>
+				</span>
+				<IdentificationCaption identification={entry.preview.identification} />
+			</>
 		);
 	}
 	if (entry.state !== "unresolved") return null;
 	return (
 		<span className="block truncate text-caption text-xs">
 			{isValidatingOnServer(entry) ? "Validating on the server…" : "Uploading…"}
+		</span>
+	);
+}
+
+/**
+ * Names the system that produced the row's metadata and, for MusicBrainz,
+ * the AcoustID score and the fields it changed, so Recording Identification
+ * can be checked per file (ADR 0017).
+ */
+export function IdentificationCaption({
+	identification,
+}: {
+	identification: ManagedImportPreview["identification"];
+}) {
+	if (!identification) return null;
+	if (identification.source === "musicbrainz") {
+		const score =
+			identification.acoustIdScore === undefined
+				? ""
+				: ` · AcoustID ${identification.acoustIdScore.toFixed(2)}`;
+		const changed = identification.changedFields?.length
+			? ` · changed ${identification.changedFields.join(", ")}`
+			: " · tags already matched";
+		return (
+			<span
+				className="block truncate text-caption text-xs"
+				data-testid="identification-caption"
+			>
+				MusicBrainz{score}
+				{changed}
+			</span>
+		);
+	}
+	return (
+		<span
+			className="block truncate text-caption text-xs"
+			data-testid="identification-caption"
+		>
+			File tags
+			{identification.reason ? ` · ${identification.reason}` : ""}
 		</span>
 	);
 }

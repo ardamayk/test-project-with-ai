@@ -338,6 +338,12 @@ paths:
       tags: [imports]
       operationId: createManagedImportBatch
       summary: Create one multi-file Managed Import Batch
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagedImportBatchCreate"
       responses:
         "201":
           description: Managed Import Batch created
@@ -1610,6 +1616,15 @@ components:
           type: string
           format: uuid
           description: Client-generated identifier used to correlate a Batch file when the create response is lost.
+    ManagedImportBatchCreate:
+      type: object
+      properties:
+        recordingIdentification:
+          type: boolean
+          default: false
+          description: >-
+            Run Recording Identification (ADR 0017) for every file in the
+            batch. Omitting the body keeps it off.
     ManagedImportBatch:
       type: object
       required: [id, status, revision, files]
