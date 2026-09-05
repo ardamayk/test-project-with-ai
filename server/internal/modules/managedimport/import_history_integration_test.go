@@ -207,6 +207,26 @@ func TestImportHistoryPreservesTerminalFileOutcomesWhenBatchIsCanceled(t *testin
 	}
 }
 
+func TestCancelRejectedOnlyBatchClosesWithoutConflict(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	configuration := config.Config{ManagedStoragePath: t.TempDir()}
+	module := managedimport.NewModule(database, configuration, library.NewMediaInspector())
+	router := chi.NewRouter()
+	module.RegisterRoutes(router)
+
+	batch := createHistoryTestBatch(t, router)
+	rejectedJob := createHistoryTestJob(t, router, batch.ID, "00000000-0000-4000-8000-000000000032")
+	uploadHistoryTestFile(t, router, rejectedJob.ID, "broken.flac", []byte("not audio"), http.StatusUnprocessableEntity)
+	cancelResponse := testutil.ServeRequest(t, router, http.MethodDelete, "/api/v1/import-batches/"+batch.ID, nil, nil)
+	if cancelResponse.Code != http.StatusNoContent {
+		t.Fatalf("cancel rejected-only Import Batch status = %d, body = %s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+	replayed := testutil.ServeRequest(t, router, http.MethodDelete, "/api/v1/import-batches/"+batch.ID, nil, nil)
+	if replayed.Code != http.StatusNoContent {
+		t.Fatalf("idempotent cancel rejected-only Import Batch status = %d, body = %s", replayed.Code, replayed.Body.String())
+	}
+}
+
 func TestCanceledBatchClientFileIDCannotBeReused(t *testing.T) {
 	store := managedimport.NewStore(testutil.OpenMigratedDB(t))
 	batch, err := store.CreateBatch(t.Context(), managedimport.BatchOptions{})
