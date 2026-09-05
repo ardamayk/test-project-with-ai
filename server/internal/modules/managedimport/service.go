@@ -121,7 +121,11 @@ func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
 }
 
 func (service *Service) CancelBatch(ctx context.Context, batchID string) error {
-	return service.cancelBatch(ctx, batchID, nil)
+	err := service.cancelBatch(ctx, batchID, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (service *Service) cancelBatch(ctx context.Context, batchID string, updatedBefore *time.Time) error {
@@ -162,7 +166,11 @@ func (service *Service) cancelBatch(ctx context.Context, batchID string, updated
 }
 
 func (service *Service) CancelJob(ctx context.Context, jobID string) error {
-	return service.cancelJob(ctx, jobID, nil)
+	err := service.cancelJob(ctx, jobID, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (service *Service) cancelJob(ctx context.Context, jobID string, updatedBefore *time.Time) error {
