@@ -7,15 +7,12 @@ import (
 	"strconv"
 )
 
-// DEFAULT_ACOUSTID_API_KEY is the AcoustID application key that ships with
-// the Music Server (ADR 0017). AcoustID issues keys per application, not per
+// DEFAULT_ACOUSTID_API_KEY is the AcoustID application key registered for
+// this project (ADR 0017). AcoustID issues keys per application, not per
 // operator, so one embedded key lets an installation identify recordings
-// without any account. Operators may replace it through ACOUSTID_API_KEY.
-//
-// The value is empty until the project registers its application at
-// https://acoustid.org/new-application; while empty, Recording Identification
-// reports a missing key and stays inactive.
-const DEFAULT_ACOUSTID_API_KEY = ""
+// without any account. Every installation shares its rate limit; an operator
+// may use their own application key through ACOUSTID_API_KEY.
+const DEFAULT_ACOUSTID_API_KEY = "3KUC2mOB4m"
 
 const (
 	DEFAULT_RECORDING_IDENTIFICATION_MIN_SCORE = 0.90
