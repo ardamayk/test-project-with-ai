@@ -90,8 +90,8 @@ func (service *Service) CreateJob(ctx context.Context, batchID, clientFileID str
 	return service.store.CreateJob(ctx, batchID, clientFileID)
 }
 
-func (service *Service) CreateBatch(ctx context.Context) (Batch, error) {
-	return service.store.CreateBatch(ctx)
+func (service *Service) CreateBatch(ctx context.Context, options BatchOptions) (Batch, error) {
+	return service.store.CreateBatch(ctx, options)
 }
 
 func (service *Service) GetBatch(ctx context.Context, batchID string) (Batch, error) {

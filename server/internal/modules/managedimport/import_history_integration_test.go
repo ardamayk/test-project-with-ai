@@ -209,7 +209,7 @@ func TestImportHistoryPreservesTerminalFileOutcomesWhenBatchIsCanceled(t *testin
 
 func TestCanceledBatchClientFileIDCannotBeReused(t *testing.T) {
 	store := managedimport.NewStore(testutil.OpenMigratedDB(t))
-	batch, err := store.CreateBatch(t.Context())
+	batch, err := store.CreateBatch(t.Context(), managedimport.BatchOptions{})
 	if err != nil {
 		t.Fatalf("create Import Batch: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestPrunedFailedStandaloneHistoryIsNotRecreatedOnDeletion(t *testing.T) {
 		t.Fatalf("fail standalone Import Job: %v", markErr)
 	}
 	for range managedimport.IMPORT_HISTORY_LIMIT {
-		batch, createErr := store.CreateBatch(t.Context())
+		batch, createErr := store.CreateBatch(t.Context(), managedimport.BatchOptions{})
 		if createErr != nil {
 			t.Fatalf("create newer Import Batch: %v", createErr)
 		}

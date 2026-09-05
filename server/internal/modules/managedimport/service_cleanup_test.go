@@ -123,7 +123,7 @@ func TestCleanupRestartReconcilesRecordsWhenStagingCleanupPartiallyFails(t *test
 func TestCancelJobRejectsCompletedBatchFile(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	store := NewStore(database)
-	batch, err := store.CreateBatch(context.Background())
+	batch, err := store.CreateBatch(context.Background(), BatchOptions{})
 	if err != nil {
 		t.Fatalf("create completed batch: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestCleanupInactiveExpiresFailedStandaloneJob(t *testing.T) {
 
 func createCleanupBatch(t *testing.T, store *Store, storage *Storage) (Batch, stagedUpload) {
 	t.Helper()
-	batch, err := store.CreateBatch(context.Background())
+	batch, err := store.CreateBatch(context.Background(), BatchOptions{})
 	if err != nil {
 		t.Fatalf("create cleanup batch: %v", err)
 	}
@@ -202,7 +202,7 @@ func createCleanupBatch(t *testing.T, store *Store, storage *Storage) (Batch, st
 func TestFinishUncommittedBatchFileRetainsPathWhenCleanupFails(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	store := NewStore(database)
-	batch, err := store.CreateBatch(context.Background())
+	batch, err := store.CreateBatch(context.Background(), BatchOptions{})
 	if err != nil {
 		t.Fatalf("create batch: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestRecoverPreviewFailureKeepsCanceledBatchJobRetryable(t *testing.T) {
 func newBatchUploadService(t *testing.T) (*Service, *Store, importJob) {
 	t.Helper()
 	store := NewStore(testutil.OpenMigratedDB(t))
-	batch, err := store.CreateBatch(context.Background())
+	batch, err := store.CreateBatch(context.Background(), BatchOptions{})
 	if err != nil {
 		t.Fatalf("create batch: %v", err)
 	}
@@ -399,7 +399,7 @@ func assertRetryableBatchJob(t *testing.T, store *Store, jobID string, uploadErr
 func TestCancelBatchReportsUnsafeCleanupAndRetainsRecords(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	store := NewStore(database)
-	batch, err := store.CreateBatch(context.Background())
+	batch, err := store.CreateBatch(context.Background(), BatchOptions{})
 	if err != nil {
 		t.Fatalf("create unsafe cleanup batch: %v", err)
 	}

@@ -28,7 +28,39 @@ const (
 	LEGACY_MIGRATION_SOURCES_VERSION   = 26
 	RETIRE_LEGACY_SCAN_JOBS_VERSION    = 27
 	REMOVE_LEGACY_LIBRARY_VERSION      = 28
+	VALIDATION_ISSUES_VERSION          = 29
+	RECORDING_IDENTIFICATION_VERSION   = 30
 )
+
+func TestRecordingIdentificationMigrationAppliesAndRollsBack(t *testing.T) {
+	sqlDB := openDatabaseAtVersion(t, VALIDATION_ISSUES_VERSION)
+	if err := goose.UpTo(sqlDB, migrationsDir(t), RECORDING_IDENTIFICATION_VERSION); err != nil {
+		t.Fatalf("apply Recording Identification migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, RECORDING_IDENTIFICATION_VERSION)
+	for _, column := range []string{"musicbrainz_recording_id", "isrc", "acoustid_score", "metadata_source", "musicbrainz_changed_fields"} {
+		assertColumnExists(t, sqlDB, "tracks", column)
+	}
+	assertColumnExists(t, sqlDB, "managed_import_batches", "recording_identification")
+	assertColumnExists(t, sqlDB, "managed_import_jobs", "identification_json")
+	assertColumnExists(t, sqlDB, "managed_import_jobs", "musicbrainz_recording_id")
+	for _, column := range []string{"metadata_source", "acoustid_score", "musicbrainz_recording_id"} {
+		assertColumnExists(t, sqlDB, "managed_import_history_files", column)
+	}
+	assertTableExists(t, sqlDB, "acoustid_lookup_cache")
+	assertTableExists(t, sqlDB, "musicbrainz_recording_cache")
+	assertExecFails(t, sqlDB, `INSERT INTO managed_import_batches (id, status, revision, recording_identification) VALUES ('b', 'uploading', 1, 2)`, "CHECK")
+	assertExecFails(t, sqlDB, `INSERT INTO tracks (id, album_id, title, title_sort, artist_name, format, file_path, metadata_source) VALUES ('t', 'a', 'T', 't', 'A', 'flac', '/t.flac', 'guess')`, "CHECK")
+
+	if err := goose.Down(sqlDB, migrationsDir(t)); err != nil {
+		t.Fatalf("roll back Recording Identification migration: %v", err)
+	}
+	assertMigrationVersion(t, sqlDB, VALIDATION_ISSUES_VERSION)
+	assertColumnMissing(t, sqlDB, "tracks", "musicbrainz_recording_id")
+	assertColumnMissing(t, sqlDB, "managed_import_batches", "recording_identification")
+	assertTableMissing(t, sqlDB, "acoustid_lookup_cache")
+	assertTableMissing(t, sqlDB, "musicbrainz_recording_cache")
+}
 
 func TestPermanentTrackDeletionMigrationAppliesAndRollsBack(t *testing.T) {
 	sqlDB := openDatabaseAtVersion(t, LEGACY_MIGRATION_COPY_VERSION)

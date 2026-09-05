@@ -126,7 +126,15 @@ type Batch struct {
 	ID       string      `json:"id"`
 	Status   BatchStatus `json:"status"`
 	Revision int         `json:"revision"`
-	Files    []BatchFile `json:"files"`
+	// RecordingIdentification is the user's per-batch switch (ADR 0017):
+	// when false no fingerprint is computed and no outbound request is made.
+	RecordingIdentification bool        `json:"recordingIdentification"`
+	Files                   []BatchFile `json:"files"`
+}
+
+// BatchOptions are the choices made when an Import Batch is created.
+type BatchOptions struct {
+	RecordingIdentification bool
 }
 
 type BatchFile struct {

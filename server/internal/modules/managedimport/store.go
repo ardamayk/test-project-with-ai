@@ -122,9 +122,10 @@ func (store *Store) CreateJob(ctx context.Context, batchID, clientFileID string)
 	return job, nil
 }
 
-func (store *Store) CreateBatch(ctx context.Context) (Batch, error) {
-	batch := Batch{ID: uuid.NewString(), Status: BATCH_STATUS_UPLOADING, Revision: 1, Files: []BatchFile{}}
-	_, err := store.database.ExecContext(ctx, `INSERT INTO managed_import_batches (id, status, revision) VALUES (?, ?, ?)`, batch.ID, batch.Status, batch.Revision)
+func (store *Store) CreateBatch(ctx context.Context, options BatchOptions) (Batch, error) {
+	batch := Batch{ID: uuid.NewString(), Status: BATCH_STATUS_UPLOADING, Revision: 1, RecordingIdentification: options.RecordingIdentification, Files: []BatchFile{}}
+	_, err := store.database.ExecContext(ctx, `INSERT INTO managed_import_batches (id, status, revision, recording_identification) VALUES (?, ?, ?, ?)`,
+		batch.ID, batch.Status, batch.Revision, batch.RecordingIdentification)
 	if err != nil {
 		return Batch{}, fmt.Errorf("create Managed Import Batch: %w", err)
 	}
@@ -172,7 +173,8 @@ func getImportJob(ctx context.Context, queryer queryRower, jobID string) (import
 
 func (store *Store) GetBatch(ctx context.Context, batchID string) (Batch, error) {
 	var batch Batch
-	err := store.database.QueryRowContext(ctx, `SELECT id, status, revision FROM managed_import_batches WHERE id = ?`, batchID).Scan(&batch.ID, &batch.Status, &batch.Revision)
+	err := store.database.QueryRowContext(ctx, `SELECT id, status, revision, recording_identification FROM managed_import_batches WHERE id = ?`, batchID).
+		Scan(&batch.ID, &batch.Status, &batch.Revision, &batch.RecordingIdentification)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Batch{}, ErrNotFound
 	}

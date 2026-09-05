@@ -835,6 +835,8 @@ export interface components {
             /** @enum {string} */
             status: "uploading" | "confirming" | "completed";
             revision: number;
+            /** @description Whether Recording Identification (ADR 0017) runs for the files in this Import Batch. Chosen when the batch is created; false means no fingerprint is computed and no AcoustID or MusicBrainz request is made for any of its files. */
+            recordingIdentification?: boolean;
             files: components["schemas"]["ManagedImportBatchFile"][];
         };
         ManagedImportBatchFile: {

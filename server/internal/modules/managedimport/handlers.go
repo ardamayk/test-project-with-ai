@@ -44,7 +44,7 @@ func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Re
 }
 
 func (handlers *Handlers) CreateBatch(writer http.ResponseWriter, request *http.Request) {
-	batch, err := handlers.service.CreateBatch(request.Context())
+	batch, err := handlers.service.CreateBatch(request.Context(), BatchOptions{})
 	if err != nil {
 		handleError(writer, request, err)
 		return

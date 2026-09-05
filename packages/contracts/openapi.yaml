@@ -1623,6 +1623,13 @@ components:
         revision:
           type: integer
           minimum: 1
+        recordingIdentification:
+          type: boolean
+          description: >-
+            Whether Recording Identification (ADR 0017) runs for the files in
+            this Import Batch. Chosen when the batch is created; false means no
+            fingerprint is computed and no AcoustID or MusicBrainz request is
+            made for any of its files.
         files:
           type: array
           items:
