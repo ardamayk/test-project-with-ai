@@ -73,7 +73,7 @@ func TestMusicBrainzRecordingLookupRequestsIncludesAndParsesRecording(t *testing
 	if len(deluxe.AlbumArtists) != 1 || deluxe.AlbumArtists[0].Name != "Taylor Swift" {
 		t.Fatalf("deluxe album artists = %+v", deluxe.AlbumArtists)
 	}
-	if deluxe.Position.DiscNumber != 1 || deluxe.Position.DiscCount != 1 || deluxe.Position.TrackNumber != 1 || deluxe.Position.TrackCount != 22 {
+	if deluxe.Position.DiscNumber != 1 || deluxe.Position.TrackNumber != 1 || deluxe.Position.TrackCount != 22 {
 		t.Fatalf("deluxe position = %+v", deluxe.Position)
 	}
 }

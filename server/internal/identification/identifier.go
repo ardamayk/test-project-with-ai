@@ -64,15 +64,23 @@ const (
 	userAgentProjectLink = "https://github.com/ardamayk/test-project-with-ai"
 )
 
+// Package-level limiters make the rate bound server-wide even if more than
+// one Identifier is ever constructed.
+var (
+	acoustIDLimiter    = NewLimiter(acoustIDInterval)
+	musicBrainzLimiter = NewLimiter(musicBrainzInterval)
+)
+
 // NewIdentifier wires the real fpcalc program and HTTP clients from
-// configuration. Both services share one server-wide limiter each.
+// configuration. Whether identification should run at all (cfg.Enabled, the
+// Import Batch switch, fpcalc presence) is the caller's decision.
 func NewIdentifier(cfg config.RecordingIdentificationConfig, version, fpcalcProgram string) *Identifier {
 	userAgent := fmt.Sprintf("EarthlyAudio/%s (%s)", version, userAgentProjectLink)
 	httpClient := &http.Client{Timeout: requestTimeout}
 	return NewIdentifierWithSources(
 		NewFingerprinter(fpcalcProgram),
-		limitedAcoustID{client: NewAcoustIDClient(httpClient, cfg.AcoustIDBaseURL, cfg.AcoustIDAPIKey, userAgent), limiter: NewLimiter(acoustIDInterval)},
-		limitedMusicBrainz{client: NewMusicBrainzClient(httpClient, cfg.MusicBrainzBaseURL, userAgent), limiter: NewLimiter(musicBrainzInterval)},
+		limitedAcoustID{client: NewAcoustIDClient(httpClient, cfg.AcoustIDBaseURL, cfg.AcoustIDAPIKey, userAgent), limiter: acoustIDLimiter},
+		limitedMusicBrainz{client: NewMusicBrainzClient(httpClient, cfg.MusicBrainzBaseURL, userAgent), limiter: musicBrainzLimiter},
 		cfg.MinScore,
 	)
 }

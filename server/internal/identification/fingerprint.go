@@ -29,7 +29,7 @@ type Fingerprint struct {
 	Value           string
 }
 
-// Fingerprinter runs fpcalc for one file at a time.
+// Fingerprinter runs the fpcalc program.
 type Fingerprinter struct {
 	program string
 }
@@ -48,11 +48,14 @@ type fpcalcOutput struct {
 func (fingerprinter *Fingerprinter) Fingerprint(ctx context.Context, path string) (Fingerprint, error) {
 	ctx, cancel := context.WithTimeout(ctx, fingerprintTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, fingerprinter.program, "-json", path)
+	command := exec.CommandContext(ctx, fingerprinter.program, "-json", "--", path)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Fingerprint{}, fmt.Errorf("%w: %w", ErrFingerprinterUnavailable, ctxErr)
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return Fingerprint{}, fmt.Errorf("%w: %s", ErrFingerprintFailed, firstLine(stderr.String()))

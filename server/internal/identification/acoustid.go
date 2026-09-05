@@ -18,11 +18,10 @@ import (
 var ErrServiceUnavailable = errors.New("identification service unavailable")
 
 const (
-	acoustIDLookupPath       = "/v2/lookup"
-	acoustIDMeta             = "recordings sources"
-	responseBodyLimitBytes   = 4 << 20
-	errorBodyPreviewBytes    = 200
-	acoustIDApplicationError = "error"
+	acoustIDLookupPath     = "/v2/lookup"
+	acoustIDMeta           = "recordings sources"
+	responseBodyLimitBytes = 4 << 20
+	errorBodyPreviewBytes  = 200
 )
 
 // AcoustIDResult is one fingerprint match with the recordings AcoustID users
@@ -88,7 +87,7 @@ func (client *AcoustIDClient) Lookup(ctx context.Context, fingerprint Fingerprin
 	if err := doJSON(client.httpClient, request, "AcoustID", &parsed); err != nil {
 		return nil, err
 	}
-	if parsed.Status == acoustIDApplicationError || parsed.Status != "ok" {
+	if parsed.Status != "ok" {
 		message := "unknown error"
 		if parsed.Error != nil {
 			message = fmt.Sprintf("code %d: %s", parsed.Error.Code, parsed.Error.Message)

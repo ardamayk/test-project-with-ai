@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -31,7 +32,7 @@ type Recording struct {
 	LengthMs int
 	Artists  []Credit
 	ISRCs    []string
-	// Genres in MusicBrainz vote order, most votes first.
+	// Genres ordered by MusicBrainz vote count, most votes first.
 	Genres   []string
 	Releases []Release
 }
@@ -63,9 +64,10 @@ type ReleaseGroup struct {
 }
 
 // Position locates the recording on a release; zero values mean unknown.
+// A recording lookup only returns the medium carrying the recording, so the
+// release's disc count is not known here.
 type Position struct {
 	DiscNumber  int
-	DiscCount   int
 	TrackNumber int
 	TrackCount  int
 }
@@ -154,7 +156,14 @@ func (parsed musicBrainzRecording) toRecording() Recording {
 		Genres:   make([]string, 0, len(parsed.Genres)),
 		Releases: make([]Release, 0, len(parsed.Releases)),
 	}
-	for _, genre := range parsed.Genres {
+	genres := slices.Clone(parsed.Genres)
+	slices.SortStableFunc(genres, func(first, second struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}) int {
+		return second.Count - first.Count
+	})
+	for _, genre := range genres {
 		recording.Genres = append(recording.Genres, genre.Name)
 	}
 	for _, release := range parsed.Releases {
@@ -171,7 +180,6 @@ func (parsed musicBrainzRecording) toRecording() Recording {
 				SecondaryTypes: release.ReleaseGroup.SecondaryTypes,
 			},
 			AlbumArtists: toCredits(release.ArtistCredit),
-			Position:     Position{DiscCount: len(release.Media)},
 		}
 		for _, medium := range release.Media {
 			if len(medium.Track) == 0 {

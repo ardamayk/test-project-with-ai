@@ -46,7 +46,7 @@ func (fake *fakeMusicBrainz) Recording(_ context.Context, mbid string) (identifi
 	return recording, nil
 }
 
-var tone = identification.Fingerprint{DurationSeconds: 212, Value: "AQAD"}
+var sampleFingerprint = identification.Fingerprint{DurationSeconds: 212, Value: "AQAD"}
 
 func newIdentifier(fingerprinter fakeFingerprinter, acoustID *fakeAcoustID, musicBrainz *fakeMusicBrainz) *identification.Identifier {
 	return identification.NewIdentifierWithSources(fingerprinter, acoustID, musicBrainz, 0.90)
@@ -60,7 +60,7 @@ func TestIdentifyPicksHighestScoreThenMostSources(t *testing.T) {
 	}}
 	musicBrainz := &fakeMusicBrainz{recordings: map[string]identification.Recording{"rec-many": {ID: "rec-many", Title: "Welcome to New York"}}}
 
-	result := newIdentifier(fakeFingerprinter{fingerprint: tone}, acoustID, musicBrainz).Identify(context.Background(), "song.flac")
+	result := newIdentifier(fakeFingerprinter{fingerprint: sampleFingerprint}, acoustID, musicBrainz).Identify(context.Background(), "song.flac")
 
 	if result.Outcome != identification.OUTCOME_MATCHED {
 		t.Fatalf("outcome = %s (%s), want matched", result.Outcome, result.Reason)
@@ -79,7 +79,7 @@ func TestIdentifyReportsBelowThreshold(t *testing.T) {
 	}}
 	musicBrainz := &fakeMusicBrainz{}
 
-	result := newIdentifier(fakeFingerprinter{fingerprint: tone}, acoustID, musicBrainz).Identify(context.Background(), "song.flac")
+	result := newIdentifier(fakeFingerprinter{fingerprint: sampleFingerprint}, acoustID, musicBrainz).Identify(context.Background(), "song.flac")
 
 	if result.Outcome != identification.OUTCOME_BELOW_THRESHOLD || result.Score != 0.71 || result.Recording != nil {
 		t.Fatalf("result = %+v", result)
@@ -90,7 +90,7 @@ func TestIdentifyReportsBelowThreshold(t *testing.T) {
 }
 
 func TestIdentifyReportsNoMatchWhenAcoustIDKnowsNothing(t *testing.T) {
-	result := newIdentifier(fakeFingerprinter{fingerprint: tone}, &fakeAcoustID{}, &fakeMusicBrainz{}).Identify(context.Background(), "song.flac")
+	result := newIdentifier(fakeFingerprinter{fingerprint: sampleFingerprint}, &fakeAcoustID{}, &fakeMusicBrainz{}).Identify(context.Background(), "song.flac")
 
 	if result.Outcome != identification.OUTCOME_NO_MATCH {
 		t.Fatalf("result = %+v", result)
@@ -102,7 +102,7 @@ func TestIdentifyTreatsUnknownRecordingAsNoMatch(t *testing.T) {
 		{ID: "a-1", Score: 0.97, Recordings: []identification.AcoustIDRecording{{ID: "gone", Sources: 5}}},
 	}}
 
-	result := newIdentifier(fakeFingerprinter{fingerprint: tone}, acoustID, &fakeMusicBrainz{}).Identify(context.Background(), "song.flac")
+	result := newIdentifier(fakeFingerprinter{fingerprint: sampleFingerprint}, acoustID, &fakeMusicBrainz{}).Identify(context.Background(), "song.flac")
 
 	if result.Outcome != identification.OUTCOME_NO_MATCH || result.Reason == "" {
 		t.Fatalf("result = %+v", result)
@@ -125,11 +125,11 @@ func TestIdentifyReportsUnavailableServicesWithReason(t *testing.T) {
 			identification.OUTCOME_UNAVAILABLE,
 		},
 		"acoustid down": {
-			fakeFingerprinter{fingerprint: tone}, &fakeAcoustID{err: identification.ErrServiceUnavailable}, &fakeMusicBrainz{},
+			fakeFingerprinter{fingerprint: sampleFingerprint}, &fakeAcoustID{err: identification.ErrServiceUnavailable}, &fakeMusicBrainz{},
 			identification.OUTCOME_UNAVAILABLE,
 		},
 		"musicbrainz down": {
-			fakeFingerprinter{fingerprint: tone},
+			fakeFingerprinter{fingerprint: sampleFingerprint},
 			&fakeAcoustID{results: []identification.AcoustIDResult{{ID: "a", Score: 0.99, Recordings: []identification.AcoustIDRecording{{ID: "rec", Sources: 1}}}}},
 			&fakeMusicBrainz{err: identification.ErrServiceUnavailable},
 			identification.OUTCOME_UNAVAILABLE,

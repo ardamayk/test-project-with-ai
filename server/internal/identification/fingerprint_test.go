@@ -3,6 +3,7 @@ package identification_test
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -44,7 +45,7 @@ func TestFingerprinterRejectsUndecodableFile(t *testing.T) {
 		t.Skip("fpcalc not installed on this host")
 	}
 	path := filepath.Join(t.TempDir(), "noise.flac")
-	if err := writeFile(path, []byte("not audio")); err != nil {
+	if err := os.WriteFile(path, []byte("not audio"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
