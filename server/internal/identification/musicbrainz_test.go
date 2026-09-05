@@ -39,7 +39,7 @@ func TestMusicBrainzRecordingLookupRequestsIncludesAndParsesRecording(t *testing
 	if received.URL.Path != "/ws/2/recording/5bcd7ba9-3b1f-4f1a-8a5a-8b0c9d1e2f30" {
 		t.Fatalf("path = %s", received.URL.Path)
 	}
-	if received.URL.RawQuery != "fmt=json&inc=artist-credits+isrcs+releases+release-groups+genres+media" {
+	if received.URL.RawQuery != "fmt=json&inc=artist-credits+isrcs+releases+release-groups+genres" {
 		t.Fatalf("query = %s", received.URL.RawQuery)
 	}
 	if received.Header.Get("User-Agent") != "EarthlyAudio/test" || received.Header.Get("Accept") != "application/json" {
@@ -72,9 +72,6 @@ func TestMusicBrainzRecordingLookupRequestsIncludesAndParsesRecording(t *testing
 	}
 	if len(deluxe.AlbumArtists) != 1 || deluxe.AlbumArtists[0].Name != "Taylor Swift" {
 		t.Fatalf("deluxe album artists = %+v", deluxe.AlbumArtists)
-	}
-	if deluxe.Position.DiscNumber != 1 || deluxe.Position.TrackNumber != 1 || deluxe.Position.TrackCount != 22 {
-		t.Fatalf("deluxe position = %+v", deluxe.Position)
 	}
 }
 

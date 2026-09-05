@@ -63,7 +63,7 @@ func TestCachedAcoustIDCachesEmptyResultsButNotFailures(t *testing.T) {
 func TestCachedMusicBrainzFetchesRecordingOnce(t *testing.T) {
 	sqlDB := testutil.OpenMigratedDB(t)
 	upstream := &fakeMusicBrainz{recordings: map[string]identification.Recording{
-		"rec": {ID: "rec", Title: "Welcome to New York", ISRCs: []string{"USUG12306672"}, Releases: []identification.Release{{ID: "rel", Title: "1989", Position: identification.Position{DiscNumber: 1, TrackNumber: 1}}}},
+		"rec": {ID: "rec", Title: "Welcome to New York", ISRCs: []string{"USUG12306672"}, Releases: []identification.Release{{ID: "rel", Title: "1989", Year: 2023}}},
 	}}
 	cached := identification.NewCachedMusicBrainz(sqlDB, upstream)
 
@@ -78,7 +78,7 @@ func TestCachedMusicBrainzFetchesRecordingOnce(t *testing.T) {
 	if len(upstream.requested) != 1 {
 		t.Fatalf("upstream requests = %v, want one", upstream.requested)
 	}
-	if recording.Title != "Welcome to New York" || recording.ISRCs[0] != "USUG12306672" || recording.Releases[0].Position.TrackNumber != 1 {
+	if recording.Title != "Welcome to New York" || recording.ISRCs[0] != "USUG12306672" || recording.Releases[0].Year != 2023 {
 		t.Fatalf("recording = %+v", recording)
 	}
 }

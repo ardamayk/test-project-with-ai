@@ -59,7 +59,10 @@ type Identifier struct {
 }
 
 const (
-	requestTimeout       = 10 * time.Second
+	// AcoustID answers within a couple of seconds; MusicBrainz can take
+	// many seconds for a recording on dozens of releases, so it gets longer.
+	acoustIDTimeout      = 10 * time.Second
+	musicBrainzTimeout   = 30 * time.Second
 	musicBrainzInterval  = time.Second
 	acoustIDInterval     = time.Second / 3
 	userAgentProjectLink = "https://github.com/ardamayk/test-project-with-ai"
@@ -78,9 +81,8 @@ var (
 // A non-nil cache database wraps both services in the indefinite caches.
 func NewIdentifier(cfg config.RecordingIdentificationConfig, version, fpcalcProgram string, cache *sql.DB) *Identifier {
 	userAgent := fmt.Sprintf("EarthlyAudio/%s (%s)", version, userAgentProjectLink)
-	httpClient := &http.Client{Timeout: requestTimeout}
-	var acoustID AcoustIDLookup = limitedAcoustID{client: NewAcoustIDClient(httpClient, cfg.AcoustIDBaseURL, cfg.AcoustIDAPIKey, userAgent), limiter: acoustIDLimiter}
-	var musicBrainz RecordingSource = limitedMusicBrainz{client: NewMusicBrainzClient(httpClient, cfg.MusicBrainzBaseURL, userAgent), limiter: musicBrainzLimiter}
+	var acoustID AcoustIDLookup = limitedAcoustID{client: NewAcoustIDClient(&http.Client{Timeout: acoustIDTimeout}, cfg.AcoustIDBaseURL, cfg.AcoustIDAPIKey, userAgent), limiter: acoustIDLimiter}
+	var musicBrainz RecordingSource = limitedMusicBrainz{client: NewMusicBrainzClient(&http.Client{Timeout: musicBrainzTimeout}, cfg.MusicBrainzBaseURL, userAgent), limiter: musicBrainzLimiter}
 	if cache != nil {
 		acoustID = NewCachedAcoustID(cache, acoustID)
 		musicBrainz = NewCachedMusicBrainz(cache, musicBrainz)

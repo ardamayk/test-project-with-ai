@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -110,7 +111,10 @@ func (client *AcoustIDClient) Lookup(ctx context.Context, fingerprint Fingerprin
 func doJSON(httpClient *http.Client, request *http.Request, service string, target any) error {
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("%w: %s request: %w", ErrServiceUnavailable, service, err)
+		if isTimeout(err) {
+			return fmt.Errorf("%w: %s did not answer within %s", ErrServiceUnavailable, service, httpClient.Timeout)
+		}
+		return fmt.Errorf("%w: %s request failed: %s", ErrServiceUnavailable, service, shortTransportError(err))
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, responseBodyLimitBytes))
@@ -140,4 +144,22 @@ type httpStatusError struct {
 
 func (err *httpStatusError) Error() string {
 	return fmt.Sprintf("%s returned HTTP %d: %s", err.service, err.code, err.preview)
+}
+
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+// shortTransportError strips the request URL that url.Error prepends so the
+// Import Preview reason stays readable.
+func shortTransportError(err error) string {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return urlErr.Err.Error()
+	}
+	return err.Error()
 }

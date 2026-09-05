@@ -17,10 +17,11 @@ var ErrRecordingNotFound = errors.New("MusicBrainz recording not found")
 
 const (
 	musicBrainzRecordingPath = "/ws/2/recording/"
-	// musicBrainzRecordingInc lists everything Recording Identification reads in
-	// one call: credits, ISRCs, genres and every release with the media that
-	// carries this recording, so no per-release lookup is needed.
-	musicBrainzRecordingInc = "artist-credits+isrcs+releases+release-groups+genres+media"
+	// musicBrainzRecordingInc lists everything Recording Identification reads
+	// in one call. "media" is deliberately absent: it multiplies the payload
+	// (127 KB and 27 s versus 58 KB and 8 s for a recording on 40 releases)
+	// and only the release's title, type, status and date are used.
+	musicBrainzRecordingInc = "artist-credits+isrcs+releases+release-groups+genres"
 )
 
 // Recording is the MusicBrainz metadata Managed Import merges over the
@@ -43,8 +44,7 @@ type Credit struct {
 	Name string
 }
 
-// Release is one MusicBrainz release containing the recording, with the
-// recording's position on that release.
+// Release is one MusicBrainz release containing the recording.
 type Release struct {
 	ID           string
 	Title        string
@@ -54,23 +54,12 @@ type Release struct {
 	Country      string
 	ReleaseGroup ReleaseGroup
 	AlbumArtists []Credit
-	Position     Position
 }
 
 type ReleaseGroup struct {
 	ID             string
 	PrimaryType    string
 	SecondaryTypes []string
-}
-
-// Position locates the recording on a release; zero values mean unknown.
-// A recording lookup only returns the medium carrying the recording (its
-// "tracks" list holds just that track), so the release's disc count is not
-// known here.
-type Position struct {
-	DiscNumber  int
-	TrackNumber int
-	TrackCount  int
 }
 
 // MusicBrainzClient reads the MusicBrainz web service (JSON).
@@ -114,13 +103,6 @@ type musicBrainzRecording struct {
 			SecondaryTypes []string `json:"secondary-types"`
 		} `json:"release-group"`
 		ArtistCredit []musicBrainzCredit `json:"artist-credit"`
-		Media        []struct {
-			Position   int `json:"position"`
-			TrackCount int `json:"track-count"`
-			Tracks     []struct {
-				Position int `json:"position"`
-			} `json:"tracks"`
-		} `json:"media"`
 	} `json:"releases"`
 }
 
@@ -181,15 +163,6 @@ func (parsed musicBrainzRecording) toRecording() Recording {
 				SecondaryTypes: release.ReleaseGroup.SecondaryTypes,
 			},
 			AlbumArtists: toCredits(release.ArtistCredit),
-		}
-		for _, medium := range release.Media {
-			if len(medium.Tracks) == 0 {
-				continue
-			}
-			converted.Position.DiscNumber = medium.Position
-			converted.Position.TrackCount = medium.TrackCount
-			converted.Position.TrackNumber = medium.Tracks[0].Position
-			break
 		}
 		recording.Releases = append(recording.Releases, converted)
 	}

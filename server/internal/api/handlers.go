@@ -87,6 +87,7 @@ var serverCapabilities = []string{
 	"managed-track-deletion.v1",
 	"managed-track-replacement.v1",
 	"managed-album-deletion.v1",
+	"recording-identification.v1",
 }
 
 // ServerCapabilities returns a copy of the advertised Server Capabilities.

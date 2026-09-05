@@ -37,7 +37,7 @@ func matchedRecording() identification.Identification {
 			Genres:  []string{"pop"},
 			Releases: []identification.Release{
 				{ID: "rel-standard", Title: "1989 (Taylor's Version)", Status: "Official", Date: "2023-10-27", Year: 2023,
-					ReleaseGroup: identification.ReleaseGroup{PrimaryType: "Album"}, Position: identification.Position{DiscNumber: 1, TrackNumber: 1, TrackCount: 21}},
+					ReleaseGroup: identification.ReleaseGroup{PrimaryType: "Album"}},
 			},
 		},
 	}

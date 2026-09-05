@@ -54,8 +54,8 @@ func TestGetHealth(t *testing.T) {
 	if !slices.Contains(body.Capabilities, "managed-album-deletion.v1") {
 		t.Fatalf("capabilities = %v, want managed-album-deletion.v1", body.Capabilities)
 	}
-	if slices.Contains(body.Capabilities, "recording-identification.v1") {
-		t.Fatalf("capabilities = %v, must not advertise recording-identification.v1 before Managed Import identifies recordings", body.Capabilities)
+	if !slices.Contains(body.Capabilities, "recording-identification.v1") {
+		t.Fatalf("capabilities = %v, want recording-identification.v1", body.Capabilities)
 	}
 }
 
