@@ -24,9 +24,14 @@ function formatBytes(bytes: number) {
 	return `${(bytes / BYTES_PER_MIB).toFixed(1)} MiB`;
 }
 
-export function ImportTransferDetails({ entry }: { entry: ImportFileEntry }) {
+export function ImportTransferDetails({
+	entry,
+	isExpanded = false,
+}: {
+	entry: ImportFileEntry;
+	isExpanded?: boolean;
+}) {
 	const [now, setNow] = useState(Date.now);
-	const [isExpanded, setIsExpanded] = useState(false);
 	const isActive =
 		entry.phase === "retry_wait" ||
 		(isExpanded && entry.state === "unresolved" && entry.phase !== "queued");
@@ -46,28 +51,30 @@ export function ImportTransferDetails({ entry }: { entry: ImportFileEntry }) {
 	const bytes = entry.transferredBytes ?? 0;
 	return (
 		<div className="text-caption text-xs">
-			{entry.phase === "retry_wait" ? (
+			{!isExpanded && entry.phase === "retry_wait" ? (
 				<p>
 					Retrying in{" "}
 					{Math.max(0, Math.ceil(((entry.retryAt ?? now) - now) / 1000))}s ·{" "}
 					{entry.retryCount}/3
 				</p>
 			) : null}
-			{entry.phase === "uploading" ? (
+			{!isExpanded && entry.phase === "uploading" ? (
 				<p>
 					{formatBytes(bytes)} / {formatBytes(entry.file.size)}
 				</p>
 			) : null}
-			{entry.startedAt || entry.errorMessage ? (
-				<details onToggle={(event) => setIsExpanded(event.currentTarget.open)}>
-					<summary className="cursor-pointer">Transfer details</summary>
+			{isExpanded && entry.startedAt ? (
+				<div>
 					<p>
-						{elapsed}s elapsed · {entry.retryCount ?? 0} retries
+						{entry.state === "unresolved"
+							? `${elapsed}s elapsed`
+							: `${formatBytes(entry.file.size)} file`}{" "}
+						· {entry.retryCount ?? 0} retries
 					</p>
 					{entry.phase === "uploading" && elapsed > 0 ? (
 						<p>{formatBytes(bytes / elapsed)}/s average</p>
 					) : null}
-				</details>
+				</div>
 			) : null}
 		</div>
 	);

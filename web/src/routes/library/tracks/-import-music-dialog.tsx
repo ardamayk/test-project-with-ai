@@ -1,14 +1,16 @@
 import type { ManagedImportPreview } from "@repo/api-client";
 import {
 	Check,
+	ChevronDown,
 	CircleAlert,
 	CircleCheck,
 	CircleX,
+	Disc3,
 	LoaderCircle,
 	X,
 } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { memo } from "react";
+import { memo, useId, useState } from "react";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { isDesktopClient } from "#/desktop/bridge";
@@ -18,7 +20,6 @@ import { ImportTransferDetails, importPhaseLabel } from "./-import-progress";
 import {
 	type DuplicateDecision,
 	type ImportFileEntry,
-	type ImportState,
 	SUPPORTED_AUDIO_FILE_ACCEPT,
 	summarizeImportEntries,
 	useManagedImportWorkflow,
@@ -74,62 +75,73 @@ export function ImportMusicDialog({
 					<DialogPrimitive.Content
 						aria-describedby="import-music-description"
 						onCloseAutoFocus={onCloseAutoFocus}
-						className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 grid max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl gap-5 overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl outline-none"
+						className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 flex max-h-[90dvh] w-[calc(100vw-1rem)] max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl outline-none sm:w-[calc(100vw-3rem)]"
 					>
 						<ImportDialogHeader isBusy={false} />
-						<RecordingIdentificationSwitch
-							isDisabled={workflow.isPickerLocked}
-							onChange={workflow.handleRecordingIdentificationChange}
-						/>
-						<ImportFilePicker
-							isBusy={workflow.isPickerLocked}
-							onFiles={workflow.handleFiles}
-							onDesktopSelection={workflow.handleDesktopSelection}
-						/>
-						<ImportActivity
-							importState={workflow.importState}
-							errorMessage={workflow.errorMessage}
-						/>
+						<div
+							hidden={workflow.entries.length > 0}
+							className={
+								workflow.entries.length > 0
+									? "hidden"
+									: "grid gap-5 overflow-y-auto px-4 py-5 sm:px-6"
+							}
+						>
+							<RecordingIdentificationSwitch
+								isDisabled={workflow.isPickerLocked}
+								onChange={workflow.handleRecordingIdentificationChange}
+							/>
+							<ImportFilePicker
+								isBusy={workflow.isPickerLocked}
+								onFiles={workflow.handleFiles}
+								onDesktopSelection={workflow.handleDesktopSelection}
+							/>
+						</div>
+						<ImportActivity errorMessage={workflow.errorMessage} />
 						<ImportSummary
 							entries={workflow.entries}
-							importState={workflow.importState}
+							isConfirming={workflow.isConfirming}
+							isCompleted={workflow.isCompleted}
 						/>
 						<ImportFileList
 							entries={workflow.entries}
 							isBusy={workflow.isSelectionLocked}
+							isConfirming={workflow.isConfirming}
 							onSelectionChange={workflow.handleSelectionChange}
 							onDuplicateDecisionChange={workflow.handleDuplicateDecisionChange}
 						/>
-						{workflow.canRetry ? (
-							<Button
-								type="button"
-								variant="outline"
-								onClick={() => void workflow.handleRetry()}
-							>
-								Retry failed uploads
-							</Button>
-						) : null}
-						{workflow.canConfirm &&
-						workflow.entries.some((entry) => entry.state !== "accepted") ? (
-							<p className="text-caption text-sm">
-								{
-									workflow.entries.filter((entry) => entry.state !== "accepted")
-										.length
-								}{" "}
-								unsuccessful files will not be imported.
-							</p>
-						) : null}
-						<ImportDialogFooter
-							canConfirm={workflow.canConfirm}
-							isBusy={workflow.isCloseLocked}
-							isCompleted={workflow.isCompleted}
-							onCancel={
-								workflow.isCompleted
-									? () => workflow.handleOpenChange(false)
-									: workflow.handleCancel
-							}
-							onConfirm={workflow.handleConfirm}
-						/>
+						<div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-border border-t px-4 py-3 sm:px-6">
+							{workflow.canRetry ? (
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => void workflow.handleRetry()}
+								>
+									Retry failed uploads
+								</Button>
+							) : null}
+							{workflow.canConfirm &&
+							workflow.entries.some((entry) => entry.state !== "accepted") ? (
+								<p className="text-caption text-sm">
+									{
+										workflow.entries.filter(
+											(entry) => entry.state !== "accepted",
+										).length
+									}{" "}
+									unsuccessful files will not be imported.
+								</p>
+							) : null}
+							<ImportDialogFooter
+								canConfirm={workflow.canConfirm}
+								isBusy={workflow.isCloseLocked}
+								isCompleted={workflow.isCompleted}
+								onCancel={
+									workflow.isCompleted
+										? () => workflow.handleOpenChange(false)
+										: workflow.handleCancel
+								}
+								onConfirm={workflow.handleConfirm}
+							/>
+						</div>
 					</DialogPrimitive.Content>
 				</DialogPrimitive.Portal>
 			</DialogPrimitive.Root>
@@ -139,7 +151,7 @@ export function ImportMusicDialog({
 
 function ImportDialogHeader({ isBusy }: { isBusy: boolean }) {
 	return (
-		<div className="flex items-start justify-between gap-4">
+		<div className="flex shrink-0 items-start justify-between gap-4 border-border border-b px-4 py-4 sm:px-6">
 			<div>
 				<DialogPrimitive.Title className="font-semibold text-heading text-xl">
 					Import Music
@@ -247,34 +259,26 @@ function ImportFileInput({
 	);
 }
 
-function ImportActivity({
-	importState,
-	errorMessage,
-}: {
-	importState: ImportState;
-	errorMessage: string;
-}) {
+function ImportActivity({ errorMessage }: { errorMessage: string }) {
+	if (!errorMessage) return null;
 	return (
-		<>
-			<p aria-live="polite" className="text-caption text-sm">
-				{importState === "uploading" ? "Uploading and validating files…" : null}
-				{importState === "confirming" ? "Committing selected Tracks…" : null}
-			</p>
-			{errorMessage ? (
-				<p role="alert" className="text-destructive text-sm">
-					{errorMessage}
-				</p>
-			) : null}
-		</>
+		<p
+			role="alert"
+			className="mx-4 my-3 rounded-md bg-destructive/10 px-3 py-2 text-destructive text-sm sm:mx-6"
+		>
+			{errorMessage}
+		</p>
 	);
 }
 
 function ImportSummary({
 	entries,
-	importState,
+	isConfirming,
+	isCompleted,
 }: {
 	entries: ImportFileEntry[];
-	importState: ImportState;
+	isConfirming: boolean;
+	isCompleted: boolean;
 }) {
 	if (entries.length === 0) return null;
 	const summary = summarizeImportEntries(entries);
@@ -282,27 +286,52 @@ function ImportSummary({
 	const processing = entries.filter(
 		(entry) => entry.state === "unresolved" && entry.phase !== "queued",
 	).length;
+	const selected = entries.filter((entry) => entry.selected).length;
+	const imported = entries.filter(
+		(entry) => entry.outcome === "imported" || entry.outcome === "replaced",
+	).length;
+	const percent = isCompleted
+		? 100
+		: isConfirming
+			? selected > 0
+				? Math.round((summary.completed / selected) * 100)
+				: 0
+			: summary.percent;
 	return (
 		<section
 			aria-label="Import progress"
-			className="grid gap-2 rounded-lg border border-border bg-muted/30 p-4"
+			className="shrink-0 space-y-2 border-border border-b px-4 py-3 sm:px-6"
 		>
-			<p className="font-medium text-heading text-sm">
-				{importState === "confirming"
-					? `Importing ${summary.completed} of ${entries.filter((entry) => entry.selected).length}`
-					: `${summary.accepted} of ${summary.total} ready · ${processing} processing · ${queued} queued`}
-			</p>
-			<div className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-xs">
-				{summary.needsReview > 0 ? (
-					<SummaryCount count={summary.needsReview} label="need review" />
-				) : null}
-				{summary.rejected > 0 ? (
-					<SummaryCount count={summary.rejected} label="unsuccessful" />
-				) : null}
-				{summary.completed > 0 ? (
-					<SummaryCount count={summary.completed} label="imported" />
-				) : null}
+			<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
+				<p aria-live="polite" className="font-medium text-heading">
+					{isCompleted
+						? `Import complete · ${imported} imported`
+						: isConfirming
+							? `Importing ${summary.completed} of ${selected}`
+							: `${summary.accepted} of ${summary.total} ready`}
+				</p>
+				<div className="flex flex-wrap gap-x-3 text-caption text-xs">
+					{processing > 0 && !isConfirming ? (
+						<SummaryCount count={processing} label="processing" />
+					) : null}
+					{queued > 0 && !isConfirming ? (
+						<SummaryCount count={queued} label="queued" />
+					) : null}
+					{summary.needsReview > 0 ? (
+						<SummaryCount count={summary.needsReview} label="need review" />
+					) : null}
+					{summary.rejected > 0 ? (
+						<SummaryCount count={summary.rejected} label="unsuccessful" />
+					) : null}
+				</div>
 			</div>
+			<ProgressBar
+				label={
+					isConfirming ? "Importing selected tracks" : "Overall import progress"
+				}
+				percent={percent}
+				className="h-1"
+			/>
 		</section>
 	);
 }
@@ -350,46 +379,105 @@ function SummaryCount({ count, label }: { count: number; label: string }) {
 	);
 }
 
+type ImportAlbumGroup = {
+	key: string;
+	album: string;
+	artists: string;
+	entries: ImportFileEntry[];
+};
+
+function groupImportEntries(entries: ImportFileEntry[]): ImportAlbumGroup[] {
+	const groups = new Map<string, ImportAlbumGroup>();
+	for (const entry of entries) {
+		const file = entry.preview?.file;
+		const album = file?.album ?? "Selected files";
+		const artists = (file?.albumArtists ?? file?.artists ?? []).join(", ");
+		const key = JSON.stringify([album, artists]);
+		let group = groups.get(key);
+		if (!group) {
+			group = { key, album, artists, entries: [] };
+			groups.set(key, group);
+		}
+		group.entries.push(entry);
+	}
+	return Array.from(groups.values());
+}
+
 function ImportFileList({
 	entries,
 	isBusy,
+	isConfirming,
 	onSelectionChange,
 	onDuplicateDecisionChange,
 }: {
 	entries: ImportFileEntry[];
 	isBusy: boolean;
+	isConfirming: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
 	onDuplicateDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
 	if (entries.length === 0) return null;
 	return (
-		<section aria-label="Import Preview" className="grid gap-2">
-			<h3 className="font-semibold text-heading">Import Preview</h3>
-			{entries.map((entry) => (
-				<ImportFileRow
-					key={entry.key}
-					entry={entry}
-					isBusy={isBusy}
-					onSelectionChange={onSelectionChange}
-					onDuplicateDecisionChange={onDuplicateDecisionChange}
-				/>
-			))}
+		<section
+			aria-label="Import Preview"
+			className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+		>
+			<h3 className="sr-only">Import Preview</h3>
+			{groupImportEntries(entries).flatMap((group) => [
+				<ImportAlbumHeader key={`album-${group.key}`} group={group} />,
+				...group.entries.map((entry) => (
+					<ImportFileRow
+						key={entry.key}
+						entry={entry}
+						albumArtists={group.artists}
+						isBusy={isBusy}
+						isConfirming={isConfirming}
+						onSelectionChange={onSelectionChange}
+						onDuplicateDecisionChange={onDuplicateDecisionChange}
+					/>
+				)),
+			])}
 		</section>
+	);
+}
+
+function ImportAlbumHeader({ group }: { group: ImportAlbumGroup }) {
+	return (
+		<div className="flex items-center gap-3 bg-muted/30 px-4 py-3 sm:px-6">
+			<Disc3 aria-hidden="true" className="size-8 shrink-0 text-caption" />
+			<div className="min-w-0 flex-1">
+				<h4 className="break-words font-medium text-heading text-sm">
+					{group.album}
+				</h4>
+				{group.artists ? (
+					<p className="break-words text-caption text-xs">{group.artists}</p>
+				) : null}
+			</div>
+			<span className="shrink-0 text-caption text-xs tabular-nums">
+				{group.entries.length} {group.entries.length === 1 ? "track" : "tracks"}
+			</span>
+		</div>
 	);
 }
 
 // Memoized so a progress tick on one upload only re-renders that row.
 const ImportFileRow = memo(function ImportFileRow({
 	entry,
+	albumArtists,
+	isConfirming,
 	isBusy,
 	onSelectionChange,
 	onDuplicateDecisionChange,
 }: {
 	entry: ImportFileEntry;
+	albumArtists: string;
+	isConfirming: boolean;
 	isBusy: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
 	onDuplicateDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
+	const [isExpanded, setIsExpanded] = useState(false);
+	const detailsId = useId();
 	const filename = entry.preview?.file.originalFilename ?? entry.file.name;
 	const duplicateClassification =
 		entry.preview?.duplicateClassification ?? "none";
@@ -397,8 +485,8 @@ const ImportFileRow = memo(function ImportFileRow({
 		entry.phase === "uploading" ||
 		(!entry.phase && entry.state === "unresolved" && entry.progress < 100);
 	return (
-		<article className="grid gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
-			<div className="flex items-center gap-3">
+		<article className="border-border/50 border-b px-4 py-1.5 transition-colors hover:bg-muted/20 sm:px-6">
+			<div className="flex min-h-10 items-center gap-3">
 				{duplicateClassification === "none" ? (
 					<SelectionCheckbox
 						label={`Select ${filename}`}
@@ -410,10 +498,20 @@ const ImportFileRow = memo(function ImportFileRow({
 					<DuplicateMarker classification={duplicateClassification} />
 				)}
 				<span className="min-w-0 flex-1">
-					<span className="block truncate font-medium text-heading text-sm">
+					<span
+						className={cn(
+							"block text-heading text-sm",
+							isExpanded ? "break-words" : "truncate",
+						)}
+						title={entry.preview?.file.title ?? filename}
+					>
 						{entry.preview?.file.title ?? filename}
 					</span>
-					<RowCaption entry={entry} />
+					<RowCaption
+						entry={entry}
+						albumArtists={albumArtists}
+						isExpanded={isExpanded}
+					/>
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
 					{isUploading ? (
@@ -421,7 +519,25 @@ const ImportFileRow = memo(function ImportFileRow({
 							{entry.progress}%
 						</span>
 					) : null}
-					<StatusBadge entry={entry} />
+					<StatusBadge entry={entry} isConfirming={isConfirming} />
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="size-7 text-caption"
+						aria-label={`Details for ${filename}`}
+						aria-expanded={isExpanded}
+						aria-controls={isExpanded ? detailsId : undefined}
+						onClick={() => setIsExpanded(!isExpanded)}
+					>
+						<ChevronDown
+							aria-hidden="true"
+							className={cn(
+								"size-4 transition-transform",
+								isExpanded && "rotate-180",
+							)}
+						/>
+					</Button>
 				</span>
 			</div>
 			{isUploading ? (
@@ -431,7 +547,23 @@ const ImportFileRow = memo(function ImportFileRow({
 					className="h-1.5"
 				/>
 			) : null}
-			<ImportTransferDetails entry={entry} />
+			{entry.phase === "uploading" || entry.phase === "retry_wait" ? (
+				<ImportTransferDetails entry={entry} />
+			) : null}
+			{isExpanded ? (
+				<div
+					id={detailsId}
+					className="ml-7 space-y-2 border-border/50 border-t py-3 text-caption text-xs"
+				>
+					<p className="break-all">
+						<span className="font-medium">File:</span> {filename}
+					</p>
+					<IdentificationCaption
+						identification={entry.preview?.identification}
+					/>
+					<ImportTransferDetails entry={entry} isExpanded />
+				</div>
+			) : null}
 			<DuplicateReview
 				entry={entry}
 				isBusy={isBusy}
@@ -442,23 +574,26 @@ const ImportFileRow = memo(function ImportFileRow({
 	);
 });
 
-function RowCaption({ entry }: { entry: ImportFileEntry }) {
-	if (entry.preview) {
-		return (
-			<>
-				<span className="block truncate text-caption text-xs">
-					<span>{entry.preview.file.artists.join(", ")}</span>
-					{" · "}
-					<span>{entry.preview.file.album}</span>
-				</span>
-				<IdentificationCaption identification={entry.preview.identification} />
-			</>
-		);
-	}
-	if (entry.state !== "unresolved") return null;
+function RowCaption({
+	entry,
+	albumArtists,
+	isExpanded,
+}: {
+	entry: ImportFileEntry;
+	albumArtists: string;
+	isExpanded: boolean;
+}) {
+	const artists = entry.preview?.file.artists.join(", ");
+	if (!artists || artists === albumArtists) return null;
 	return (
-		<span className="block truncate text-caption text-xs">
-			{importPhaseLabel(entry)}
+		<span
+			className={cn(
+				"block text-caption text-xs",
+				isExpanded ? "break-words" : "truncate",
+			)}
+			title={artists}
+		>
+			{artists}
 		</span>
 	);
 }
@@ -491,7 +626,7 @@ export function IdentificationCaption({
 			: " · tags already matched";
 		return (
 			<span
-				className="block truncate text-caption text-xs"
+				className="block break-words text-caption text-xs"
 				data-testid="identification-caption"
 			>
 				MusicBrainz{method}
@@ -502,7 +637,7 @@ export function IdentificationCaption({
 	}
 	return (
 		<span
-			className="block truncate text-caption text-xs"
+			className="block break-words text-caption text-xs"
 			data-testid="identification-caption"
 		>
 			File tags
@@ -562,12 +697,32 @@ function DuplicateMarker({
 	);
 }
 
-function StatusBadge({ entry }: { entry: ImportFileEntry }) {
+function StatusBadge({
+	entry,
+	isConfirming,
+}: {
+	entry: ImportFileEntry;
+	isConfirming: boolean;
+}) {
+	if (isConfirming && entry.selected && !entry.outcome) {
+		return (
+			<span className="flex items-center gap-1.5 text-caption text-xs">
+				<LoaderCircle aria-hidden="true" className="size-3 animate-spin" />
+				Importing…
+			</span>
+		);
+	}
 	const badge = entry.outcome
 		? outcomeBadges[entry.outcome]
 		: stateBadges[entry.state];
 	return (
-		<Badge variant={badge.variant}>
+		<Badge
+			variant={badge.variant}
+			className={cn(
+				"border-0 bg-transparent px-0 font-normal text-xs dark:bg-transparent",
+				badge.variant === "destructive" ? "text-destructive" : "text-caption",
+			)}
+		>
 			<badge.Icon aria-hidden="true" className={badge.iconClassName} />
 			{entry.state === "unresolved" ? importPhaseLabel(entry) : badge.label}
 		</Badge>
@@ -739,7 +894,7 @@ function ImportDialogFooter({
 	onConfirm: () => Promise<void>;
 }) {
 	return (
-		<div className="flex justify-end gap-2 border-border border-t pt-4">
+		<div className="ml-auto flex shrink-0 justify-end gap-2">
 			<Button
 				type="button"
 				variant="outline"

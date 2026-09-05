@@ -135,6 +135,8 @@ export function useManagedImportWorkflow({
 	useImportSessionActivity(state, onCommitted);
 	const isBusy = state.importState !== "idle";
 	const isCompleted = state.batch?.status === "completed";
+	const isConfirming =
+		state.importState === "confirming" || state.batch?.status === "confirming";
 	const isCloseLocked =
 		(isBusy && !state.batch) ||
 		state.importState === "confirming" ||
@@ -174,6 +176,7 @@ export function useManagedImportWorkflow({
 		isPickerLocked: isBusy || state.entries.length > 0 || Boolean(state.batch),
 		isSelectionLocked: isBusy || state.batch?.status === "confirming",
 		isCompleted,
+		isConfirming,
 		canConfirm,
 		handleFiles: createFileHandler(state),
 		handleDesktopSelection: createDesktopSelectionHandler(state),

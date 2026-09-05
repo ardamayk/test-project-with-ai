@@ -861,8 +861,8 @@ describe("tracks route", () => {
 		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalled();
 		expect(await screen.findByText("import-1")).toBeTruthy();
 		expect(
-			screen.getByRole("button", { name: "Select audio folder" }),
-		).toHaveProperty("disabled", true);
+			screen.queryByRole("button", { name: "Select audio folder" }),
+		).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 		await vi.waitFor(() =>
 			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
@@ -1238,15 +1238,57 @@ describe("tracks route", () => {
 				?.querySelector('[role="progressbar"]')
 				?.getAttribute("aria-valuenow"),
 		).toBe("45");
+		const details = screen.getByRole("button", {
+			name: "Details for one.flac",
+		});
+		fireEvent.click(details);
 		finishRetry();
 		await vi.waitFor(() =>
 			expect(interruptedRow?.textContent).toContain("Accepted"),
 		);
+		expect(details.isConnected).toBe(true);
+		expect(details.getAttribute("aria-expanded")).toBe("true");
 		expectUploadAttempts("import-1", 2);
 		expectUploadAttempts("import-2", 1);
 		expect(mocks.uploadManagedImportFile.mock.calls[2]?.[4]).toBeInstanceOf(
 			AbortSignal,
 		);
+	});
+
+	it("groups album metadata and reveals per-file details only on request", async () => {
+		mocks.uploadManagedImportFile.mockImplementation(async (jobId: string) => ({
+			...createImportPreview(jobId),
+			identification: { source: "file_tags", reason: "Identification is off" },
+		}));
+		mocks.getManagedImportBatch.mockResolvedValue({
+			id: "batch-1",
+			status: "uploading",
+			revision: 5,
+			files: [
+				createBatchFile("import-1", true),
+				createBatchFile("import-2", true),
+			],
+		});
+		await openImportMusicDialog();
+		selectAudioFolder([
+			new File(["one"], "one.flac"),
+			new File(["two"], "two.flac"),
+		]);
+		await screen.findByText("2 of 2 ready");
+		expect(screen.getAllByText("Strict Import Tests")).toHaveLength(1);
+		expect(screen.getAllByText("Test Artist")).toHaveLength(1);
+		expect(screen.getAllByText("import-1")).toHaveLength(1);
+		expect(
+			screen.queryByText("Identification is off", { exact: false }),
+		).toBeNull();
+		const details = screen.getByRole("button", {
+			name: "Details for import-1.flac",
+		});
+		fireEvent.click(details);
+		expect(details.getAttribute("aria-expanded")).toBe("true");
+		expect(screen.getByText("File tags · Identification is off")).toBeTruthy();
+		fireEvent.click(details);
+		expect(screen.queryByText("File tags · Identification is off")).toBeNull();
 	});
 
 	it("imports a selected file and reports a rejected sibling independently", async () => {

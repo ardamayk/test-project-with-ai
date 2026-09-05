@@ -232,7 +232,7 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 		]);
 
 	const liveRegion = dialog.locator("[aria-live='polite']");
-	await expect(liveRegion).toHaveText("Uploading and validating files…");
+	await expect(liveRegion).toContainText("of 4 ready");
 	await expect(
 		dialog.getByRole("progressbar", { name: "alpha.mp3 upload progress" }),
 	).toBeVisible();
@@ -242,7 +242,7 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 	await expect(
 		dialog.getByRole("heading", { name: "Import Preview" }),
 	).toBeVisible();
-	await expect(liveRegion).toHaveText("", { timeout: 20_000 });
+	await expect(liveRegion).toHaveText("2 of 4 ready", { timeout: 20_000 });
 	await page.unroute("**/api/v1/imports/*/file");
 
 	const alphaRow = previewRow(dialog, ALPHA);
