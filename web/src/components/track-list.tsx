@@ -375,6 +375,35 @@ function TrackDetailsDialog({
 				],
 				["Genre", getTrackGenreNames(track).join(", ")],
 				["Size", formatBytes(track.sizeBytes)],
+				["Channels", track.channelCount?.toString()],
+				["Container", track.container],
+				["Sample format", track.sampleFormat],
+				["Track total", track.trackTotal?.toString()],
+				["Disc total", track.discTotal?.toString()],
+				["Metadata source", formatMetadataSource(track.metadataSource)],
+				["MusicBrainz recording", track.musicbrainzRecordingId],
+				["ISRC", track.isrc],
+				[
+					"AcoustID score",
+					track.acoustIdScore === undefined
+						? undefined
+						: track.acoustIdScore.toFixed(3),
+				],
+				[
+					"Changed by MusicBrainz",
+					track.musicbrainzChangedFields?.length
+						? track.musicbrainzChangedFields.join(", ")
+						: undefined,
+				],
+				["Title sort", track.titleSort],
+				["Identity key", track.identityKey],
+				["Revision", track.revision?.toString()],
+				["File path", track.filePath],
+				["File modified", formatUnixSeconds(track.fileMtime)],
+				["SHA-256", track.contentSha256],
+				["Created", formatTimestamp(track.createdAt)],
+				["Updated", formatTimestamp(track.updatedAt)],
+				["Album id", track.albumId],
 				["Id", track.id],
 			].filter((row): row is [string, string] => Boolean(row[1]))
 		: [];
@@ -407,6 +436,23 @@ function TrackDetailsDialog({
 			</DialogPrimitive.Portal>
 		</DialogPrimitive.Root>
 	);
+}
+
+function formatMetadataSource(source?: string): string | undefined {
+	if (source === "musicbrainz") return "MusicBrainz (AcoustID match)";
+	if (source === "file_tags") return "File tags";
+	return source;
+}
+
+function formatUnixSeconds(seconds?: number): string | undefined {
+	if (!seconds) return undefined;
+	return new Date(seconds * 1000).toISOString();
+}
+
+function formatTimestamp(value?: string): string | undefined {
+	if (!value) return undefined;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }
 
 function DetailRow({ label, value }: { label: string; value?: string | null }) {

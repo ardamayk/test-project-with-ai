@@ -2327,6 +2327,50 @@ components:
           type: integer
         replayGain:
           $ref: "#/components/schemas/ReplayGainMetadata"
+        titleSort:
+          type: string
+          description: Normalized title the library sorts and matches by.
+        filePath:
+          type: string
+          description: Canonical Library Path of the authoritative audio file in Managed Storage.
+        fileMtime:
+          type: integer
+          format: int64
+          description: Modification time of the managed file, seconds since the Unix epoch.
+        contentSha256:
+          type: string
+          description: Full-file SHA-256 of the managed audio bytes.
+        identityKey:
+          type: string
+          description: Strict position-and-title identity within the Album.
+        revision:
+          type: integer
+          minimum: 1
+          description: Increments on every Track Replacement.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        metadataSource:
+          type: string
+          enum: [file_tags, musicbrainz]
+          description: Which source produced the Track's metadata (ADR 0017).
+        musicbrainzRecordingId:
+          type: string
+          description: MusicBrainz Recording MBID when Recording Identification matched.
+        isrc:
+          type: string
+        acoustIdScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        musicbrainzChangedFields:
+          type: array
+          items:
+            type: string
+          description: Metadata fields MusicBrainz replaced or completed at import.
     ReplayGainMetadata:
       type: object
       required: [trackGainDb, trackPeak, albumGainDb, albumPeak]

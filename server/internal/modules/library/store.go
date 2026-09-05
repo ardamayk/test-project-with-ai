@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 )
 
 type Artist struct {
@@ -78,7 +79,21 @@ type Track struct {
 	BitrateBps   int                `json:"bitrateBps,omitempty"`
 	BitrateKbps  int                `json:"bitrateKbps,omitempty"`
 	ReplayGain   ReplayGainMetadata `json:"replayGain"`
-	FilePath     string             `json:"-"`
+	// Every remaining stored column, so a detail page can show all the Music
+	// Server knows about a Track (single source of truth: the tracks row).
+	TitleSort                string    `json:"titleSort"`
+	FilePath                 string    `json:"filePath"`
+	FileMtime                int64     `json:"fileMtime"`
+	ContentSHA256            string    `json:"contentSha256,omitempty"`
+	IdentityKey              string    `json:"identityKey,omitempty"`
+	Revision                 int       `json:"revision"`
+	CreatedAt                time.Time `json:"createdAt"`
+	UpdatedAt                time.Time `json:"updatedAt"`
+	MetadataSource           string    `json:"metadataSource"`
+	MusicBrainzRecordingID   string    `json:"musicbrainzRecordingId,omitempty"`
+	ISRC                     string    `json:"isrc,omitempty"`
+	AcoustIDScore            *float64  `json:"acoustIdScore,omitempty"`
+	MusicBrainzChangedFields []string  `json:"musicbrainzChangedFields"`
 }
 
 type AlbumDetail struct {

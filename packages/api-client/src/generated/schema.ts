@@ -1193,6 +1193,36 @@ export interface components {
             bitrateKbps?: number;
             sizeBytes?: number;
             replayGain?: components["schemas"]["ReplayGainMetadata"];
+            /** @description Normalized title the library sorts and matches by. */
+            titleSort?: string;
+            /** @description Canonical Library Path of the authoritative audio file in Managed Storage. */
+            filePath?: string;
+            /**
+             * Format: int64
+             * @description Modification time of the managed file, seconds since the Unix epoch.
+             */
+            fileMtime?: number;
+            /** @description Full-file SHA-256 of the managed audio bytes. */
+            contentSha256?: string;
+            /** @description Strict position-and-title identity within the Album. */
+            identityKey?: string;
+            /** @description Increments on every Track Replacement. */
+            revision?: number;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+            /**
+             * @description Which source produced the Track's metadata (ADR 0017).
+             * @enum {string}
+             */
+            metadataSource?: "file_tags" | "musicbrainz";
+            /** @description MusicBrainz Recording MBID when Recording Identification matched. */
+            musicbrainzRecordingId?: string;
+            isrc?: string;
+            acoustIdScore?: number;
+            /** @description Metadata fields MusicBrainz replaced or completed at import. */
+            musicbrainzChangedFields?: string[];
         };
         ReplayGainMetadata: {
             /** Format: double */
