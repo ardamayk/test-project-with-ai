@@ -605,7 +605,7 @@ func (service *Service) persistPreview(ctx context.Context, job importJob, origi
 	preview.DuplicateCandidates = candidates
 	preview.Identification = &identified.IdentificationPreview
 	if job.ReplaceTrackID != "" && classification != DUPLICATE_EXACT {
-		state, stateErr := service.buildReplacementState(ctx, job, inspection, upload.Path)
+		state, stateErr := service.buildReplacementState(ctx, job, inspection, upload.Path, identified)
 		if stateErr != nil {
 			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, stateErr)
 		}

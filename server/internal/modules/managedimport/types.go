@@ -288,10 +288,8 @@ type importJob struct {
 	Outcome          ImportOutcome
 	Selected         bool
 	ReplaceTrackID   string
-	// IdentificationJSON is the stored identificationRecord; RecordingID
-	// duplicates its recording MBID for Recording Duplicate queries.
+	// IdentificationJSON is the stored identificationRecord.
 	IdentificationJSON string
-	RecordingID        string
 }
 
 type commitJournal struct {

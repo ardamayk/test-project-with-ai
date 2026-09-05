@@ -145,13 +145,13 @@ type queryRower interface {
 func getImportJob(ctx context.Context, queryer queryRower, jobID string) (importJob, error) {
 	var job importJob
 	var batchID, clientFileID, originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
-	var previewJSON, errorField, errorReason, outcome, replaceTrackID, identificationJSON, recordingID sql.NullString
+	var previewJSON, errorField, errorReason, outcome, replaceTrackID, identificationJSON sql.NullString
 	err := queryer.QueryRowContext(ctx, `
 		SELECT id, status, revision, validation_progress, batch_id, client_file_id, original_filename, staged_file_path,
 			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected, replace_track_id, validation_issues,
-			identification_json, musicbrainz_recording_id
+			identification_json
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected, &replaceTrackID, &job.Issues, &identificationJSON, &recordingID)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected, &replaceTrackID, &job.Issues, &identificationJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
@@ -172,7 +172,6 @@ func getImportJob(ctx context.Context, queryer queryRower, jobID string) (import
 	job.ReplaceTrackID = replaceTrackID.String
 	job.ReplacesTrackID = replaceTrackID.String
 	job.IdentificationJSON = identificationJSON.String
-	job.RecordingID = recordingID.String
 	return job, nil
 }
 
@@ -988,15 +987,13 @@ func scanHistorySourceFile(scanner historyFileScanner, hasPosition bool) (Histor
 	}
 	file.SafeFilename = safeFilename.String
 	file.ContentSHA256 = contentSHA256.String
-	file.MetadataSource = METADATA_SOURCE_FILE_TAGS
-	if identificationJSON.String != "" {
-		var record identificationRecord
-		if decodeErr := json.Unmarshal([]byte(identificationJSON.String), &record); decodeErr == nil && record.Source != "" {
-			file.MetadataSource = record.Source
-			file.AcoustIDScore = record.AcoustIDScore
-			file.RecordingID = record.RecordingID
-		}
+	record, decodeErr := decodeIdentificationRecord(identificationJSON.String)
+	if decodeErr != nil {
+		return HistoryFile{}, "", "", "", "", fmt.Errorf("read terminal Managed Import file %q: %w", file.JobID, decodeErr)
 	}
+	file.MetadataSource = record.Source
+	file.AcoustIDScore = record.AcoustIDScore
+	file.RecordingID = record.RecordingID
 	return file, ImportOutcome(outcome.String), status, errorCode.String, trackID.String, nil
 }
 

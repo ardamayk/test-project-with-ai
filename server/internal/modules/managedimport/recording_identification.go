@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/ardam/navidrome-replacement/server/internal/identification"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
@@ -29,13 +28,13 @@ type recordingIdentifier interface {
 // metadata and why, so Recording Identification can be inspected and tested
 // from the Import Preview and Import History.
 type IdentificationPreview struct {
-	Source        MetadataSource `json:"source"`
-	Outcome       string         `json:"outcome"`
-	Reason        string         `json:"reason,omitempty"`
-	AcoustIDScore float64        `json:"acoustIdScore,omitempty"`
-	RecordingID   string         `json:"recordingId,omitempty"`
-	ISRC          string         `json:"isrc,omitempty"`
-	ChangedFields []string       `json:"changedFields,omitempty"`
+	Source        MetadataSource        `json:"source"`
+	Outcome       IdentificationOutcome `json:"outcome"`
+	Reason        string                `json:"reason,omitempty"`
+	AcoustIDScore float64               `json:"acoustIdScore,omitempty"`
+	RecordingID   string                `json:"recordingId,omitempty"`
+	ISRC          string                `json:"isrc,omitempty"`
+	ChangedFields []string              `json:"changedFields,omitempty"`
 }
 
 // identificationRecord is what a job stores between Import Preview and
@@ -46,10 +45,29 @@ type identificationRecord struct {
 	Recording *identification.Recording `json:"recording,omitempty"`
 }
 
+// IdentificationOutcome extends identification.Outcome with the two reasons
+// Managed Import itself never asked: the batch switch was off, or the
+// feature is inactive on this Music Server.
+type IdentificationOutcome string
+
 const (
-	IDENTIFICATION_OUTCOME_SWITCHED_OFF = "switched_off"
-	IDENTIFICATION_OUTCOME_INACTIVE     = "inactive"
+	IDENTIFICATION_OUTCOME_SWITCHED_OFF IdentificationOutcome = "switched_off"
+	IDENTIFICATION_OUTCOME_INACTIVE     IdentificationOutcome = "inactive"
 )
+
+func decodeIdentificationRecord(encoded string) (identificationRecord, error) {
+	record := identificationRecord{IdentificationPreview: IdentificationPreview{Source: METADATA_SOURCE_FILE_TAGS}}
+	if encoded == "" {
+		return record, nil
+	}
+	if err := json.Unmarshal([]byte(encoded), &record); err != nil {
+		return identificationRecord{}, fmt.Errorf("decode stored Recording Identification: %w", err)
+	}
+	if record.Source == "" {
+		record.Source = METADATA_SOURCE_FILE_TAGS
+	}
+	return record, nil
+}
 
 // identifyStagedUpload runs Recording Identification for one staged file
 // when the Import Batch asked for it and the feature is active, and merges
@@ -74,7 +92,7 @@ func (service *Service) identifyStagedUpload(ctx context.Context, job importJob,
 		return record, inspection, nil
 	}
 	result := service.identifier.Identify(ctx, stagedPath)
-	record.Outcome = string(result.Outcome)
+	record.Outcome = IdentificationOutcome(result.Outcome)
 	record.Reason = result.Reason
 	record.AcoustIDScore = result.Score
 	if result.Outcome != identification.OUTCOME_MATCHED || result.Recording == nil {
@@ -96,12 +114,9 @@ func (service *Service) identifyStagedUpload(ctx context.Context, job importJob,
 // inspection of the staged file, so the committed Track carries exactly what
 // the Import Preview showed.
 func applyStoredIdentification(job importJob, inspection library.MediaInspection) (identificationRecord, library.MediaInspection, error) {
-	record := identificationRecord{IdentificationPreview: IdentificationPreview{Source: METADATA_SOURCE_FILE_TAGS}}
-	if job.IdentificationJSON == "" {
-		return record, inspection, nil
-	}
-	if err := json.Unmarshal([]byte(job.IdentificationJSON), &record); err != nil {
-		return record, inspection, fmt.Errorf("decode stored Recording Identification for job %q: %w", job.ID, err)
+	record, err := decodeIdentificationRecord(job.IdentificationJSON)
+	if err != nil {
+		return record, inspection, fmt.Errorf("job %q: %w", job.ID, err)
 	}
 	if record.Source != METADATA_SOURCE_MUSICBRAINZ || record.Recording == nil {
 		return record, inspection, nil
@@ -123,6 +138,11 @@ func (record identificationRecord) encode() (string, error) {
 // mergeRecording applies ADR 0017's rule: recording-level fields (Title,
 // Artists) come from MusicBrainz; release-level fields stay as tagged and are
 // only completed from the closest release when the tag left them empty.
+//
+// The Strict Import Profile already requires Title, Artists, Album, Album
+// Artists, Genre and positions, so today only Year can be empty; track and
+// disc totals are left alone so the album position check that ran on the
+// tags at Import Preview still holds at commit.
 func mergeRecording(tagged library.NormalizedMediaMetadata, recording identification.Recording) (library.NormalizedMediaMetadata, []string) {
 	merged := tagged
 	var changed []string
@@ -134,16 +154,9 @@ func mergeRecording(tagged library.NormalizedMediaMetadata, recording identifica
 		merged.Artists = artists
 		changed = append(changed, "artists")
 	}
-	release, hasRelease := chooseRelease(recording.Releases, tagged.Album)
-	if hasRelease {
-		if tagged.Year == 0 && release.Year > 0 {
-			merged.Year = release.Year
-			changed = append(changed, "year")
-		}
-		if tagged.TrackPosition.Total == 0 && release.Position.TrackCount > 0 && release.Position.TrackCount >= tagged.TrackPosition.Number {
-			merged.TrackPosition.Total = release.Position.TrackCount
-			changed = append(changed, "trackTotal")
-		}
+	if release, hasRelease := chooseRelease(recording.Releases, tagged.Album); hasRelease && tagged.Year == 0 && release.Year > 0 {
+		merged.Year = release.Year
+		changed = append(changed, "year")
 	}
 	return merged, changed
 }
@@ -158,21 +171,15 @@ func creditNames(credits []identification.Credit) []string {
 	return names
 }
 
-// chooseRelease prefers the release whose title matches the tagged Album,
+// chooseRelease prefers the release whose title equals the tagged Album,
 // then the earliest official album release, then the first release.
 func chooseRelease(releases []identification.Release, taggedAlbum string) (identification.Release, bool) {
 	if len(releases) == 0 {
 		return identification.Release{}, false
 	}
-	wanted := normalizeIdentity(taggedAlbum)
-	if wanted != "" {
+	if wanted := normalizeIdentity(taggedAlbum); wanted != "" {
 		for _, release := range releases {
 			if normalizeIdentity(release.Title) == wanted {
-				return release, true
-			}
-		}
-		for _, release := range releases {
-			if strings.Contains(normalizeIdentity(release.Title), wanted) || strings.Contains(wanted, normalizeIdentity(release.Title)) {
 				return release, true
 			}
 		}

@@ -23,6 +23,8 @@ type replacementState struct {
 	Inspection library.MediaInspection
 	AlbumKey   string
 	StagedSize int64
+	// Identification is re-applied at commit so the replaced Track matches the Preview.
+	Identification identificationRecord
 }
 
 func (service *Service) CreateReplacementJob(ctx context.Context, trackID string) (Job, error) {
@@ -32,7 +34,7 @@ func (service *Service) CreateReplacementJob(ctx context.Context, trackID string
 	return service.store.CreateReplacementJob(ctx, trackID)
 }
 
-func (service *Service) buildReplacementState(ctx context.Context, job importJob, inspection library.MediaInspection, stagedPath string) (replacementState, error) {
+func (service *Service) buildReplacementState(ctx context.Context, job importJob, inspection library.MediaInspection, stagedPath string, identified identificationRecord) (replacementState, error) {
 	target, err := loadReplacementTarget(ctx, service.store.database, service.storage, job.ReplaceTrackID)
 	if err != nil {
 		return replacementState{}, err
@@ -46,7 +48,7 @@ func (service *Service) buildReplacementState(ctx context.Context, job importJob
 	if positionErr := service.validateReplacementPositions(ctx, job.ID, metadata, target.TrackID); positionErr != nil {
 		return replacementState{}, positionErr
 	}
-	_, candidates, err := service.store.ClassifyDuplicateExcluding(ctx, inspection, target.TrackID, "")
+	_, candidates, err := service.store.ClassifyDuplicateExcluding(ctx, inspection, target.TrackID, identified.RecordingID)
 	if err != nil {
 		return replacementState{}, err
 	}
@@ -62,7 +64,7 @@ func (service *Service) buildReplacementState(ctx context.Context, job importJob
 	if err != nil {
 		return replacementState{}, err
 	}
-	state := replacementState{Target: target, Identity: identity, Placement: placement, Inspection: inspection, AlbumKey: albumKey, StagedSize: stagedSize}
+	state := replacementState{Target: target, Identity: identity, Placement: placement, Inspection: inspection, AlbumKey: albumKey, StagedSize: stagedSize, Identification: identified}
 	state.Preview = buildReplacementPreview(state, candidates, libraryChange)
 	state.Preview.ConfirmationToken, err = replacementToken(state)
 	return state, err
@@ -274,9 +276,9 @@ func (service *Service) replayedReplacementResult(ctx context.Context, job impor
 }
 
 func (service *Service) prepareReplacementConfirmation(ctx context.Context, job importJob) (replacementState, error) {
-	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
+	identified, inspection, err := service.inspectStagedJob(ctx, job)
 	if err != nil {
-		return replacementState{}, validationError(err)
+		return replacementState{}, err
 	}
 	if inspection.FileSHA256 != job.ContentSHA256 {
 		reason := "staged file changed after Import Preview"
@@ -289,7 +291,7 @@ func (service *Service) prepareReplacementConfirmation(ctx context.Context, job 
 	if exactTrackID != "" {
 		return replacementState{}, service.rejectExactDuplicate(ctx, job)
 	}
-	state, err := service.buildReplacementState(ctx, job, inspection, job.StagedFilePath)
+	state, err := service.buildReplacementState(ctx, job, inspection, job.StagedFilePath, identified)
 	if err != nil {
 		return replacementState{}, err
 	}
@@ -308,7 +310,7 @@ func (service *Service) commitReplacement(ctx context.Context, job importJob, st
 	if err := service.swapAndStreamReplacement(ctx, journal, placement, state); err != nil {
 		return TrackReplacementResult{}, err
 	}
-	data := replacementCommitData{Job: job, Target: state.Target, Identity: state.Identity, Placement: placement, Inspection: state.Inspection, AlbumKey: state.AlbumKey}
+	data := replacementCommitData{Job: job, Target: state.Target, Identity: state.Identity, Placement: placement, Inspection: state.Inspection, AlbumKey: state.AlbumKey, Identification: state.Identification}
 	invalidations, commitErr := service.store.CommitReplacement(ctx, data, journal.ID)
 	if commitErr == nil && service.commitResultHook != nil {
 		commitErr = service.commitResultHook()

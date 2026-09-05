@@ -246,3 +246,73 @@ func TestRecordingIdentificationFlagsSameRecordingAsRecordingDuplicate(t *testin
 		t.Fatalf("second Track source = %q recording = %q", source, recordingID)
 	}
 }
+
+func TestRecordingIdentificationAppearsInImportHistory(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	module := NewModule(database, config.Config{ManagedStoragePath: t.TempDir()}, library.NewMediaInspector())
+	module.service.identifier = &scriptedIdentifier{result: matchedRecording()}
+	service := module.service
+	ctx := context.Background()
+
+	batch, _ := service.CreateBatch(ctx, BatchOptions{RecordingIdentification: true})
+	job, _ := service.CreateJob(ctx, batch.ID, "00000000-0000-4000-8000-000000000001")
+	flac := strictFLAC(t)
+	if _, err := service.Upload(ctx, job.ID, "song.flac", bytes.NewReader(flac), int64(len(flac))); err != nil {
+		t.Fatal(err)
+	}
+	confirmBatchJob(t, service, batch.ID, job.ID)
+
+	history, err := service.ListHistory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Items) != 1 || len(history.Items[0].Files) != 1 {
+		t.Fatalf("history = %+v", history)
+	}
+	file := history.Items[0].Files[0]
+	if file.MetadataSource != METADATA_SOURCE_MUSICBRAINZ || file.AcoustIDScore != 0.97 || file.RecordingID != "5bcd7ba9-3b1f-4f1a-8a5a-8b0c9d1e2f30" {
+		t.Fatalf("history file = %+v", file)
+	}
+}
+
+func TestRecordingIdentificationCarriesIntoTrackReplacement(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	module := NewModule(database, config.Config{ManagedStoragePath: t.TempDir()}, library.NewMediaInspector())
+	identifier := &scriptedIdentifier{result: identification.Identification{Outcome: identification.OUTCOME_NO_MATCH, Reason: "nothing yet"}}
+	module.service.identifier = identifier
+	service := module.service
+	ctx := context.Background()
+
+	batch, _ := service.CreateBatch(ctx, BatchOptions{RecordingIdentification: true})
+	job, _ := service.CreateJob(ctx, batch.ID, "00000000-0000-4000-8000-000000000001")
+	flac := strictFLAC(t)
+	if _, err := service.Upload(ctx, job.ID, "song.flac", bytes.NewReader(flac), int64(len(flac))); err != nil {
+		t.Fatal(err)
+	}
+	trackID := confirmBatchJob(t, service, batch.ID, job.ID)
+
+	identifier.result = matchedRecording()
+	replacementJob, err := service.CreateReplacementJob(ctx, trackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mp3 := testutil.StrictMP3Fixture()
+	preview, err := service.Upload(ctx, replacementJob.ID, "song.mp3", bytes.NewReader(mp3), int64(len(mp3)))
+	if err != nil {
+		t.Fatalf("replacement Upload() error = %v", err)
+	}
+	if preview.Replacement == nil || preview.File.Title != "Welcome to New York (Taylor's Version)" {
+		t.Fatalf("replacement preview = %+v", preview)
+	}
+	if _, err := service.ConfirmReplacement(ctx, replacementJob.ID, TrackReplacementConfirmation{Revision: preview.Revision, ConfirmationToken: preview.Replacement.ConfirmationToken}); err != nil {
+		t.Fatalf("ConfirmReplacement() error = %v", err)
+	}
+
+	var title, source, recordingID string
+	if err := database.QueryRow(`SELECT title, metadata_source, musicbrainz_recording_id FROM tracks WHERE id = ?`, trackID).Scan(&title, &source, &recordingID); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Welcome to New York (Taylor's Version)" || source != "musicbrainz" || recordingID != "5bcd7ba9-3b1f-4f1a-8a5a-8b0c9d1e2f30" {
+		t.Fatalf("replaced Track = %q %q %q", title, source, recordingID)
+	}
+}
