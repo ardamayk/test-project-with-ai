@@ -1,8 +1,12 @@
 package managedimport
 
 import (
+	"os/exec"
+
 	"context"
 	"database/sql"
+	"github.com/ardam/navidrome-replacement/server/internal/dependencies"
+	"github.com/ardam/navidrome-replacement/server/internal/identification"
 	"log/slog"
 	"time"
 
@@ -39,6 +43,7 @@ func newModule(database *sql.DB, configuration config.Config, inspector library.
 	if len(queueEvents) > 0 {
 		service.queueEvents = queueEvents[0]
 	}
+	service.identifier = newRecordingIdentifier(database, configuration)
 	return &Module{handlers: NewHandlers(service), service: service}
 }
 
@@ -92,4 +97,19 @@ func (module *Module) RegisterRoutes(router chi.Router) {
 	router.Put("/api/v1/imports/{importId}/file", module.handlers.UploadFile)
 	router.Post("/api/v1/imports/{importId}/confirm", module.handlers.Confirm)
 	router.Post("/api/v1/imports/{importId}/replacement", module.handlers.ConfirmTrackReplacement)
+}
+
+// newRecordingIdentifier activates Recording Identification only when the
+// operator left it enabled, fpcalc is installed and an AcoustID key exists;
+// otherwise the service stays nil and every import reports why (ADR 0017).
+func newRecordingIdentifier(database *sql.DB, configuration config.Config) recordingIdentifier {
+	settings := configuration.RecordingIdentification
+	if !settings.Enabled || settings.AcoustIDAPIKey == "" {
+		return nil
+	}
+	program, err := exec.LookPath(dependencies.FPCALC)
+	if err != nil {
+		return nil
+	}
+	return identification.NewIdentifier(settings, configuration.Version, program, database)
 }

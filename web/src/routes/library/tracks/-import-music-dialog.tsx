@@ -458,7 +458,10 @@ function SelectionCheckbox({
 function DuplicateMarker({
 	classification,
 }: {
-	classification: "exact_duplicate" | "possible_duplicate";
+	classification:
+		| "exact_duplicate"
+		| "possible_duplicate"
+		| "recording_duplicate";
 }) {
 	const Icon = classification === "exact_duplicate" ? CircleX : CircleAlert;
 	return (
@@ -529,13 +532,23 @@ function DuplicateReview({
 	if (preview.duplicateClassification === "exact_duplicate") {
 		return <ExactDuplicateReview preview={preview} />;
 	}
-	if (preview.duplicateClassification !== "possible_duplicate") return null;
+	const isRecordingDuplicate =
+		preview.duplicateClassification === "recording_duplicate";
+	if (
+		preview.duplicateClassification !== "possible_duplicate" &&
+		!isRecordingDuplicate
+	)
+		return null;
 	return (
 		<fieldset className="grid gap-2 rounded-md border border-border bg-background p-3">
 			<legend className="px-1 font-medium text-heading text-sm">
-				Possible Duplicate
+				{isRecordingDuplicate ? "Same recording" : "Possible Duplicate"}
 			</legend>
-			<p className="text-caption text-sm">Different file bytes resemble:</p>
+			<p className="text-caption text-sm">
+				{isRecordingDuplicate
+					? "MusicBrainz identifies this file as the same recording as:"
+					: "Different file bytes resemble:"}
+			</p>
 			<ul className="list-disc pl-5 text-caption text-sm">
 				{preview.duplicateCandidates.map((candidate) => (
 					<li key={candidate.trackId}>

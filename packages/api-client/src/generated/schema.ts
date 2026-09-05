@@ -903,8 +903,12 @@ export interface components {
             resultCode: string;
             /** Format: uuid */
             createdTrackId?: string;
-            /** Format: uuid */
             replacedTrackId?: string;
+            /** @enum {string} */
+            metadataSource?: "file_tags" | "musicbrainz";
+            acoustIdScore?: number;
+            /** Format: uuid */
+            recordingId?: string;
         };
         ManagedImportBatchConfirmation: {
             revision: number;
@@ -924,10 +928,29 @@ export interface components {
             status: "awaiting_confirmation" | "failed";
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
-            /** @enum {string} */
-            duplicateClassification: "none" | "exact_duplicate" | "possible_duplicate";
+            /**
+             * @description recording_duplicate means Recording Identification (ADR 0017) resolved the upload to the same MusicBrainz Recording as an existing Track while the bytes differ. It takes the same explicit decision as possible_duplicate.
+             * @enum {string}
+             */
+            duplicateClassification: "none" | "exact_duplicate" | "possible_duplicate" | "recording_duplicate";
             duplicateCandidates?: components["schemas"]["ManagedImportDuplicateCandidate"][];
             replacement?: components["schemas"]["TrackReplacementPreview"];
+            identification?: components["schemas"]["RecordingIdentificationPreview"];
+        };
+        /** @description Which system produced this file's metadata and why (ADR 0017), so Recording Identification can be inspected per file. */
+        RecordingIdentificationPreview: {
+            /** @enum {string} */
+            source: "file_tags" | "musicbrainz";
+            /** @description matched, no_match, below_threshold, unavailable, switched_off (the Import Batch switch was off) or inactive (the Music Server cannot identify recordings). */
+            outcome: string;
+            /** @description Why the file's tags stayed untouched; absent when matched. */
+            reason?: string;
+            acoustIdScore?: number;
+            /** @description MusicBrainz Recording MBID of a confident match. */
+            recordingId?: string;
+            isrc?: string;
+            /** @description Metadata fields MusicBrainz replaced or completed. */
+            changedFields?: string[];
         };
         ManagedImportDuplicateCandidate: {
             /** Format: uuid */

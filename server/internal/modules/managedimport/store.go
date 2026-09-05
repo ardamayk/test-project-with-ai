@@ -35,6 +35,8 @@ type commitData struct {
 	Placement  placedFiles
 	Inspection library.MediaInspection
 	AlbumKey   string
+	// Identification is the Recording Identification outcome the Track records.
+	Identification identificationRecord
 }
 
 func NewStore(database *sql.DB) *Store {
@@ -143,12 +145,13 @@ type queryRower interface {
 func getImportJob(ctx context.Context, queryer queryRower, jobID string) (importJob, error) {
 	var job importJob
 	var batchID, clientFileID, originalFilename, stagedFilePath, contentSHA256, errorCode, trackID sql.NullString
-	var previewJSON, errorField, errorReason, outcome, replaceTrackID sql.NullString
+	var previewJSON, errorField, errorReason, outcome, replaceTrackID, identificationJSON, recordingID sql.NullString
 	err := queryer.QueryRowContext(ctx, `
 		SELECT id, status, revision, validation_progress, batch_id, client_file_id, original_filename, staged_file_path,
-			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected, replace_track_id, validation_issues
+			content_sha256, error_code, track_id, preview_json, error_field, error_reason, outcome, selected, replace_track_id, validation_issues,
+			identification_json, musicbrainz_recording_id
 		FROM managed_import_jobs WHERE id = ?`, jobID,
-	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected, &replaceTrackID, &job.Issues)
+	).Scan(&job.ID, &job.Status, &job.Revision, &job.ValidationProgress, &batchID, &clientFileID, &originalFilename, &stagedFilePath, &contentSHA256, &errorCode, &trackID, &previewJSON, &errorField, &errorReason, &outcome, &job.Selected, &replaceTrackID, &job.Issues, &identificationJSON, &recordingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importJob{}, ErrNotFound
 	}
@@ -168,6 +171,8 @@ func getImportJob(ctx context.Context, queryer queryRower, jobID string) (import
 	job.Outcome = ImportOutcome(outcome.String)
 	job.ReplaceTrackID = replaceTrackID.String
 	job.ReplacesTrackID = replaceTrackID.String
+	job.IdentificationJSON = identificationJSON.String
+	job.RecordingID = recordingID.String
 	return job, nil
 }
 
@@ -286,7 +291,8 @@ func scanHistoryItem(scanner historyFileScanner) (HistoryItem, error) {
 func listHistoryFiles(ctx context.Context, queryer historyQueryer, importID string) (_ []HistoryFile, returnErr error) {
 	rows, err := queryer.QueryContext(ctx, `
 		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256,
-			result_code, created_track_id, replaced_track_id, validation_issues
+			result_code, created_track_id, replaced_track_id, validation_issues,
+			metadata_source, acoustid_score, musicbrainz_recording_id
 		FROM managed_import_history_files WHERE import_id = ? ORDER BY position`, importID)
 	if err != nil {
 		return nil, fmt.Errorf("list Import History files for %q: %w", importID, err)
@@ -299,15 +305,19 @@ func listHistoryFiles(ctx context.Context, queryer historyQueryer, importID stri
 	files := []HistoryFile{}
 	for rows.Next() {
 		var file HistoryFile
-		var safeFilename, contentSHA256, createdTrackID, replacedTrackID sql.NullString
+		var safeFilename, contentSHA256, createdTrackID, replacedTrackID, recordingID sql.NullString
+		var score sql.NullFloat64
 		if err := rows.Scan(&file.FileID, &file.JobID, &safeFilename, &file.StartedAt, &file.CompletedAt,
-			&contentSHA256, &file.ResultCode, &createdTrackID, &replacedTrackID, &file.Issues); err != nil {
+			&contentSHA256, &file.ResultCode, &createdTrackID, &replacedTrackID, &file.Issues,
+			&file.MetadataSource, &score, &recordingID); err != nil {
 			return nil, fmt.Errorf("read Import History file: %w", err)
 		}
 		file.SafeFilename = safeFilename.String
 		file.ContentSHA256 = contentSHA256.String
 		file.CreatedTrackID = createdTrackID.String
 		file.ReplacedTrackID = replacedTrackID.String
+		file.AcoustIDScore = score.Float64
+		file.RecordingID = recordingID.String
 		files = append(files, file)
 	}
 	if err := rows.Err(); err != nil {
@@ -533,7 +543,7 @@ func (store *Store) ReserveBatchUpload(ctx context.Context, jobID string, upload
 	return ErrBatchTooLarge
 }
 
-func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256, previewJSON string, uploadSize, batchLimit int64) (_ importJob, returnErr error) {
+func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, stagedFilePath, contentSHA256, previewJSON string, uploadSize, batchLimit int64, identificationJSON, recordingID string) (_ importJob, returnErr error) {
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
 		return importJob{}, fmt.Errorf("begin Import Preview transition: %w", err)
@@ -549,7 +559,8 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 		SET status = ?, revision = revision + 1, original_filename = ?, staged_file_path = ?,
 			content_sha256 = ?, preview_json = ?, upload_size_bytes = ?, error_code = NULL,
 			error_field = NULL, error_reason = NULL, validation_issues = '[]', outcome = NULL, selected = 1,
-			validation_progress = 100, updated_at = CURRENT_TIMESTAMP
+			validation_progress = 100, identification_json = NULLIF(?, ''), musicbrainz_recording_id = NULLIF(?, ''),
+			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = ? AND (
 			batch_id IS NULL OR ? + COALESCE((
 				SELECT SUM(sibling.upload_size_bytes) FROM managed_import_jobs AS sibling
@@ -557,6 +568,7 @@ func (store *Store) MarkPreview(ctx context.Context, jobID, originalFilename, st
 			), 0) <= ?
 		)`,
 		STATUS_AWAITING_CONFIRMATION, originalFilename, stagedFilePath, contentSHA256, previewJSON, uploadSize,
+		identificationJSON, recordingID,
 		jobID, STATUS_UPLOADING, uploadSize, batchLimit,
 	)
 	if err != nil {
@@ -930,10 +942,10 @@ func archiveStandaloneHistory(ctx context.Context, transaction *sql.Tx, jobID st
 func readBatchHistoryFiles(ctx context.Context, transaction *sql.Tx, batchID string, terminalCode HistoryResultCode, completedAt time.Time) (_ []HistoryFile, counts HistoryCounts, returnErr error) {
 	rows, err := transaction.QueryContext(ctx, `
 		SELECT COALESCE(NULLIF(client_file_id, ''), id), id, original_filename, created_at, updated_at,
-			content_sha256, status, outcome, error_code, track_id, validation_issues, batch_position
+			content_sha256, status, outcome, error_code, track_id, validation_issues, identification_json, batch_position
 		FROM managed_import_jobs WHERE batch_id = ?
 		UNION ALL
-		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256, ?, ?, ?, NULL, '[]', position
+		SELECT file_id, job_id, safe_filename, started_at, completed_at, content_sha256, ?, ?, ?, NULL, '[]', NULL, position
 		FROM managed_import_canceled_files WHERE batch_id = ?
 		ORDER BY batch_position`, batchID, STATUS_FAILED, OUTCOME_NOT_ATTEMPTED, IMPORT_CANCELED_RESULT_CODE, batchID)
 	if err != nil {
@@ -962,10 +974,10 @@ type historyFileScanner interface {
 
 func scanHistorySourceFile(scanner historyFileScanner, hasPosition bool) (HistoryFile, ImportOutcome, ImportStatus, string, string, error) {
 	var file HistoryFile
-	var safeFilename, contentSHA256, outcome, errorCode, trackID sql.NullString
+	var safeFilename, contentSHA256, outcome, errorCode, trackID, identificationJSON sql.NullString
 	var status ImportStatus
 	destinations := []any{&file.FileID, &file.JobID, &safeFilename, &file.StartedAt, &file.CompletedAt,
-		&contentSHA256, &status, &outcome, &errorCode, &trackID, &file.Issues}
+		&contentSHA256, &status, &outcome, &errorCode, &trackID, &file.Issues, &identificationJSON}
 	var position int
 	if hasPosition {
 		destinations = append(destinations, &position)
@@ -976,13 +988,22 @@ func scanHistorySourceFile(scanner historyFileScanner, hasPosition bool) (Histor
 	}
 	file.SafeFilename = safeFilename.String
 	file.ContentSHA256 = contentSHA256.String
+	file.MetadataSource = METADATA_SOURCE_FILE_TAGS
+	if identificationJSON.String != "" {
+		var record identificationRecord
+		if decodeErr := json.Unmarshal([]byte(identificationJSON.String), &record); decodeErr == nil && record.Source != "" {
+			file.MetadataSource = record.Source
+			file.AcoustIDScore = record.AcoustIDScore
+			file.RecordingID = record.RecordingID
+		}
+	}
 	return file, ImportOutcome(outcome.String), status, errorCode.String, trackID.String, nil
 }
 
 func readStandaloneHistory(ctx context.Context, transaction *sql.Tx, jobID string, terminalCode HistoryResultCode) (HistoryItem, bool, error) {
 	row := transaction.QueryRowContext(ctx, `
 		SELECT COALESCE(NULLIF(client_file_id, ''), id), id, original_filename, created_at, updated_at,
-			content_sha256, status, outcome, error_code, track_id, validation_issues
+			content_sha256, status, outcome, error_code, track_id, validation_issues, identification_json
 		FROM managed_import_jobs WHERE id = ? AND batch_id IS NULL`, jobID)
 	file, outcome, status, errorCode, trackID, err := scanHistorySourceFile(row, false)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1098,13 +1119,19 @@ func insertHistory(ctx context.Context, transaction *sql.Tx, item HistoryItem) e
 }
 
 func insertHistoryFile(ctx context.Context, transaction *sql.Tx, importID string, position int, file HistoryFile) error {
+	source := file.MetadataSource
+	if source == "" {
+		source = METADATA_SOURCE_FILE_TAGS
+	}
 	_, err := transaction.ExecContext(ctx, `
 		INSERT INTO managed_import_history_files (
 			import_id, file_id, job_id, safe_filename, started_at, completed_at, content_sha256,
-			result_code, created_track_id, replaced_track_id, position, validation_issues
-		) VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
+			result_code, created_track_id, replaced_track_id, position, validation_issues,
+			metadata_source, acoustid_score, musicbrainz_recording_id
+		) VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''))`,
 		importID, file.FileID, file.JobID, file.SafeFilename, file.StartedAt, file.CompletedAt,
-		file.ContentSHA256, file.ResultCode, file.CreatedTrackID, file.ReplacedTrackID, position, file.Issues)
+		file.ContentSHA256, file.ResultCode, file.CreatedTrackID, file.ReplacedTrackID, position, file.Issues,
+		source, nullableScore(file.AcoustIDScore), file.RecordingID)
 	if err != nil {
 		return fmt.Errorf("store Import History file %q: %w", file.FileID, err)
 	}
@@ -1209,13 +1236,14 @@ func (store *Store) FindExactDuplicateTrackID(ctx context.Context, contentSHA256
 	return trackID, nil
 }
 
-func (store *Store) ClassifyDuplicate(ctx context.Context, inspection library.MediaInspection) (DuplicateClassification, []DuplicateCandidate, error) {
-	return store.ClassifyDuplicateExcluding(ctx, inspection, "")
+func (store *Store) ClassifyDuplicate(ctx context.Context, inspection library.MediaInspection, recordingID string) (DuplicateClassification, []DuplicateCandidate, error) {
+	return store.ClassifyDuplicateExcluding(ctx, inspection, "", recordingID)
 }
 
 // ClassifyDuplicateExcluding ignores one Track for Possible Duplicate matching while still treating any
-// exact byte match, including that Track's own bytes, as an Exact Duplicate.
-func (store *Store) ClassifyDuplicateExcluding(ctx context.Context, inspection library.MediaInspection, excludedTrackID string) (DuplicateClassification, []DuplicateCandidate, error) {
+// exact byte match, including that Track's own bytes, as an Exact Duplicate. A non-empty recordingID
+// classifies any other Track identified as the same MusicBrainz Recording as a Recording Duplicate.
+func (store *Store) ClassifyDuplicateExcluding(ctx context.Context, inspection library.MediaInspection, excludedTrackID, recordingID string) (DuplicateClassification, []DuplicateCandidate, error) {
 	trackID, err := store.FindExactDuplicateTrackID(ctx, inspection.FileSHA256)
 	if err != nil {
 		return "", nil, err
@@ -1227,6 +1255,19 @@ func (store *Store) ClassifyDuplicateExcluding(ctx context.Context, inspection l
 		}
 		return DUPLICATE_EXACT, []DuplicateCandidate{candidate}, nil
 	}
+	if recordingID != "" {
+		recordingTrackIDs, err := store.findDuplicatesByRecording(ctx, recordingID, excludedTrackID)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(recordingTrackIDs) > 0 {
+			candidates, readErr := store.readDuplicateCandidates(ctx, recordingTrackIDs)
+			if readErr != nil {
+				return "", nil, readErr
+			}
+			return DUPLICATE_RECORDING, candidates, nil
+		}
+	}
 	trackIDs, err := store.findPossibleDuplicateTrackIDs(ctx, inspection.Metadata, excludedTrackID)
 	if err != nil {
 		return "", nil, err
@@ -1234,15 +1275,34 @@ func (store *Store) ClassifyDuplicateExcluding(ctx context.Context, inspection l
 	if len(trackIDs) == 0 {
 		return DUPLICATE_NONE, nil, nil
 	}
+	candidates, err := store.readDuplicateCandidates(ctx, trackIDs)
+	if err != nil {
+		return "", nil, err
+	}
+	return DUPLICATE_POSSIBLE, candidates, nil
+}
+
+func (store *Store) readDuplicateCandidates(ctx context.Context, trackIDs []string) ([]DuplicateCandidate, error) {
 	candidates := make([]DuplicateCandidate, 0, len(trackIDs))
 	for _, candidateTrackID := range trackIDs {
 		candidate, readErr := store.readDuplicateCandidate(ctx, candidateTrackID)
 		if readErr != nil {
-			return "", nil, readErr
+			return nil, readErr
 		}
 		candidates = append(candidates, candidate)
 	}
-	return DUPLICATE_POSSIBLE, candidates, nil
+	return candidates, nil
+}
+
+func (store *Store) findDuplicatesByRecording(ctx context.Context, recordingID, excludedTrackID string) ([]string, error) {
+	rows, err := store.database.QueryContext(ctx, `
+		SELECT id FROM tracks
+		WHERE missing_at IS NULL AND id != ? AND musicbrainz_recording_id = ?
+		ORDER BY id`, excludedTrackID, recordingID)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Recording Duplicates: %w", err)
+	}
+	return scanTrackIDs(rows, "recording duplicates")
 }
 
 func (store *Store) findPossibleDuplicateTrackIDs(ctx context.Context, metadata library.NormalizedMediaMetadata, excludedTrackID string) ([]string, error) {
@@ -1766,6 +1826,14 @@ func upsertAlbum(ctx context.Context, transaction *sql.Tx, data commitData, arti
 func insertTrack(ctx context.Context, transaction *sql.Tx, data commitData) error {
 	metadata := data.Inspection.Metadata
 	audio := data.Inspection.Audio
+	identified := data.Identification
+	if identified.Source == "" {
+		identified.Source = METADATA_SOURCE_FILE_TAGS
+	}
+	changedFields, err := encodeChangedFields(identified.ChangedFields)
+	if err != nil {
+		return err
+	}
 	fileInfo, err := os.Stat(data.Placement.AudioPath)
 	if err != nil {
 		return fmt.Errorf("stat canonical Managed Track: %w", err)
@@ -1776,14 +1844,17 @@ func insertTrack(ctx context.Context, transaction *sql.Tx, data commitData) erro
 			size_bytes, file_path, file_mtime, genre, sample_rate_hz, bit_depth, disc_no,
 			track_total, disc_total, channel_count, bitrate_bps, codec, container,
 			replaygain_track_gain_db, replaygain_track_peak, replaygain_album_gain_db,
-			replaygain_album_peak, identity_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			replaygain_album_peak, identity_key,
+			musicbrainz_recording_id, isrc, acoustid_score, metadata_source, musicbrainz_changed_fields
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)`,
 		data.Identity.TrackID, data.Identity.AlbumID, metadata.Title, normalizeIdentity(metadata.Title), strings.Join(metadata.Artists, ", "),
 		metadata.TrackPosition.Number, audio.DurationMs, audio.Format, fileInfo.Size(), data.Placement.AudioPath, fileInfo.ModTime().Unix(),
 		metadata.Genres[0], audio.SampleRateHz, nullablePositive(audio.BitDepth), metadata.DiscPosition.Number,
 		nullablePositive(metadata.TrackPosition.Total), nullablePositive(metadata.DiscPosition.Total), audio.ChannelCount,
 		audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Container, metadata.ReplayGain.TrackGainDB,
 		metadata.ReplayGain.TrackPeak, metadata.ReplayGain.AlbumGainDB, metadata.ReplayGain.AlbumPeak, trackIdentityKey(metadata),
+		identified.RecordingID, identified.ISRC, nullableScore(identified.AcoustIDScore), identified.Source, changedFields,
 	)
 	if err != nil {
 		return fmt.Errorf("create Managed Track: %w", err)
@@ -1934,4 +2005,22 @@ func releaseDate(year int) any {
 		return nil
 	}
 	return fmt.Sprint(year)
+}
+
+func nullableScore(score float64) any {
+	if score <= 0 {
+		return nil
+	}
+	return score
+}
+
+func encodeChangedFields(fields []string) (string, error) {
+	if len(fields) == 0 {
+		return "[]", nil
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return "", fmt.Errorf("encode changed metadata fields: %w", err)
+	}
+	return string(encoded), nil
 }

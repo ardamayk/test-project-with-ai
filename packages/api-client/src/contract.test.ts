@@ -54,7 +54,9 @@ describe('generated Managed Import contract', () => {
     >().toEqualTypeOf<number>();
     expectTypeOf<
       Schemas['ManagedImportPreview']['duplicateClassification']
-    >().toEqualTypeOf<'none' | 'exact_duplicate' | 'possible_duplicate'>();
+    >().toEqualTypeOf<
+      'none' | 'exact_duplicate' | 'possible_duplicate' | 'recording_duplicate'
+    >();
     expectTypeOf<
       Schemas['ManagedImportDuplicateDecision']['action']
     >().toEqualTypeOf<

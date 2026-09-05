@@ -1771,6 +1771,13 @@ components:
           format: uuid
         replacedTrackId:
           type: string
+        metadataSource:
+          type: string
+          enum: [file_tags, musicbrainz]
+        acoustIdScore:
+          type: number
+        recordingId:
+          type: string
           format: uuid
     ManagedImportBatchConfirmation:
       type: object
@@ -1817,13 +1824,53 @@ components:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
         duplicateClassification:
           type: string
-          enum: [none, exact_duplicate, possible_duplicate]
+          enum: [none, exact_duplicate, possible_duplicate, recording_duplicate]
+          description: >-
+            recording_duplicate means Recording Identification (ADR 0017)
+            resolved the upload to the same MusicBrainz Recording as an
+            existing Track while the bytes differ. It takes the same explicit
+            decision as possible_duplicate.
         duplicateCandidates:
           type: array
           items:
             $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
         replacement:
           $ref: "#/components/schemas/TrackReplacementPreview"
+        identification:
+          $ref: "#/components/schemas/RecordingIdentificationPreview"
+    RecordingIdentificationPreview:
+      type: object
+      required: [source, outcome]
+      description: >-
+        Which system produced this file's metadata and why (ADR 0017), so
+        Recording Identification can be inspected per file.
+      properties:
+        source:
+          type: string
+          enum: [file_tags, musicbrainz]
+        outcome:
+          type: string
+          description: >-
+            matched, no_match, below_threshold, unavailable, switched_off (the
+            Import Batch switch was off) or inactive (the Music Server cannot
+            identify recordings).
+        reason:
+          type: string
+          description: Why the file's tags stayed untouched; absent when matched.
+        acoustIdScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        recordingId:
+          type: string
+          description: MusicBrainz Recording MBID of a confident match.
+        isrc:
+          type: string
+        changedFields:
+          type: array
+          items:
+            type: string
+          description: Metadata fields MusicBrainz replaced or completed.
     ManagedImportDuplicateCandidate:
       type: object
       required: [trackId, title, artists, album, discNo, trackNo, format, durationMs]

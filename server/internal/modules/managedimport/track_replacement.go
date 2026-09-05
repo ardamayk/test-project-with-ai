@@ -46,7 +46,7 @@ func (service *Service) buildReplacementState(ctx context.Context, job importJob
 	if positionErr := service.validateReplacementPositions(ctx, job.ID, metadata, target.TrackID); positionErr != nil {
 		return replacementState{}, positionErr
 	}
-	_, candidates, err := service.store.ClassifyDuplicateExcluding(ctx, inspection, target.TrackID)
+	_, candidates, err := service.store.ClassifyDuplicateExcluding(ctx, inspection, target.TrackID, "")
 	if err != nil {
 		return replacementState{}, err
 	}

@@ -27,7 +27,7 @@ func TestMarkPreviewRollsBackJobWhenBatchRevisionFails(t *testing.T) {
 		t.Fatalf("create failure trigger: %v", err)
 	}
 
-	_, err = store.MarkPreview(context.Background(), job.ID, "track.flac", "/tmp/staged", "sha256", `{}`, 10, 100)
+	_, err = store.MarkPreview(context.Background(), job.ID, "track.flac", "/tmp/staged", "sha256", `{}`, 10, 100, "", "")
 	if err == nil {
 		t.Fatal("MarkPreview succeeded despite batch revision failure")
 	}

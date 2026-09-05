@@ -370,7 +370,7 @@ func prepareCommitRecoveryJob(t *testing.T, database *sql.DB, storage *Storage) 
 	if err != nil {
 		t.Fatalf("stage upload: %v", err)
 	}
-	job, err := store.MarkPreview(context.Background(), created.ID, "track.flac", upload.Path, upload.SHA256, `{}`, upload.Size, 1024)
+	job, err := store.MarkPreview(context.Background(), created.ID, "track.flac", upload.Path, upload.SHA256, `{}`, upload.Size, 1024, "", "")
 	if err != nil {
 		t.Fatalf("mark preview: %v", err)
 	}
@@ -410,7 +410,7 @@ func prepareBatchCommitRecoveryJob(t *testing.T, database *sql.DB, storage *Stor
 	if err != nil {
 		t.Fatalf("stage recovery Batch upload: %v", err)
 	}
-	job, err := service.store.MarkPreview(context.Background(), created.ID, "track.flac", upload.Path, upload.SHA256, `{}`, upload.Size, 1024)
+	job, err := service.store.MarkPreview(context.Background(), created.ID, "track.flac", upload.Path, upload.SHA256, `{}`, upload.Size, 1024, "", "")
 	if err != nil {
 		t.Fatalf("mark recovery Batch preview: %v", err)
 	}

@@ -2,6 +2,7 @@ package identification
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -74,15 +75,17 @@ var (
 // NewIdentifier wires the real fpcalc program and HTTP clients from
 // configuration. Whether identification should run at all (cfg.Enabled, the
 // Import Batch switch, fpcalc presence) is the caller's decision.
-func NewIdentifier(cfg config.RecordingIdentificationConfig, version, fpcalcProgram string) *Identifier {
+// A non-nil cache database wraps both services in the indefinite caches.
+func NewIdentifier(cfg config.RecordingIdentificationConfig, version, fpcalcProgram string, cache *sql.DB) *Identifier {
 	userAgent := fmt.Sprintf("EarthlyAudio/%s (%s)", version, userAgentProjectLink)
 	httpClient := &http.Client{Timeout: requestTimeout}
-	return NewIdentifierWithSources(
-		NewFingerprinter(fpcalcProgram),
-		limitedAcoustID{client: NewAcoustIDClient(httpClient, cfg.AcoustIDBaseURL, cfg.AcoustIDAPIKey, userAgent), limiter: acoustIDLimiter},
-		limitedMusicBrainz{client: NewMusicBrainzClient(httpClient, cfg.MusicBrainzBaseURL, userAgent), limiter: musicBrainzLimiter},
-		cfg.MinScore,
-	)
+	var acoustID AcoustIDLookup = limitedAcoustID{client: NewAcoustIDClient(httpClient, cfg.AcoustIDBaseURL, cfg.AcoustIDAPIKey, userAgent), limiter: acoustIDLimiter}
+	var musicBrainz RecordingSource = limitedMusicBrainz{client: NewMusicBrainzClient(httpClient, cfg.MusicBrainzBaseURL, userAgent), limiter: musicBrainzLimiter}
+	if cache != nil {
+		acoustID = NewCachedAcoustID(cache, acoustID)
+		musicBrainz = NewCachedMusicBrainz(cache, musicBrainz)
+	}
+	return NewIdentifierWithSources(NewFingerprinter(fpcalcProgram), acoustID, musicBrainz, cfg.MinScore)
 }
 
 // NewIdentifierWithSources accepts the three seams directly for tests.

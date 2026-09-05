@@ -64,6 +64,10 @@ const (
 	DUPLICATE_NONE     DuplicateClassification = "none"
 	DUPLICATE_EXACT    DuplicateClassification = "exact_duplicate"
 	DUPLICATE_POSSIBLE DuplicateClassification = "possible_duplicate"
+	// DUPLICATE_RECORDING: Recording Identification resolved the upload to the
+	// same MusicBrainz Recording as an existing Track (ADR 0017). Same decision
+	// set as a Possible Duplicate, clearer message.
+	DUPLICATE_RECORDING DuplicateClassification = "recording_duplicate"
 )
 
 type commitPhase string
@@ -182,6 +186,7 @@ type Preview struct {
 	DuplicateClassification DuplicateClassification  `json:"duplicateClassification"`
 	DuplicateCandidates     []DuplicateCandidate     `json:"duplicateCandidates,omitempty"`
 	Replacement             *TrackReplacementPreview `json:"replacement,omitempty"`
+	Identification          *IdentificationPreview   `json:"identification,omitempty"`
 }
 
 type DuplicateCandidate struct {
@@ -264,6 +269,9 @@ type HistoryFile struct {
 	ResultCode      string           `json:"resultCode"`
 	CreatedTrackID  string           `json:"createdTrackId,omitempty"`
 	ReplacedTrackID string           `json:"replacedTrackId,omitempty"`
+	MetadataSource  MetadataSource   `json:"metadataSource,omitempty"`
+	AcoustIDScore   float64          `json:"acoustIdScore,omitempty"`
+	RecordingID     string           `json:"recordingId,omitempty"`
 }
 
 type importJob struct {
@@ -280,6 +288,10 @@ type importJob struct {
 	Outcome          ImportOutcome
 	Selected         bool
 	ReplaceTrackID   string
+	// IdentificationJSON is the stored identificationRecord; RecordingID
+	// duplicates its recording MBID for Recording Duplicate queries.
+	IdentificationJSON string
+	RecordingID        string
 }
 
 type commitJournal struct {
