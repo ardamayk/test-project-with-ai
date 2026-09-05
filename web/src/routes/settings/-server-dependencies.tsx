@@ -16,28 +16,9 @@ type Row = {
 	detail?: string;
 };
 
-const recordingIdentificationLabels: Record<
-	HealthResponse["recordingIdentification"]["status"],
-	string
-> = {
-	enabled: "Active",
-	disabled_by_config: "Disabled by RECORDING_IDENTIFICATION_ENABLED",
-	missing_fpcalc: "Unavailable: fpcalc is not installed",
-	missing_api_key: "Unavailable: no AcoustID key",
-};
-
-const acoustIdKeyLabels: Record<
-	HealthResponse["recordingIdentification"]["acoustIdKeySource"],
-	string
-> = {
-	embedded: "Embedded in this release",
-	operator: "Set through ACOUSTID_API_KEY",
-	missing: "Not configured",
-};
-
 /**
  * Read-only view of the Server Dependencies probed by the Music Server and,
- * on the Desktop Client only, the pinned mpv sidecar (ADR 0017).
+ * on the Desktop Client only, the pinned mpv sidecar.
  */
 export function ServerDependenciesSection({ health, desktopMpv }: Props) {
 	if (!health) {
@@ -52,7 +33,6 @@ export function ServerDependenciesSection({ health, desktopMpv }: Props) {
 	}
 
 	const dependencies = health.dependencies ?? [];
-	const identification = health.recordingIdentification;
 	const rows: Row[] = dependencies.map((dependency) => ({
 		name: dependency.name,
 		scope: "Music Server",
@@ -101,22 +81,6 @@ export function ServerDependenciesSection({ health, desktopMpv }: Props) {
 					</tbody>
 				</table>
 			</div>
-			{identification ? (
-				<dl className="grid gap-2 text-sm sm:grid-cols-[auto_1fr] sm:gap-x-6">
-					<dt className="font-medium">Recording Identification</dt>
-					<dd className="text-muted-foreground">
-						{recordingIdentificationLabels[identification.status]}
-					</dd>
-					<dt className="font-medium">AcoustID key</dt>
-					<dd className="text-muted-foreground">
-						{acoustIdKeyLabels[identification.acoustIdKeySource]}
-					</dd>
-				</dl>
-			) : (
-				<p className="text-muted-foreground text-sm">
-					This Music Server predates Recording Identification.
-				</p>
-			)}
 		</section>
 	);
 }

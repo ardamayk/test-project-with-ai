@@ -94,15 +94,15 @@ func TestInspectVorbisNamesSplitsDelimitedGenreTag(t *testing.T) {
 	}
 }
 
-func TestInspectVorbisNamesRejectsGenreTagWithoutAnyGenre(t *testing.T) {
-	_, err := inspectVorbisNames(map[string][]string{
+func TestInspectVorbisNamesAcceptsEmptyOptionalGenre(t *testing.T) {
+	names, err := inspectVorbisNames(map[string][]string{
 		"TITLE":       {"Track"},
 		"ARTIST":      {"Artist"},
 		"ALBUMARTIST": {"Artist"},
 		"ALBUM":       {"Album"},
 		"GENRE":       {";"},
 	})
-	if err == nil {
-		t.Fatal("GENRE tag holding only delimiters was accepted")
+	if err != nil || len(names.Genres) != 0 {
+		t.Fatalf("optional empty GENRE: %+v, %v", names.Genres, err)
 	}
 }

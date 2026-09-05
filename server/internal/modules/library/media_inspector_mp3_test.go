@@ -92,10 +92,9 @@ func TestMediaInspectorRejectsOneExplicitNonFrontMP3Picture(t *testing.T) {
 	}
 	fixture[pictureType+len("image/png\x00")] = 4
 
-	_, err := inspectMP3FixtureError(t, fixture)
-	var inspectionErr *library.InspectionError
-	if !errors.As(err, &inspectionErr) || inspectionErr.Code != library.INSPECTION_ERROR_INVALID_ARTWORK || inspectionErr.Field != "artwork" {
-		t.Fatalf("non-front picture error = %T %+v", err, inspectionErr)
+	inspection := inspectMP3Fixture(t, fixture)
+	if len(inspection.AlbumArtwork.Data) != 0 {
+		t.Fatal("non-front artwork was retained")
 	}
 }
 
@@ -130,6 +129,13 @@ func TestMediaInspectorRejectsInvalidMP3TagsArtworkCodecAndTruncation(t *testing
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			if testCase.field == "artwork" {
+				inspection := inspectMP3Fixture(t, testCase.data)
+				if inspection.AlbumArtwork.Warning == "" || len(inspection.AlbumArtwork.Data) != 0 {
+					t.Fatal("invalid artwork was retained or not reported")
+				}
+				return
+			}
 			_, err := inspectMP3FixtureError(t, testCase.data)
 			var inspectionErr *library.InspectionError
 			if !errors.As(err, &inspectionErr) || inspectionErr.Code != testCase.code || inspectionErr.Field != testCase.field {
@@ -160,10 +166,9 @@ func TestMediaInspectorRejectsTruncatedMP3PictureType(t *testing.T) {
 	truncated[8] = byte(tagSize >> 7 & 0x7f)
 	truncated[9] = byte(tagSize & 0x7f)
 
-	_, err := inspectMP3FixtureError(t, truncated)
-	var inspectionErr *library.InspectionError
-	if !errors.As(err, &inspectionErr) || inspectionErr.Code != library.INSPECTION_ERROR_INVALID_ARTWORK || inspectionErr.Field != "artwork" {
-		t.Fatalf("truncated picture type error = %T %+v", err, inspectionErr)
+	inspection := inspectMP3Fixture(t, truncated)
+	if len(inspection.AlbumArtwork.Data) != 0 || inspection.AlbumArtwork.Warning == "" {
+		t.Fatal("malformed APIC must be omitted with warning")
 	}
 }
 

@@ -12,8 +12,7 @@ import (
 func TestGetTrackExposesEveryStoredColumn(t *testing.T) {
 	db := testutil.OpenMigratedDB(t)
 	_, trackID := seedTrack(t, db)
-	if _, err := db.Exec(`UPDATE tracks SET musicbrainz_recording_id = 'rec-1', isrc = 'USUG12306672', acoustid_score = 0.97,
-		metadata_source = 'musicbrainz', musicbrainz_changed_fields = '["title","artists"]', revision = 3 WHERE id = ?`, trackID); err != nil {
+	if _, err := db.Exec(`UPDATE tracks SET revision = 3 WHERE id = ?`, trackID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -22,12 +21,6 @@ func TestGetTrackExposesEveryStoredColumn(t *testing.T) {
 		t.Fatalf("GetTrack() error = %v", err)
 	}
 
-	if track.MusicBrainzRecordingID != "rec-1" || track.ISRC != "USUG12306672" || track.AcoustIDScore == nil || *track.AcoustIDScore != 0.97 {
-		t.Fatalf("identification fields = %+v", track)
-	}
-	if track.MetadataSource != "musicbrainz" || len(track.MusicBrainzChangedFields) != 2 || track.MusicBrainzChangedFields[0] != "title" {
-		t.Fatalf("source = %q changed = %v", track.MetadataSource, track.MusicBrainzChangedFields)
-	}
 	if track.TitleSort == "" || track.Revision != 3 || track.FilePath == "" {
 		t.Fatalf("stored columns missing: %+v", track)
 	}
@@ -36,19 +29,5 @@ func TestGetTrackExposesEveryStoredColumn(t *testing.T) {
 	}
 	if track.ContentSHA256 == "" {
 		t.Fatalf("content hash missing: %+v", track)
-	}
-}
-
-func TestGetTrackDefaultsIdentificationFieldsForTagOnlyTracks(t *testing.T) {
-	db := testutil.OpenMigratedDB(t)
-	_, trackID := seedTrack(t, db)
-
-	track, err := NewStore(db).GetTrack(context.Background(), trackID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if track.MetadataSource != "file_tags" || track.MusicBrainzRecordingID != "" || track.AcoustIDScore != nil || len(track.MusicBrainzChangedFields) != 0 {
-		t.Fatalf("tag-only track = %+v", track)
 	}
 }

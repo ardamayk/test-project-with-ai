@@ -252,7 +252,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libchromaprint-tools
+          sudo apt-get install -y ffmpeg
 
       - name: Resolve pnpm store path
         id: pnpm_store

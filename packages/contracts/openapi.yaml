@@ -404,6 +404,62 @@ paths:
           description: Client liveness recorded
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/import-batches/{batchId}/albums/{albumKey}/artwork:
+    parameters:
+      - $ref: "#/components/parameters/batchId"
+      - name: albumKey
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      operationId: uploadManagedImportArtwork
+      summary: Stage a JPEG or PNG cover for an import Album
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Validated artwork option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportArtworkOption"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/import-batches/{batchId}/artwork/{artworkId}:
+    parameters:
+      - $ref: "#/components/parameters/batchId"
+      - name: artworkId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getManagedImportArtwork
+      summary: Preview staged Album artwork
+      responses:
+        "200":
+          description: Validated image bytes
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/import-batches/{batchId}/confirm:
     post:
       tags: [imports]
@@ -1405,7 +1461,7 @@ components:
   schemas:
     HealthResponse:
       type: object
-      required: [status, version, capabilities, dependencies, recordingIdentification]
+      required: [status, version, capabilities, dependencies]
       properties:
         status:
           type: string
@@ -1425,13 +1481,7 @@ components:
             Track Deletion as managed-track-deletion.v1, explicit Track
             Replacement as managed-track-replacement.v1, Album deletion
             (one Permanent Track Deletion per Track, previewed once) as
-            managed-album-deletion.v1, and Recording Identification through
-            AcoustID and MusicBrainz (ADR 0017: the Import Batch switch,
-            per-file identification in the Import Preview and Recording
-            Duplicates) as recording-identification.v1. A capability describes
-            the release, never the deployment: whether identification is
-            usable on this installation is reported separately by
-            dependencies and recordingIdentification. Clients gate optional
+            managed-album-deletion.v1. Clients gate optional
             behavior on the exact capability name and must ignore unknown
             entries so newer servers stay compatible with older clients.
         dependencies:
@@ -1440,10 +1490,8 @@ components:
             $ref: "#/components/schemas/ServerDependency"
           description: >-
             Server Dependencies probed once at startup, in a stable order
-            (ffmpeg, ffprobe, fpcalc). They describe the deployment environment
+            (ffmpeg, ffprobe). They describe the deployment environment
             so an operator can see what the installation supports.
-        recordingIdentification:
-          $ref: "#/components/schemas/RecordingIdentificationStatus"
     ServerDependency:
       type: object
       required: [name, required, available]
@@ -1464,25 +1512,6 @@ components:
           description: >-
             Version parsed from the program's own version output. Absent when
             the program is missing or its output could not be parsed.
-    RecordingIdentificationStatus:
-      type: object
-      required: [status, acoustIdKeySource]
-      properties:
-        status:
-          type: string
-          enum: [enabled, disabled_by_config, missing_fpcalc, missing_api_key]
-          description: >-
-            Why Recording Identification is or is not active on this
-            installation. enabled means Recording Identification may run;
-            every other value names the reason it cannot, in precedence order:
-            RECORDING_IDENTIFICATION_ENABLED=false, then a missing fpcalc
-            program, then a missing AcoustID key.
-        acoustIdKeySource:
-          type: string
-          enum: [embedded, operator, missing]
-          description: >-
-            Where the AcoustID application key came from: the key embedded in
-            this release, the ACOUSTID_API_KEY environment variable, or neither.
     User:
       type: object
       required: [id, username]
@@ -1635,16 +1664,14 @@ components:
     ManagedImportBatchCreate:
       type: object
       properties:
-        recordingIdentification:
-          type: boolean
-          default: false
-          description: >-
-            Run Recording Identification (ADR 0017) for every file in the
-            batch. Omitting the body keeps it off.
     ManagedImportBatch:
       type: object
       required: [id, status, revision, files]
       properties:
+        albums:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportAlbumPreview"
         id:
           type: string
           format: uuid
@@ -1654,13 +1681,6 @@ components:
         revision:
           type: integer
           minimum: 1
-        recordingIdentification:
-          type: boolean
-          description: >-
-            Whether Recording Identification (ADR 0017) runs for the files in
-            this Import Batch. Chosen when the batch is created; false means no
-            fingerprint is computed and no AcoustID or MusicBrainz request is
-            made for any of its files.
         files:
           type: array
           items:
@@ -1671,7 +1691,7 @@ components:
       properties:
         phase:
           type: string
-          enum: [queued, uploading, validating, waiting_identification, identifying, ready, failed, committing, completed]
+          enum: [queued, uploading, validating, ready, failed, committing, completed]
           description: Current server processing phase, separate from byte transfer progress.
         transferredBytes:
           type: integer
@@ -1815,18 +1835,75 @@ components:
           format: uuid
         replacedTrackId:
           type: string
-        metadataSource:
+    ManagedImportAlbumPreview:
+      type: object
+      required: [key, title, albumArtists, existingAlbums, artworks]
+      properties:
+        key:
           type: string
-          enum: [file_tags, musicbrainz]
-        acoustIdScore:
-          type: number
-        recordingId:
+        title:
           type: string
-          format: uuid
+        albumArtists:
+          type: array
+          items:
+            type: string
+        existingAlbums:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportAlbumMatch"
+        artworks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportArtworkOption"
+    ManagedImportAlbumMatch:
+      type: object
+      required: [id, hasArtwork, tracks]
+      properties:
+        id:
+          type: string
+        year:
+          type: integer
+        hasArtwork:
+          type: boolean
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
+    ManagedImportArtworkOption:
+      type: object
+      required: [id, mediaType, contentSha256]
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        mediaType:
+          type: string
+        contentSha256:
+          type: string
+    ManagedImportAlbumDecision:
+      type: object
+      required: [albumKey, createSeparate, artworkMode]
+      properties:
+        albumKey:
+          type: string
+        albumId:
+          type: string
+        createSeparate:
+          type: boolean
+        artworkId:
+          type: string
+        artworkMode:
+          type: string
+          enum: [auto, none, selected]
     ManagedImportBatchConfirmation:
       type: object
       required: [revision, selectedFileIds]
       properties:
+        albumDecisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportAlbumDecision"
         revision:
           type: integer
           minimum: 1
@@ -1845,6 +1922,12 @@ components:
       type: object
       required: [jobId, action]
       properties:
+        targetRevision:
+          type: integer
+          minimum: 1
+        trackId:
+          type: string
+          format: uuid
         jobId:
           type: string
           format: uuid
@@ -1855,6 +1938,10 @@ components:
       type: object
       required: [jobId, status, revision, file, duplicateClassification]
       properties:
+        matchingTracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
         jobId:
           type: string
           format: uuid
@@ -1868,64 +1955,25 @@ components:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
         duplicateClassification:
           type: string
-          enum: [none, exact_duplicate, possible_duplicate, recording_duplicate]
-          description: >-
-            recording_duplicate means Recording Identification (ADR 0017)
-            resolved the upload to the same MusicBrainz Recording as an
-            existing Track while the bytes differ. It takes the same explicit
-            decision as possible_duplicate.
+          enum: [none, exact_duplicate]
+          description: Only identical full-file SHA-256 values are duplicates.
         duplicateCandidates:
           type: array
           items:
             $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
         replacement:
           $ref: "#/components/schemas/TrackReplacementPreview"
-        identification:
-          $ref: "#/components/schemas/RecordingIdentificationPreview"
-    RecordingIdentificationPreview:
-      type: object
-      required: [source, outcome]
-      description: >-
-        Which system produced this file's metadata and why (ADR 0017), so
-        Recording Identification can be inspected per file.
-      properties:
-        source:
-          type: string
-          enum: [file_tags, musicbrainz]
-        outcome:
-          type: string
-          description: >-
-            matched, no_match, below_threshold, unavailable, switched_off (the
-            Import Batch switch was off) or inactive (the Music Server cannot
-            identify recordings).
-        method:
-          type: string
-          enum: [tag_recording_id, tag_isrc, fingerprint]
-          description: >-
-            Evidence that resolved (or was last tried for) the Recording: a
-            MusicBrainz recording MBID already in the file's tags, an ISRC in
-            the tags, or the Chromaprint fingerprint via AcoustID.
-        reason:
-          type: string
-          description: Why the file's tags stayed untouched; absent when matched.
-        acoustIdScore:
-          type: number
-          minimum: 0
-          maximum: 1
-        recordingId:
-          type: string
-          description: MusicBrainz Recording MBID of a confident match.
-        isrc:
-          type: string
-        changedFields:
-          type: array
-          items:
-            type: string
-          description: Metadata fields MusicBrainz replaced or completed.
     ManagedImportDuplicateCandidate:
       type: object
       required: [trackId, title, artists, album, discNo, trackNo, format, durationMs]
       properties:
+        revision:
+          type: integer
+          minimum: 1
+        titleKey:
+          type: string
+        currentFile:
+          $ref: "#/components/schemas/ManagedImportPreviewFile"
         trackId:
           type: string
           format: uuid
@@ -1983,6 +2031,19 @@ components:
         - bitrateKbps
         - artworkMediaType
       properties:
+        hasDiscNumber:
+          type: boolean
+        titleKey:
+          type: string
+        albumKey:
+          type: string
+        contentSha256:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        artworkWarning:
+          type: string
         originalFilename:
           type: string
         title:
@@ -2001,7 +2062,6 @@ components:
           type: string
         genres:
           type: array
-          minItems: 1
           items:
             type: string
         trackNo:
@@ -2032,7 +2092,7 @@ components:
           minimum: 1
         artworkMediaType:
           type: string
-          enum: [image/jpeg, image/png, image/webp]
+          enum: ["", image/jpeg, image/png, image/webp]
     ManagedImportFlacPreviewFile:
       allOf:
         - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
@@ -2385,24 +2445,6 @@ components:
         updatedAt:
           type: string
           format: date-time
-        metadataSource:
-          type: string
-          enum: [file_tags, musicbrainz]
-          description: Which source produced the Track's metadata (ADR 0017).
-        musicbrainzRecordingId:
-          type: string
-          description: MusicBrainz Recording MBID when Recording Identification matched.
-        isrc:
-          type: string
-        acoustIdScore:
-          type: number
-          minimum: 0
-          maximum: 1
-        musicbrainzChangedFields:
-          type: array
-          items:
-            type: string
-          description: Metadata fields MusicBrainz replaced or completed at import.
     ReplayGainMetadata:
       type: object
       required: [trackGainDb, trackPeak, albumGainDb, albumPeak]
@@ -2829,7 +2871,6 @@ components:
         - oldFile
         - playlistReferences
         - queueReferences
-        - possibleDuplicates
         - confirmationToken
       properties:
         trackId:
@@ -2865,11 +2906,6 @@ components:
           description: Queue references that stay attached to the unchanged Track ID.
           items:
             $ref: "#/components/schemas/TrackDeletionQueueReference"
-        possibleDuplicates:
-          type: array
-          description: Other Tracks whose metadata resembles the replacement; informational only.
-          items:
-            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
         confirmationToken:
           type: string
           description: Opaque token binding confirmation to the reviewed Track, managed file, references, and replacement bytes

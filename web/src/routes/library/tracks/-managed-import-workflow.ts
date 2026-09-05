@@ -1,5 +1,6 @@
 import {
 	ApiError,
+	type ManagedImportAlbumDecision,
 	type ManagedImportBatch,
 	type ManagedImportBatchFile,
 	type ManagedImportDuplicateDecision,
@@ -14,6 +15,11 @@ import {
 	selectDesktopImportFolder,
 } from "#/desktop/bridge";
 import { apiClient } from "#/lib/api";
+import {
+	importPositionKey,
+	importReviewProblems,
+	reviewImportEntries,
+} from "./-import-review";
 
 import { formatImportIssue, formatImportIssues } from "./-import-validation";
 
@@ -62,17 +68,10 @@ export type ImportFileEntry = {
 
 export type DuplicateDecision = ManagedImportDuplicateDecision["action"];
 
-/**
- * Possible and Recording Duplicates share one decision set (ADR 0017): both
- * block confirmation until the user chooses what to do.
- */
 export function requiresDuplicateDecision(
-	classification: ManagedImportPreview["duplicateClassification"] | undefined,
+	preview: ManagedImportPreview | undefined,
 ): boolean {
-	return (
-		classification === "possible_duplicate" ||
-		classification === "recording_duplicate"
-	);
+	return Boolean(preview?.matchingTracks?.length);
 }
 
 export type ImportEntrySummary = {
@@ -80,7 +79,7 @@ export type ImportEntrySummary = {
 	processed: number;
 	unresolved: number;
 	accepted: number;
-	/** Possible Duplicates still waiting for a decision. */
+	/** Track Replacement candidates still waiting for a decision. */
 	needsReview: number;
 	rejected: number;
 	completed: number;
@@ -113,7 +112,7 @@ export function summarizeImportEntries(
 		if (entry.state === "rejected") summary.rejected += 1;
 		else if (entry.state === "completed") summary.completed += 1;
 		else if (
-			requiresDuplicateDecision(entry.preview?.duplicateClassification) &&
+			requiresDuplicateDecision(entry.preview) &&
 			!entry.duplicateDecision
 		)
 			summary.needsReview += 1;
@@ -133,7 +132,17 @@ export function useManagedImportWorkflow({
 }) {
 	const state = useImportWorkflowState();
 	useImportSessionActivity(state, onCommitted);
-	const isBusy = state.importState !== "idle";
+	const isBusy = state.importState !== "idle" || state.artworkUploads > 0;
+	const reviewEntries = reviewImportEntries(
+		state.entries,
+		state.batch,
+		state.albumDecisions,
+	);
+	const reviewProblems = importReviewProblems(
+		reviewEntries,
+		state.batch?.albums ?? [],
+		state.albumDecisions,
+	);
 	const isCompleted = state.batch?.status === "completed";
 	const isConfirming =
 		state.importState === "confirming" || state.batch?.status === "confirming";
@@ -149,14 +158,26 @@ export function useManagedImportWorkflow({
 			state.entries.some(
 				(entry) => entry.state === "accepted" && entry.selected,
 			) &&
-			!hasUndecidedPossibleDuplicate(state.entries),
+			reviewProblems.length === 0,
 	);
 
 	const { updateEntry } = state;
 	const handleSelectionChange = useCallback(
-		(key: string, selected: boolean) =>
-			updateEntry(key, { selected, hasSelectionOverride: true }),
-		[updateEntry],
+		(key: string, selected: boolean) => {
+			state.setEntries((current) => {
+				const chosen = current.find((entry) => entry.key === key);
+				return current.map((entry) =>
+					entry.key === key
+						? { ...entry, selected, hasSelectionOverride: true }
+						: selected &&
+								chosen &&
+								importPositionKey(entry) === importPositionKey(chosen)
+							? { ...entry, selected: false, hasSelectionOverride: true }
+							: entry,
+				);
+			});
+		},
+		[state.setEntries],
 	);
 	const handleDuplicateDecisionChange = useCallback(
 		(key: string, duplicateDecision: DuplicateDecision) =>
@@ -169,7 +190,28 @@ export function useManagedImportWorkflow({
 	);
 	return {
 		importState: state.importState,
-		entries: state.entries,
+		entries: reviewEntries,
+		batchId: state.batch?.id,
+		albums: state.batch?.albums ?? [],
+		albumDecisions: state.albumDecisions,
+		reviewProblems,
+		handleAlbumDecision: (decision: ManagedImportAlbumDecision) => {
+			state.setAlbumDecisions((current) => ({
+				...current,
+				[decision.albumKey]: decision,
+			}));
+			state.setEntries((current) =>
+				current.map((entry) => ({ ...entry, duplicateDecision: undefined })),
+			);
+		},
+		handleArtworkUploadState: (isUploading: boolean) =>
+			state.setArtworkUploads((current) =>
+				Math.max(0, current + (isUploading ? 1 : -1)),
+			),
+		handleArtworkUploaded: async () => {
+			if (state.batch)
+				state.setBatch(await apiClient.getManagedImportBatch(state.batch.id));
+		},
 		errorMessage: state.errorMessage,
 		isBusy,
 		isCloseLocked,
@@ -180,12 +222,6 @@ export function useManagedImportWorkflow({
 		canConfirm,
 		handleFiles: createFileHandler(state),
 		handleDesktopSelection: createDesktopSelectionHandler(state),
-		handleRecordingIdentificationChange: useCallback(
-			(isOn: boolean) => {
-				state.recordingIdentification.current = isOn;
-			},
-			[state.recordingIdentification],
-		),
 		handleConfirm: createConfirmHandler(state, canConfirm, onCommitted),
 		handleRetry: createRetryHandler(state),
 		canRetry:
@@ -200,10 +236,12 @@ export function useManagedImportWorkflow({
 function useImportWorkflowState() {
 	const [importState, setImportState] = useState<ImportState>("idle");
 	const [batch, setBatch] = useState<ManagedImportBatch>();
+	const [artworkUploads, setArtworkUploads] = useState(0);
+	const [albumDecisions, setAlbumDecisions] = useState<
+		Record<string, ManagedImportAlbumDecision>
+	>({});
 	const [entries, setEntries] = useState<ImportFileEntry[]>([]);
 	const [errorMessage, setErrorMessage] = useState("");
-	// Effective value of the Import Music switch; read when the batch is created.
-	const recordingIdentification = useRef(false);
 	const activeUploadController = useRef<AbortController | undefined>(undefined);
 	const isDesktopSelectionPending = useRef(false);
 	// Stable identity lets memoized rows skip re-rendering when a sibling's
@@ -220,6 +258,7 @@ function useImportWorkflowState() {
 	);
 	function reset() {
 		setBatch(undefined);
+		setAlbumDecisions({});
 		setEntries([]);
 		setErrorMessage("");
 	}
@@ -228,13 +267,16 @@ function useImportWorkflowState() {
 		setImportState,
 		batch,
 		setBatch,
+		albumDecisions,
+		setAlbumDecisions,
+		artworkUploads,
+		setArtworkUploads,
 		entries,
 		setEntries,
 		errorMessage,
 		setErrorMessage,
 		activeUploadController,
 		isDesktopSelectionPending,
-		recordingIdentification,
 		updateEntry,
 		reset,
 	};
@@ -254,9 +296,7 @@ function createFileHandler(state: WorkflowState) {
 		const uploadController = new AbortController();
 		state.activeUploadController.current = uploadController;
 		try {
-			const createdBatch = await apiClient.createManagedImportBatch({
-				recordingIdentification: state.recordingIdentification.current,
-			});
+			const createdBatch = await apiClient.createManagedImportBatch();
 			if (uploadController.signal.aborted) {
 				await apiClient.cancelManagedImportBatch(createdBatch.id);
 				return;
@@ -350,18 +390,77 @@ function createConfirmHandler(
 				currentBatch.files,
 			);
 
+			const changedReplacement = state.entries.some((entry) => {
+				if (entry.duplicateDecision !== "replace_existing") return false;
+				const previous = entry.preview?.matchingTracks?.[0];
+				const file = currentBatch.files.find(
+					(file) => file.jobId === entry.jobId,
+				);
+				const album = currentBatch.albums?.find(
+					(album) => album.key === entry.preview?.file.albumKey,
+				);
+				const current =
+					album?.existingAlbums
+						.flatMap((album) => album.tracks)
+						.find((track) => track.trackId === previous?.trackId) ??
+					file?.preview?.matchingTracks?.[0];
+				return (
+					current &&
+					previous &&
+					(current.trackId !== previous.trackId ||
+						current.revision !== previous.revision)
+				);
+			});
 			state.setBatch(currentBatch);
 			reconciledEntries = mergeBatchFiles(
 				reconciledEntries,
 				currentBatch.files,
 			);
+			reconciledEntries = reviewImportEntries(
+				reconciledEntries,
+				currentBatch,
+				state.albumDecisions,
+			);
 			state.setEntries(reconciledEntries);
 
-			if (hasUndecidedPossibleDuplicate(reconciledEntries)) {
-				state.setErrorMessage("Review the newly detected Possible Duplicate.");
+			if (changedReplacement) {
+				state.setEntries(
+					reconciledEntries.map((entry) => ({
+						...entry,
+						duplicateDecision: undefined,
+					})),
+				);
+				state.setErrorMessage(
+					"The existing Track changed. Review its changes and confirm replacement again.",
+				);
 				return;
 			}
-			const report = await confirmImportBatch(currentBatch, reconciledEntries);
+			const problems = importReviewProblems(
+				reconciledEntries,
+				currentBatch.albums ?? [],
+				state.albumDecisions,
+			);
+			if (
+				state.entries.some(
+					(entry) =>
+						entry.selected &&
+						!reconciledEntries.find((current) => current.key === entry.key)
+							?.selected,
+				)
+			) {
+				problems.push(
+					"Import preview changed. Review the selected files before confirming again.",
+				);
+			}
+			if (problems.length) {
+				state.setErrorMessage(problems.join(" "));
+				return;
+			}
+			const report = await confirmImportBatch(
+				currentBatch,
+				reconciledEntries,
+				Object.values(state.albumDecisions),
+			);
 			state.setBatch(report);
 			state.setEntries((current) => mergeBatchFiles(current, report.files));
 			await releaseNativeSelections(reconciledEntries);
@@ -394,14 +493,6 @@ async function prepareConfirmationBatch(
 	return hasCanceledJobs ? apiClient.getManagedImportBatch(batchId) : batch;
 }
 
-function hasUndecidedPossibleDuplicate(entries: ImportFileEntry[]): boolean {
-	return entries.some(
-		(entry) =>
-			requiresDuplicateDecision(entry.preview?.duplicateClassification) &&
-			!entry.duplicateDecision,
-	);
-}
-
 async function handleConfirmationFailure(
 	state: WorkflowState,
 	error: unknown,
@@ -421,7 +512,7 @@ async function handleConfirmationFailure(
 		state.setErrorMessage(
 			error instanceof ApiError &&
 				error.body.code === "import_revision_conflict"
-				? "Review the newly detected Possible Duplicate."
+				? "Import preview changed. Review the Album and Track choices."
 				: importErrorMessage(error),
 		);
 	} catch (refreshError) {
@@ -602,32 +693,32 @@ async function uploadDesktopFile(
 function confirmImportBatch(
 	batch: ManagedImportBatch,
 	entries: ImportFileEntry[],
+	albumDecisions: ManagedImportAlbumDecision[],
 ) {
-	const selectedFileIds = entries.flatMap((entry) =>
-		entry.selected && entry.jobId ? [entry.jobId] : [],
+	const selected = entries.filter(
+		(entry): entry is ImportFileEntry & { jobId: string } =>
+			entry.state === "accepted" && entry.selected && Boolean(entry.jobId),
 	);
-	const duplicateDecisions = entries.flatMap((entry) =>
-		entry.jobId && entry.duplicateDecision
+	const decisions = selected.flatMap((entry) =>
+		entry.duplicateDecision === "replace_existing" &&
+		entry.preview?.matchingTracks?.length
 			? [
 					{
 						jobId: entry.jobId,
 						action: entry.duplicateDecision,
+						trackId: entry.preview.matchingTracks[0]?.trackId,
+						targetRevision: entry.preview.matchingTracks[0]?.revision,
 					} satisfies ManagedImportDuplicateDecision,
 				]
 			: [],
 	);
-	return duplicateDecisions.length > 0
-		? apiClient.confirmManagedImportBatch(
-				batch.id,
-				batch.revision,
-				selectedFileIds,
-				duplicateDecisions,
-			)
-		: apiClient.confirmManagedImportBatch(
-				batch.id,
-				batch.revision,
-				selectedFileIds,
-			);
+	return apiClient.confirmManagedImportBatch(
+		batch.id,
+		batch.revision,
+		selected.map((entry) => entry.jobId),
+		decisions.length ? decisions : undefined,
+		albumDecisions.length ? albumDecisions : undefined,
+	);
 }
 
 function hasLibraryMutation(batch: ManagedImportBatch): boolean {
@@ -1039,9 +1130,7 @@ function applyLiveProgress(state: WorkflowState, batch: ManagedImportBatch) {
 			);
 			if (
 				!file?.phase ||
-				!["validating", "waiting_identification", "identifying"].includes(
-					file.phase,
-				) ||
+				!["validating"].includes(file.phase) ||
 				entry.phase === "failed"
 			)
 				return entry;

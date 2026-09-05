@@ -7,8 +7,6 @@ const PHASE_LABELS = {
 	queued: "Queued",
 	uploading: "Uploading…",
 	validating: "Validating…",
-	waiting_identification: "Waiting for identification…",
-	identifying: "Identifying…",
 	ready: "Ready",
 	failed: "Failed",
 	committing: "Importing…",

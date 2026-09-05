@@ -286,6 +286,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import-batches/{batchId}/albums/{albumKey}/artwork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                albumKey: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Stage a JPEG or PNG cover for an import Album */
+        put: operations["uploadManagedImportArtwork"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import-batches/{batchId}/artwork/{artworkId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                artworkId: string;
+            };
+            cookie?: never;
+        };
+        /** Preview staged Album artwork */
+        get: operations["getManagedImportArtwork"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches/{batchId}/confirm": {
         parameters: {
             query?: never;
@@ -735,11 +775,10 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1, and Recording Identification through AcoustID and MusicBrainz (ADR 0017: the Import Batch switch, per-file identification in the Import Preview and Recording Duplicates) as recording-identification.v1. A capability describes the release, never the deployment: whether identification is usable on this installation is reported separately by dependencies and recordingIdentification. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
+            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
             capabilities: string[];
-            /** @description Server Dependencies probed once at startup, in a stable order (ffmpeg, ffprobe, fpcalc). They describe the deployment environment so an operator can see what the installation supports. */
+            /** @description Server Dependencies probed once at startup, in a stable order (ffmpeg, ffprobe). They describe the deployment environment so an operator can see what the installation supports. */
             dependencies: components["schemas"]["ServerDependency"][];
-            recordingIdentification: components["schemas"]["RecordingIdentificationStatus"];
         };
         ServerDependency: {
             /** @description Program name as invoked by the Music Server. */
@@ -750,18 +789,6 @@ export interface components {
             available: boolean;
             /** @description Version parsed from the program's own version output. Absent when the program is missing or its output could not be parsed. */
             version?: string;
-        };
-        RecordingIdentificationStatus: {
-            /**
-             * @description Why Recording Identification is or is not active on this installation. enabled means Recording Identification may run; every other value names the reason it cannot, in precedence order: RECORDING_IDENTIFICATION_ENABLED=false, then a missing fpcalc program, then a missing AcoustID key.
-             * @enum {string}
-             */
-            status: "enabled" | "disabled_by_config" | "missing_fpcalc" | "missing_api_key";
-            /**
-             * @description Where the AcoustID application key came from: the key embedded in this release, the ACOUSTID_API_KEY environment variable, or neither.
-             * @enum {string}
-             */
-            acoustIdKeySource: "embedded" | "operator" | "missing";
         };
         User: {
             /** Format: uuid */
@@ -846,21 +873,14 @@ export interface components {
              */
             clientFileId: string;
         };
-        ManagedImportBatchCreate: {
-            /**
-             * @description Run Recording Identification (ADR 0017) for every file in the batch. Omitting the body keeps it off.
-             * @default false
-             */
-            recordingIdentification: boolean;
-        };
+        ManagedImportBatchCreate: Record<string, never>;
         ManagedImportBatch: {
+            albums?: components["schemas"]["ManagedImportAlbumPreview"][];
             /** Format: uuid */
             id: string;
             /** @enum {string} */
             status: "uploading" | "confirming" | "completed";
             revision: number;
-            /** @description Whether Recording Identification (ADR 0017) runs for the files in this Import Batch. Chosen when the batch is created; false means no fingerprint is computed and no AcoustID or MusicBrainz request is made for any of its files. */
-            recordingIdentification?: boolean;
             files: components["schemas"]["ManagedImportBatchFile"][];
         };
         ManagedImportBatchFile: {
@@ -868,7 +888,7 @@ export interface components {
              * @description Current server processing phase, separate from byte transfer progress.
              * @enum {string}
              */
-            phase?: "queued" | "uploading" | "validating" | "waiting_identification" | "identifying" | "ready" | "failed" | "committing" | "completed";
+            phase?: "queued" | "uploading" | "validating" | "ready" | "failed" | "committing" | "completed";
             /** Format: int64 */
             transferredBytes?: number;
             /** Format: int64 */
@@ -937,24 +957,51 @@ export interface components {
             /** Format: uuid */
             createdTrackId?: string;
             replacedTrackId?: string;
+        };
+        ManagedImportAlbumPreview: {
+            key: string;
+            title: string;
+            albumArtists: string[];
+            existingAlbums: components["schemas"]["ManagedImportAlbumMatch"][];
+            artworks: components["schemas"]["ManagedImportArtworkOption"][];
+        };
+        ManagedImportAlbumMatch: {
+            id: string;
+            year?: number;
+            hasArtwork: boolean;
+            tracks: components["schemas"]["ManagedImportDuplicateCandidate"][];
+        };
+        ManagedImportArtworkOption: {
+            id: string;
+            jobId?: string;
+            mediaType: string;
+            contentSha256: string;
+        };
+        ManagedImportAlbumDecision: {
+            albumKey: string;
+            albumId?: string;
+            createSeparate: boolean;
+            artworkId?: string;
             /** @enum {string} */
-            metadataSource?: "file_tags" | "musicbrainz";
-            acoustIdScore?: number;
-            /** Format: uuid */
-            recordingId?: string;
+            artworkMode: "auto" | "none" | "selected";
         };
         ManagedImportBatchConfirmation: {
+            albumDecisions?: components["schemas"]["ManagedImportAlbumDecision"][];
             revision: number;
             selectedFileIds: string[];
             duplicateDecisions?: components["schemas"]["ManagedImportDuplicateDecision"][];
         };
         ManagedImportDuplicateDecision: {
+            targetRevision?: number;
+            /** Format: uuid */
+            trackId?: string;
             /** Format: uuid */
             jobId: string;
             /** @enum {string} */
             action: "import_separately" | "replace_existing" | "do_not_import";
         };
         ManagedImportPreview: {
+            matchingTracks?: components["schemas"]["ManagedImportDuplicateCandidate"][];
             /** Format: uuid */
             jobId: string;
             /** @enum {string} */
@@ -962,35 +1009,17 @@ export interface components {
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
             /**
-             * @description recording_duplicate means Recording Identification (ADR 0017) resolved the upload to the same MusicBrainz Recording as an existing Track while the bytes differ. It takes the same explicit decision as possible_duplicate.
+             * @description Only identical full-file SHA-256 values are duplicates.
              * @enum {string}
              */
-            duplicateClassification: "none" | "exact_duplicate" | "possible_duplicate" | "recording_duplicate";
+            duplicateClassification: "none" | "exact_duplicate";
             duplicateCandidates?: components["schemas"]["ManagedImportDuplicateCandidate"][];
             replacement?: components["schemas"]["TrackReplacementPreview"];
-            identification?: components["schemas"]["RecordingIdentificationPreview"];
-        };
-        /** @description Which system produced this file's metadata and why (ADR 0017), so Recording Identification can be inspected per file. */
-        RecordingIdentificationPreview: {
-            /** @enum {string} */
-            source: "file_tags" | "musicbrainz";
-            /** @description matched, no_match, below_threshold, unavailable, switched_off (the Import Batch switch was off) or inactive (the Music Server cannot identify recordings). */
-            outcome: string;
-            /**
-             * @description Evidence that resolved (or was last tried for) the Recording: a MusicBrainz recording MBID already in the file's tags, an ISRC in the tags, or the Chromaprint fingerprint via AcoustID.
-             * @enum {string}
-             */
-            method?: "tag_recording_id" | "tag_isrc" | "fingerprint";
-            /** @description Why the file's tags stayed untouched; absent when matched. */
-            reason?: string;
-            acoustIdScore?: number;
-            /** @description MusicBrainz Recording MBID of a confident match. */
-            recordingId?: string;
-            isrc?: string;
-            /** @description Metadata fields MusicBrainz replaced or completed. */
-            changedFields?: string[];
         };
         ManagedImportDuplicateCandidate: {
+            revision?: number;
+            titleKey?: string;
+            currentFile?: components["schemas"]["ManagedImportPreviewFile"];
             /** Format: uuid */
             trackId: string;
             title: string;
@@ -1003,6 +1032,13 @@ export interface components {
         };
         ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportWavPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
         ManagedImportPreviewFileCommon: {
+            hasDiscNumber?: boolean;
+            titleKey?: string;
+            albumKey?: string;
+            contentSha256?: string;
+            /** Format: int64 */
+            sizeBytes?: number;
+            artworkWarning?: string;
             originalFilename: string;
             title: string;
             artists: string[];
@@ -1019,7 +1055,7 @@ export interface components {
             channelCount: number;
             bitrateKbps: number;
             /** @enum {string} */
-            artworkMediaType: "image/jpeg" | "image/png" | "image/webp";
+            artworkMediaType: "" | "image/jpeg" | "image/png" | "image/webp";
         };
         ManagedImportFlacPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
             /** @enum {string} */
@@ -1243,17 +1279,6 @@ export interface components {
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
-            /**
-             * @description Which source produced the Track's metadata (ADR 0017).
-             * @enum {string}
-             */
-            metadataSource?: "file_tags" | "musicbrainz";
-            /** @description MusicBrainz Recording MBID when Recording Identification matched. */
-            musicbrainzRecordingId?: string;
-            isrc?: string;
-            acoustIdScore?: number;
-            /** @description Metadata fields MusicBrainz replaced or completed at import. */
-            musicbrainzChangedFields?: string[];
         };
         ReplayGainMetadata: {
             /** Format: double */
@@ -1471,8 +1496,6 @@ export interface components {
             playlistReferences: components["schemas"]["TrackDeletionPlaylistReference"][];
             /** @description Queue references that stay attached to the unchanged Track ID. */
             queueReferences: components["schemas"]["TrackDeletionQueueReference"][];
-            /** @description Other Tracks whose metadata resembles the replacement; informational only. */
-            possibleDuplicates: components["schemas"]["ManagedImportDuplicateCandidate"][];
             /** @description Opaque token binding confirmation to the reviewed Track, managed file, references, and replacement bytes */
             confirmationToken: string;
         };
@@ -2121,6 +2144,60 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    uploadManagedImportArtwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                albumKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Validated artwork option */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportArtworkOption"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getManagedImportArtwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                artworkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validated image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                    "image/jpeg": string;
+                    "image/webp": string;
+                };
             };
             404: components["responses"]["NotFound"];
         };

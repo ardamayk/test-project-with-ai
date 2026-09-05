@@ -113,7 +113,5 @@ Provider rate limits are shared service limits; two-file concurrency does not
 raise those limits. Large-library responsiveness and production CPU/memory
 measurements remain follow-up performance validation.
 
-Server lint still reports three pre-existing findings present at the review
-baseline: shadowed `err` in duplicate classification, an unused assignment in
-recording-identification integration tests, and the convertible batch-options
-struct literal in the create-batch handler.
+
+ADR 0019 removes the Recording Identification integration and adds tag-based Album planning, optional artwork, and explicit Track Replacement review. Its focused HTTP regression tests live in `tag-import_integration_test.go`.

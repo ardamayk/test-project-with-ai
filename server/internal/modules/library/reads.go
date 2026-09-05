@@ -3,7 +3,6 @@ package library
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -29,8 +28,7 @@ const trackReadSelect = `SELECT
 	COALESCE(t.channel_count, 0), COALESCE(t.bitrate_bps, 0), t.codec, t.container,
 	t.sample_format, COALESCE(ts.file_path, t.file_path), t.replaygain_track_gain_db,
 	t.replaygain_track_peak, t.replaygain_album_gain_db, t.replaygain_album_peak,
-	t.title_sort, t.file_mtime, ts.content_sha256, t.identity_key, t.revision, t.created_at, t.updated_at,
-	t.metadata_source, t.musicbrainz_recording_id, t.isrc, t.acoustid_score, t.musicbrainz_changed_fields
+	t.title_sort, t.file_mtime, ts.content_sha256, t.identity_key, t.revision, t.created_at, t.updated_at
 FROM visible_tracks t
 INNER JOIN albums al ON al.id = t.album_id
 LEFT JOIN track_sources ts ON ts.track_id = t.id
@@ -43,8 +41,7 @@ type rowScanner interface {
 func scanExpandedTrack(scanner rowScanner) (Track, error) {
 	var track Track
 	var trackNo, trackTotal, discTotal sql.NullInt64
-	var codec, container, sampleFormat, contentSHA256, identityKey, recordingID, isrc, changedFields sql.NullString
-	var acoustIDScore sql.NullFloat64
+	var codec, container, sampleFormat, contentSHA256, identityKey sql.NullString
 	err := scanner.Scan(
 		&track.ID, &track.Title, &track.ArtistName, &track.AlbumID, &track.AlbumTitle,
 		&trackNo, &track.DiscNo, &trackTotal, &discTotal, &track.DurationMs, &track.Format,
@@ -53,24 +50,12 @@ func scanExpandedTrack(scanner rowScanner) (Track, error) {
 		&track.ReplayGain.TrackGainDB, &track.ReplayGain.TrackPeak,
 		&track.ReplayGain.AlbumGainDB, &track.ReplayGain.AlbumPeak,
 		&track.TitleSort, &track.FileMtime, &contentSHA256, &identityKey, &track.Revision, &track.CreatedAt, &track.UpdatedAt,
-		&track.MetadataSource, &recordingID, &isrc, &acoustIDScore, &changedFields,
 	)
 	if err != nil {
 		return Track{}, err
 	}
 	track.ContentSHA256 = contentSHA256.String
 	track.IdentityKey = identityKey.String
-	track.MusicBrainzRecordingID = recordingID.String
-	track.ISRC = isrc.String
-	if acoustIDScore.Valid {
-		track.AcoustIDScore = &acoustIDScore.Float64
-	}
-	track.MusicBrainzChangedFields = []string{}
-	if changedFields.String != "" {
-		if decodeErr := json.Unmarshal([]byte(changedFields.String), &track.MusicBrainzChangedFields); decodeErr != nil {
-			return Track{}, fmt.Errorf("decode changed metadata fields for Track %q: %w", track.ID, decodeErr)
-		}
-	}
 	track.TrackNo = optionalInt(trackNo)
 	track.TrackTotal = optionalInt(trackTotal)
 	track.DiscTotal = optionalInt(discTotal)

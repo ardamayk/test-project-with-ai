@@ -248,11 +248,13 @@ func TestMediaInspectorRejectsWAVWithoutFrontCoverArtwork(t *testing.T) {
 	}
 	fixture.id3Frames = frames
 	_, err := library.NewMediaInspector().Inspect(context.Background(), writeWAVFixture(t, fixture), nil)
-	assertInspectionError(t, err, library.INSPECTION_ERROR_MISSING_ARTWORK, "artwork")
+	if err != nil {
+		t.Fatalf("optional WAV artwork: %v", err)
+	}
 }
 
 func TestMediaInspectorRejectsWAVWithMissingIdentityTag(t *testing.T) {
-	for _, dropped := range []string{"TIT2", "TPE1", "TPE2", "TALB", "TRCK", "TCON"} {
+	for _, dropped := range []string{"TIT2", "TPE1", "TPE2", "TALB", "TRCK"} {
 		t.Run(dropped, func(t *testing.T) {
 			fixture := strictWAVFixture()
 			frames := make([]id3Frame, 0, len(fixture.id3Frames))

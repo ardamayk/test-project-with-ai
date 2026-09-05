@@ -12,8 +12,8 @@ import (
 func TestManagedImportRetainsAllValidationIssues(t *testing.T) {
 	router, _, _ := newMP3ManagedImportRouter(t)
 	jobID := createManagedImportJob(t, router)
-	fixture := bytes.ReplaceAll(testutil.StrictMP3Fixture(), []byte("TCON"), []byte("XXXX"))
-	fixture = bytes.ReplaceAll(fixture, []byte("APIC"), []byte("YYYY"))
+	fixture := bytes.ReplaceAll(testutil.StrictMP3Fixture(), []byte("TIT2"), []byte("XXXX"))
+	fixture = bytes.ReplaceAll(fixture, []byte("TPE1"), []byte("YYYY"))
 	response := testutil.ServeRequest(t, router, http.MethodPut, "/api/v1/imports/"+jobID+"/file", bytes.NewReader(fixture), map[string]string{"Content-Type": "application/octet-stream", "X-Import-Filename": "multiple.mp3"})
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("upload status = %d: %s", response.Code, response.Body.String())
@@ -30,7 +30,7 @@ func TestManagedImportRetainsAllValidationIssues(t *testing.T) {
 	for _, issue := range failure.Issues {
 		fields = append(fields, issue.Field)
 	}
-	if !reflect.DeepEqual(fields, []string{"GENRE", "artwork"}) {
+	if !reflect.DeepEqual(fields, []string{"TITLE", "ARTIST"}) {
 		t.Fatalf("response issues = %+v", failure.Issues)
 	}
 	historyResponse := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/import-history", nil, nil)
@@ -58,8 +58,8 @@ func TestManagedImportBatchKeepsIssuesAfterCancellation(t *testing.T) {
 	router, _, _ := newMP3ManagedImportRouter(t)
 	batch := createHistoryTestBatch(t, router)
 	job := createHistoryTestJob(t, router, batch.ID, "00000000-0000-4000-8000-000000000123")
-	fixture := bytes.ReplaceAll(testutil.StrictMP3Fixture(), []byte("TCON"), []byte("XXXX"))
-	fixture = bytes.ReplaceAll(fixture, []byte("APIC"), []byte("YYYY"))
+	fixture := bytes.ReplaceAll(testutil.StrictMP3Fixture(), []byte("TIT2"), []byte("XXXX"))
+	fixture = bytes.ReplaceAll(fixture, []byte("TPE1"), []byte("YYYY"))
 	uploadHistoryTestFile(t, router, job.ID, "multiple.mp3", fixture, http.StatusUnprocessableEntity)
 	response := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/import-batches/"+batch.ID, nil, nil)
 	if response.Code != http.StatusOK {

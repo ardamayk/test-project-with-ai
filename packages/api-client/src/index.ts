@@ -78,6 +78,9 @@ export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track };
 export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] };
 export type ErrorResponse = Schemas['ErrorResponse'];
 export type ManagedImportJob = Schemas['ManagedImportJob'];
+export type ManagedImportAlbumDecision = Schemas['ManagedImportAlbumDecision'];
+export type ManagedImportAlbumPreview = Schemas['ManagedImportAlbumPreview'];
+export type ManagedImportArtworkOption = Schemas['ManagedImportArtworkOption'];
 export type ManagedImportBatch = Schemas['ManagedImportBatch'];
 export type ManagedImportBatchCreate = Schemas['ManagedImportBatchCreate'];
 export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile'];
@@ -454,6 +457,21 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'POST',
         body: options ? JSON.stringify(options) : undefined,
       }),
+    uploadManagedImportArtwork: (
+      batchId: string,
+      albumKey: string,
+      file: File,
+    ) =>
+      request<ManagedImportArtworkOption>(
+        `/api/v1/import-batches/${batchId}/albums/${albumKey}/artwork`,
+        {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        },
+      ),
+    getManagedImportArtworkUrl: (batchId: string, artworkId: string) =>
+      `${getMediaBaseUrl()}/api/v1/import-batches/${batchId}/artwork/${encodeURIComponent(artworkId)}`,
     heartbeatManagedImportBatch: (batchId: string) =>
       request<void>(`/api/v1/import-batches/${batchId}/heartbeat`, {
         method: 'POST',
@@ -470,10 +488,16 @@ export function createApiClient(config: ApiClientConfig) {
       revision: number,
       selectedFileIds: string[],
       duplicateDecisions?: ManagedImportDuplicateDecision[],
+      albumDecisions?: ManagedImportAlbumDecision[],
     ) =>
       request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}/confirm`, {
         method: 'POST',
-        body: JSON.stringify({ revision, selectedFileIds, duplicateDecisions }),
+        body: JSON.stringify({
+          revision,
+          selectedFileIds,
+          duplicateDecisions,
+          albumDecisions,
+        }),
       }),
     createManagedImportJob: (batchId?: string, clientFileId?: string) =>
       request<ManagedImportJob>('/api/v1/imports', {

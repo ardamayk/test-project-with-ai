@@ -319,7 +319,7 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 
 func strictValidationMessage(validationErr *ValidationError, reason string) string {
 	if validationErr.Code == string(library.INSPECTION_ERROR_MISSING_ARTWORK) {
-		return "Embedded front-cover artwork is required; add one with MusicBrainz Picard and retry"
+		return "Choose valid Album artwork or continue without a cover"
 	}
 	if validationErr.Field == "" {
 		return fmt.Sprintf("File failed the Strict Import Profile: %s", reason)

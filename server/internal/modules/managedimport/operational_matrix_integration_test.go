@@ -151,6 +151,18 @@ func TestManagedImportRejectsCorruptStreamsWithoutResidue(t *testing.T) {
 				"Content-Type": "audio/flac", "X-Import-Filename": "corrupt.flac",
 			})
 
+			if testCase.expectedCode == library.INSPECTION_ERROR_INVALID_ARTWORK {
+				if response.Code != http.StatusOK {
+					t.Fatalf("invalid optional artwork: %d %s", response.Code, response.Body.String())
+				}
+				var preview managedimport.Preview
+				testutil.DecodeJSON(t, response, &preview)
+				if preview.File.ArtworkWarning == "" || preview.File.ArtworkMediaType != "" {
+					t.Fatalf("unsafe artwork preview: %+v", preview.File)
+				}
+				assertNoLibraryEntities(t, database)
+				return
+			}
 			if response.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("corrupt upload status = %d, body = %s", response.Code, response.Body.String())
 			}

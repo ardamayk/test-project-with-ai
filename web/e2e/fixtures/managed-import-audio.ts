@@ -20,7 +20,7 @@ export interface StrictTags {
 export interface FixtureOptions {
 	/** Drop the identity frames listed here to produce a rejected file. */
 	omitFrames?: Array<"TIT2" | "TPE1" | "TPE2" | "TALB" | "TRCK" | "TCON">;
-	/** Omit the embedded front cover to trigger the Picard remediation hint. */
+	/** Omit the optional embedded front cover. */
 	omitArtwork?: boolean;
 	/** Cover fill colour; a different colour yields a different artwork hash. */
 	coverColor?: [number, number, number];

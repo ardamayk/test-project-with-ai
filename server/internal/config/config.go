@@ -25,7 +25,6 @@ type Config struct {
 	ManagedImportFileLimitBytes  int64
 	ManagedImportBatchLimitBytes int64
 	RadioBrowserBaseURL          string
-	RecordingIdentification      RecordingIdentificationConfig
 }
 
 type managedStorageSettings struct {
@@ -39,7 +38,6 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	recordingIdentification, err := loadRecordingIdentificationConfig()
 	if err != nil {
 		return Config{}, err
 	}
@@ -59,7 +57,6 @@ func Load() (Config, error) {
 			"RADIO_BROWSER_BASE_URL",
 			"https://de1.api.radio-browser.info",
 		),
-		RecordingIdentification: recordingIdentification,
 	}
 	return cfg, nil
 }

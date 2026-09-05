@@ -1,6 +1,7 @@
 package managedimport
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,13 +62,8 @@ type ImportStatus string
 type DuplicateClassification string
 
 const (
-	DUPLICATE_NONE     DuplicateClassification = "none"
-	DUPLICATE_EXACT    DuplicateClassification = "exact_duplicate"
-	DUPLICATE_POSSIBLE DuplicateClassification = "possible_duplicate"
-	// DUPLICATE_RECORDING: Recording Identification resolved the upload to the
-	// same MusicBrainz Recording as an existing Track (ADR 0017). Same decision
-	// set as a Possible Duplicate, clearer message.
-	DUPLICATE_RECORDING DuplicateClassification = "recording_duplicate"
+	DUPLICATE_NONE  DuplicateClassification = "none"
+	DUPLICATE_EXACT DuplicateClassification = "exact_duplicate"
 )
 
 type commitPhase string
@@ -127,23 +123,19 @@ type JobCreate struct {
 }
 
 type Batch struct {
-	ID       string      `json:"id"`
-	Status   BatchStatus `json:"status"`
-	Revision int         `json:"revision"`
-	// RecordingIdentification is the user's per-batch switch (ADR 0017):
-	// when false no fingerprint is computed and no outbound request is made.
-	RecordingIdentification bool        `json:"recordingIdentification"`
-	Files                   []BatchFile `json:"files"`
+	Albums   []AlbumPreview `json:"albums"`
+	ID       string         `json:"id"`
+	Status   BatchStatus    `json:"status"`
+	Revision int            `json:"revision"`
+	Files    []BatchFile    `json:"files"`
 }
 
 // BatchOptions are the choices made when an Import Batch is created.
 type BatchOptions struct {
-	RecordingIdentification bool
 }
 
 // BatchCreate is the optional request body of POST /api/v1/import-batches.
 type BatchCreate struct {
-	RecordingIdentification bool `json:"recordingIdentification"`
 }
 
 type BatchFile struct {
@@ -168,14 +160,17 @@ type BatchFile struct {
 }
 
 type BatchConfirmation struct {
+	AlbumDecisions     []AlbumDecision     `json:"albumDecisions,omitempty"`
 	Revision           int                 `json:"revision"`
 	SelectedFileIDs    []string            `json:"selectedFileIds"`
 	DuplicateDecisions []DuplicateDecision `json:"duplicateDecisions,omitempty"`
 }
 
 type DuplicateDecision struct {
-	JobID  string          `json:"jobId"`
-	Action DuplicateAction `json:"action"`
+	TargetRevision int             `json:"targetRevision,omitempty"`
+	TrackID        string          `json:"trackId,omitempty"`
+	JobID          string          `json:"jobId"`
+	Action         DuplicateAction `json:"action"`
 }
 
 type DuplicateAction string
@@ -187,6 +182,7 @@ const (
 )
 
 type Preview struct {
+	MatchingTracks          []DuplicateCandidate     `json:"matchingTracks,omitempty"`
 	JobID                   string                   `json:"jobId"`
 	Status                  ImportStatus             `json:"status"`
 	Revision                int                      `json:"revision"`
@@ -194,21 +190,29 @@ type Preview struct {
 	DuplicateClassification DuplicateClassification  `json:"duplicateClassification"`
 	DuplicateCandidates     []DuplicateCandidate     `json:"duplicateCandidates,omitempty"`
 	Replacement             *TrackReplacementPreview `json:"replacement,omitempty"`
-	Identification          *IdentificationPreview   `json:"identification,omitempty"`
 }
 
 type DuplicateCandidate struct {
-	TrackID    string   `json:"trackId"`
-	Title      string   `json:"title"`
-	Artists    []string `json:"artists"`
-	Album      string   `json:"album"`
-	DiscNo     int      `json:"discNo"`
-	TrackNo    int      `json:"trackNo"`
-	Format     string   `json:"format"`
-	DurationMs int      `json:"durationMs"`
+	Revision    int          `json:"revision"`
+	TitleKey    string       `json:"titleKey"`
+	CurrentFile *PreviewFile `json:"currentFile,omitempty"`
+	TrackID     string       `json:"trackId"`
+	Title       string       `json:"title"`
+	Artists     []string     `json:"artists"`
+	Album       string       `json:"album"`
+	DiscNo      int          `json:"discNo"`
+	TrackNo     int          `json:"trackNo"`
+	Format      string       `json:"format"`
+	DurationMs  int          `json:"durationMs"`
 }
 
 type PreviewFile struct {
+	HasDiscNumber    bool     `json:"hasDiscNumber"`
+	TitleKey         string   `json:"titleKey"`
+	AlbumKey         string   `json:"albumKey"`
+	ContentSHA256    string   `json:"contentSha256"`
+	SizeBytes        int64    `json:"sizeBytes"`
+	ArtworkWarning   string   `json:"artworkWarning,omitempty"`
 	OriginalFilename string   `json:"originalFilename"`
 	Title            string   `json:"title"`
 	Artists          []string `json:"artists"`
@@ -277,13 +281,11 @@ type HistoryFile struct {
 	ResultCode      string           `json:"resultCode"`
 	CreatedTrackID  string           `json:"createdTrackId,omitempty"`
 	ReplacedTrackID string           `json:"replacedTrackId,omitempty"`
-	MetadataSource  MetadataSource   `json:"metadataSource,omitempty"`
-	AcoustIDScore   float64          `json:"acoustIdScore,omitempty"`
-	RecordingID     string           `json:"recordingId,omitempty"`
 }
 
 type importJob struct {
-	Issues ValidationIssues `json:"issues,omitempty"`
+	ImportPlanJSON string
+	Issues         ValidationIssues `json:"issues,omitempty"`
 	Job
 	BatchID          string
 	ClientFileID     string
@@ -296,8 +298,6 @@ type importJob struct {
 	Outcome          ImportOutcome
 	Selected         bool
 	ReplaceTrackID   string
-	// IdentificationJSON is the stored identificationRecord.
-	IdentificationJSON string
 }
 
 type commitJournal struct {
@@ -355,8 +355,13 @@ func previewFileFromInspection(originalFilename string, inspection library.Media
 	metadata := inspection.Metadata
 	audio := inspection.Audio
 	return PreviewFile{
+		AlbumKey:         fmt.Sprintf("%x", sha256.Sum256([]byte(albumIdentityKey(metadata)))),
+		ContentSHA256:    inspection.FileSHA256,
+		ArtworkWarning:   inspection.AlbumArtwork.Warning,
 		OriginalFilename: originalFilename,
 		Title:            metadata.Title,
+		TitleKey:         normalizeIdentity(metadata.Title),
+		HasDiscNumber:    metadata.HasDiscNumber,
 		Artists:          metadata.Artists,
 		AlbumArtists:     metadata.AlbumArtists,
 		Album:            metadata.Album,

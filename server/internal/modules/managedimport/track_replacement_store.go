@@ -50,13 +50,12 @@ type replacementTarget struct {
 }
 
 type replacementCommitData struct {
-	Job            importJob
-	Target         replacementTarget
-	Identity       commitIdentity
-	Placement      replacementPlacement
-	Inspection     library.MediaInspection
-	AlbumKey       string
-	Identification identificationRecord
+	Job        importJob
+	Target     replacementTarget
+	Identity   commitIdentity
+	Placement  replacementPlacement
+	Inspection library.MediaInspection
+	AlbumKey   string
 }
 
 func (store *Store) CreateReplacementJob(ctx context.Context, trackID string) (Job, error) {
@@ -476,14 +475,6 @@ func writeReplacementData(ctx context.Context, transaction *sql.Tx, data replace
 func updateReplacedTrack(ctx context.Context, transaction *sql.Tx, data replacementCommitData) error {
 	metadata := data.Inspection.Metadata
 	audio := data.Inspection.Audio
-	identified := data.Identification
-	if identified.Source == "" {
-		identified.Source = METADATA_SOURCE_FILE_TAGS
-	}
-	changedFields, err := encodeChangedFields(identified.ChangedFields)
-	if err != nil {
-		return err
-	}
 	fileInfo, err := os.Stat(data.Placement.AudioPath)
 	if err != nil {
 		return fmt.Errorf("stat replacement Managed Track: %w", err)
@@ -493,18 +484,15 @@ func updateReplacedTrack(ctx context.Context, transaction *sql.Tx, data replacem
 			format = ?, size_bytes = ?, file_path = ?, file_mtime = ?, genre = ?, sample_rate_hz = ?, bit_depth = ?,
 			disc_no = ?, track_total = ?, disc_total = ?, channel_count = ?, bitrate_bps = ?, codec = ?, container = ?,
 			replaygain_track_gain_db = ?, replaygain_track_peak = ?, replaygain_album_gain_db = ?,
-			replaygain_album_peak = ?, identity_key = ?,
-			musicbrainz_recording_id = NULLIF(?, ''), isrc = NULLIF(?, ''), acoustid_score = ?, metadata_source = ?,
-			musicbrainz_changed_fields = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+			replaygain_album_peak = ?, identity_key = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND revision = ? AND missing_at IS NULL`,
 		data.Identity.AlbumID, metadata.Title, normalizeIdentity(metadata.Title), strings.Join(metadata.Artists, ", "),
 		metadata.TrackPosition.Number, audio.DurationMs, audio.Format, fileInfo.Size(), data.Placement.AudioPath,
-		fileInfo.ModTime().Unix(), metadata.Genres[0], audio.SampleRateHz, nullablePositive(audio.BitDepth),
+		fileInfo.ModTime().Unix(), firstGenre(metadata.Genres), audio.SampleRateHz, nullablePositive(audio.BitDepth),
 		metadata.DiscPosition.Number, nullablePositive(metadata.TrackPosition.Total), nullablePositive(metadata.DiscPosition.Total),
 		audio.ChannelCount, audio.BitrateKbps*BITS_PER_KILOBIT, audio.Codec, audio.Container,
 		metadata.ReplayGain.TrackGainDB, metadata.ReplayGain.TrackPeak, metadata.ReplayGain.AlbumGainDB,
 		metadata.ReplayGain.AlbumPeak, trackIdentityKey(metadata),
-		identified.RecordingID, identified.ISRC, nullableScore(identified.AcoustIDScore), identified.Source, changedFields,
 		data.Target.TrackID, data.Target.TrackRevision,
 	)
 	if err != nil {

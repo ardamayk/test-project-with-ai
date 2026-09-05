@@ -19,7 +19,7 @@ A Managed Import initiated by selecting a directory on a Playback Client and rec
 _Avoid_: folder scan, preserved folder hierarchy
 
 **Managed Storage**:
-The Music Server-owned location that holds one authoritative audio file per Track in its Source Audio Format and one extracted artwork file per Album.
+The Music Server-owned location that holds one authoritative audio file per Track in its Source Audio Format and, when available, one artwork file in each Album's directory alongside its music files.
 _Avoid_: Source folder, Playlist folder, symlink view
 
 **Bit-Preserving Storage**:
@@ -31,32 +31,32 @@ The validation result shown before a Managed Import is committed. It identifies 
 _Avoid_: Completed import, scan result
 
 **Strict Import Profile**:
-The fallback-free metadata, artwork, and audio-integrity contract used by Managed Import. Metadata is read from the file's own tags and then corrected or completed by Recording Identification when it succeeds; a file that still fails any required condition is rejected without synthesizing missing values or granting legacy exceptions.
+The acceptance contract for Managed Import covering audio integrity and file-tag metadata: Title, Artist, Album Artist, Album, and Track number are required, with a Disc number required for multi-disc Albums and assumed to be one for single-disc Albums. Genre, year, and Album Artwork are optional; missing required metadata is rejected rather than inferred from filenames or an online service.
 _Avoid_: Best-effort scan, legacy exception, filename fallback, tag rewriting
 
-**Recording Identification**:
-The Managed Import step that resolves an uploaded audio file to a MusicBrainz Recording, using the cheapest evidence first: a recording MBID already in the file's tags, then a tagged ISRC, then a Chromaprint fingerprint matched through AcoustID when the score reaches the configured threshold. It uses that Recording's MusicBrainz metadata to correct or complete the metadata read from the file's tags. It never writes to the audio file, never fetches artwork, and leaves the tag metadata untouched when no confident match exists or the services are unreachable.
-_Avoid_: Tag lookup, Picard tagging, cover fetch, automatic replacement
-
 **Import Batch**:
-A user-selected group of files processed through one Import Preview. Each selected file commits independently, so one failure does not roll back files already imported successfully.
+A user-selected group of files processed through one Import Preview, potentially spanning multiple automatically grouped Albums, single Tracks, or incomplete Albums. Each selected file commits independently, so one failure does not roll back files already imported successfully.
 _Avoid_: Atomic batch, folder scan, Playlist
 
 **Import History**:
 The retained results of the most recent Managed Imports without their staged audio files. It supports reviewing outcomes but not resuming or restoring an import.
 _Avoid_: Staging storage, retry queue, library history
 
-**Possible Duplicate**:
-A proposed import whose metadata resembles an existing Track but whose full-file content hash differs. It requires an explicit user choice and never causes automatic replacement.
-_Avoid_: Exact duplicate, automatic replacement
-
 **Exact Duplicate**:
-A proposed import whose full-file content hash matches an existing Track. It is rejected without changing library state, regardless of its client filename or source location.
+A proposed import whose full-file content hash matches an existing library Track. It is not imported again, regardless of its filename, metadata, source location, or Album.
 _Avoid_: Possible Duplicate, same title, same recording
 
-**Recording Duplicate**:
-A proposed import whose Recording Identification resolves to the same MusicBrainz Recording as an existing Track while its full-file content hash differs. Like a Possible Duplicate it requires an explicit user choice, but it is presented as the same recording rather than as merely similar metadata.
-_Avoid_: Exact Duplicate, Possible Duplicate, same title
+**Track Replacement Candidate**:
+A proposed import with a different full-file content hash that matches an existing Track's Album, Disc number, Track number, and normalized Title. Differences in Artist credits or Source Audio Format do not prevent a match and require review before a Track Replacement.
+_Avoid_: Possible Duplicate, Recording Duplicate, automatic upgrade
+
+**Import File Alternatives**:
+Files in one Import Batch with different full-file content hashes that propose the same Album, Disc number, Track number, and normalized Title. The user chooses one file for that Album position and the others are skipped, without an automatic quality ranking.
+_Avoid_: Exact Duplicate, automatic upgrade, first-upload-wins
+
+**Album Position Conflict**:
+A proposed import occupying the same Album, Disc number, and Track number as another Track but carrying a different normalized Title. It prevents that file from being imported until resolved and is distinct from an Exact Duplicate.
+_Avoid_: Duplicate, automatic replacement
 
 **Source Audio Format**:
 The audio file's existing supported format, which a Managed Import preserves without transcoding.
@@ -71,12 +71,12 @@ The Artist credit under which an Album is grouped. It is required independently 
 _Avoid_: Track Artist, fallback Artist, Composer
 
 **Album**:
-A release grouping of Tracks under an Album Artist and stable Album identity. Similar titles or editions require explicit matching rather than automatic merging when their known release metadata conflicts.
-_Avoid_: Playlist, folder, import batch
+A grouping of Tracks matched by Album Artist credits and the full Album title, independent of year and each Track's Artist credits, with case and redundant whitespace ignored. Edition qualifiers remain part of the title, so "Album X" and "Album X (Deluxe)" are separate Albums; users may explicitly create a separate Album for a differently intended edition with otherwise matching tags.
+_Avoid_: Playlist, folder, import batch, grouping by Track Artist
 
 **Album Artwork**:
-The validated front-cover image embedded in every Track of an Album edition. Accepted Tracks in that Album carry byte-identical artwork, from which the Music Server extracts one display copy without modifying the audio files.
-_Avoid_: External cover upload, folder artwork, inferred picture
+The optional validated front-cover image for an Album, chosen from valid embedded covers or supplied by the user as JPEG or PNG. An existing cover is preserved during Managed Import, a coverless Album may receive a cover with user confirmation, and an Album without artwork uses a default cover in clients.
+_Avoid_: Required embedded artwork, per-track cover copy
 
 **Track**:
 A library item backed by one authoritative playable audio source. Playlist and genre membership reference the Track without creating additional audio-file copies.
@@ -91,7 +91,7 @@ A normalized classification referenced by one or more Tracks. An Album's display
 _Avoid_: Playlist, folder, symlink view
 
 **Track Replacement**:
-An explicit user-confirmed change of a Track's managed audio file that preserves the Track's identity and adopts the replacement file's validated metadata. A Possible Duplicate never triggers Track Replacement automatically.
+An explicit user-confirmed change of a Track's managed audio file that preserves the Track's identity and adopts the replacement file's validated metadata, whether its Source Audio Format is the same or different. Declining replacement skips the incoming file and preserves the existing Track; retaining both versions requires a separate Album.
 _Avoid_: Exact duplicate, automatic replacement, separate import
 
 **Canonical Library Path**:

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
 	type ImportFileEntry,
-	requiresDuplicateDecision,
 	summarizeImportEntries,
 } from "./-managed-import-workflow";
 
@@ -28,9 +27,21 @@ describe("summarizeImportEntries", () => {
 		expect(summary.percent).toBe(70);
 	});
 
-	it("counts only undecided Possible Duplicates as needing review", () => {
+	it("counts only undecided Track Replacement candidates as needing review", () => {
 		const possibleDuplicate = {
-			duplicateClassification: "possible_duplicate",
+			duplicateClassification: "none",
+			matchingTracks: [
+				{
+					trackId: "existing",
+					title: "Track",
+					artists: ["Artist"],
+					album: "Album",
+					discNo: 1,
+					trackNo: 1,
+					format: "flac",
+					durationMs: 1000,
+				},
+			],
 		} as NonNullable<ImportFileEntry["preview"]>;
 		const summary = summarizeImportEntries([
 			entry({ state: "accepted", progress: 100, preview: possibleDuplicate }),
@@ -38,7 +49,7 @@ describe("summarizeImportEntries", () => {
 				state: "accepted",
 				progress: 100,
 				preview: possibleDuplicate,
-				duplicateDecision: "import_separately",
+				duplicateDecision: "replace_existing",
 			}),
 			entry({ state: "rejected", progress: 100 }),
 			entry({ state: "completed", progress: 100, outcome: "imported" }),
@@ -60,17 +71,21 @@ describe("summarizeImportEntries", () => {
 });
 
 describe("requiresDuplicateDecision", () => {
-	it("treats Recording Duplicates like Possible Duplicates", () => {
-		expect(requiresDuplicateDecision("recording_duplicate")).toBe(true);
-		expect(requiresDuplicateDecision("possible_duplicate")).toBe(true);
-		expect(requiresDuplicateDecision("exact_duplicate")).toBe(false);
-		expect(requiresDuplicateDecision("none")).toBe(false);
-		expect(requiresDuplicateDecision(undefined)).toBe(false);
-	});
-
-	it("counts an undecided Recording Duplicate as needing review", () => {
+	it("counts an undecided Track Replacement candidate as needing review", () => {
 		const recordingDuplicate = {
-			duplicateClassification: "recording_duplicate",
+			duplicateClassification: "none",
+			matchingTracks: [
+				{
+					trackId: "existing",
+					title: "Track",
+					artists: ["Artist"],
+					album: "Album",
+					discNo: 1,
+					trackNo: 1,
+					format: "flac",
+					durationMs: 1000,
+				},
+			],
 		} as NonNullable<ImportFileEntry["preview"]>;
 		const summary = summarizeImportEntries([
 			entry({ state: "accepted", progress: 100, preview: recordingDuplicate }),

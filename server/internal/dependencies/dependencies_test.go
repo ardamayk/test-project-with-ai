@@ -17,8 +17,6 @@ func TestProbeReportsEveryServerDependencyInStableOrder(t *testing.T) {
 				return "ffmpeg version n9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with gcc", nil
 			case "/usr/bin/ffprobe":
 				return "ffprobe version 7.1.1 Copyright (c) 2007-2025 the FFmpeg developers", nil
-			case "/usr/bin/fpcalc":
-				return "fpcalc version 1.5.1 (FFmpeg Lavc60.31.102 Lavf60.16.100 SwR4.12.100)", nil
 			}
 			return "", errors.New("unexpected path " + path)
 		},
@@ -29,7 +27,6 @@ func TestProbeReportsEveryServerDependencyInStableOrder(t *testing.T) {
 	want := []dependencies.Dependency{
 		{Name: "ffmpeg", Required: true, Available: true, Version: "n9.0.1"},
 		{Name: "ffprobe", Required: true, Available: true, Version: "7.1.1"},
-		{Name: "fpcalc", Required: false, Available: true, Version: "1.5.1"},
 	}
 	if len(report) != len(want) {
 		t.Fatalf("report = %+v, want %d entries", report, len(want))
@@ -44,7 +41,7 @@ func TestProbeReportsEveryServerDependencyInStableOrder(t *testing.T) {
 func TestProbeMarksMissingProgramUnavailableWithoutVersion(t *testing.T) {
 	probe := dependencies.Probe{
 		LookPath: func(name string) (string, error) {
-			if name == "fpcalc" {
+			if name == "ffprobe" {
 				return "", errors.New("executable file not found in $PATH")
 			}
 			return "/usr/bin/" + name, nil
@@ -56,12 +53,12 @@ func TestProbeMarksMissingProgramUnavailableWithoutVersion(t *testing.T) {
 
 	report := probe.Run(context.Background())
 
-	fpcalc := report[2]
-	if fpcalc.Name != "fpcalc" || fpcalc.Available || fpcalc.Version != "" {
-		t.Fatalf("fpcalc = %+v, want unavailable without version", fpcalc)
+	ffprobe := report[1]
+	if ffprobe.Name != "ffprobe" || ffprobe.Available || ffprobe.Version != "" {
+		t.Fatalf("ffprobe = %+v, want unavailable without version", ffprobe)
 	}
-	if !report.Has("ffmpeg") || report.Has("fpcalc") {
-		t.Fatalf("Has() = ffmpeg %v fpcalc %v", report.Has("ffmpeg"), report.Has("fpcalc"))
+	if !report.Has("ffmpeg") || report.Has("ffprobe") {
+		t.Fatalf("Has() = ffmpeg %v ffprobe %v", report.Has("ffmpeg"), report.Has("ffprobe"))
 	}
 }
 
@@ -82,7 +79,7 @@ func TestProbeKeepsProgramAvailableWhenVersionCommandFails(t *testing.T) {
 
 func TestSystemProbeFindsProgramsOnThisHost(t *testing.T) {
 	report := dependencies.SystemProbe().Run(context.Background())
-	if len(report) != 3 || report[0].Name != "ffmpeg" || report[2].Name != "fpcalc" {
+	if len(report) != 2 || report[0].Name != "ffmpeg" || report[1].Name != "ffprobe" {
 		t.Fatalf("report = %+v", report)
 	}
 }

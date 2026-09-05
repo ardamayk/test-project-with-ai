@@ -185,6 +185,14 @@ func inspectID3Tag(file *os.File) (id3Tag, error) {
 	}
 	metadata, metadataErr := normalizeID3Metadata(values)
 	artwork, artworkErr := inspectID3Artwork(values.pictures)
+	artwork, artworkErr = optionalArtwork(artwork, artworkErr)
+	for _, issue := range InspectionIssues(parseErr) {
+		if issue.Field == "artwork" {
+			artwork, artworkErr = optionalArtwork(AlbumArtwork{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New(issue.Reason)))
+			parseErr = excludeInspectionFields(parseErr, []string{"artwork"})
+			break
+		}
+	}
 	return id3Tag{metadata: metadata, artwork: artwork, offset: offset}, errors.Join(parseErr, excludeInspectionFields(errors.Join(metadataErr, artworkErr), failedFields))
 }
 
@@ -298,6 +306,9 @@ func collectID3Values(frames []id3Frame, version byte) (id3Values, error) {
 func collectID3Frame(values *id3Values, frame id3Frame, version byte) error {
 	key := canonicalID3FrameName(frame.name, version)
 	if key != "" {
+		if (key == "GENRE" || key == "DATE") && len(frame.payload) == ID3_ENCODED_TEXT_OFFSET && frame.payload[ID3_TEXT_ENCODING_OFFSET] <= ID3_TEXT_ENCODING_UTF8 {
+			return nil
+		}
 		frameValues, err := decodeID3TextValues(frame.payload, version)
 		if err != nil {
 			return inspectionError(INSPECTION_ERROR_INVALID_METADATA, key, err)
@@ -316,28 +327,7 @@ func collectID3Frame(values *id3Values, frame id3Frame, version byte) error {
 	if frame.name == id3PictureFrameName(version) {
 		return collectID3Picture(values, frame.payload, version)
 	}
-	if frame.name == id3UniqueFileIDFrameName(version) {
-		collectID3MusicBrainzRecordingID(values, frame.payload)
-	}
 	return nil
-}
-
-func id3UniqueFileIDFrameName(version byte) string {
-	if version == ID3_VERSION_2 {
-		return "UFI"
-	}
-	return "UFID"
-}
-
-// collectID3MusicBrainzRecordingID reads the UFID frame Picard writes: the
-// owner "http://musicbrainz.org", a NUL, then the recording MBID as text.
-// Other owners are ignored.
-func collectID3MusicBrainzRecordingID(values *id3Values, payload []byte) {
-	owner, identifier, found := bytes.Cut(payload, []byte{0})
-	if !found || string(owner) != "http://musicbrainz.org" {
-		return
-	}
-	values.tags[TAG_MUSICBRAINZ_TRACK_ID] = append(values.tags[TAG_MUSICBRAINZ_TRACK_ID], string(identifier))
 }
 
 func normalizeID3Metadata(values id3Values) (NormalizedMediaMetadata, error) {
@@ -369,9 +359,9 @@ func parseID3ReplayGain(values map[string]string, key string, parse func(string)
 
 func canonicalID3FrameName(name string, version byte) string {
 	names := map[byte]map[string]string{
-		ID3_VERSION_2: {"TT2": "TITLE", "TP1": "ARTIST", "TP2": "ALBUMARTIST", "TAL": "ALBUM", "TRK": "TRACKNUMBER", "TPA": "DISCNUMBER", "TCO": "GENRE", "TYE": "DATE", "TRC": TAG_ISRC},
-		ID3_VERSION_3: {"TIT2": "TITLE", "TPE1": "ARTIST", "TPE2": "ALBUMARTIST", "TALB": "ALBUM", "TRCK": "TRACKNUMBER", "TPOS": "DISCNUMBER", "TCON": "GENRE", "TYER": "DATE", "TSRC": TAG_ISRC},
-		ID3_VERSION_4: {"TIT2": "TITLE", "TPE1": "ARTIST", "TPE2": "ALBUMARTIST", "TALB": "ALBUM", "TRCK": "TRACKNUMBER", "TPOS": "DISCNUMBER", "TCON": "GENRE", "TDRC": "DATE", "TSRC": TAG_ISRC},
+		ID3_VERSION_2: {"TT2": "TITLE", "TP1": "ARTIST", "TP2": "ALBUMARTIST", "TAL": "ALBUM", "TRK": "TRACKNUMBER", "TPA": "DISCNUMBER", "TCO": "GENRE", "TYE": "DATE"},
+		ID3_VERSION_3: {"TIT2": "TITLE", "TPE1": "ARTIST", "TPE2": "ALBUMARTIST", "TALB": "ALBUM", "TRCK": "TRACKNUMBER", "TPOS": "DISCNUMBER", "TCON": "GENRE", "TYER": "DATE"},
+		ID3_VERSION_4: {"TIT2": "TITLE", "TPE1": "ARTIST", "TPE2": "ALBUMARTIST", "TALB": "ALBUM", "TRCK": "TRACKNUMBER", "TPOS": "DISCNUMBER", "TCON": "GENRE", "TDRC": "DATE"},
 	}
 	return names[version][name]
 }

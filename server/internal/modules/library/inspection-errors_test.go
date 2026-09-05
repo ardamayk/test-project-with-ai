@@ -29,7 +29,7 @@ func TestMediaInspectorReportsIndependentFLACErrors(t *testing.T) {
 	for _, issue := range issues {
 		fields = append(fields, issue.Field)
 	}
-	if !reflect.DeepEqual(fields, []string{"TITLE", "GENRE", "TRACKNUMBER", "artwork"}) {
+	if !reflect.DeepEqual(fields, []string{"TITLE", "TRACKNUMBER"}) {
 		t.Fatalf("validation fields = %v; error = %v", fields, err)
 	}
 }
@@ -44,7 +44,7 @@ func TestMediaInspectorReportsMP3MetadataArtworkAndAudioErrors(t *testing.T) {
 	for _, issue := range library.InspectionIssues(err) {
 		fields = append(fields, issue.Field)
 	}
-	if !reflect.DeepEqual(fields, []string{"TITLE", "GENRE", "artwork", "audio"}) {
+	if !reflect.DeepEqual(fields, []string{"TITLE", "audio"}) {
 		t.Fatalf("validation fields = %v; error = %v", fields, err)
 	}
 }
@@ -64,7 +64,7 @@ func TestMediaInspectorReportsIndependentOGGErrors(t *testing.T) {
 			for _, issue := range library.InspectionIssues(err) {
 				fields = append(fields, issue.Field)
 			}
-			if !reflect.DeepEqual(fields, []string{"TITLE", "artwork"}) {
+			if !reflect.DeepEqual(fields, []string{"TITLE"}) {
 				t.Fatalf("validation fields = %v", fields)
 			}
 		})
@@ -85,7 +85,7 @@ func TestMediaInspectorContinuesAfterMalformedID3Field(t *testing.T) {
 	for _, issue := range library.InspectionIssues(err) {
 		fields = append(fields, issue.Field)
 	}
-	if !reflect.DeepEqual(fields, []string{"TITLE", "GENRE", "artwork"}) {
+	if !reflect.DeepEqual(fields, []string{"TITLE"}) {
 		t.Fatalf("validation fields = %v; error = %v", fields, err)
 	}
 }
@@ -112,7 +112,7 @@ func TestMediaInspectorContinuesAfterMalformedM4ACredits(t *testing.T) {
 	for _, issue := range library.InspectionIssues(err) {
 		fields = append(fields, issue.Field)
 	}
-	if !reflect.DeepEqual(fields, []string{"credits", "TITLE", "GENRE"}) {
+	if !reflect.DeepEqual(fields, []string{"credits", "TITLE"}) {
 		t.Fatalf("validation fields = %v; error = %v", fields, err)
 	}
 }

@@ -23,10 +23,6 @@ const currentServer = {
   dependencies: [
     { name: 'ffmpeg', required: true, available: true, version: '7.1' },
   ],
-  recordingIdentification: {
-    status: 'missing_fpcalc' as const,
-    acoustIdKeySource: 'missing' as const,
-  },
 };
 
 describe('Server Capability gating', () => {

@@ -1,6 +1,5 @@
 // Package dependencies reports the Server Dependencies: external programs the
-// Music Server calls at runtime. A missing optional dependency disables a
-// feature without changing the advertised Server Capabilities (ADR 0017).
+// Music Server calls at runtime. Dependency availability is separate from Server Capabilities.
 package dependencies
 
 import (
@@ -14,7 +13,6 @@ import (
 const (
 	FFMPEG  = "ffmpeg"
 	FFPROBE = "ffprobe"
-	FPCALC  = "fpcalc"
 
 	versionTimeout = 5 * time.Second
 )
@@ -50,7 +48,6 @@ type program struct {
 var programs = []program{
 	{name: FFMPEG, required: true, versionArgs: []string{"-version"}},
 	{name: FFPROBE, required: true, versionArgs: []string{"-version"}},
-	{name: FPCALC, required: false, versionArgs: []string{"-version"}},
 }
 
 // Probe locates programs and reads their versions through injectable
@@ -93,7 +90,7 @@ func runVersionCommand(ctx context.Context, path string, args ...string) (string
 var versionPattern = regexp.MustCompile(`^(\S+) version (\S+)`)
 
 // parseVersion reads "<name> version <version> ..." from the first line, the
-// format shared by ffmpeg, ffprobe and fpcalc.
+// format shared by ffmpeg and ffprobe.
 func parseVersion(name, output string) string {
 	firstLine, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
 	match := versionPattern.FindStringSubmatch(firstLine)

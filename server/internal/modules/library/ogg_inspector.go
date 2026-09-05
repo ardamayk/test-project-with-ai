@@ -473,6 +473,7 @@ func readLengthPrefixedValue(data []byte) ([]byte, []byte, error) {
 func inspectOGGMetadataAndArtwork(tags map[string][]string) (NormalizedMediaMetadata, AlbumArtwork, error) {
 	metadata, metadataErr := normalizeMediaMetadata(tags, replayGainFromTags(tags))
 	artwork, artworkErr := inspectPictureComments(tags["METADATA_BLOCK_PICTURE"])
+	artwork, artworkErr = optionalArtwork(artwork, artworkErr)
 	return metadata, artwork, errors.Join(metadataErr, artworkErr)
 }
 

@@ -99,6 +99,7 @@ func (input wavInspectionInput) inspect(ctx context.Context) (MediaInspection, e
 	}
 	metadata, metadataErr := normalizeMediaMetadata(chunks.tags, ReplayGainMetadata{})
 	embeddedArtwork, artworkErr := inspectWAVArtwork(chunks.pictures)
+	embeddedArtwork, artworkErr = optionalArtwork(embeddedArtwork, artworkErr)
 	audio, audioErr := input.decodePCM(ctx, chunks.format, chunks.data)
 	if err := errors.Join(metadataErr, artworkErr, audioErr); err != nil {
 		return MediaInspection{}, err

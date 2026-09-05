@@ -189,6 +189,13 @@ function createImportPreview(jobId: string) {
 		revision: 2,
 		file: {
 			originalFilename: `${jobId}.flac`,
+			albumKey: "album-key",
+			contentSha256: jobId,
+			format: "flac",
+			discNo: 1,
+			trackNo:
+				jobId === "import-2" ? 4 : jobId === "remaster-selection" ? 5 : 3,
+			albumArtists: ["Test Album Artist"],
 			title: jobId,
 			artists: ["Test Artist"],
 			album: "Strict Import Tests",
@@ -1010,17 +1017,18 @@ describe("tracks route", () => {
 		const remasterPreview = {
 			...createImportPreview("remaster-selection"),
 			file: {
+				...createImportPreview("remaster-selection").file,
 				originalFilename: "remaster.opus",
 				title: "Remaster",
 				artists: ["Test Artist"],
 				album: "Strict Import Tests",
 				format: "opus",
 			},
-			duplicateClassification: "possible_duplicate",
-			duplicateCandidates: [
+			duplicateClassification: "none",
+			matchingTracks: [
 				{
 					trackId: "existing-track",
-					title: "Original",
+					title: "Remaster",
 					artists: ["Test Artist"],
 					album: "Strict Import Tests",
 					discNo: 1,
@@ -1087,7 +1095,7 @@ describe("tracks route", () => {
 				},
 				{
 					...createBatchFile("remaster-selection", true),
-					selected: false,
+					selected: true,
 					preview: remasterPreview,
 				},
 			],
@@ -1158,11 +1166,13 @@ describe("tracks route", () => {
 		).toHaveProperty("checked", true);
 
 		// A Possible Duplicate requires an explicit decision before confirming.
-		await screen.findByText("Possible Duplicate");
+		await screen.findByText("Track Replacement");
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", true);
-		fireEvent.click(screen.getByRole("radio", { name: "Import separately" }));
+		fireEvent.click(
+			screen.getByRole("radio", { name: "Replace existing Track" }),
+		);
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", false);
@@ -1173,7 +1183,14 @@ describe("tracks route", () => {
 				"batch-1",
 				3,
 				["accepted-selection", "remaster-selection"],
-				[{ jobId: "remaster-selection", action: "import_separately" }],
+				[
+					{
+						jobId: "remaster-selection",
+						action: "replace_existing",
+						trackId: "existing-track",
+					},
+				],
+				undefined,
 			),
 		);
 		expect(await screen.findAllByText("Imported")).toHaveLength(2);
@@ -1258,7 +1275,6 @@ describe("tracks route", () => {
 	it("groups album metadata and reveals per-file details only on request", async () => {
 		mocks.uploadManagedImportFile.mockImplementation(async (jobId: string) => ({
 			...createImportPreview(jobId),
-			identification: { source: "file_tags", reason: "Identification is off" },
 		}));
 		mocks.getManagedImportBatch.mockResolvedValue({
 			id: "batch-1",
@@ -1276,7 +1292,7 @@ describe("tracks route", () => {
 		]);
 		await screen.findByText("2 of 2 ready");
 		expect(screen.getAllByText("Strict Import Tests")).toHaveLength(1);
-		expect(screen.getAllByText("Test Artist")).toHaveLength(1);
+		expect(screen.getAllByText("Test Artist")).toHaveLength(2);
 		expect(screen.getAllByText("import-1")).toHaveLength(1);
 		expect(
 			screen.queryByText("Identification is off", { exact: false }),
@@ -1286,7 +1302,9 @@ describe("tracks route", () => {
 		});
 		fireEvent.click(details);
 		expect(details.getAttribute("aria-expanded")).toBe("true");
-		expect(screen.getByText("File tags · Identification is off")).toBeTruthy();
+		expect(
+			screen.queryByText("Identification is off", { exact: false }),
+		).toBeNull();
 		fireEvent.click(details);
 		expect(screen.queryByText("File tags · Identification is off")).toBeNull();
 	});
@@ -1390,9 +1408,13 @@ describe("tracks route", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 
 		await screen.findByText("Inspection Fixture");
-		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
-			"import-1",
-		]);
+		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+			"batch-1",
+			3,
+			["import-1"],
+			undefined,
+			undefined,
+		);
 		await vi.waitFor(() => expect(mocks.listTracks).toHaveBeenCalledTimes(2));
 		expect(screen.getByText("Imported")).toBeTruthy();
 		expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1453,11 +1475,11 @@ describe("tracks route", () => {
 			...(await mocks.uploadManagedImportFile.getMockImplementation()?.(
 				"import-1",
 			)),
-			duplicateClassification: "possible_duplicate",
-			duplicateCandidates: [
+			duplicateClassification: "none",
+			matchingTracks: [
 				{
 					trackId: "existing-track",
-					title: "Existing Track",
+					title: "Inspection Fixture",
 					artists: ["Test Artist"],
 					album: "Strict Import Tests",
 					discNo: 1,
@@ -1489,11 +1511,13 @@ describe("tracks route", () => {
 			target: { files: [new File(["different"], "candidate.flac")] },
 		});
 
-		await screen.findByText("Possible Duplicate");
+		await screen.findByText("Track Replacement");
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", true);
-		fireEvent.click(screen.getByRole("radio", { name: "Import separately" }));
+		fireEvent.click(
+			screen.getByRole("radio", { name: "Replace existing Track" }),
+		);
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", false);
@@ -1503,7 +1527,14 @@ describe("tracks route", () => {
 				"batch-1",
 				3,
 				["import-1"],
-				[{ jobId: "import-1", action: "import_separately" }],
+				[
+					{
+						jobId: "import-1",
+						action: "replace_existing",
+						trackId: "existing-track",
+					},
+				],
+				undefined,
 			),
 		);
 		expect(
@@ -1517,11 +1548,11 @@ describe("tracks route", () => {
 			...(await mocks.uploadManagedImportFile.getMockImplementation()?.(
 				"import-1",
 			)),
-			duplicateClassification: "possible_duplicate",
-			duplicateCandidates: [
+			duplicateClassification: "none",
+			matchingTracks: [
 				{
 					trackId: "late-track",
-					title: "Late Track",
+					title: "Inspection Fixture",
 					artists: ["Test Artist"],
 					album: "Strict Import Tests",
 					discNo: 1,
@@ -1579,7 +1610,7 @@ describe("tracks route", () => {
 			expect(mocks.getManagedImportBatch).toHaveBeenCalledTimes(2),
 		);
 		expect(mocks.confirmManagedImportBatch).not.toHaveBeenCalled();
-		await screen.findByText("Possible Duplicate");
+		await screen.findByText("Track Replacement");
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", true);
@@ -1652,9 +1683,13 @@ describe("tracks route", () => {
 
 		await screen.findByText("Imported");
 		expect(mocks.getManagedImportBatch).toHaveBeenCalledTimes(2);
-		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
-			"import-1",
-		]);
+		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+			"batch-1",
+			3,
+			["import-1"],
+			undefined,
+			undefined,
+		);
 	});
 
 	it("shows every validation issue on a separate readable line", async () => {
@@ -1998,6 +2033,8 @@ describe("tracks route", () => {
 				"batch-1",
 				3,
 				["import-1"],
+				undefined,
+				undefined,
 			),
 		);
 		expect(screen.queryByText("upload response lost")).toBeNull();

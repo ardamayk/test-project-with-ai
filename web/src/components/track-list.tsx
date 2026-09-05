@@ -380,21 +380,6 @@ function TrackDetailsDialog({
 				["Sample format", track.sampleFormat],
 				["Track total", track.trackTotal?.toString()],
 				["Disc total", track.discTotal?.toString()],
-				["Metadata source", formatMetadataSource(track.metadataSource)],
-				["MusicBrainz recording", track.musicbrainzRecordingId],
-				["ISRC", track.isrc],
-				[
-					"AcoustID score",
-					track.acoustIdScore === undefined
-						? undefined
-						: track.acoustIdScore.toFixed(3),
-				],
-				[
-					"Changed by MusicBrainz",
-					track.musicbrainzChangedFields?.length
-						? track.musicbrainzChangedFields.join(", ")
-						: undefined,
-				],
 				["Title sort", track.titleSort],
 				["Identity key", track.identityKey],
 				["Revision", track.revision?.toString()],
@@ -436,12 +421,6 @@ function TrackDetailsDialog({
 			</DialogPrimitive.Portal>
 		</DialogPrimitive.Root>
 	);
-}
-
-function formatMetadataSource(source?: string): string | undefined {
-	if (source === "musicbrainz") return "MusicBrainz (AcoustID match)";
-	if (source === "file_tags") return "File tags";
-	return source;
 }
 
 function formatUnixSeconds(seconds?: number): string | undefined {

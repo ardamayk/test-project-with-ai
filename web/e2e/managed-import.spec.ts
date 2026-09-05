@@ -242,23 +242,21 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 	await expect(
 		dialog.getByRole("heading", { name: "Import Preview" }),
 	).toBeVisible();
-	await expect(liveRegion).toHaveText("2 of 4 ready", { timeout: 20_000 });
+	await expect(liveRegion).toHaveText("3 of 4 ready", { timeout: 20_000 });
 	await page.unroute("**/api/v1/imports/*/file");
 
 	const alphaRow = previewRow(dialog, ALPHA);
 	const betaRow = previewRow(dialog, BETA);
 	const untitledRow = previewRow(dialog, "untitled.mp3");
-	const artlessRow = previewRow(dialog, "no-artwork.mp3");
+	const artlessRow = previewRow(dialog, `${RUN_ID} Artless`);
 	await expect(alphaRow.getByText("Accepted")).toBeVisible();
 	await expect(betaRow.getByText("Accepted")).toBeVisible();
 	await expect(untitledRow.getByText("Rejected")).toBeVisible();
-	await expect(artlessRow.getByText("Rejected")).toBeVisible();
+	await expect(artlessRow.getByText("Accepted")).toBeVisible();
+	await artlessRow.getByRole("checkbox").uncheck();
 	await expect(
 		untitledRow.getByRole("list", { name: "Import errors" }),
 	).not.toBeEmpty();
-	await expect(
-		artlessRow.getByRole("list", { name: "Import errors" }),
-	).toContainText(/artwork|cover/i);
 	await expect(untitledRow.getByRole("checkbox")).toBeDisabled();
 	await expect(
 		alphaRow.getByRole("checkbox", { name: "Select alpha.mp3" }),
@@ -312,7 +310,7 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 	expect(newStagingFiles(stagingBefore)).toEqual([]);
 });
 
-test("Import Preview resolves an Exact Duplicate and a Possible Duplicate", async ({
+test("Import Preview skips identical bytes and separates a conflicting Album edition", async ({
 	page,
 	request,
 }) => {
@@ -334,26 +332,20 @@ test("Import Preview resolves an Exact Duplicate and a Possible Duplicate", asyn
 	await expect(copyRow.locator("dd", { hasText: ALBUM })).toBeVisible();
 
 	const remasterRow = previewRow(dialog, BETA_REMASTER);
-	const duplicateGroup = remasterRow.getByRole("group", {
-		name: "Possible Duplicate",
-	});
-	await expect(duplicateGroup).toBeVisible();
 	await expect(
-		duplicateGroup.getByText("Different file bytes resemble:"),
+		remasterRow.getByText(
+			"Another title occupies this Album position. Skip this file or create a separate Album.",
+		),
 	).toBeVisible();
-	await expect(duplicateGroup.getByText(`${BETA} — ${ARTIST}`)).toBeVisible();
+	await dialog
+		.getByLabel(`Album destination for ${ALBUM}`)
+		.selectOption("separate");
 	await expect(
-		duplicateGroup.getByRole("radio", { name: "Replace existing Track" }),
-	).toBeDisabled();
-
-	// Every decision stays explicit: nothing is preselected for a duplicate.
-	await duplicateGroup.getByRole("radio", { name: "Do not import" }).check();
-	await duplicateGroup
-		.getByRole("radio", { name: "Import separately" })
-		.check();
-	await expect(
-		duplicateGroup.getByRole("radio", { name: "Import separately" }),
-	).toBeChecked();
+		remasterRow.getByText(
+			"Another title occupies this Album position. Skip this file or create a separate Album.",
+		),
+	).toBeHidden();
+	await remasterRow.getByRole("checkbox").check();
 	await dialog.getByRole("button", { name: "Confirm Import" }).click();
 
 	await expect(remasterRow.getByText("Imported")).toBeVisible({

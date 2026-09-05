@@ -1,4 +1,3 @@
-import type { ManagedImportPreview } from "@repo/api-client";
 import {
 	Check,
 	ChevronDown,
@@ -15,8 +14,13 @@ import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { isDesktopClient } from "#/desktop/bridge";
 import { cn } from "#/lib/utils.ts";
+import {
+	ImportAlbumReview,
+	ImportFileAlternatives,
+} from "./-import-album-review";
 import { ImportErrors } from "./-import-errors";
 import { ImportTransferDetails, importPhaseLabel } from "./-import-progress";
+import { normalizeImportTitle } from "./-import-review";
 import {
 	type DuplicateDecision,
 	type ImportFileEntry,
@@ -24,7 +28,6 @@ import {
 	summarizeImportEntries,
 	useManagedImportWorkflow,
 } from "./-managed-import-workflow";
-import { RecordingIdentificationSwitch } from "./-recording-identification-switch";
 
 export function ImportMusicDialog({
 	isOpen,
@@ -86,10 +89,6 @@ export function ImportMusicDialog({
 									: "grid gap-5 overflow-y-auto px-4 py-5 sm:px-6"
 							}
 						>
-							<RecordingIdentificationSwitch
-								isDisabled={workflow.isPickerLocked}
-								onChange={workflow.handleRecordingIdentificationChange}
-							/>
 							<ImportFilePicker
 								isBusy={workflow.isPickerLocked}
 								onFiles={workflow.handleFiles}
@@ -102,13 +101,46 @@ export function ImportMusicDialog({
 							isConfirming={workflow.isConfirming}
 							isCompleted={workflow.isCompleted}
 						/>
-						<ImportFileList
-							entries={workflow.entries}
-							isBusy={workflow.isSelectionLocked}
-							isConfirming={workflow.isConfirming}
-							onSelectionChange={workflow.handleSelectionChange}
-							onDuplicateDecisionChange={workflow.handleDuplicateDecisionChange}
-						/>
+						<div className="min-h-0 flex-1 overflow-y-auto">
+							{!workflow.isCompleted && workflow.batchId ? (
+								<ImportAlbumReview
+									batchId={workflow.batchId}
+									albums={workflow.albums}
+									decisions={workflow.albumDecisions}
+									isBusy={workflow.isSelectionLocked}
+									onChange={workflow.handleAlbumDecision}
+									onUploaded={workflow.handleArtworkUploaded}
+									onUploadStateChange={workflow.handleArtworkUploadState}
+								/>
+							) : null}
+							{!workflow.isCompleted ? (
+								<ImportFileAlternatives
+									entries={workflow.entries}
+									isBusy={workflow.isSelectionLocked}
+									onSelect={workflow.handleSelectionChange}
+								/>
+							) : null}
+							{!workflow.isBusy && !workflow.isCompleted
+								? workflow.reviewProblems.map((problem) => (
+										<p
+											key={problem}
+											aria-live="polite"
+											className="px-4 py-1 text-amber-600 text-sm sm:px-6"
+										>
+											{problem}
+										</p>
+									))
+								: null}
+							<ImportFileList
+								entries={workflow.entries}
+								isBusy={workflow.isSelectionLocked}
+								isConfirming={workflow.isConfirming}
+								onSelectionChange={workflow.handleSelectionChange}
+								onDuplicateDecisionChange={
+									workflow.handleDuplicateDecisionChange
+								}
+							/>
+						</div>
 						<div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-border border-t px-4 py-3 sm:px-6">
 							{workflow.canRetry ? (
 								<Button
@@ -558,9 +590,6 @@ const ImportFileRow = memo(function ImportFileRow({
 					<p className="break-all">
 						<span className="font-medium">File:</span> {filename}
 					</p>
-					<IdentificationCaption
-						identification={entry.preview?.identification}
-					/>
 					<ImportTransferDetails entry={entry} isExpanded />
 				</div>
 			) : null}
@@ -598,54 +627,6 @@ function RowCaption({
 	);
 }
 
-/**
- * Names the system that produced the row's metadata and, for MusicBrainz,
- * the AcoustID score and the fields it changed, so Recording Identification
- * can be checked per file (ADR 0017).
- */
-export function IdentificationCaption({
-	identification,
-}: {
-	identification: ManagedImportPreview["identification"];
-}) {
-	if (!identification) return null;
-	if (identification.source === "musicbrainz") {
-		const method =
-			identification.method === "tag_recording_id"
-				? " via tagged MBID"
-				: identification.method === "tag_isrc"
-					? " via tagged ISRC"
-					: "";
-		const score =
-			identification.acoustIdScore === undefined ||
-			identification.acoustIdScore === 0
-				? ""
-				: ` · AcoustID ${identification.acoustIdScore.toFixed(2)}`;
-		const changed = identification.changedFields?.length
-			? ` · changed ${identification.changedFields.join(", ")}`
-			: " · tags already matched";
-		return (
-			<span
-				className="block break-words text-caption text-xs"
-				data-testid="identification-caption"
-			>
-				MusicBrainz{method}
-				{score}
-				{changed}
-			</span>
-		);
-	}
-	return (
-		<span
-			className="block break-words text-caption text-xs"
-			data-testid="identification-caption"
-		>
-			File tags
-			{identification.reason ? ` · ${identification.reason}` : ""}
-		</span>
-	);
-}
-
 function SelectionCheckbox({
 	label,
 	checked,
@@ -678,10 +659,7 @@ function SelectionCheckbox({
 function DuplicateMarker({
 	classification,
 }: {
-	classification:
-		| "exact_duplicate"
-		| "possible_duplicate"
-		| "recording_duplicate";
+	classification: "exact_duplicate";
 }) {
 	const Icon = classification === "exact_duplicate" ? CircleX : CircleAlert;
 	return (
@@ -768,34 +746,40 @@ function DuplicateReview({
 	onDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
 	const preview = entry.preview;
-	if (!preview?.duplicateCandidates?.length) return null;
-	if (preview.duplicateClassification === "exact_duplicate") {
+	if (!preview) return null;
+	if (preview.duplicateClassification === "exact_duplicate")
 		return <ExactDuplicateReview preview={preview} />;
-	}
-	const isRecordingDuplicate =
-		preview.duplicateClassification === "recording_duplicate";
+	const candidates = preview.matchingTracks ?? [];
+	if (!candidates.length)
+		return preview.file.artworkWarning ? (
+			<p className="text-amber-600 text-sm">{preview.file.artworkWarning}</p>
+		) : null;
 	if (
-		preview.duplicateClassification !== "possible_duplicate" &&
-		!isRecordingDuplicate
+		candidates.some(
+			(candidate) =>
+				(candidate.titleKey ?? normalizeImportTitle(candidate.title)) !==
+				(preview.file.titleKey ?? normalizeImportTitle(preview.file.title)),
+		)
 	)
-		return null;
-	return (
-		<fieldset className="grid gap-2 rounded-md border border-border bg-background p-3">
-			<legend className="px-1 font-medium text-heading text-sm">
-				{isRecordingDuplicate ? "Same recording" : "Possible Duplicate"}
-			</legend>
-			<p className="text-caption text-sm">
-				{isRecordingDuplicate
-					? "MusicBrainz identifies this file as the same recording as:"
-					: "Different file bytes resemble:"}
+		return (
+			<p className="text-destructive text-sm">
+				Another title occupies this Album position. Skip this file or create a
+				separate Album.
 			</p>
-			<ul className="list-disc pl-5 text-caption text-sm">
-				{preview.duplicateCandidates.map((candidate) => (
-					<li key={candidate.trackId}>
-						{candidate.title} — {candidate.artists.join(", ")}
-					</li>
-				))}
-			</ul>
+		);
+	return (
+		<fieldset className="grid gap-2 rounded border border-border p-3">
+			<legend className="px-1 font-medium">Track Replacement</legend>
+			<p className="text-caption text-sm">
+				Replace {candidates[0]?.title} ({candidates[0]?.format}) with this{" "}
+				{preview.file.format} file? Track identity and playlist references will
+				be preserved.
+			</p>
+			<p className="text-caption text-sm">
+				Artist credits: {candidates[0]?.artists.join(", ")} / incoming:{" "}
+				{preview.file.artists.join(", ")}
+			</p>
+			<ReplacementMetadataChanges preview={preview} />
 			{duplicateDecisionOptions.map((option) => (
 				<DuplicateDecisionOption
 					key={option.value}
@@ -850,7 +834,6 @@ function DuplicateDecisionOption({
 	option: (typeof duplicateDecisionOptions)[number];
 	onDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
-	const isReplacement = option.value === "replace_existing";
 	return (
 		<label className="flex items-center gap-2 text-sm">
 			<input
@@ -858,12 +841,7 @@ function DuplicateDecisionOption({
 				name={`duplicate-decision-${entry.key}`}
 				value={option.value}
 				checked={entry.duplicateDecision === option.value}
-				disabled={isBusy || isReplacement}
-				title={
-					isReplacement
-						? "Track Replacement requires the replacement workflow"
-						: undefined
-				}
+				disabled={isBusy}
 				onChange={() => onDecisionChange(entry.key, option.value)}
 			/>
 			{option.label}
@@ -875,7 +853,6 @@ const duplicateDecisionOptions: Array<{
 	value: DuplicateDecision;
 	label: string;
 }> = [
-	{ value: "import_separately", label: "Import separately" },
 	{ value: "replace_existing", label: "Replace existing Track" },
 	{ value: "do_not_import", label: "Do not import" },
 ];
@@ -913,5 +890,76 @@ function ImportDialogFooter({
 				</Button>
 			) : null}
 		</div>
+	);
+}
+
+function ReplacementMetadataChanges({
+	preview,
+}: {
+	preview: NonNullable<ImportFileEntry["preview"]>;
+}) {
+	const current = preview.matchingTracks?.[0]?.currentFile;
+	if (!current) return null;
+	const incoming = preview.file;
+	const fields = [
+		"title",
+		"artists",
+		"albumArtists",
+		"album",
+		"year",
+		"genres",
+		"discNo",
+		"trackNo",
+		"discTotal",
+		"trackTotal",
+		"format",
+		"container",
+		"codec",
+		"durationMs",
+		"sampleRateHz",
+		"channelCount",
+		"bitDepth",
+		"bitrateKbps",
+		"sizeBytes",
+	] as const;
+	const read = (file: typeof current, field: string): string => {
+		const value = Reflect.get(file, field);
+		return Array.isArray(value)
+			? value.join(", ")
+			: value == null || value === ""
+				? "Not tagged"
+				: String(value);
+	};
+	const changes = fields
+		.map((field) => ({
+			field,
+			previous: read(current, field),
+			incoming: read(incoming, field),
+		}))
+		.filter((change) => change.previous !== change.incoming);
+	return (
+		<details>
+			<summary className="cursor-pointer text-sm">
+				Review metadata and audio changes ({changes.length})
+			</summary>
+			<table className="w-full text-left text-sm">
+				<thead>
+					<tr>
+						<th>Field</th>
+						<th>Existing</th>
+						<th>Incoming</th>
+					</tr>
+				</thead>
+				<tbody>
+					{changes.map((change) => (
+						<tr key={change.field}>
+							<th>{change.field}</th>
+							<td>{change.previous}</td>
+							<td>{change.incoming}</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</details>
 	);
 }

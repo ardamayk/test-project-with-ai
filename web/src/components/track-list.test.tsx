@@ -102,11 +102,6 @@ const sampleTrack: Track = {
 	revision: 2,
 	createdAt: "2026-09-05T15:02:17Z",
 	updatedAt: "2026-09-05T15:02:17Z",
-	metadataSource: "musicbrainz",
-	musicbrainzRecordingId: "rec-1",
-	isrc: "USUG12306672",
-	acoustIdScore: 0.97,
-	musicbrainzChangedFields: ["title", "artists"],
 };
 
 describe("TrackList", () => {
@@ -359,7 +354,6 @@ describe("TrackList", () => {
 				},
 				playlistReferences: [{ id: "p1", name: "Road Trip" }],
 				queueReferences: [{ userId: "user-1", itemCount: 2 }],
-				possibleDuplicates: [],
 				confirmationToken: "token-1",
 			},
 		};
@@ -430,17 +424,7 @@ describe("TrackList", () => {
 			within(dialog).getByText("1856 kbps (Calculated by app)"),
 		).toBeTruthy();
 		expect(within(dialog).getByText("Sample rate")).toBeTruthy();
-		expect(within(dialog).getByText("Metadata source")).toBeTruthy();
-		expect(
-			within(dialog).getByText("MusicBrainz (AcoustID match)"),
-		).toBeTruthy();
-		expect(within(dialog).getByText("MusicBrainz recording")).toBeTruthy();
-		expect(within(dialog).getByText("rec-1")).toBeTruthy();
-		expect(within(dialog).getByText("ISRC")).toBeTruthy();
-		expect(within(dialog).getByText("AcoustID score")).toBeTruthy();
-		expect(within(dialog).getByText("0.970")).toBeTruthy();
-		expect(within(dialog).getByText("Changed by MusicBrainz")).toBeTruthy();
-		expect(within(dialog).getByText("title, artists")).toBeTruthy();
+		expect(within(dialog).queryByText("Metadata source")).toBeNull();
 		expect(within(dialog).getByText("File path")).toBeTruthy();
 		expect(within(dialog).getByText("SHA-256")).toBeTruthy();
 		expect(within(dialog).getByText("Revision")).toBeTruthy();

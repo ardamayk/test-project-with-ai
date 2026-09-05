@@ -27,10 +27,6 @@ func TestTrackReplacementRechecksCapacityBeforeCommitAndKeepsOldTrack(t *testing
 	if len(replacement) != len(original) || bytes.Equal(replacement, original) {
 		t.Fatalf("replacement fixture length = %d, want %d with different bytes", len(replacement), len(original))
 	}
-	inspection, err := library.NewMediaInspector().Inspect(context.Background(), filepath.Join("..", "library", "testdata", "strict-import.flac"), nil)
-	if err != nil {
-		t.Fatalf("inspect fixture: %v", err)
-	}
 	const reserveBytes int64 = 1024
 	availableBytes := int64(1 << 40)
 	managedStoragePath := t.TempDir()
@@ -48,9 +44,8 @@ func TestTrackReplacementRechecksCapacityBeforeCommitAndKeepsOldTrack(t *testing
 	if preview.Replacement == nil || preview.Status != STATUS_AWAITING_CONFIRMATION {
 		t.Fatalf("replacement Import Preview = %+v", preview)
 	}
-	// Free space drops between preview and commit to one byte below the reserve, the replacement bytes,
-	// and the artwork copy that must coexist with the retained old file until the swap is verified.
-	availableBytes = reserveBytes + int64(len(replacement)) + int64(len(inspection.AlbumArtwork.Data)) - 1
+	// Existing artwork is reused; only the replacement copy and reserve need free space.
+	availableBytes = reserveBytes + int64(len(replacement)) - 1
 
 	exhausted := confirmReplacement(router, job.ID, preview.Revision, preview.Replacement.ConfirmationToken)
 

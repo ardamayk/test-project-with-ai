@@ -382,7 +382,6 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             ffmpeg \
-            libchromaprint-tools \
             libayatana-appindicator3-dev \
             libass-dev \
             libavcodec-dev \
@@ -519,7 +518,6 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             ffmpeg \
-            libchromaprint-tools \
             libayatana-appindicator3-dev \
             libass-dev \
             libavcodec-dev \

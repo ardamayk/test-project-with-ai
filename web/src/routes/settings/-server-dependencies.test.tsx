@@ -9,12 +9,7 @@ const health = {
 	dependencies: [
 		{ name: "ffmpeg", required: true, available: true, version: "7.1.1" },
 		{ name: "ffprobe", required: true, available: true, version: "7.1.1" },
-		{ name: "fpcalc", required: false, available: false },
 	],
-	recordingIdentification: {
-		status: "missing_fpcalc" as const,
-		acoustIdKeySource: "missing" as const,
-	},
 };
 
 describe("ServerDependenciesSection", () => {
@@ -30,43 +25,7 @@ describe("ServerDependenciesSection", () => {
 		expect(ffmpeg.textContent).toContain("Required");
 		expect(ffmpeg.textContent).toContain("Installed");
 
-		const fpcalc = screen.getByRole("row", { name: /fpcalc/ });
-		expect(fpcalc.textContent).toContain("Optional");
-		expect(fpcalc.textContent).toContain("Missing");
-		expect(fpcalc.textContent).not.toContain("Required");
-	});
-
-	it("explains the Recording Identification status and key source", () => {
-		render(<ServerDependenciesSection health={health} desktopMpv={null} />);
-
-		expect(
-			screen.getByText(/Recording Identification/).parentElement?.textContent,
-		).toContain("Unavailable: fpcalc is not installed");
-		expect(
-			screen.getByText(/AcoustID key/).parentElement?.textContent,
-		).toContain("Not configured");
-	});
-
-	it("shows Recording Identification as active when enabled with an embedded key", () => {
-		render(
-			<ServerDependenciesSection
-				health={{
-					...health,
-					recordingIdentification: {
-						status: "enabled",
-						acoustIdKeySource: "embedded",
-					},
-				}}
-				desktopMpv={null}
-			/>,
-		);
-
-		expect(
-			screen.getByText(/Recording Identification/).parentElement?.textContent,
-		).toContain("Active");
-		expect(
-			screen.getByText(/AcoustID key/).parentElement?.textContent,
-		).toContain("Embedded in this release");
+		expect(screen.queryByText(/Recording Identification/)).toBeNull();
 	});
 
 	it("omits the mpv row on the Web Client and shows it on the Desktop Client", () => {
@@ -126,7 +85,7 @@ describe("ServerDependenciesSection", () => {
 		);
 
 		expect(screen.queryByRole("row", { name: /ffmpeg/ })).toBeNull();
-		expect(screen.getByText(/predates Recording Identification/)).toBeTruthy();
+		expect(screen.queryByText(/Recording Identification/)).toBeNull();
 	});
 
 	it("renders a loading state without health data", () => {
