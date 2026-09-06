@@ -91,6 +91,30 @@ describe("AppShell", () => {
 		expect(screen.getByText("Queue")).toBeTruthy();
 	});
 
+	it("aligns the floating player dock with the page content column", () => {
+		const { container } = render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider
+					api={mockPlaybackApi}
+					engine={new InMemoryPlaybackEngine()}
+				>
+					<AppShell bottom={<div>Player</div>}>
+						<div>Main content</div>
+					</AppShell>
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		const dock = container.querySelector("[data-player-dock]");
+		const column = container.querySelector("[data-player-dock-column]");
+		expect(dock?.className).toContain("inset-x-0");
+		// Mirrors PAGE_CONTENT_PADDING_CLASS / PAGE_CONTENT_WIDTH_CLASS in web:
+		// padding on the outer region, the centred width box inside it.
+		expect(dock?.className).toContain("px-6");
+		expect(dock?.className).toContain("md:px-8");
+		expect(column?.className).toContain("min-[1801px]:max-w-[1476px]");
+		expect(column?.className).toContain("mx-auto");
+	});
+
 	it("does not render resize handles for fixed shell columns", () => {
 		const { container } = render(
 			<LayoutProvider initialPreferences={defaultPreferences}>

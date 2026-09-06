@@ -8,6 +8,11 @@ import { WidgetDndProvider, WidgetDock } from "./WidgetDock";
 // Floating player bar: 72px bar + 16px bottom inset + 16px breathing room, so
 // scrolled content never ends hidden under the bar.
 const PLAYER_DOCK_CONTENT_PADDING = "pb-[104px]";
+// The dock follows the page content column so the bar lines up with page
+// headers and lists. Mirrors PAGE_CONTENT_PADDING_CLASS and
+// PAGE_CONTENT_WIDTH_CLASS in web/src/lib/page-layout-classes.ts.
+const PLAYER_DOCK_PADDING_CLASS = "px-6 md:px-8";
+const PLAYER_DOCK_COLUMN_CLASS = "mx-auto w-full min-[1801px]:max-w-[1476px]";
 
 export function AppShell({
 	children,
@@ -84,9 +89,14 @@ export function AppShell({
 						{bottom ? (
 							<div
 								data-player-dock
-								className="pointer-events-none absolute inset-x-4 bottom-4 z-30"
+								className={`pointer-events-none absolute inset-x-0 bottom-4 z-30 ${PLAYER_DOCK_PADDING_CLASS}`}
 							>
-								<div className="pointer-events-auto">{bottom}</div>
+								<div
+									data-player-dock-column
+									className={PLAYER_DOCK_COLUMN_CLASS}
+								>
+									<div className="pointer-events-auto">{bottom}</div>
+								</div>
 							</div>
 						) : null}
 					</div>
