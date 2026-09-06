@@ -101,7 +101,11 @@ export function ImportMusicDialog({
 							isConfirming={workflow.isConfirming}
 							isCompleted={workflow.isCompleted}
 						/>
-						<div className="min-h-0 flex-1 overflow-y-auto">
+						{/* The single scroll region of the review step. Nested sections must
+						 * not become scroll containers of their own: a non-overflowing
+						 * `overflow-y-auto` + `overscroll-contain` child swallows wheel
+						 * events and the dialog stops scrolling with the mouse. */}
+						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
 							{!workflow.isCompleted && workflow.batchId ? (
 								<ImportAlbumReview
 									batchId={workflow.batchId}
@@ -452,7 +456,7 @@ function ImportFileList({
 	return (
 		<section
 			aria-label="Import Preview"
-			className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+			className="outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 		>
 			<h3 className="sr-only">Import Preview</h3>
 			{groupImportEntries(entries).flatMap((group) => [
