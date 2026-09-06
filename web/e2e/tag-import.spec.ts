@@ -41,6 +41,16 @@ test("new Album cover and file alternatives lead to an explicit batch Track Repl
 		.getByLabel(`Upload cover for ${album}`)
 		.setInputFiles({ name: "cover.png", mimeType: "image/png", buffer: PNG });
 	await expect(dialog.getByText("Uploading artwork…")).toBeHidden();
+	const uploadedCover = dialog.getByRole("img", { name: "Uploaded cover 1" });
+	await expect(uploadedCover).toBeVisible();
+	await expect
+		.poll(() =>
+			uploadedCover.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		)
+		.toBeGreaterThan(0);
+	await expect(
+		dialog.getByRole("radio", { name: `Uploaded cover 1 for ${album}` }),
+	).toBeChecked();
 	await expect(
 		dialog.getByRole("button", { name: "Confirm Import" }),
 	).toBeEnabled();
@@ -79,6 +89,22 @@ test("new Album cover and file alternatives lead to an explicit batch Track Repl
 	});
 	await expect(
 		dialog.getByText("Track Replacement", { exact: true }),
+	).toBeVisible();
+	await dialog
+		.getByRole("combobox", { name: `Album destination for ${album}` })
+		.click();
+	await page
+		.getByRole("option", { name: "Create separate album", exact: true })
+		.click();
+	await expect(
+		dialog.getByRole("radio", { name: "Replace existing Track" }),
+	).toHaveCount(0);
+	await dialog
+		.getByRole("combobox", { name: `Album destination for ${album}` })
+		.click();
+	await page.getByRole("option", { name: /Add to existing album/ }).click();
+	await expect(
+		dialog.getByText("Existing Album cover will be preserved."),
 	).toBeVisible();
 	const replace = dialog.getByRole("radio", { name: "Replace existing Track" });
 	await expect(replace).toBeEnabled();

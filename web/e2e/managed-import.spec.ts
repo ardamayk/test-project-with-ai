@@ -337,9 +337,10 @@ test("Import Preview skips identical bytes and separates a conflicting Album edi
 			"Another title occupies this Album position. Skip this file or create a separate Album.",
 		),
 	).toBeVisible();
-	await dialog
-		.getByLabel(`Album destination for ${ALBUM}`)
-		.selectOption("separate");
+	await dialog.getByLabel(`Album destination for ${ALBUM}`).click();
+	await page
+		.getByRole("option", { name: "Create separate album", exact: true })
+		.click();
 	await expect(
 		remasterRow.getByText(
 			"Another title occupies this Album position. Skip this file or create a separate Album.",

@@ -811,14 +811,23 @@ fn cover_http_request(
 ) -> Result<HttpRequest, ConnectionError> {
     let path = request.uri().path();
     let segments = path.split('/').collect::<Vec<_>>();
-    let is_cover_path = matches!(
-        segments.as_slice(),
-        ["", "api", "v1", "library", "albums", album_id, "cover"] if !album_id.is_empty()
-    );
+    let is_cover_path = match segments.as_slice() {
+        ["", "api", "v1", "library", "albums", album_id, "cover"] => !album_id.is_empty(),
+        [
+            "",
+            "api",
+            "v1",
+            "import-batches",
+            batch_id,
+            "artwork",
+            artwork_id,
+        ] => !batch_id.is_empty() && !artwork_id.is_empty(),
+        _ => false,
+    };
     if !is_cover_path || !matches!(request.method().as_str(), "GET" | "HEAD") {
         return Err(ConnectionError::new(
             ConnectionErrorCode::InvalidRequest,
-            "Desktop cover protocol only serves album cover GET and HEAD requests.",
+            "Desktop cover protocol only serves album cover and import artwork GET and HEAD requests.",
         ));
     }
     let headers = request
@@ -1078,6 +1087,44 @@ mod tests {
             forwarded.url,
             "/api/v1/library/albums/album-1/cover?size=large"
         );
+    }
+
+    #[test]
+    fn cover_protocol_allows_import_artwork_get_and_head() {
+        for method in ["GET", "HEAD"] {
+            let request = tauri::http::Request::builder()
+                .method(method)
+                .uri("earthly-media://localhost/api/v1/import-batches/batch-1/artwork/cover-1")
+                .body(Vec::new())
+                .expect("import artwork request");
+            let forwarded = cover_http_request(&request).expect("allowed import artwork");
+            assert_eq!(
+                forwarded.url,
+                "/api/v1/import-batches/batch-1/artwork/cover-1"
+            );
+            assert_eq!(forwarded.method, method);
+        }
+    }
+
+    #[test]
+    fn cover_protocol_rejects_import_mutations_and_unrelated_paths() {
+        for (method, path) in [
+            ("PUT", "/api/v1/import-batches/batch-1/artwork/cover-1"),
+            ("GET", "/api/v1/import-batches/batch-1"),
+            ("GET", "/api/v1/import-batches//artwork/cover-1"),
+            ("GET", "/api/v1/import-batches/batch-1/artwork/"),
+            (
+                "GET",
+                "/api/v1/import-batches/batch-1/artwork/cover-1/extra",
+            ),
+        ] {
+            let request = tauri::http::Request::builder()
+                .method(method)
+                .uri(format!("earthly-media://localhost{path}"))
+                .body(Vec::new())
+                .expect("invalid import artwork request");
+            assert!(cover_http_request(&request).is_err(), "{method} {path}");
+        }
     }
 
     #[test]
