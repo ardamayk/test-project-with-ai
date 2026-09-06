@@ -7,8 +7,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GenreDetailContent } from "./-genre-page";
 import { GenresPage } from "./-genres-page";
-import { GenreDetailContent } from "./$genre";
 
 const mocks = vi.hoisted(() => ({
 	listTracks: vi.fn(),
