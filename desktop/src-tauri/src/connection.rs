@@ -1110,7 +1110,8 @@ mod tests {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept confirmation");
             let mut request = [0_u8; 4096];
-            stream.read(&mut request).expect("read confirmation");
+            let bytes_read = stream.read(&mut request).expect("read confirmation");
+            assert!(bytes_read > 0, "confirmation request must not be empty");
             thread::sleep(CONFIRMATION_DELAY);
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: 22\r\nConnection: close\r\n\r\n{{\"status\":\"completed\"}}")
                 .expect("write confirmation result");
