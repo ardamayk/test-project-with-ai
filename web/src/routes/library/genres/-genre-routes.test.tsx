@@ -243,6 +243,29 @@ describe("genre routes", () => {
 		).toContain("py-1.5");
 	});
 
+	it("lists genre tracks in added order with list numbering", async () => {
+		mocks.listTracks.mockResolvedValue({
+			items: [
+				{ ...tracks[0], trackNo: 9, createdAt: "2026-03-01T00:00:00Z" },
+				{ ...tracks[1], trackNo: 4, createdAt: "2026-01-01T00:00:00Z" },
+				{ ...tracks[2], trackNo: 7, createdAt: "2026-02-01T00:00:00Z" },
+			],
+		});
+		renderWithQuery(<GenreDetailContent genre="Synthpop" />);
+
+		await screen.findByRole("heading", { name: "Synthpop" });
+		const rows = screen
+			.getAllByRole("row")
+			.slice(1)
+			.map((row) => row.textContent ?? "");
+		expect(rows[0]).toMatch(/^1.*Bizarre Love Triangle/);
+		expect(rows[1]).toMatch(/^2.*Age of Consent/);
+		expect(rows[2]).toMatch(/^3.*Blue Monday/);
+
+		fireEvent.click(screen.getByRole("button", { name: "Play" }));
+		expect(mocks.playTrack).toHaveBeenCalledWith("t2", ["t2", "t3", "t1"]);
+	});
+
 	it("filters genre detail actions to the visible tracks", async () => {
 		const { container } = renderWithQuery(
 			<GenreDetailContent genre="Synthpop" />,

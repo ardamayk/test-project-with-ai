@@ -9,6 +9,7 @@ import { TrackList } from "#/components/track-list";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
 import { trackHasGenre } from "#/lib/genre-filter";
+import { sortTracksByAddedAt } from "#/lib/sort-tracks";
 import {
 	formatTrackCollectionDuration,
 	useTrackCollectionViewState,
@@ -31,9 +32,15 @@ export function GenreDetailContent({ genre }: { genre: string }) {
 		staleTime: 60_000,
 	});
 
+	// A genre is not an album: list Tracks in the order they were added to the
+	// library and number them 1..n instead of showing album track numbers.
 	const genreTracks = useMemo(
 		() =>
-			(tracks.data?.items ?? []).filter((track) => trackHasGenre(track, genre)),
+			sortTracksByAddedAt(
+				(tracks.data?.items ?? []).filter((track) =>
+					trackHasGenre(track, genre),
+				),
+			),
 		[tracks.data?.items, genre],
 	);
 	const collection = useTrackCollectionViewState(genreTracks, {
@@ -96,6 +103,7 @@ export function GenreDetailContent({ genre }: { genre: string }) {
 						tracks={collection.visibleTracks}
 						contextTracks={collection.visibleTracks}
 						playMode="double"
+						numbering="list"
 						showFavorite
 						showMeta
 						showDelete
