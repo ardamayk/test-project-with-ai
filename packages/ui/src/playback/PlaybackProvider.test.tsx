@@ -147,6 +147,12 @@ function Harness() {
 			<button type="button" onClick={() => void playback.playTrack(track2.id)}>
 				Track 2
 			</button>
+			<button
+				type="button"
+				onClick={() => void playback.playTrack(track2.id, [track2.id])}
+			>
+				Play from album
+			</button>
 			<button type="button" onClick={() => void playback.playQueueIndex(0)}>
 				First Queue item
 			</button>
@@ -632,6 +638,34 @@ describe("PlaybackProvider", () => {
 		expect(api.removeQueueItem).toHaveBeenNthCalledWith(1, "item-1", "1");
 		expect(api.removeQueueItem).toHaveBeenNthCalledWith(2, "item-1", "2");
 		expect(api.getQueue).toHaveBeenCalledTimes(2);
+	});
+
+	it("refetches and retries an explicit play-with-context replace once", async () => {
+		const api = createApi();
+		vi.mocked(api.getQueue)
+			.mockResolvedValueOnce({ items: queueItems, revision: "1" })
+			.mockResolvedValueOnce({ items: queueItems, revision: "2" });
+		vi.mocked(api.replaceQueue)
+			.mockRejectedValueOnce(queueConflict("2"))
+			.mockResolvedValueOnce({
+				items: [
+					{ id: "item-9", trackId: track2.id, position: 0, track: track2 },
+				],
+				revision: "3",
+			});
+		renderPlayback(api);
+		await act(async () => {});
+
+		await act(async () =>
+			screen.getByRole("button", { name: "Play from album" }).click(),
+		);
+
+		expect(api.replaceQueue).toHaveBeenNthCalledWith(1, ["track-2"], "1");
+		expect(api.replaceQueue).toHaveBeenNthCalledWith(2, ["track-2"], "2");
+		expect(screen.getByTestId("queue").textContent).toBe("track-2");
+		expect(screen.getByTestId("track").textContent).toBe("Track 2");
+		expect(screen.getByTestId("playing").textContent).toBe("true");
+		expect(screen.getByTestId("queue-conflict").textContent).toBe("");
 	});
 
 	it.each([

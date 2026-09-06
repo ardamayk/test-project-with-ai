@@ -145,6 +145,62 @@ body::after {
   }
 }
 
+@layer components {
+  /* Vertical volume slider: a horizontal range rotated -90deg (works in every
+     engine, unlike writing-mode on range inputs), thin track, line-shaped thumb. */
+  .player-volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    /* Track length = popover inner height (h-32 minus py-3). */
+    width: 104px;
+    height: 16px;
+    margin: 0;
+    transform: translate(-50%, -50%) rotate(-90deg);
+    background: transparent;
+    cursor: pointer;
+    --_fill: var(--player-control-primary);
+    --_track: color-mix(in srgb, var(--player-foreground) 25%, transparent);
+    --_track-bg: linear-gradient(
+      to right,
+      var(--_fill) 0 var(--volume-level, 100%),
+      var(--_track) var(--volume-level, 100%) 100%
+    );
+  }
+  .player-volume-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--_track-bg);
+  }
+  .player-volume-slider::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--_track-bg);
+  }
+  .player-volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 3px;
+    height: 16px;
+    margin-top: -6px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--player-control-primary);
+  }
+  .player-volume-slider::-moz-range-thumb {
+    width: 3px;
+    height: 16px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--player-control-primary);
+  }
+  .player-volume-slider:focus-visible {
+    outline: none;
+  }
+}
+
 @layer base {
   a {
     color: inherit;

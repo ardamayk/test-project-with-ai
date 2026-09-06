@@ -119,8 +119,15 @@ export function TrackList({
 	const restoreRowFocus = (event: Event) =>
 		returnFocus.restore(event, tableRef.current);
 
+	// Selecting a Track replaces the Queue with the context from that Track
+	// onward, so the previous Queue is gone and no earlier Track in the list
+	// is presented as already played.
 	const handlePlay = (track: Track) => {
-		const queueTrackIds = (contextTracks ?? tracks).map((t) => t.id);
+		const context = contextTracks ?? tracks;
+		const startIndex = context.findIndex((t) => t.id === track.id);
+		const queueTrackIds = context
+			.slice(startIndex < 0 ? 0 : startIndex)
+			.map((t) => t.id);
 		void playTrack(track.id, queueTrackIds);
 	};
 

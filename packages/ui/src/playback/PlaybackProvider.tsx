@@ -342,7 +342,9 @@ export function PlaybackProvider({
 		async (trackId: string, queueTrackIds?: string[]) => {
 			let nextQueue = queueRef.current;
 			if (queueTrackIds) {
-				const data = await replaceQueue(queueTrackIds);
+				const data = await replaceQueue(queueTrackIds, {
+					retryOnConflict: true,
+				});
 				if (!data) return;
 				nextQueue = data.items;
 			}

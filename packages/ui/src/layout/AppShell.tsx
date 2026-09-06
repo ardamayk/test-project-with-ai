@@ -5,6 +5,10 @@ import { QueuePanel } from "./QueuePanel";
 import { Toaster } from "./Toaster";
 import { WidgetDndProvider, WidgetDock } from "./WidgetDock";
 
+// Floating player bar: 72px bar + 16px bottom inset + 16px breathing room, so
+// scrolled content never ends hidden under the bar.
+const PLAYER_DOCK_CONTENT_PADDING = "pb-[104px]";
+
 export function AppShell({
 	children,
 	sidebar,
@@ -69,15 +73,26 @@ export function AppShell({
 				<div className="flex min-h-0 flex-1 overflow-hidden">
 					{navPanel === "left" ? fixedNavColumn : null}
 					{queuePanel === "left" && !queueCollapsed ? fixedQueueColumn : null}
-					<main className="flex h-full min-w-0 flex-1 flex-col overflow-auto bg-background">
-						{children}
-					</main>
+					<div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+						<main
+							className={`flex h-full min-w-0 flex-1 flex-col overflow-auto bg-background ${
+								bottom ? PLAYER_DOCK_CONTENT_PADDING : ""
+							}`}
+						>
+							{children}
+						</main>
+						{bottom ? (
+							<div
+								data-player-dock
+								className="pointer-events-none absolute inset-x-4 bottom-4 z-30"
+							>
+								<div className="pointer-events-auto">{bottom}</div>
+							</div>
+						) : null}
+					</div>
 					{queuePanel === "right" && !queueCollapsed ? fixedQueueColumn : null}
 					{navPanel === "right" ? fixedNavColumn : null}
 				</div>
-				{bottom ? (
-					<div className="shrink-0 border-border border-t">{bottom}</div>
-				) : null}
 				<Toaster />
 			</div>
 		</WidgetDndProvider>

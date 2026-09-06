@@ -260,6 +260,17 @@ describe("TrackList", () => {
 		expect(playTrack).toHaveBeenCalledWith("t2", ["t2", "t1"]);
 	});
 
+	it("starts the Queue at the selected Track so no earlier Track counts as played", () => {
+		const second = { ...sampleTrack, id: "t2", title: "Style" };
+		const third = { ...sampleTrack, id: "t3", title: "Blank Space" };
+
+		render(<TrackList tracks={[sampleTrack, second, third]} />);
+
+		fireEvent.click(screen.getByText("Style"));
+
+		expect(playTrack).toHaveBeenCalledWith("t2", ["t2", "t3"]);
+	});
+
 	it("plays the focused row with Enter in double-click mode", () => {
 		render(<TrackList tracks={[sampleTrack]} playMode="double" />);
 

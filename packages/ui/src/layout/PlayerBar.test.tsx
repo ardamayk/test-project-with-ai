@@ -243,6 +243,23 @@ describe("PlayerBar", () => {
 		expect(screen.getByRole("contentinfo").className).toContain("bg-player");
 	});
 
+	it("mutes from the volume icon and restores the previous level on unmute", async () => {
+		renderPlayerBar();
+
+		fireEvent.change(screen.getByLabelText("Volume"), {
+			target: { value: "0.4" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Mute" }));
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0",
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Unmute" }));
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0.4",
+		);
+	});
+
 	it("keeps volume slider usable", async () => {
 		renderPlayerBar();
 

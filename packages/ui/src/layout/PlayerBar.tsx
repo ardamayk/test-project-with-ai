@@ -426,7 +426,7 @@ export function PlayerBar({
 	};
 
 	return (
-		<footer className="relative h-[72px] border-[var(--shell-subtle-border)] border-t bg-player px-6 pt-px text-player-foreground shadow-[0px_-10px_40px_0px_rgba(0,0,0,0.3)] backdrop-blur-[12px]">
+		<footer className="relative h-[72px] rounded-2xl border border-[var(--shell-subtle-border)] bg-player/95 px-6 text-player-foreground shadow-[0px_12px_40px_0px_rgba(0,0,0,0.35)] backdrop-blur-[12px]">
 			{playbackAlert ? (
 				<p
 					role="alert"

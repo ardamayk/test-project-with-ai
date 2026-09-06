@@ -9,9 +9,17 @@ import {
 	Shuffle,
 	SkipBack,
 	SkipForward,
+	Volume1,
 	Volume2,
+	VolumeX,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+	type CSSProperties,
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { cn } from "../lib/utils";
 import type { RepeatMode } from "../playback/PlaybackProvider";
 
@@ -278,14 +286,6 @@ export function VolumeAndQueueControls({
 			{signalControl}
 			<button
 				type="button"
-				className="hidden size-5 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] sm:inline-flex"
-				onClick={onToggleQueue}
-				aria-label="Toggle queue panel"
-			>
-				<ListMusic className="size-4" />
-			</button>
-			<button
-				type="button"
 				className="inline-flex h-6 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] py-[5px] text-[11px] text-player-foreground disabled:opacity-100"
 				aria-label={`Quality ${qualityLabel}`}
 				disabled
@@ -296,21 +296,97 @@ export function VolumeAndQueueControls({
 					{qualityLabel}
 				</span>
 			</button>
-			<Volume2
-				className="hidden size-[15px] shrink-0 text-player-foreground sm:block"
-				aria-hidden
-			/>
-			<input
-				type="range"
-				min={0}
-				max={1}
-				step={0.01}
-				value={volume}
-				onChange={(event) => onVolumeChange(Number(event.target.value))}
-				className="w-14 shrink-0 accent-[var(--player-control-primary)] sm:w-20 md:w-[105px]"
-				aria-label="Volume"
-			/>
+			<VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
+			<button
+				type="button"
+				className="hidden size-5 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] sm:inline-flex"
+				onClick={onToggleQueue}
+				aria-label="Toggle queue panel"
+			>
+				<ListMusic className="size-4" />
+			</button>
 		</section>
+	);
+}
+
+function VolumeControl({
+	volume,
+	onVolumeChange,
+}: {
+	volume: number;
+	onVolumeChange: (value: number) => void;
+}) {
+	const VolumeIcon = volume <= 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
+	// Touch devices have no hover, so a tap opens the popover instead of muting.
+	const [touchOpen, setTouchOpen] = useState(false);
+	const lastPointerWasTouchRef = useRef(false);
+	const lastAudibleVolumeRef = useRef(volume > 0 ? volume : 1);
+	if (volume > 0) lastAudibleVolumeRef.current = volume;
+
+	const rootRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (!touchOpen) return undefined;
+		const closeOnOutsideTap = (event: PointerEvent) => {
+			if (!rootRef.current?.contains(event.target as Node)) setTouchOpen(false);
+		};
+		document.addEventListener("pointerdown", closeOnOutsideTap);
+		return () => document.removeEventListener("pointerdown", closeOnOutsideTap);
+	}, [touchOpen]);
+
+	const toggleMute = () =>
+		onVolumeChange(volume <= 0 ? lastAudibleVolumeRef.current : 0);
+
+	return (
+		<div ref={rootRef} className="group relative flex shrink-0 items-center">
+			<button
+				type="button"
+				className={cn(
+					CONTROL_BUTTON_CLASS,
+					"group-focus-within:text-[var(--player-control-primary)] group-hover:text-[var(--player-control-primary)]",
+				)}
+				aria-label={volume <= 0 ? "Unmute" : "Mute"}
+				onPointerDown={(event) => {
+					lastPointerWasTouchRef.current = event.pointerType === "touch";
+				}}
+				onClick={() => {
+					if (lastPointerWasTouchRef.current) {
+						setTouchOpen((open) => !open);
+						return;
+					}
+					toggleMute();
+				}}
+			>
+				<VolumeIcon className="size-4" />
+			</button>
+			<div
+				data-testid="volume-popover"
+				className={cn(
+					"pointer-events-none absolute bottom-full left-1/2 z-40 -translate-x-1/2 pb-3 opacity-0 transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100",
+					touchOpen && "pointer-events-auto opacity-100",
+				)}
+			>
+				<div className="flex h-32 w-9 items-center justify-center rounded-xl border border-[var(--shell-subtle-border)] bg-player px-2 py-3 shadow-[0px_8px_24px_0px_rgba(0,0,0,0.35)] backdrop-blur-[12px]">
+					<div className="relative h-full w-4">
+						<input
+							type="range"
+							min={0}
+							max={1}
+							step={0.01}
+							value={volume}
+							onChange={(event) => onVolumeChange(Number(event.target.value))}
+							className="player-volume-slider"
+							style={
+								{
+									"--volume-level": `${Math.round(volume * 100)}%`,
+								} as CSSProperties
+							}
+							aria-label="Volume"
+							aria-orientation="vertical"
+						/>
+					</div>
+				</div>
+			</div>
+		</div>
 	);
 }
 

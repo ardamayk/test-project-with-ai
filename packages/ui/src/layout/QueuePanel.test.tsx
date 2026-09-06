@@ -27,12 +27,20 @@ const track = {
 	genres: [],
 };
 
-function createApi(): PlaybackApi {
+const track2 = { ...track, id: "track-2", title: "Track 2" };
+const track3 = { ...track, id: "track-3", title: "Track 3" };
+
+const threeItems = [
+	{ id: "item-1", trackId: track.id, position: 0, track },
+	{ id: "item-2", trackId: track2.id, position: 1, track: track2 },
+	{ id: "item-3", trackId: track3.id, position: 2, track: track3 },
+];
+
+function createApi(
+	items = [{ id: "item-1", trackId: track.id, position: 0, track }],
+): PlaybackApi {
 	return {
-		getQueue: vi.fn(async () => ({
-			items: [{ id: "item-1", trackId: track.id, position: 0, track }],
-			revision: "1",
-		})),
+		getQueue: vi.fn(async () => ({ items, revision: "1" })),
 		replaceQueue: vi.fn(async () => ({ items: [], revision: "2" })),
 		reorderQueue: vi.fn(async () => ({ items: [], revision: "2" })),
 		appendQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
@@ -94,6 +102,48 @@ describe("QueuePanel", () => {
 			fireEvent.click(row as HTMLElement);
 		});
 
+		expect(engine.getState().source).toMatchObject({
+			type: "track",
+			playbackUrl: "/stream/track-1",
+		});
+	});
+
+	it("splits the Queue into played, playing and next up around the current item", async () => {
+		const engine = new InMemoryPlaybackEngine();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={createApi(threeItems)} engine={engine}>
+					<QueuePanel />
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+
+		expect(await screen.findByText("Track 2")).toBeTruthy();
+		expect(screen.getByRole("region", { name: "Next up" })).toBeTruthy();
+		expect(screen.queryByRole("region", { name: "Played" })).toBeNull();
+
+		await act(async () => {
+			fireEvent.click(screen.getByText("Track 2").closest("li") as HTMLElement);
+		});
+
+		const played = screen.getByRole("region", { name: "Played" });
+		const playing = screen.getByRole("region", { name: "Playing" });
+		const nextUp = screen.getByRole("region", { name: "Next up" });
+		expect(played.textContent).toContain("Track 1");
+		expect(playing.textContent).toContain("Track 2");
+		expect(nextUp.textContent).toContain("Track 3");
+		expect(
+			playing.querySelector('[aria-current="true"]')?.textContent,
+		).toContain("Track 2");
+
+		// Going back: a played row is still playable.
+		await act(async () => {
+			fireEvent.click(screen.getByText("Track 1").closest("li") as HTMLElement);
+		});
+		expect(screen.queryByRole("region", { name: "Played" })).toBeNull();
+		expect(
+			screen.getByRole("region", { name: "Playing" }).textContent,
+		).toContain("Track 1");
 		expect(engine.getState().source).toMatchObject({
 			type: "track",
 			playbackUrl: "/stream/track-1",

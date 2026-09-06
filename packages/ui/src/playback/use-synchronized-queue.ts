@@ -97,12 +97,11 @@ export function useSynchronizedQueue(api: PlaybackQueueApi) {
 		);
 	}, [refreshQueue]);
 
-	const retryAppend = useCallback(
-		async (trackId: string): Promise<Queue> => {
+	/** Refetch the Queue and re-issue one mutation against the fresh revision. */
+	const retryWithFreshRevision = useCallback(
+		async (mutate: (revision: string) => Promise<Queue>): Promise<Queue> => {
 			const current = await runQueueRequest(() => apiRef.current.getQueue());
-			const retried = await runQueueRequest(() =>
-				apiRef.current.appendQueueItem(trackId, current.revision),
-			);
+			const retried = await runQueueRequest(() => mutate(current.revision));
 			setQueueConflict(null);
 			return retried;
 		},
@@ -119,14 +118,25 @@ export function useSynchronizedQueue(api: PlaybackQueueApi) {
 				return data;
 			} catch (error) {
 				if (!isQueueConflict(error)) throw error;
-				return retryAppend(trackId);
+				return retryWithFreshRevision((revision) =>
+					apiRef.current.appendQueueItem(trackId, revision),
+				);
 			}
 		},
-		[retryAppend, runQueueRequest],
+		[retryWithFreshRevision, runQueueRequest],
 	);
 
+	/**
+	 * Replace the Queue. A replace whose content does not depend on the
+	 * previous Queue (playing a Track with its context) is an unambiguous
+	 * intent and may be retried once after a revision conflict; other
+	 * replacements surface the conflict for the user to resolve.
+	 */
 	const replaceQueue = useCallback(
-		async (trackIds: string[]): Promise<Queue | undefined> => {
+		async (
+			trackIds: string[],
+			options: { retryOnConflict?: boolean } = {},
+		): Promise<Queue | undefined> => {
 			try {
 				const data = await runQueueRequest(() =>
 					apiRef.current.replaceQueue(trackIds, queueRevisionRef.current),
@@ -135,6 +145,11 @@ export function useSynchronizedQueue(api: PlaybackQueueApi) {
 				return data;
 			} catch (error) {
 				if (!isQueueConflict(error)) throw error;
+				if (options.retryOnConflict) {
+					return retryWithFreshRevision((revision) =>
+						apiRef.current.replaceQueue(trackIds, revision),
+					);
+				}
 				await runQueueRequest(() => apiRef.current.getQueue());
 				setQueueConflict(
 					"Queue changed in another Playback Client. Review replacement and try again.",
@@ -142,7 +157,7 @@ export function useSynchronizedQueue(api: PlaybackQueueApi) {
 				return undefined;
 			}
 		},
-		[runQueueRequest],
+		[retryWithFreshRevision, runQueueRequest],
 	);
 
 	const reconcileRemove = useCallback(
