@@ -16,10 +16,15 @@ function formatDuration(ms: number): string {
 	return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function QueuePanel() {
+export function QueuePanel({
+	embedded = false,
+}: {
+	/** Rendered inside another surface (Lyrics view): no collapse control or suggestion footer. */
+	embedded?: boolean;
+} = {}) {
 	const { preferences, togglePanel } = useLayout();
 	const panelSide = getQueuePanel(preferences.layout.sidebarPosition);
-	const isCollapsed = preferences.layout.collapsed[panelSide];
+	const isCollapsed = !embedded && preferences.layout.collapsed[panelSide];
 
 	const {
 		queue,
@@ -82,11 +87,13 @@ export function QueuePanel() {
 						</button>
 					) : null}
 				</div>
-				<PanelCollapseButton
-					edge={panelSide}
-					collapsed={false}
-					onToggle={() => togglePanel(panelSide)}
-				/>
+				{embedded ? null : (
+					<PanelCollapseButton
+						edge={panelSide}
+						collapsed={false}
+						onToggle={() => togglePanel(panelSide)}
+					/>
+				)}
 			</div>
 			<div className="flex-1 overflow-y-auto p-3">
 				{queueConflict ? (
@@ -109,14 +116,16 @@ export function QueuePanel() {
 					/>
 				)}
 			</div>
-			<div className="border-border border-t p-3">
-				<div className="rounded-lg border border-dashed border-border bg-muted/30 p-3">
-					<p className="font-medium text-heading text-xs">Smart suggestion</p>
-					<p className="mt-1 text-caption text-xs">
-						Based on your listening — coming soon.
-					</p>
+			{embedded ? null : (
+				<div className="border-border border-t p-3">
+					<div className="rounded-lg border border-dashed border-border bg-muted/30 p-3">
+						<p className="font-medium text-heading text-xs">Smart suggestion</p>
+						<p className="mt-1 text-caption text-xs">
+							Based on your listening — coming soon.
+						</p>
+					</div>
 				</div>
-			</div>
+			)}
 		</div>
 	);
 }

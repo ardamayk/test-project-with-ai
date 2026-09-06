@@ -29,6 +29,7 @@ import {
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
+import { LyricsOverlay } from "./LyricsOverlay";
 import { PlaybackSignal } from "./PlaybackSignal";
 import {
 	PlaybackControls,
@@ -110,6 +111,7 @@ export function PlayerBar({
 	const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
 	const [playlistSubmenuOpen, setPlaylistSubmenuOpen] = useState(false);
 	const [infoOpen, setInfoOpen] = useState(false);
+	const [lyricsOpen, setLyricsOpen] = useState(false);
 	const [playlists, setPlaylists] = useState<Playlist[]>([]);
 	const [playlistsLoaded, setPlaylistsLoaded] = useState(false);
 	const [memberPlaylistIds, setMemberPlaylistIds] = useState<Set<string>>(
@@ -408,7 +410,7 @@ export function PlayerBar({
 	};
 
 	return (
-		<footer className="relative h-[72px] rounded-2xl border border-[var(--player-border)] bg-player px-6 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]">
+		<footer className="relative h-[80px] rounded-2xl border border-[var(--player-border)] bg-player px-5 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]">
 			{playbackAlert ? (
 				<p
 					role="alert"
@@ -425,7 +427,7 @@ export function PlayerBar({
 					<AlbumArt
 						coverUrl={artworkUrl}
 						title={nowPlayingTitle}
-						className="size-12 shrink-0 rounded-[2px] border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
+						className="size-14 shrink-0 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
 					/>
 					<div className="min-w-0 overflow-hidden">
 						<div className="flex max-w-full min-w-0 items-center">
@@ -484,7 +486,7 @@ export function PlayerBar({
 							</button>
 						</div>
 						<p
-							className="truncate text-player-foreground text-[11px]"
+							className="truncate text-player-foreground text-xs"
 							title={nowPlayingSubtitle}
 							role={isReconnecting ? "status" : undefined}
 							aria-live={isReconnecting ? "polite" : undefined}
@@ -586,9 +588,17 @@ export function PlayerBar({
 						) : undefined
 					}
 					onToggleQueue={() => togglePanel(queuePanelSide)}
+					onOpenLyrics={currentTrack ? () => setLyricsOpen(true) : undefined}
 					onVolumeChange={setVolume}
 				/>
 			</div>
+			{lyricsOpen && currentTrack ? (
+				<LyricsOverlay
+					track={currentTrack}
+					coverUrl={artworkUrl}
+					onClose={() => setLyricsOpen(false)}
+				/>
+			) : null}
 			{infoOpen && currentTrack ? (
 				<TrackInfoDialog
 					track={currentTrack}

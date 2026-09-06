@@ -241,7 +241,7 @@ describe("PlayerBar", () => {
 	it("renders the Figma player bar shell dimensions", () => {
 		renderPlayerBar();
 
-		expect(screen.getByRole("contentinfo").className).toContain("h-[72px]");
+		expect(screen.getByRole("contentinfo").className).toContain("h-[80px]");
 		expect(screen.getByRole("contentinfo").className).toContain("bg-player");
 	});
 
@@ -284,6 +284,27 @@ describe("PlayerBar", () => {
 		const seek = screen.getByLabelText("Seek") as HTMLInputElement;
 		expect(seek.className).toContain("player-seek-slider");
 		expect(seek.style.getPropertyValue("--seek-level")).toMatch(/%$/);
+	});
+
+	it("opens the full-screen Lyrics view with the Queue beside it", async () => {
+		renderPlayerBar();
+		expect(
+			(screen.getByRole("button", { name: "Lyrics" }) as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+
+		const view = screen.getByRole("dialog", { name: "Lyrics" });
+		expect(within(view).getByText("No lyrics yet")).toBeTruthy();
+		expect(within(view).getByRole("heading", { name: "Queue" })).toBeTruthy();
+		expect(within(view).getAllByText("Track 1").length).toBeGreaterThan(0);
+
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog", { name: "Lyrics" })).toBeNull();
 	});
 
 	it("mutes from the volume icon and restores the previous level on unmute", async () => {

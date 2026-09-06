@@ -80,7 +80,7 @@ export function PlaybackSignal({
 				title={`Output mode: ${activeLabel}`}
 				aria-haspopup="menu"
 				aria-expanded={isOpen}
-				className="inline-flex h-6 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
+				className="inline-flex h-7 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
 				onClick={() => setIsOpen((value) => !value)}
 			>
 				{qualityIcon}

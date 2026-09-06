@@ -3,6 +3,7 @@ import {
 	Disc3,
 	Infinity as InfinityIcon,
 	ListMusic,
+	MicVocal,
 	Pause,
 	Play,
 	Repeat,
@@ -24,7 +25,8 @@ import { cn } from "../lib/utils";
 import type { RepeatMode } from "../playback/PlaybackProvider";
 
 const CONTROL_BUTTON_CLASS =
-	"inline-flex size-5 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40";
+	"inline-flex size-6 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40";
+const CONTROL_ICON_CLASS = "size-[18px]";
 const ACTIVE_CONTROL_BUTTON_CLASS = "text-[var(--player-control-primary)]";
 
 type PlaybackControlsProps = {
@@ -69,7 +71,7 @@ function TransportControls({
 	onNext,
 }: PlaybackControlsProps) {
 	return (
-		<div className="flex items-center gap-6">
+		<div className="flex items-center gap-5">
 			<ShuffleButton
 				isEnabled={shuffleEnabled}
 				disabled={!hasCurrentTrack}
@@ -119,7 +121,7 @@ function QueueNavigationButton({
 			disabled={disabled}
 			aria-label={label}
 		>
-			<Icon className="size-4" />
+			<Icon className={CONTROL_ICON_CLASS} />
 		</button>
 	);
 }
@@ -144,7 +146,7 @@ function ShuffleButton({
 			onClick={onClick}
 			disabled={disabled}
 		>
-			<Shuffle className="size-4" />
+			<Shuffle className={CONTROL_ICON_CLASS} />
 		</button>
 	);
 }
@@ -166,7 +168,11 @@ function PrimaryPlaybackButton({
 			disabled={disabled}
 			aria-label={isPlaying ? "Pause" : "Play"}
 		>
-			{isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+			{isPlaying ? (
+				<Pause className={CONTROL_ICON_CLASS} />
+			) : (
+				<Play className={cn(CONTROL_ICON_CLASS, "ml-0.5")} />
+			)}
 		</button>
 	);
 }
@@ -198,7 +204,7 @@ function RepeatButton({
 			onClick={onClick}
 			disabled={disabled}
 		>
-			<Repeat className="size-4" />
+			<Repeat className={CONTROL_ICON_CLASS} />
 			{repeatMode === "once" ? (
 				<span className="-right-0.5 -bottom-0.5 absolute flex size-3 items-center justify-center rounded-full bg-primary font-semibold text-[0.5rem] text-primary-foreground">
 					1
@@ -272,12 +278,14 @@ type VolumeAndQueueControlsProps = {
 	volume: number;
 	signalControl?: ReactNode;
 	onToggleQueue: () => void;
+	/** Absent while nothing is playing; the Lyrics button is then disabled. */
+	onOpenLyrics?: () => void;
 	onVolumeChange: (value: number) => void;
 };
 
 export function QualityIconFor({ isLossless }: { isLossless: boolean }) {
 	const Icon = isLossless ? Disc3 : AudioLines;
-	return <Icon className="size-3 shrink-0" />;
+	return <Icon className="size-3.5 shrink-0" />;
 }
 
 export function VolumeAndQueueControls({
@@ -286,22 +294,23 @@ export function VolumeAndQueueControls({
 	volume,
 	signalControl,
 	onToggleQueue,
+	onOpenLyrics,
 	onVolumeChange,
 }: VolumeAndQueueControlsProps) {
 	const QualityIcon = isLossless ? Disc3 : AudioLines;
 	return (
 		<section
 			aria-label="Volume and queue"
-			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
+			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-3.5 justify-self-end"
 		>
 			{signalControl ?? (
 				<span
 					role="note"
-					className="inline-flex h-6 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] text-[11px] text-player-foreground"
+					className="inline-flex h-7 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] text-[11px] text-player-foreground"
 					title={qualityLabel}
 					aria-label={`Quality ${qualityLabel}`}
 				>
-					<QualityIcon className="size-3 shrink-0" />
+					<QualityIcon className="size-3.5 shrink-0" />
 					<span className="hidden font-medium tabular-nums md:inline">
 						{qualityLabel}
 					</span>
@@ -310,11 +319,20 @@ export function VolumeAndQueueControls({
 			<VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
 			<button
 				type="button"
-				className="hidden size-5 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] sm:inline-flex"
+				className={cn(CONTROL_BUTTON_CLASS, "hidden shrink-0 sm:inline-flex")}
+				onClick={onOpenLyrics}
+				disabled={!onOpenLyrics}
+				aria-label="Lyrics"
+			>
+				<MicVocal className={CONTROL_ICON_CLASS} />
+			</button>
+			<button
+				type="button"
+				className={cn(CONTROL_BUTTON_CLASS, "hidden shrink-0 sm:inline-flex")}
 				onClick={onToggleQueue}
 				aria-label="Toggle queue panel"
 			>
-				<ListMusic className="size-4" />
+				<ListMusic className={CONTROL_ICON_CLASS} />
 			</button>
 		</section>
 	);
@@ -367,7 +385,7 @@ function VolumeControl({
 					toggleMute();
 				}}
 			>
-				<VolumeIcon className="size-4" />
+				<VolumeIcon className={CONTROL_ICON_CLASS} />
 			</button>
 			<div
 				data-testid="volume-popover"

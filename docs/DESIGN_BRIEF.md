@@ -191,7 +191,7 @@ Her sayfada görünür; Spotify / Apple Music benzeri ama kopya değil. Yan pane
 
 **Orta:** Play/Pause, Next, seek slider, current time / duration
 
-**Sağ:** Quality pill, volume ikonu (hover/focus ile yukarı açılan dikey slider, tıklama mute), en sağda queue toggle
+**Sağ:** Quality pill (tıklayınca çıkış modu menüsü), volume ikonu (hover/focus ile yukarı açılan dikey slider, tıklama mute), Lyrics (alttan yukarı açılan tam ekran görünüm: solda sözler, sağda kuyruk), en sağda queue toggle
 
 **Durumlar:**
 
