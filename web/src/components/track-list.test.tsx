@@ -436,21 +436,32 @@ describe("TrackList", () => {
 		).toBeTruthy();
 		expect(within(dialog).getByText("Sample rate")).toBeTruthy();
 		expect(within(dialog).queryByText("Metadata source")).toBeNull();
-		expect(within(dialog).getByText("File path")).toBeTruthy();
-		expect(within(dialog).getByText("SHA-256")).toBeTruthy();
 		expect(within(dialog).getByText("Revision")).toBeTruthy();
 		expect(within(dialog).getByText("Bit depth")).toBeTruthy();
 		expect(within(dialog).getByText("Genre")).toBeTruthy();
-		expect(within(dialog).getByText("Size")).toBeTruthy();
 		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
 		expect(within(dialog).getByText("Album ReplayGain")).toBeTruthy();
 		expect(
-			within(dialog).getByText("Available · Gain -7.25 dB · Peak 0.980000"),
+			within(dialog).getByText("Gain -7.25 dB · Peak 0.980000"),
 		).toBeTruthy();
 		expect(
-			within(dialog).getByText("Available · Gain -6.50 dB · Peak 1.010000"),
+			within(dialog).getByText("Gain -6.50 dB · Peak 1.010000"),
 		).toBeTruthy();
-		expect(within(dialog).getByText("Id")).toBeTruthy();
+		for (const hidden of [
+			"Size",
+			"Channels",
+			"Container",
+			"Track total",
+			"Disc total",
+			"Title sort",
+			"Identity key",
+			"File path",
+			"SHA-256",
+			"Album id",
+			"Id",
+		]) {
+			expect(within(dialog).queryByText(hidden)).toBeNull();
+		}
 		expect(within(dialog).getByText("Taylor Swift")).toBeTruthy();
 		expect(within(dialog).getByText("1989")).toBeTruthy();
 		expect(within(dialog).getAllByText("1")).toHaveLength(2);
@@ -459,8 +470,6 @@ describe("TrackList", () => {
 		expect(within(dialog).getByText("96 kHz")).toBeTruthy();
 		expect(within(dialog).getByText("24-bit")).toBeTruthy();
 		expect(within(dialog).getByText("Pop")).toBeTruthy();
-		expect(within(dialog).getByText("47.74 MiB")).toBeTruthy();
-		expect(within(dialog).getByText("t1")).toBeTruthy();
 		expect(within(dialog).getByRole("button", { name: "Close" })).toBeTruthy();
 
 		fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -551,7 +560,7 @@ describe("TrackList", () => {
 		).toBeNull();
 	});
 
-	it("shows partial and absent ReplayGain Metadata availability", () => {
+	it("shows partial ReplayGain Metadata and hides unrecorded ReplayGain rows", () => {
 		render(
 			<TrackList
 				tracks={[
@@ -574,8 +583,10 @@ describe("TrackList", () => {
 		fireEvent.click(screen.getByText("Details"));
 
 		const dialog = screen.getByRole("dialog", { name: "Welcome to New York" });
-		expect(within(dialog).getByText("Available · Gain -4.25 dB")).toBeTruthy();
-		expect(within(dialog).getByText("Unavailable")).toBeTruthy();
+		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
+		expect(within(dialog).getByText("Gain -4.25 dB")).toBeTruthy();
+		expect(within(dialog).queryByText("Album ReplayGain")).toBeNull();
+		expect(within(dialog).queryByText("Unavailable")).toBeNull();
 	});
 
 	it("renders custom remove and delete actions together when supplied", () => {

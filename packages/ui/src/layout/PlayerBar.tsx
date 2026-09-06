@@ -99,12 +99,6 @@ function formatDuration(ms?: number): string | null {
 	return `${minutes}m ${seconds}s`;
 }
 
-function formatBytes(bytes?: number): string | null {
-	if (!bytes || bytes <= 0) return null;
-	const mib = bytes / 1024 / 1024;
-	return `${mib.toFixed(2)} MiB`;
-}
-
 function isLosslessFormat(format?: string): boolean {
 	return ["flac", "alac", "wav", "aiff", "dsd"].includes(
 		format?.toLowerCase() ?? "",
@@ -794,8 +788,6 @@ function TrackInfoDialog({
 			),
 		],
 		["Genre", track.genre],
-		["Size", formatBytes(track.sizeBytes)],
-		["Id", track.id],
 	].filter((row): row is [string, string] => Boolean(row[1]));
 
 	return (

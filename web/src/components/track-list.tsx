@@ -64,12 +64,6 @@ function formatBitrate(kbps?: number, format?: string): string | null {
 	return `${kbps} kbps (${provenance})`;
 }
 
-function formatBytes(bytes?: number): string | null {
-	if (!bytes || bytes <= 0) return null;
-	const mib = bytes / 1024 / 1024;
-	return `${mib.toFixed(2)} MiB`;
-}
-
 export function TrackList({
 	tracks,
 	contextTracks,
@@ -381,22 +375,11 @@ function TrackDetailsDialog({
 					),
 				],
 				["Genre", getTrackGenreNames(track).join(", ")],
-				["Size", formatBytes(track.sizeBytes)],
-				["Channels", track.channelCount?.toString()],
-				["Container", track.container],
 				["Sample format", track.sampleFormat],
-				["Track total", track.trackTotal?.toString()],
-				["Disc total", track.discTotal?.toString()],
-				["Title sort", track.titleSort],
-				["Identity key", track.identityKey],
 				["Revision", track.revision?.toString()],
-				["File path", track.filePath],
 				["File modified", formatUnixSeconds(track.fileMtime)],
-				["SHA-256", track.contentSha256],
 				["Created", formatTimestamp(track.createdAt)],
 				["Updated", formatTimestamp(track.updatedAt)],
-				["Album id", track.albumId],
-				["Id", track.id],
 			].filter((row): row is [string, string] => Boolean(row[1]))
 		: [];
 

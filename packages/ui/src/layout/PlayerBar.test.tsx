@@ -526,9 +526,11 @@ describe("PlayerBar", () => {
 		).toBeTruthy();
 		expect(within(dialog).getByText("96 kHz")).toBeTruthy();
 		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
-		expect(within(dialog).getByText("Available · Gain -7.25 dB")).toBeTruthy();
-		expect(within(dialog).getByText("Album ReplayGain")).toBeTruthy();
-		expect(within(dialog).getByText("Unavailable")).toBeTruthy();
+		expect(within(dialog).getByText("Gain -7.25 dB")).toBeTruthy();
+		expect(within(dialog).queryByText("Album ReplayGain")).toBeNull();
+		expect(within(dialog).queryByText("Unavailable")).toBeNull();
+		expect(within(dialog).queryByText("Size")).toBeNull();
+		expect(within(dialog).queryByText("Id")).toBeNull();
 	});
 
 	it("shows active shuffle and repeat states", async () => {
