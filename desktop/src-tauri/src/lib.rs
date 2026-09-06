@@ -295,6 +295,28 @@ fn get_desktop_mpv_status() -> playback::MpvStatus {
     playback::probe_mpv_status()
 }
 
+/// External links (Spotify, Last.fm, ...) leave the Desktop Client and open in
+/// the system browser. Only web URLs are accepted so the renderer cannot hand
+/// arbitrary schemes to the operating system.
+#[tauri::command]
+fn desktop_open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let url = validate_external_url(&url)?;
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+fn validate_external_url(raw: &str) -> Result<url::Url, String> {
+    let parsed =
+        url::Url::parse(raw).map_err(|_| "External link is not a valid URL.".to_owned())?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(parsed),
+        scheme => Err(format!("External link scheme '{scheme}' is not allowed.")),
+    }
+}
+
 #[tauri::command]
 fn desktop_playback_quit(
     app: tauri::AppHandle,
@@ -907,6 +929,7 @@ fn protocol_error_status(code: ConnectionErrorCode) -> u16 {
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .on_window_event(handle_main_window_close)
         .register_asynchronous_uri_scheme_protocol(COVER_PROTOCOL, |context, request, responder| {
             let state = context.app_handle().state::<AppState>();
@@ -1043,6 +1066,7 @@ pub fn run() -> tauri::Result<()> {
             desktop_reconnect_queue_events,
             get_desktop_playback_state,
             get_desktop_mpv_status,
+            desktop_open_external_url,
             desktop_playback_renderer_ready,
             desktop_playback_quit,
             desktop_playback_play,
@@ -1071,7 +1095,16 @@ pub fn run() -> tauri::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cover_http_request, validate_playback_source};
+    use super::{cover_http_request, validate_external_url, validate_playback_source};
+
+    #[test]
+    fn external_links_accept_only_web_urls() {
+        assert!(validate_external_url("https://open.spotify.com/search/x").is_ok());
+        assert!(validate_external_url("http://example.com").is_ok());
+        assert!(validate_external_url("file:///etc/passwd").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("not a url").is_err());
+    }
     use serde_json::json;
 
     #[test]

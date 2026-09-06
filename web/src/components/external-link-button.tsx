@@ -1,6 +1,12 @@
 import { useState } from "react";
+import { isDesktopClient, openExternalUrl } from "#/desktop/bridge";
 import { cn } from "#/lib/utils";
 
+/**
+ * External links open a new browser tab on the web. Inside the Desktop
+ * Client the webview cannot open windows, so the link is handed to the
+ * system browser instead.
+ */
 export function ExternalLinkButton({
 	href,
 	name,
@@ -27,6 +33,13 @@ export function ExternalLinkButton({
 				"flex size-10 items-center justify-center rounded-full border border-border bg-background/80",
 				"text-caption transition hover:bg-muted hover:text-foreground",
 			)}
+			onClick={(event) => {
+				if (!isDesktopClient()) return;
+				event.preventDefault();
+				void openExternalUrl(href).catch((error) => {
+					console.warn("Failed to open external link", { href, error });
+				});
+			}}
 		>
 			{showIcon ? (
 				<img
