@@ -1088,6 +1088,9 @@ describe("tracks route", () => {
 		expect(preview.className).not.toContain("overscroll-contain");
 		expect(preview.parentElement?.className).toContain("overflow-y-auto");
 		expect(preview.parentElement?.className).toContain("overscroll-contain");
+		expect(preview.parentElement?.className).toContain(
+			"[scrollbar-width:none]",
+		);
 		expect(
 			screen.getByRole("checkbox", { name: "Select broken.flac" }),
 		).toHaveProperty("disabled", true);

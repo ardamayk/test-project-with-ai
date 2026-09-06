@@ -86,7 +86,7 @@ export function ImportMusicDialog({
 							className={
 								workflow.entries.length > 0
 									? "hidden"
-									: "grid gap-5 overflow-y-auto px-4 py-5 sm:px-6"
+									: "grid gap-5 overflow-y-auto px-4 py-5 sm:px-6 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 							}
 						>
 							<ImportFilePicker
@@ -105,7 +105,7 @@ export function ImportMusicDialog({
 						 * not become scroll containers of their own: a non-overflowing
 						 * `overflow-y-auto` + `overscroll-contain` child swallows wheel
 						 * events and the dialog stops scrolling with the mouse. */}
-						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 							{!workflow.isCompleted && workflow.batchId ? (
 								<ImportAlbumReview
 									batchId={workflow.batchId}
