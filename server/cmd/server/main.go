@@ -107,6 +107,12 @@ func isUnboundedRequest(request *http.Request) bool {
 	if isStreamPath(request.URL.Path) {
 		return true
 	}
+	// Batch confirmation rechecks and commits all selected files synchronously.
+	if request.Method == http.MethodPost &&
+		strings.HasPrefix(request.URL.Path, "/api/v1/import-batches/") &&
+		strings.HasSuffix(request.URL.Path, "/confirm") {
+		return true
+	}
 	if request.Method == http.MethodDelete &&
 		request.Header.Get("X-Permanent-Delete") == "1" &&
 		strings.HasPrefix(request.URL.Path, "/api/v1/library/tracks/") {

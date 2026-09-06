@@ -145,3 +145,18 @@ func TestNewHTTPServerLeavesWriteTimeoutDisabledForStreams(t *testing.T) {
 		t.Fatalf("WriteTimeout = %s, want disabled for long-running streams", server.WriteTimeout)
 	}
 }
+
+func TestImportBatchConfirmationDoesNotInheritRequestDeadline(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		t.Run(method, func(t *testing.T) {
+			handler := streamAwareTimeout(time.Second)(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				_, hasDeadline := request.Context().Deadline()
+				if hasDeadline != (method != http.MethodPost) {
+					t.Errorf("%s import confirmation has deadline = %v", method, hasDeadline)
+				}
+				writer.WriteHeader(http.StatusOK)
+			}))
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, "/api/v1/import-batches/batch-1/confirm", nil))
+		})
+	}
+}
