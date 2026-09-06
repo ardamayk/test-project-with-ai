@@ -199,6 +199,76 @@ body::after {
   .player-volume-slider:focus-visible {
     outline: none;
   }
+
+  /* Seek bar: thin filled track; the thumb only appears on hover / focus. */
+  .player-seek-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 16px;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+    --_fill: var(--player-live-progress);
+    --_track: color-mix(in srgb, var(--player-foreground) 22%, transparent);
+    --_track-bg: linear-gradient(
+      to right,
+      var(--_fill) 0 var(--seek-level, 0%),
+      var(--_track) var(--seek-level, 0%) 100%
+    );
+  }
+  .player-seek-slider:disabled {
+    cursor: default;
+  }
+  .player-seek-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--_track-bg);
+  }
+  .player-seek-slider::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--_track-bg);
+  }
+  .player-seek-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -4px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--player-live-progress);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--player) 85%, transparent);
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 120ms ease, transform 120ms ease;
+  }
+  .player-seek-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--player-live-progress);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--player) 85%, transparent);
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 120ms ease, transform 120ms ease;
+  }
+  .player-seek-slider:not(:disabled):hover::-webkit-slider-thumb,
+  .player-seek-slider:not(:disabled):focus-visible::-webkit-slider-thumb,
+  .player-seek-slider:not(:disabled):active::-webkit-slider-thumb {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .player-seek-slider:not(:disabled):hover::-moz-range-thumb,
+  .player-seek-slider:not(:disabled):focus-visible::-moz-range-thumb,
+  .player-seek-slider:not(:disabled):active::-moz-range-thumb {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .player-seek-slider:focus-visible {
+    outline: none;
+  }
 }
 
 @layer base {

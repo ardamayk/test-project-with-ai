@@ -4,6 +4,7 @@ import {
 	Check,
 	ChevronRight,
 	Download,
+	Heart,
 	Info,
 	MoreVertical,
 	Plus,
@@ -25,7 +26,11 @@ import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
 import { PlaybackSignal } from "./PlaybackSignal";
-import { PlaybackControls, VolumeAndQueueControls } from "./PlayerBarControls";
+import {
+	PlaybackControls,
+	QualityIconFor,
+	VolumeAndQueueControls,
+} from "./PlayerBarControls";
 
 const RECENT_PLAYLISTS_KEY = "navidrome-recent-playlists";
 const RECENT_PLAYLIST_LIMIT = 2;
@@ -112,8 +117,13 @@ type MenuPosition = {
 
 export function PlayerBar({
 	onPlaylistMutated,
+	isCurrentTrackFavorite = false,
+	onToggleFavorite,
 }: {
 	onPlaylistMutated?: () => void;
+	/** Favorite state of the current Track; the host app owns the Favorites playlist. */
+	isCurrentTrackFavorite?: boolean;
+	onToggleFavorite?: (trackId: string) => void;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -447,11 +457,38 @@ export function PlayerBar({
 							>
 								{nowPlayingTitle}
 							</p>
+							{onToggleFavorite ? (
+								<button
+									type="button"
+									className={cn(
+										"ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
+										isCurrentTrackFavorite &&
+											"text-[var(--player-control-primary)]",
+									)}
+									aria-label={
+										isCurrentTrackFavorite
+											? "Remove from favorites"
+											: "Add to favorites"
+									}
+									aria-pressed={isCurrentTrackFavorite}
+									disabled={!currentTrack}
+									onClick={() => {
+										if (currentTrack) onToggleFavorite(currentTrack.id);
+									}}
+								>
+									<Heart
+										className={cn(
+											"size-3.5",
+											isCurrentTrackFavorite && "fill-current",
+										)}
+									/>
+								</button>
+							) : null}
 							<button
 								ref={actionsButtonRef}
 								type="button"
 								className={cn(
-									"ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
+									"ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
 									actionsOpen && "text-[var(--player-control-primary)]",
 								)}
 								aria-label="Track actions"
@@ -555,6 +592,12 @@ export function PlayerBar({
 					signalControl={
 						hasActiveSource && outputMode ? (
 							<PlaybackSignal
+								qualityLabel={qualityLabel}
+								qualityIcon={
+									<QualityIconFor
+										isLossless={isLosslessFormat(currentTrack?.format)}
+									/>
+								}
 								outputMode={outputMode}
 								outputControls={{
 									selectNormalOutput: fallbackToSystemOutput,

@@ -189,7 +189,9 @@ describe("PlayerBar", () => {
 			(screen.getByRole("button", { name: "Play" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
-		expect(screen.queryByRole("button", { name: /Output mode:/ })).toBeNull();
+		// Nothing is playing: the quality pill is a plain status, not a menu.
+		expect(screen.queryByRole("button", { name: /^Quality/ })).toBeNull();
+		expect(screen.getByLabelText("Quality Quality")).toBeTruthy();
 	});
 
 	it("shows the current track after playback starts", async () => {
@@ -241,6 +243,47 @@ describe("PlayerBar", () => {
 
 		expect(screen.getByRole("contentinfo").className).toContain("h-[72px]");
 		expect(screen.getByRole("contentinfo").className).toContain("bg-player");
+	});
+
+	it("toggles the current Track's favorite state from the Player Bar", async () => {
+		const onToggleFavorite = vi.fn();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={api} engine={new InMemoryPlaybackEngine()}>
+					<PlaybackStarter />
+					<PlayerBar
+						isCurrentTrackFavorite={false}
+						onToggleFavorite={onToggleFavorite}
+					/>
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Add to favorites",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
+		expect(onToggleFavorite).toHaveBeenCalledWith(track.id);
+	});
+
+	it("renders a round primary play control and a thin seek bar", async () => {
+		renderPlayerBar();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		expect(screen.getByRole("button", { name: "Pause" }).className).toContain(
+			"rounded-full",
+		);
+		const seek = screen.getByLabelText("Seek") as HTMLInputElement;
+		expect(seek.className).toContain("player-seek-slider");
+		expect(seek.style.getPropertyValue("--seek-level")).toMatch(/%$/);
 	});
 
 	it("mutes from the volume icon and restores the previous level on unmute", async () => {
@@ -296,9 +339,7 @@ describe("PlayerBar", () => {
 		renderPlayerBar();
 		await openActionsMenu();
 
-		expect(
-			screen.getByRole("button", { name: "Quality 24-bit · 96 kHz" }),
-		).toBeTruthy();
+		expect(screen.getByLabelText("Quality 24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("Add to playlist")).toBeTruthy();
 		expect(screen.queryByText("Play next")).toBeNull();
@@ -318,9 +359,7 @@ describe("PlayerBar", () => {
 			renderPlayerBar();
 			await openActionsMenu();
 
-			expect(
-				screen.getByRole("button", { name: "Quality - · 96 kHz" }),
-			).toBeTruthy();
+			expect(screen.getByLabelText("Quality - · 96 kHz")).toBeTruthy();
 		} finally {
 			track.bitDepth = bitDepth;
 		}
@@ -334,9 +373,11 @@ describe("PlayerBar", () => {
 			screen.getByRole("button", { name: "Start track" }).click();
 		});
 
-		fireEvent.click(
-			screen.getByRole("button", { name: "Output mode: Exclusive" }),
-		);
+		const trigger = screen.getByRole("button", {
+			name: "Quality 24-bit · 96 kHz",
+		});
+		expect(trigger.getAttribute("title")).toBe("Output mode: Exclusive");
+		fireEvent.click(trigger);
 		const menu = screen.getByRole("menu", { name: "Output mode" });
 		expect(within(menu).getAllByRole("menuitemradio")).toHaveLength(3);
 		fireEvent.click(
@@ -345,8 +386,10 @@ describe("PlayerBar", () => {
 
 		expect(fallbackToSystemOutput).toHaveBeenCalledOnce();
 		expect(
-			screen.getByRole("button", { name: "Output mode: Normal" }),
-		).toBeTruthy();
+			screen
+				.getByRole("button", { name: "Quality 24-bit · 96 kHz" })
+				.getAttribute("title"),
+		).toBe("Output mode: Normal");
 	});
 
 	it("shows live radio progress instead of track time", async () => {
@@ -359,9 +402,7 @@ describe("PlayerBar", () => {
 		expect(screen.getByText("LIVE")).toBeTruthy();
 		expect(screen.getByText("--:--")).toBeTruthy();
 		expect(screen.queryByLabelText("Seek")).toBeNull();
-		expect(
-			screen.getByRole("button", { name: "Quality High Quality" }),
-		).toBeTruthy();
+		expect(screen.getByLabelText("Quality High Quality")).toBeTruthy();
 	});
 
 	it("renders the actions menu in a portal with anchored coordinates", async () => {

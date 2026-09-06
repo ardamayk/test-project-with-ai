@@ -161,7 +161,7 @@ function PrimaryPlaybackButton({
 	return (
 		<button
 			type="button"
-			className="inline-flex size-10 items-center justify-center rounded-xl bg-[var(--player-control-primary)] text-[var(--player-control-primary-foreground)] shadow-[0px_10px_15px_-3px_var(--player-control-shadow),0px_4px_6px_-4px_var(--player-control-shadow)] hover:opacity-90 disabled:opacity-50"
+			className="inline-flex size-11 items-center justify-center rounded-full bg-[var(--player-control-primary)] text-[var(--player-control-primary-foreground)] shadow-[0px_10px_15px_-3px_var(--player-control-shadow),0px_4px_6px_-4px_var(--player-control-shadow)] transition hover:scale-105 hover:opacity-95 disabled:opacity-50 disabled:hover:scale-100"
 			onClick={onClick}
 			disabled={disabled}
 			aria-label={isPlaying ? "Pause" : "Play"}
@@ -230,6 +230,7 @@ function PlaybackProgress({
 	effectiveDuration: number;
 	onSeek: (seconds: number) => void;
 }) {
+	const progress = effectiveDuration > 0 ? currentTime / effectiveDuration : 0;
 	return (
 		<div className="mt-2 flex w-full min-w-0 items-center gap-2 text-[11px] tabular-nums">
 			<span className="w-8 shrink-0 text-right text-player-foreground">
@@ -243,12 +244,17 @@ function PlaybackProgress({
 					min={0}
 					max={1}
 					step={0.001}
-					value={effectiveDuration > 0 ? currentTime / effectiveDuration : 0}
+					value={progress}
 					onChange={(event) =>
 						effectiveDuration > 0 &&
 						onSeek(Number(event.target.value) * effectiveDuration)
 					}
-					className="h-1 min-w-0 flex-1 accent-[var(--player-live-progress)] disabled:opacity-100"
+					className="player-seek-slider min-w-0 flex-1 disabled:opacity-100"
+					style={
+						{
+							"--seek-level": `${(progress * 100).toFixed(2)}%`,
+						} as CSSProperties
+					}
 					disabled={!hasCurrentTrack}
 					aria-label="Seek"
 				/>
@@ -269,6 +275,11 @@ type VolumeAndQueueControlsProps = {
 	onVolumeChange: (value: number) => void;
 };
 
+export function QualityIconFor({ isLossless }: { isLossless: boolean }) {
+	const Icon = isLossless ? Disc3 : AudioLines;
+	return <Icon className="size-3 shrink-0" />;
+}
+
 export function VolumeAndQueueControls({
 	qualityLabel,
 	isLossless,
@@ -283,19 +294,19 @@ export function VolumeAndQueueControls({
 			aria-label="Volume and queue"
 			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
-			{signalControl}
-			<button
-				type="button"
-				className="inline-flex h-6 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] py-[5px] text-[11px] text-player-foreground disabled:opacity-100"
-				aria-label={`Quality ${qualityLabel}`}
-				disabled
-				title="Quality selector coming soon"
-			>
-				<QualityIcon className="size-3 shrink-0" />
-				<span className="hidden font-medium tabular-nums md:inline">
-					{qualityLabel}
+			{signalControl ?? (
+				<span
+					role="note"
+					className="inline-flex h-6 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] text-[11px] text-player-foreground"
+					title={qualityLabel}
+					aria-label={`Quality ${qualityLabel}`}
+				>
+					<QualityIcon className="size-3 shrink-0" />
+					<span className="hidden font-medium tabular-nums md:inline">
+						{qualityLabel}
+					</span>
 				</span>
-			</button>
+			)}
 			<VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
 			<button
 				type="button"

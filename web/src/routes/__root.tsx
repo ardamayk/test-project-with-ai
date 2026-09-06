@@ -6,6 +6,7 @@ import {
 	PlaybackProvider,
 	PlayerBar,
 	SidebarNav,
+	usePlayback,
 } from "@repo/ui";
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +15,7 @@ import { ImportSessionProvider } from "#/components/import-session-provider";
 import { RootErrorComponent } from "#/components/root-error";
 import { ThemeSync } from "#/components/theme-sync";
 import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
+import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
 import { apiClient } from "#/lib/api";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
 import { getSharedPlaybackEngine } from "#/playback/shared-playback-engine";
@@ -55,11 +57,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function PlayerBarWithSync() {
 	const queryClient = useQueryClient();
+	const { currentTrack } = usePlayback();
+	const { isFavorite, toggleFavorite } = useFavoriteTracks();
 	return (
 		<PlayerBar
 			onPlaylistMutated={() => {
 				void invalidatePlaylistCache(queryClient);
 			}}
+			isCurrentTrackFavorite={
+				currentTrack ? isFavorite(currentTrack.id) : false
+			}
+			onToggleFavorite={toggleFavorite}
 		/>
 	);
 }

@@ -1,9 +1,18 @@
 import { Check, ChevronUp } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { cn } from "../lib/utils";
 import type { OutputMode } from "../playback/processing";
 
 type PlaybackSignalProps = {
+	/** Bit depth / sample rate summary shown on the pill. */
+	qualityLabel: string;
+	qualityIcon?: ReactNode;
 	outputMode: OutputMode;
 	outputControls: PlaybackOutputControls;
 };
@@ -20,7 +29,14 @@ const OUTPUT_OPTIONS: Array<{ mode: OutputMode; label: string }> = [
 	{ mode: "adaptive-system-rate", label: "Adaptive" },
 ];
 
+/**
+ * The quality pill: shows the stream's bit depth and sample rate, and opens
+ * the output-mode menu. Output mode is a technical setting, so it lives one
+ * click away instead of as its own permanent pill on the Player Bar.
+ */
 export function PlaybackSignal({
+	qualityLabel,
+	qualityIcon,
 	outputMode,
 	outputControls,
 }: PlaybackSignalProps) {
@@ -60,21 +76,28 @@ export function PlaybackSignal({
 		<div ref={containerRef} className="relative">
 			<button
 				type="button"
-				aria-label={`Output mode: ${activeLabel}`}
+				aria-label={`Quality ${qualityLabel}`}
+				title={`Output mode: ${activeLabel}`}
 				aria-haspopup="menu"
 				aria-expanded={isOpen}
-				className="inline-flex h-6 items-center gap-1 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-2.5 text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
+				className="inline-flex h-6 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] text-[11px] text-player-foreground hover:text-[var(--player-control-primary)]"
 				onClick={() => setIsOpen((value) => !value)}
 			>
-				{activeLabel}
+				{qualityIcon}
+				<span className="hidden font-medium tabular-nums md:inline">
+					{qualityLabel}
+				</span>
 				<ChevronUp className="size-3" aria-hidden />
 			</button>
 			{isOpen ? (
 				<div
 					role="menu"
 					aria-label="Output mode"
-					className="absolute right-0 bottom-full z-50 mb-1.5 w-32 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl"
+					className="absolute right-0 bottom-full z-50 mb-1.5 w-40 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-xl"
 				>
+					<p className="px-1.5 pt-1 pb-1.5 font-medium text-[0.625rem] text-caption uppercase tracking-wide">
+						Output mode
+					</p>
 					{OUTPUT_OPTIONS.map((option) => (
 						<button
 							type="button"
