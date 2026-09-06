@@ -16,39 +16,42 @@ import (
 )
 
 const (
-	ID3_SIGNATURE                            = "ID3"
-	ID3V1_SIGNATURE                          = "TAG"
-	ID3_SIGNATURE_SIZE_BYTES                 = 3
-	ID3_HEADER_SIZE_BYTES                    = 10
-	ID3V2_2_FRAME_HEADER_SIZE                = 6
-	ID3V2_3_FRAME_HEADER_SIZE                = 10
-	ID3V2_2_FRAME_NAME_SIZE                  = 3
-	ID3V2_3_FRAME_NAME_SIZE                  = 4
-	ID3V2_2_FRAME_SIZE_BYTES                 = 3
-	ID3_FRAME_SIZE_BYTES                     = 4
-	ID3_FRAME_FLAGS_SIZE_BYTES               = 2
-	ID3_SYNC_SAFE_SIZE_BYTES                 = 4
-	ID3_SYNC_SAFE_BITS_PER_BYTE              = 7
-	ID3_SYNC_SAFE_HIGH_BIT            byte   = 0x80
-	ID3_SYNC_SAFE_DATA_MASK           byte   = 0x7f
-	ID3_TEXT_ENCODING_OFFSET                 = 0
-	ID3_ENCODED_TEXT_OFFSET                  = 1
-	ID3_MAJOR_VERSION_OFFSET                 = 3
-	ID3_REVISION_OFFSET                      = 4
-	ID3_FLAGS_OFFSET                         = 5
-	ID3_SIZE_OFFSET                          = 6
-	MAX_ID3_TAG_SIZE_BYTES                   = 32 * 1024 * 1024
-	MP3_SYNC_BYTE                     byte   = 0xff
-	MP3_SYNC_MASK                     byte   = 0xe0
-	ID3_FRONT_COVER_TYPE              byte   = 3
-	ID3_OTHER_PICTURE_TYPE            byte   = 0
-	ID3_VERSION_2                     byte   = 2
-	ID3_VERSION_3                     byte   = 3
-	ID3_VERSION_4                     byte   = 4
-	ID3_TEXT_ENCODING_LATIN1          byte   = 0
-	ID3_TEXT_ENCODING_UTF16           byte   = 1
-	ID3_TEXT_ENCODING_UTF16BE         byte   = 2
-	ID3_TEXT_ENCODING_UTF8            byte   = 3
+	ID3_SIGNATURE                    = "ID3"
+	ID3V1_SIGNATURE                  = "TAG"
+	ID3_SIGNATURE_SIZE_BYTES         = 3
+	ID3_HEADER_SIZE_BYTES            = 10
+	ID3V2_2_FRAME_HEADER_SIZE        = 6
+	ID3V2_3_FRAME_HEADER_SIZE        = 10
+	ID3V2_2_FRAME_NAME_SIZE          = 3
+	ID3V2_3_FRAME_NAME_SIZE          = 4
+	ID3V2_2_FRAME_SIZE_BYTES         = 3
+	ID3_FRAME_SIZE_BYTES             = 4
+	ID3_FRAME_FLAGS_SIZE_BYTES       = 2
+	ID3_SYNC_SAFE_SIZE_BYTES         = 4
+	ID3_SYNC_SAFE_BITS_PER_BYTE      = 7
+	ID3_SYNC_SAFE_HIGH_BIT      byte = 0x80
+	ID3_SYNC_SAFE_DATA_MASK     byte = 0x7f
+	ID3_TEXT_ENCODING_OFFSET         = 0
+	ID3_ENCODED_TEXT_OFFSET          = 1
+	ID3_MAJOR_VERSION_OFFSET         = 3
+	ID3_REVISION_OFFSET              = 4
+	ID3_FLAGS_OFFSET                 = 5
+	ID3_SIZE_OFFSET                  = 6
+	MAX_ID3_TAG_SIZE_BYTES           = 32 * 1024 * 1024
+	MP3_SYNC_BYTE               byte = 0xff
+	MP3_SYNC_MASK               byte = 0xe0
+	ID3_FRONT_COVER_TYPE        byte = 3
+	ID3_OTHER_PICTURE_TYPE      byte = 0
+	ID3_VERSION_2               byte = 2
+	ID3_VERSION_3               byte = 3
+	ID3_VERSION_4               byte = 4
+	ID3_TEXT_ENCODING_LATIN1    byte = 0
+	ID3_TEXT_ENCODING_UTF16     byte = 1
+	ID3_TEXT_ENCODING_UTF16BE   byte = 2
+	ID3_TEXT_ENCODING_UTF8      byte = 3
+	// Encoding byte plus the three-letter language code that precede the
+	// descriptor and text of a USLT frame.
+	ID3_LYRICS_TEXT_OFFSET                   = 4
 	ID3V1_TAG_SIZE_BYTES                     = 128
 	ID3V1_SIGNATURE_SIZE_BYTES               = 3
 	MP3_FRAME_HEADER_SIZE_BYTES              = 4
@@ -327,6 +330,35 @@ func collectID3Frame(values *id3Values, frame id3Frame, version byte) error {
 	if frame.name == id3PictureFrameName(version) {
 		return collectID3Picture(values, frame.payload, version)
 	}
+	if frame.name == id3LyricsFrameName(version) {
+		return collectID3Lyrics(values, frame.payload)
+	}
+	return nil
+}
+
+func id3LyricsFrameName(version byte) string {
+	if version == ID3_VERSION_2 {
+		return "ULT"
+	}
+	return "USLT"
+}
+
+// collectID3Lyrics reads an unsynchronised lyrics frame: encoding byte, a
+// three-letter language, a NUL-terminated content descriptor, then the text.
+func collectID3Lyrics(values *id3Values, payload []byte) error {
+	if len(payload) < ID3_LYRICS_TEXT_OFFSET {
+		return invalidID3Error(errors.New("lyrics frame is truncated"))
+	}
+	encoding := payload[ID3_TEXT_ENCODING_OFFSET]
+	_, remainder, err := splitEncodedField(encoding, payload[ID3_LYRICS_TEXT_OFFSET:])
+	if err != nil {
+		return invalidID3Error(err)
+	}
+	text, err := decodeID3Text(encoding, remainder)
+	if err != nil {
+		return invalidID3Error(err)
+	}
+	values.tags["LYRICS"] = append(values.tags["LYRICS"], text)
 	return nil
 }
 

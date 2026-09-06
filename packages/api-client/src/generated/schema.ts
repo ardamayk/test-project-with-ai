@@ -180,6 +180,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/tracks/{trackId}/lyrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the lyrics text stored for a track
+         * @description Unsynchronised lyrics read from the file tags at import; empty when the file carried none.
+         */
+        get: operations["getTrackLyrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/tracks/{trackId}/deletion": {
         parameters: {
             query?: never;
@@ -1222,6 +1242,12 @@ export interface components {
         AlbumDetail: components["schemas"]["Album"] & {
             tracks: components["schemas"]["Track"][];
         };
+        TrackLyrics: {
+            /** Format: uuid */
+            trackId: string;
+            /** @description Plain lyrics text with newline-separated lines; empty when none are stored. */
+            lyrics: string;
+        };
         Track: {
             /** Format: uuid */
             id: string;
@@ -1988,6 +2014,29 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getTrackLyrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track lyrics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackLyrics"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     previewTrackDeletion: {

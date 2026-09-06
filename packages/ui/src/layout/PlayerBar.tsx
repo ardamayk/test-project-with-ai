@@ -147,6 +147,7 @@ export function PlayerBar({
 		fallbackToSystemOutput,
 		enableAdaptiveSystemRate,
 		getAlbumCoverUrl,
+		getTrackLyrics,
 	} = usePlayback();
 	const {
 		listPlaylists,
@@ -596,6 +597,7 @@ export function PlayerBar({
 				<LyricsOverlay
 					track={currentTrack}
 					coverUrl={artworkUrl}
+					loadLyrics={getTrackLyrics}
 					onClose={() => setLyricsOpen(false)}
 				/>
 			) : null}

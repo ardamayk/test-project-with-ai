@@ -79,6 +79,7 @@ const api: PlaybackApi = {
 	removeQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
 	getStreamUrl: (trackId) => `/stream/${trackId}`,
 	getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+	getTrackLyrics: vi.fn(async () => ({ lyrics: "Line one\nLine two" })),
 	getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
 	getRadioCatalogPreviewStreamUrl: (stationUuid) =>
 		`/radio/preview/${stationUuid}`,
@@ -299,7 +300,9 @@ describe("PlayerBar", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
 
 		const view = screen.getByRole("dialog", { name: "Lyrics" });
-		expect(within(view).getByText("No lyrics yet")).toBeTruthy();
+		expect(await within(view).findByText("Line one")).toBeTruthy();
+		expect(within(view).getByText("Line two")).toBeTruthy();
+		expect(api.getTrackLyrics).toHaveBeenCalledWith(track.id);
 		expect(within(view).getByRole("heading", { name: "Queue" })).toBeTruthy();
 		expect(within(view).getAllByText("Track 1").length).toBeGreaterThan(0);
 

@@ -138,6 +138,9 @@ type NormalizedMediaMetadata struct {
 	Genres           []string
 	Year             int
 	ReplayGain       ReplayGainMetadata
+	// Lyrics is the unsynchronised lyrics text from the file tags (Vorbis
+	// LYRICS / UNSYNCEDLYRICS, ID3 USLT, MP4 lyrics); empty when absent.
+	Lyrics string
 }
 
 type MediaPosition struct {
@@ -342,7 +345,23 @@ func normalizeMediaMetadata(tags map[string][]string, replayGain ReplayGainMetad
 		Genres:        names.Genres,
 		Year:          year,
 		ReplayGain:    replayGain,
+		Lyrics:        optionalLyrics(tags),
 	}, nil
+}
+
+// optionalLyrics returns the first non-empty lyrics tag. Tag editors disagree
+// on the key (Picard writes LYRICS for Vorbis, older tools UNSYNCEDLYRICS), so
+// both are accepted; line endings are normalised and outer whitespace dropped.
+func optionalLyrics(tags map[string][]string) string {
+	for _, key := range []string{"LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS"} {
+		for _, value := range tags[key] {
+			normalized := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n"))
+			if normalized != "" {
+				return normalized
+			}
+		}
+	}
+	return ""
 }
 
 func replayGainFromTags(tags map[string][]string) ReplayGainMetadata {

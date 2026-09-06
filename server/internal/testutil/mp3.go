@@ -248,3 +248,20 @@ func ID3UFIDFrame(version byte, owner, identifier string) []byte {
 	payload = append(payload, []byte(identifier)...)
 	return id3FrameBytes(version, name, payload)
 }
+
+// ID3LyricsFrame builds a USLT (ULT for v2.2) frame: encoding, language,
+// NUL-terminated descriptor, then the lyrics text.
+func ID3LyricsFrame(version byte, language, description, text string) []byte {
+	encoding, name := byte(0), "USLT"
+	if version == 4 {
+		encoding = 3
+	}
+	if version == 2 {
+		name = "ULT"
+	}
+	payload := append([]byte{encoding}, []byte(language)...)
+	payload = append(payload, []byte(description)...)
+	payload = append(payload, 0)
+	payload = append(payload, []byte(text)...)
+	return id3FrameBytes(version, name, payload)
+}

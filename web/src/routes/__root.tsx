@@ -34,6 +34,7 @@ const playbackApi: PlaybackApi = {
 		apiClient.subscribePlaybackQueueEvents(onEvent, onError),
 	getStreamUrl: (trackId) => apiClient.getTrackStreamUrl(trackId),
 	getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
+	getTrackLyrics: (trackId) => apiClient.getTrackLyrics(trackId),
 	getRadioStationStreamUrl: (stationId) =>
 		apiClient.getRadioStationStreamUrl(stationId),
 	getRadioCatalogPreviewStreamUrl: (stationUuid) =>
