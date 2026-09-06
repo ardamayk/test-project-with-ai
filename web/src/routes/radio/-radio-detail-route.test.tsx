@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseStationTags } from "#/lib/radio-station-tags";
-import { RadioStationDetailContent } from "./$stationId";
+import { RadioStationDetailContent } from "./-station-page";
 
 const mocks = vi.hoisted(() => ({
 	getRadioStation: vi.fn(),

@@ -8,8 +8,8 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PlaylistDetailContent } from "./-playlist-page";
 import { PlaylistsPage } from "./-playlists-page";
-import { PlaylistDetailContent } from "./$playlistId";
 
 const mocks = vi.hoisted(() => ({
 	listPlaylists: vi.fn(),
