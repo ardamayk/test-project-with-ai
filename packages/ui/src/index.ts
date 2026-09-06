@@ -55,6 +55,12 @@ export {
 	formatTelemetryStatus,
 	mergeProcessingState,
 } from "./playback/telemetry";
+export {
+	buildTrackDetailRows,
+	getTrackArtistName,
+	getTrackGenreNames,
+	type TrackDetailRow,
+} from "./playback/track-details";
 export { ThemeProvider } from "./theme/ThemeProvider";
 export * from "./widgets";
 export {

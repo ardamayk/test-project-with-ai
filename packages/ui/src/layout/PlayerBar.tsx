@@ -20,8 +20,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
-import { formatReplayGainAvailability } from "../playback/format-replay-gain";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
+import {
+	buildTrackDetailRows,
+	formatBitDepth,
+	formatSampleRate,
+} from "../playback/track-details";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
@@ -59,24 +63,6 @@ function touchRecentPlaylist(playlistId: string) {
 	);
 }
 
-function formatSampleRate(hz?: number): string | null {
-	if (!hz || hz <= 0) return null;
-	if (hz % 1000 === 0) return `${hz / 1000} kHz`;
-	return `${(hz / 1000).toFixed(1)} kHz`;
-}
-
-function formatBitDepth(bits?: number): string | null {
-	if (!bits || bits <= 0) return null;
-	return `${bits}-bit`;
-}
-
-function formatBitrate(kbps?: number, format?: string): string | null {
-	if (!kbps || kbps <= 0) return null;
-	const provenance =
-		format?.toLowerCase() === "wav" ? "Native" : "Calculated by app";
-	return `${kbps} kbps (${provenance})`;
-}
-
 function formatQualityLabel(
 	track: { bitDepth?: number; sampleRateHz?: number } | null,
 ): string {
@@ -94,14 +80,6 @@ function formatRadioQualityLabel(station: RadioStation | null): string {
 		station.bitrate ? `${station.bitrate} kbps` : null,
 	].filter(Boolean);
 	return parts.length > 0 ? parts.join(" · ") : "High Quality";
-}
-
-function formatDuration(ms?: number): string | null {
-	if (!ms || ms <= 0) return null;
-	const total = Math.floor(ms / 1000);
-	const minutes = Math.floor(total / 60);
-	const seconds = total % 60;
-	return `${minutes}m ${seconds}s`;
 }
 
 function isLosslessFormat(format?: string): boolean {
@@ -806,32 +784,7 @@ function TrackInfoDialog({
 	track: Track;
 	onClose: () => void;
 }) {
-	const rows = [
-		["Title", track.title],
-		["Artist", track.artistName],
-		["Album", track.albumTitle],
-		["Track", track.trackNo?.toString()],
-		["Duration", formatDuration(track.durationMs)],
-		["Codec", track.format],
-		["Bitrate", formatBitrate(track.bitrateKbps, track.format)],
-		["Sample rate", formatSampleRate(track.sampleRateHz)],
-		["Bit depth", formatBitDepth(track.bitDepth)],
-		[
-			"Track ReplayGain",
-			formatReplayGainAvailability(
-				track.replayGain?.trackGainDb,
-				track.replayGain?.trackPeak,
-			),
-		],
-		[
-			"Album ReplayGain",
-			formatReplayGainAvailability(
-				track.replayGain?.albumGainDb,
-				track.replayGain?.albumPeak,
-			),
-		],
-		["Genre", track.genre],
-	].filter((row): row is [string, string] => Boolean(row[1]));
+	const rows = buildTrackDetailRows(track);
 
 	return (
 		<Portal>

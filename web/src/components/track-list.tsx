@@ -1,5 +1,5 @@
 import type { Track } from "@repo/api-client";
-import { formatReplayGainAvailability, usePlayback } from "@repo/ui";
+import { buildTrackDetailRows, usePlayback } from "@repo/ui";
 import {
 	Clock,
 	Heart,
@@ -22,7 +22,7 @@ import { useReturnFocus } from "#/hooks/use-return-focus";
 import { useServerCapability } from "#/hooks/use-server-capability";
 import { useTrackDeletionFlow } from "#/hooks/use-track-deletion-flow";
 import { useTrackReplacementFlow } from "#/hooks/use-track-replacement-flow";
-import { getTrackArtistName, getTrackGenreNames } from "#/lib/library-display";
+import { getTrackArtistName } from "#/lib/library-display";
 import { cn } from "#/lib/utils";
 import { TrackDeletionDialog } from "./track-deletion-dialog";
 import { TrackReplacementDialog } from "./track-replacement-dialog";
@@ -36,32 +36,6 @@ function formatDuration(ms: number): string {
 	const m = Math.floor(total / 60);
 	const s = total % 60;
 	return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function formatDurationLabel(ms?: number): string | null {
-	if (!ms || ms <= 0) return null;
-	const total = Math.floor(ms / 1000);
-	const minutes = Math.floor(total / 60);
-	const seconds = total % 60;
-	return `${minutes}m ${seconds}s`;
-}
-
-function formatSampleRate(hz?: number): string | null {
-	if (!hz || hz <= 0) return null;
-	if (hz % 1000 === 0) return `${hz / 1000} kHz`;
-	return `${(hz / 1000).toFixed(1)} kHz`;
-}
-
-function formatBitDepth(bits?: number): string | null {
-	if (!bits || bits <= 0) return null;
-	return `${bits}-bit`;
-}
-
-function formatBitrate(kbps?: number, format?: string): string | null {
-	if (!kbps || kbps <= 0) return null;
-	const provenance =
-		format?.toLowerCase() === "wav" ? "Native" : "Calculated by app";
-	return `${kbps} kbps (${provenance})`;
 }
 
 export function TrackList({
@@ -348,40 +322,7 @@ function TrackDetailsDialog({
 	onOpenChange: (isOpen: boolean) => void;
 	onCloseAutoFocus?: (event: Event) => void;
 }) {
-	const rows = track
-		? [
-				["Title", track.title],
-				["Artist", getTrackArtistName(track)],
-				["Album", track.albumTitle],
-				["Disc", track.discNo.toString()],
-				["Track", track.trackNo?.toString()],
-				["Duration", formatDurationLabel(track.durationMs)],
-				["Codec", track.format],
-				["Bitrate", formatBitrate(track.bitrateKbps, track.format)],
-				["Sample rate", formatSampleRate(track.sampleRateHz)],
-				["Bit depth", formatBitDepth(track.bitDepth)],
-				[
-					"Track ReplayGain",
-					formatReplayGainAvailability(
-						track.replayGain?.trackGainDb,
-						track.replayGain?.trackPeak,
-					),
-				],
-				[
-					"Album ReplayGain",
-					formatReplayGainAvailability(
-						track.replayGain?.albumGainDb,
-						track.replayGain?.albumPeak,
-					),
-				],
-				["Genre", getTrackGenreNames(track).join(", ")],
-				["Sample format", track.sampleFormat],
-				["Revision", track.revision?.toString()],
-				["File modified", formatUnixSeconds(track.fileMtime)],
-				["Created", formatTimestamp(track.createdAt)],
-				["Updated", formatTimestamp(track.updatedAt)],
-			].filter((row): row is [string, string] => Boolean(row[1]))
-		: [];
+	const rows = track ? buildTrackDetailRows(track) : [];
 
 	return (
 		<DialogPrimitive.Root open={Boolean(track)} onOpenChange={onOpenChange}>
@@ -411,17 +352,6 @@ function TrackDetailsDialog({
 			</DialogPrimitive.Portal>
 		</DialogPrimitive.Root>
 	);
-}
-
-function formatUnixSeconds(seconds?: number): string | undefined {
-	if (!seconds) return undefined;
-	return new Date(seconds * 1000).toISOString();
-}
-
-function formatTimestamp(value?: string): string | undefined {
-	if (!value) return undefined;
-	const parsed = new Date(value);
-	return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }
 
 function DetailRow({ label, value }: { label: string; value?: string | null }) {

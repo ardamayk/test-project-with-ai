@@ -568,6 +568,8 @@ describe("PlayerBar", () => {
 		expect(within(dialog).getByText("96 kHz")).toBeTruthy();
 		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
 		expect(within(dialog).getByText("Gain -7.25 dB")).toBeTruthy();
+		// Same row set as the track list "Details" dialog (shared builder).
+		expect(within(dialog).getByText("Disc")).toBeTruthy();
 		expect(within(dialog).queryByText("Album ReplayGain")).toBeNull();
 		expect(within(dialog).queryByText("Unavailable")).toBeNull();
 		expect(within(dialog).queryByText("Size")).toBeNull();
