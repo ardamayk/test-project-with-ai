@@ -17,7 +17,6 @@ import {
 } from "#/hooks/use-server-capability";
 import { apiClient } from "#/lib/api";
 import { filterTracksByText } from "#/lib/filter-tracks";
-import { ImportHistory } from "./-import-history";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
 	const [debounced, setDebounced] = useState(value);
@@ -50,7 +49,6 @@ export function TracksPage() {
 		>
 			<CollectionPageContainer className="space-y-6">
 				<TrackResults {...tracks} />
-				<ImportHistory onRetry={managedImport.open} />
 			</CollectionPageContainer>
 		</PageShell>
 	);

@@ -30,23 +30,14 @@ export function ImportSessionProvider({ children }: { children: ReactNode }) {
 function useImportSession() {
 	const [isOpen, setIsOpen] = useState(false);
 	const queryClient = useQueryClient();
-	// The dialog has no DialogTrigger (it opens from the plus action or the
-	// Import History retry), so remember the opener to restore focus on close.
+	// The dialog opens from the plus action without a DialogTrigger, so remember
+	// the opener to restore focus on close.
 	const returnFocus = useReturnFocus();
 	async function refresh() {
-		await Promise.all([
-			queryClient.invalidateQueries({ queryKey: ["library", "tracks"] }),
-			queryClient.invalidateQueries({
-				queryKey: ["managed-import", "history"],
-			}),
-		]);
+		await queryClient.invalidateQueries({ queryKey: ["library", "tracks"] });
 	}
 	function handleOpenChange(nextIsOpen: boolean) {
 		setIsOpen(nextIsOpen);
-		if (!nextIsOpen)
-			void queryClient.invalidateQueries({
-				queryKey: ["managed-import", "history"],
-			});
 	}
 	return {
 		isOpen,

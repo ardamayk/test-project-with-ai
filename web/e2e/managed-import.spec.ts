@@ -451,56 +451,6 @@ test("committed Tracks appear in library views and stream bit-for-bit", async ({
 	await expect(page.getByText("Nothing playing")).toHaveCount(0);
 });
 
-test("Import History lists the terminal batch results", async ({ page }) => {
-	await gotoTracks(page);
-	const history = page.getByRole("region", { name: "Import History" });
-	await expect(
-		history.getByRole("heading", { name: "Import History" }),
-	).toBeVisible();
-	await expect(
-		history.getByText("Latest terminal Managed Import results"),
-	).toBeVisible();
-
-	// History accumulates across runs, so locate this run's batches by their
-	// filenames (rendered inside the collapsed details body).
-	const firstBatch = history
-		.locator("details")
-		.filter({ hasText: "no-artwork.mp3" })
-		.first();
-	await expect(firstBatch).toBeVisible();
-	await expect(firstBatch.locator("summary")).toContainText(
-		"Partially completed",
-	);
-	await expect(firstBatch.locator("summary")).toContainText(
-		"2 imported · 2 rejected",
-	);
-
-	const secondBatch = history
-		.locator("details")
-		.filter({ hasText: "beta-remaster.mp3" })
-		.first();
-	await expect(secondBatch.locator("summary")).toContainText(
-		"Partially completed",
-	);
-	await expect(secondBatch.locator("summary")).toContainText(
-		"1 imported · 1 rejected",
-	);
-	await secondBatch.locator("summary").click();
-	await expect(secondBatch.getByText(/^Import [0-9a-f-]{36}$/)).toBeVisible();
-	await expect(secondBatch.getByText("Result: exact_duplicate")).toBeVisible();
-	await expect(
-		secondBatch.getByText(/^Created Track [0-9a-f-]{36}$/),
-	).toBeVisible();
-	await expect(secondBatch.getByText("alpha-renamed-copy.mp3")).toBeVisible();
-
-	await history.getByRole("button", { name: "Retry import" }).click();
-	await expect(
-		page.getByRole("dialog", { name: "Import Music" }),
-	).toBeVisible();
-	await page.keyboard.press("Escape");
-	await expect(page.getByRole("dialog", { name: "Import Music" })).toBeHidden();
-});
-
 test("Permanent Track Deletion requires an explicit destructive confirmation", async ({
 	page,
 	request,
@@ -611,10 +561,6 @@ test("Import Music dialog is keyboard accessible and cancelling cleans staging",
 	expect(after.map((track) => track.title).sort()).toEqual(
 		before.map((track) => track.title).sort(),
 	);
-	const history = page.getByRole("region", { name: "Import History" });
-	await expect(
-		history.locator("details").filter({ hasText: "Canceled" }).first(),
-	).toBeVisible();
 });
 
 test("Album deletion previews and permanently deletes every remaining Track", async ({
