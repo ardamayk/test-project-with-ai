@@ -8,6 +8,7 @@ mod playback;
 mod playback_app_actions;
 mod playback_lifecycle;
 mod playback_navigation;
+mod playback_restore;
 #[cfg(test)]
 mod playback_test_support;
 mod playback_tray;
@@ -918,11 +919,16 @@ pub fn run() -> tauri::Result<()> {
             let store = ConnectionStore::new(config_directory.join(CONNECTION_FILE_NAME));
             let playback_snapshot_store =
                 PlaybackSnapshotStore::new(config_directory.join(PLAYBACK_SNAPSHOT_FILE_NAME));
-            let saved_playback = playback_snapshot_store
-                .load()
-                .map_err(std::io::Error::other)?;
-            let origin = Arc::new(RwLock::new(store.load()?));
+            let saved_origin = store.load()?;
             let bridge = Arc::new(HttpBridge::new()?);
+            let saved_playback =
+                tauri::async_runtime::block_on(playback_restore::load_saved_playback(
+                    &playback_snapshot_store,
+                    &bridge,
+                    saved_origin.as_ref(),
+                ))
+                .map_err(std::io::Error::other)?;
+            let origin = Arc::new(RwLock::new(saved_origin));
             let media_proxy = MediaProxy::start(bridge.clone(), origin.clone())?;
             let saved_playback = saved_playback
                 .map(|snapshot| snapshot.rebind_media_proxy(media_proxy.base_url()))
