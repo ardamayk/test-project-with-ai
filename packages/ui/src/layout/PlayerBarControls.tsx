@@ -27,6 +27,9 @@ import type { RepeatMode } from "../playback/PlaybackProvider";
 const CONTROL_BUTTON_CLASS =
 	"inline-flex size-6 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40";
 const CONTROL_ICON_CLASS = "size-[18px]";
+// The right cluster sits alone at the edge, so its icons run one step larger.
+const SIDE_ICON_CLASS = "size-5";
+const SIDE_BUTTON_CLASS = "size-7";
 const ACTIVE_CONTROL_BUTTON_CLASS = "text-[var(--player-control-primary)]";
 
 type PlaybackControlsProps = {
@@ -285,7 +288,7 @@ type VolumeAndQueueControlsProps = {
 
 export function QualityIconFor({ isLossless }: { isLossless: boolean }) {
 	const Icon = isLossless ? Disc3 : AudioLines;
-	return <Icon className="size-3.5 shrink-0" />;
+	return <Icon className="size-4 shrink-0" />;
 }
 
 export function VolumeAndQueueControls({
@@ -301,16 +304,16 @@ export function VolumeAndQueueControls({
 	return (
 		<section
 			aria-label="Volume and queue"
-			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-3.5 justify-self-end"
+			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
 			{signalControl ?? (
 				<span
 					role="note"
-					className="inline-flex h-7 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-[13px] text-[11px] text-player-foreground"
+					className="inline-flex h-8 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-3.5 text-player-foreground text-xs"
 					title={qualityLabel}
 					aria-label={`Quality ${qualityLabel}`}
 				>
-					<QualityIcon className="size-3.5 shrink-0" />
+					<QualityIcon className="size-4 shrink-0" />
 					<span className="hidden font-medium tabular-nums md:inline">
 						{qualityLabel}
 					</span>
@@ -319,20 +322,28 @@ export function VolumeAndQueueControls({
 			<VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
 			<button
 				type="button"
-				className={cn(CONTROL_BUTTON_CLASS, "hidden shrink-0 sm:inline-flex")}
+				className={cn(
+					CONTROL_BUTTON_CLASS,
+					SIDE_BUTTON_CLASS,
+					"hidden shrink-0 sm:inline-flex",
+				)}
 				onClick={onOpenLyrics}
 				disabled={!onOpenLyrics}
 				aria-label="Lyrics"
 			>
-				<MicVocal className={CONTROL_ICON_CLASS} />
+				<MicVocal className={SIDE_ICON_CLASS} />
 			</button>
 			<button
 				type="button"
-				className={cn(CONTROL_BUTTON_CLASS, "hidden shrink-0 sm:inline-flex")}
+				className={cn(
+					CONTROL_BUTTON_CLASS,
+					SIDE_BUTTON_CLASS,
+					"hidden shrink-0 sm:inline-flex",
+				)}
 				onClick={onToggleQueue}
 				aria-label="Toggle queue panel"
 			>
-				<ListMusic className={CONTROL_ICON_CLASS} />
+				<ListMusic className={SIDE_ICON_CLASS} />
 			</button>
 		</section>
 	);
@@ -371,6 +382,7 @@ function VolumeControl({
 				type="button"
 				className={cn(
 					CONTROL_BUTTON_CLASS,
+					SIDE_BUTTON_CLASS,
 					"group-focus-within:text-[var(--player-control-primary)] group-hover:text-[var(--player-control-primary)]",
 				)}
 				aria-label={volume <= 0 ? "Unmute" : "Mute"}
@@ -385,7 +397,7 @@ function VolumeControl({
 					toggleMute();
 				}}
 			>
-				<VolumeIcon className={CONTROL_ICON_CLASS} />
+				<VolumeIcon className={SIDE_ICON_CLASS} />
 			</button>
 			<div
 				data-testid="volume-popover"
