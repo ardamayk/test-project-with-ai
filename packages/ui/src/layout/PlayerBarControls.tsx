@@ -365,7 +365,7 @@ function VolumeControl({
 					touchOpen && "pointer-events-auto opacity-100",
 				)}
 			>
-				<div className="flex h-32 w-9 items-center justify-center rounded-xl border border-[var(--shell-subtle-border)] bg-player px-2 py-3 shadow-[0px_8px_24px_0px_rgba(0,0,0,0.35)] backdrop-blur-[12px]">
+				<div className="flex h-32 w-9 items-center justify-center rounded-xl border border-[var(--player-border)] bg-player px-2 py-3 shadow-[0_8px_24px_-4px_var(--player-shadow)]">
 					<div className="relative h-full w-4">
 						<input
 							type="range"

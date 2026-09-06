@@ -88,6 +88,13 @@ export function AppShell({
 						</main>
 						{bottom ? (
 							<div
+								data-player-scrim
+								aria-hidden
+								className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-36 bg-gradient-to-t from-background via-background/75 to-transparent"
+							/>
+						) : null}
+						{bottom ? (
+							<div
 								data-player-dock
 								className={`pointer-events-none absolute inset-x-0 bottom-4 z-30 ${PLAYER_DOCK_PADDING_CLASS}`}
 							>

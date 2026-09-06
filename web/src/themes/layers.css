@@ -16,7 +16,11 @@
 	--input: color-mix(in srgb, var(--theme-2) 80%, var(--theme-3) 20%);
 	--sidebar: var(--theme-2);
 	--queue: var(--theme-2);
-	--player: var(--theme-1);
+	/* The floating player sits over list rows on --background, so it takes a
+	 * surface one step lighter than cards and its own border/shadow tokens. */
+	--player: color-mix(in srgb, var(--theme-2) 85%, var(--theme-3) 15%);
+	--player-border: color-mix(in srgb, var(--border) 70%, transparent);
+	--player-shadow: rgba(0, 0, 0, 0.45);
 
 	/* Text — light end */
 	--heading: var(--theme-6);
@@ -90,7 +94,9 @@
 	--input: color-mix(in srgb, var(--theme-5) 80%, var(--theme-4) 20%);
 	--sidebar: var(--theme-5);
 	--queue: var(--theme-5);
-	--player: var(--theme-6);
+	--player: color-mix(in srgb, var(--theme-5) 85%, var(--theme-4) 15%);
+	--player-border: color-mix(in srgb, var(--border) 80%, transparent);
+	--player-shadow: rgba(20, 20, 30, 0.18);
 
 	/* Text — dark end */
 	--heading: var(--theme-1);

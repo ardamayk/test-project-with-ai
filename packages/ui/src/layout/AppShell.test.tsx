@@ -104,6 +104,9 @@ describe("AppShell", () => {
 				</PlaybackProvider>
 			</LayoutProvider>,
 		);
+		const scrim = container.querySelector("[data-player-scrim]");
+		expect(scrim?.className).toContain("bg-gradient-to-t");
+		expect(scrim?.className).toContain("pointer-events-none");
 		const dock = container.querySelector("[data-player-dock]");
 		const column = container.querySelector("[data-player-dock-column]");
 		expect(dock?.className).toContain("inset-x-0");
