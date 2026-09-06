@@ -1,24 +1,22 @@
 import { MANAGED_IMPORT_CAPABILITY, type Track } from "@repo/api-client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
 	COLLECTION_PAGE_CONTAINER_CLASS,
 	CollectionPageContainer,
 } from "#/components/collection-grid-layout";
+import { useManagedImport } from "#/components/import-session-provider";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
-import { useReturnFocus } from "#/hooks/use-return-focus";
 import {
 	type ServerCapabilityState,
 	useServerCapabilityState,
 } from "#/hooks/use-server-capability";
 import { apiClient } from "#/lib/api";
 import { filterTracksByText } from "#/lib/filter-tracks";
-import { ImportHistory } from "./-import-history";
-import { ImportMusicDialog } from "./-import-music-dialog";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
 	const [debounced, setDebounced] = useState(value);
@@ -51,14 +49,7 @@ export function TracksPage() {
 		>
 			<CollectionPageContainer className="space-y-6">
 				<TrackResults {...tracks} />
-				<ImportHistory onRetry={managedImport.open} />
 			</CollectionPageContainer>
-			<ImportMusicDialog
-				isOpen={managedImport.isOpen}
-				onOpenChange={managedImport.handleOpenChange}
-				onCommitted={managedImport.refresh}
-				onCloseAutoFocus={managedImport.restoreFocus}
-			/>
 		</PageShell>
 	);
 }
@@ -160,37 +151,4 @@ function TrackResults({
 			numbering="list"
 		/>
 	);
-}
-
-function useManagedImport() {
-	const [isOpen, setIsOpen] = useState(false);
-	const queryClient = useQueryClient();
-	// The dialog has no DialogTrigger (it opens from the plus action or the
-	// Import History retry), so remember the opener to restore focus on close.
-	const returnFocus = useReturnFocus();
-	async function refresh() {
-		await Promise.all([
-			queryClient.invalidateQueries({ queryKey: ["library", "tracks"] }),
-			queryClient.invalidateQueries({
-				queryKey: ["managed-import", "history"],
-			}),
-		]);
-	}
-	function handleOpenChange(nextIsOpen: boolean) {
-		setIsOpen(nextIsOpen);
-		if (!nextIsOpen)
-			void queryClient.invalidateQueries({
-				queryKey: ["managed-import", "history"],
-			});
-	}
-	return {
-		isOpen,
-		open: () => {
-			returnFocus.capture();
-			setIsOpen(true);
-		},
-		handleOpenChange,
-		refresh,
-		restoreFocus: returnFocus.restore,
-	};
 }

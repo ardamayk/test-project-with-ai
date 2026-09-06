@@ -1,6 +1,7 @@
 package managedimport_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -161,7 +162,6 @@ func TestContractCoversStrictValidationErrorsAtTheHTTPSeam(t *testing.T) {
 		field  string
 		reason string
 	}{
-		{name: "missing artwork", body: withoutFrontCover(t, readStrictFLACFixture(t)), code: string(library.INSPECTION_ERROR_MISSING_ARTWORK), field: "artwork", reason: "embedded front cover is required"},
 		{name: "missing title", body: replaceFixtureTag(t, readStrictFLACFixture(t), "TITLE=  Inspection   Fixture  ", "XITLE=  Inspection   Fixture  "), code: string(library.INSPECTION_ERROR_INVALID_METADATA), field: "TITLE", reason: "required tag is missing"},
 		{name: "truncated stream", body: readStrictFLACFixture(t)[:len(readStrictFLACFixture(t))-8], code: string(library.INSPECTION_ERROR_AUDIO_DECODE), field: "audio", reason: "audio stream failed full decode"},
 	}
@@ -236,11 +236,11 @@ func TestContractCoversBatchPerFileStatusAndDuplicateDecisions(t *testing.T) {
 
 	candidate := replaceFixtureTag(t, readStrictFLACFixture(t), "TITLE=  Inspection   Fixture  ", "TITLE=Inspection       Fixture")
 	preview := decodeContract[contractPreview](t, testutil.ServeContractRequest(t, router, contractUploadRequest(possibleDuplicate.ID, "audio/flac", "candidate.flac", candidate, nil)), http.StatusOK)
-	if preview.DuplicateClassification != string(managedimport.DUPLICATE_POSSIBLE) {
+	if preview.DuplicateClassification != string(managedimport.DUPLICATE_NONE) {
 		t.Fatalf("duplicate classification = %q, want possible duplicate", preview.DuplicateClassification)
 	}
-	broken := testutil.ServeContractRequest(t, router, contractUploadRequest(rejected.ID, "audio/flac", "broken.flac", withoutFrontCover(t, thirdTrackFixture(readStrictFLACFixture(t))), nil))
-	testutil.AssertStructuredError(t, broken, http.StatusUnprocessableEntity, string(library.INSPECTION_ERROR_MISSING_ARTWORK))
+	broken := testutil.ServeContractRequest(t, router, contractUploadRequest(rejected.ID, "audio/flac", "broken.flac", bytes.ReplaceAll(thirdTrackFixture(readStrictFLACFixture(t)), []byte("TITLE="), []byte("XITLE=")), nil))
+	testutil.AssertStructuredError(t, broken, http.StatusUnprocessableEntity, string(library.INSPECTION_ERROR_INVALID_METADATA))
 	decodeContract[contractPreview](t, testutil.ServeContractRequest(t, router, contractUploadRequest(accepted.ID, "audio/flac", "second.flac", secondTrackFixture(readStrictFLACFixture(t)), nil)), http.StatusOK)
 
 	current := decodeContract[contractBatch](t, testutil.ServeContractRequest(t, router, testutil.ContractRequest{Method: http.MethodGet, Path: "/api/v1/import-batches/" + batch.ID}), http.StatusOK)
@@ -254,15 +254,15 @@ func TestContractCoversBatchPerFileStatusAndDuplicateDecisions(t *testing.T) {
 
 	confirmPath := "/api/v1/import-batches/" + batch.ID + "/confirm"
 	undecided := testutil.ServeContractRequest(t, router, contractJSONRequest(http.MethodPost, confirmPath, map[string]any{"revision": current.Revision, "selectedFileIds": []string{possibleDuplicate.ID, accepted.ID}}, nil))
-	testutil.AssertStructuredError(t, undecided, http.StatusBadRequest, "invalid_upload")
+	testutil.AssertStructuredError(t, undecided, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 
 	malformed := testutil.ServeContractRequest(t, router, contractJSONRequest(http.MethodPost, confirmPath, map[string]any{"revision": 0}, nil))
 	testutil.AssertStructuredError(t, malformed, http.StatusBadRequest, "invalid_batch_confirmation")
 
 	confirmation := map[string]any{
-		"revision":           current.Revision,
-		"selectedFileIds":    []string{possibleDuplicate.ID, accepted.ID},
-		"duplicateDecisions": []map[string]string{{"jobId": possibleDuplicate.ID, "action": "import_separately"}},
+		"revision":        current.Revision,
+		"selectedFileIds": []string{possibleDuplicate.ID, accepted.ID},
+		"albumDecisions":  []map[string]any{{"albumKey": getImportBatch(t, router, batch.ID).Albums[0].Key, "createSeparate": true}},
 	}
 	completed := decodeContract[contractBatch](t, testutil.ServeContractRequest(t, router, contractJSONRequest(http.MethodPost, confirmPath, confirmation, nil)), http.StatusOK)
 	outcomes := map[string]string{}

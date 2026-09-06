@@ -130,7 +130,7 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
 
     // 1. Recursive folder selection imports one file per supported format.
     //    The Opus fixture carries the same tags as the Ogg Vorbis fixture, so
-    //    it is imported in step 4 as an explicit Possible Duplicate decision,
+    //    it is imported in step 4 with an explicit separate Album decision,
     //    mirroring the Web journey.
     let collection = harness.root.join("selection/Collection");
     let disc = collection.join("Disc 1");
@@ -230,7 +230,7 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
         .map(|file| file.job_id.clone())
         .collect::<Vec<_>>();
     let committed = harness
-        .confirm_batch(&batch.id, staged.revision, &selected_file_ids, &[])
+        .confirm_batch(&batch.id, staged.revision, &selected_file_ids, &[], &[])
         .await
         .unwrap_or_else(|(status, body)| panic!("confirm folder batch: HTTP {status} {body}"));
     assert_eq!(committed.status, "completed", "{committed:?}");
@@ -306,7 +306,7 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
     drop(proxy);
 
     // 4. Explicit file selection: an Exact Duplicate, a server-rejected file,
-    //    and a Possible Duplicate that needs an explicit decision resolve
+    //    and a Track Replacement Candidate that needs an explicit decision resolve
     //    independently, exactly as on Web.
     let single = harness.root.join("selection/single");
     fs::create_dir_all(&single).expect("create single directory");
@@ -379,17 +379,15 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
                 assert_eq!(body["file"]["format"].as_str(), Some("opus"), "{body}");
                 assert_eq!(
                     body["duplicateClassification"].as_str(),
-                    Some("possible_duplicate"),
+                    Some("none"),
                     "{body}"
                 );
-                let candidates = body["duplicateCandidates"]
-                    .as_array()
-                    .expect("duplicate candidates");
+                let candidates = body["matchingTracks"].as_array().expect("matching Tracks");
                 assert!(
                     candidates
                         .iter()
                         .any(|candidate| candidate["trackId"] == ogg_track_id.as_str()),
-                    "Possible Duplicate should name the committed Ogg Vorbis Track: {body}"
+                    "replacement candidate should name the committed Ogg Vorbis Track: {body}"
                 );
                 imported_formats.insert("opus".to_owned());
             }
@@ -431,18 +429,22 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
         .find(|file| file.job_id == second_jobs["strict-import.opus"])
         .expect("Opus in batch");
     assert_eq!(opus.state, "accepted");
-    // The Music Server reports the accepted file as selected; the shared
-    // Import Music dialog is what withholds preselection for a Possible
-    // Duplicate on both Web and Desktop (covered by the Web unit tests).
+    // Different bytes are not an Exact Duplicate, but the matching Album
+    // position requires a replacement or separate Album decision.
     assert_eq!(
         opus.preview
             .as_ref()
             .map(|preview| &preview["duplicateClassification"]),
-        Some(&Value::String("possible_duplicate".to_owned())),
+        Some(&Value::String("none".to_owned())),
         "{opus:?}"
     );
 
-    // Confirming without a decision is refused; "Import separately" commits
+    let album_key = opus.preview.as_ref().expect("Opus preview")["file"]["albumKey"]
+        .as_str()
+        .expect("Album key");
+    assert!(!album_key.is_empty(), "Album decision needs a server key");
+
+    // Confirming without a decision is refused; a separate Album decision commits
     // the Opus file as its own Album edition while the other two stay out.
     let (refused_status, refused_body) = harness
         .confirm_batch(
@@ -450,19 +452,19 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
             staged.revision,
             std::slice::from_ref(&opus.job_id),
             &[],
+            &[],
         )
         .await
-        .expect_err("Possible Duplicate requires an explicit decision");
-    assert!(
-        (400..500).contains(&refused_status),
-        "HTTP {refused_status} {refused_body}"
-    );
+        .expect_err("matching Track requires an explicit decision");
+    assert_eq!(refused_status, 409, "HTTP {refused_status} {refused_body}");
+    assert_eq!(refused_body["code"], "import_revision_conflict");
     let committed = harness
         .confirm_batch(
             &second_batch.id,
             staged.revision,
             std::slice::from_ref(&opus.job_id),
-            &[json!({ "jobId": opus.job_id, "action": "import_separately" })],
+            &[],
+            &[json!({ "albumKey": album_key, "createSeparate": true, "artworkMode": "auto" })],
         )
         .await
         .unwrap_or_else(|(status, body)| panic!("confirm with decision: HTTP {status} {body}"));
@@ -568,7 +570,7 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
         .unwrap_or(0);
     assert_eq!(leftover, 0, "staging must be empty after cancellation");
 
-    // 6. Import History reports the same terminal results Web renders.
+    // 6. Import History retains the terminal results through the shared API.
     let history = harness.send("GET", "/api/v1/import-history", None).await;
     assert_eq!(history.status, 200);
     let history: Value = serde_json::from_slice(&history.body).expect("history JSON");
@@ -735,10 +737,14 @@ impl Harness {
         revision: u64,
         selected_file_ids: &[String],
         duplicate_decisions: &[Value],
+        album_decisions: &[Value],
     ) -> Result<Batch, (u16, Value)> {
         let mut body = json!({ "revision": revision, "selectedFileIds": selected_file_ids });
         if !duplicate_decisions.is_empty() {
             body["duplicateDecisions"] = Value::Array(duplicate_decisions.to_vec());
+        }
+        if !album_decisions.is_empty() {
+            body["albumDecisions"] = Value::Array(album_decisions.to_vec());
         }
         let response = self
             .send(

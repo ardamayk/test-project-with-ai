@@ -209,14 +209,6 @@ function ReplacementReview({ preview }: { preview: TrackReplacementPreview }) {
 						: `${queueCount} Queue item${queueCount === 1 ? "" : "s"}`}
 				</dd>
 			</dl>
-			{preview.possibleDuplicates.length > 0 ? (
-				<p className="text-caption text-sm">
-					Possible Duplicates of other Tracks:{" "}
-					{preview.possibleDuplicates
-						.map((candidate) => candidate.title)
-						.join(", ")}
-				</p>
-			) : null}
 		</section>
 	);
 }

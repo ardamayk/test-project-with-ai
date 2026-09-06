@@ -37,6 +37,10 @@ func (service *Service) buildReplacementState(ctx context.Context, job importJob
 	if err != nil {
 		return replacementState{}, err
 	}
+	inspection, err = service.applyImportPlan(ctx, job, inspection)
+	if err != nil {
+		return replacementState{}, err
+	}
 	metadata := inspection.Metadata
 	albumKey := albumIdentityKey(metadata)
 	identity, err := service.store.ResolveReplacementIdentity(ctx, metadata, albumKey, target.TrackID)
@@ -45,10 +49,6 @@ func (service *Service) buildReplacementState(ctx context.Context, job importJob
 	}
 	if positionErr := service.validateReplacementPositions(ctx, job.ID, metadata, target.TrackID); positionErr != nil {
 		return replacementState{}, positionErr
-	}
-	_, candidates, err := service.store.ClassifyDuplicateExcluding(ctx, inspection, target.TrackID)
-	if err != nil {
-		return replacementState{}, err
 	}
 	placement, err := service.storage.planReplacementPlacement(stagedPath, inspection, identity, target)
 	if err != nil {
@@ -63,7 +63,7 @@ func (service *Service) buildReplacementState(ctx context.Context, job importJob
 		return replacementState{}, err
 	}
 	state := replacementState{Target: target, Identity: identity, Placement: placement, Inspection: inspection, AlbumKey: albumKey, StagedSize: stagedSize}
-	state.Preview = buildReplacementPreview(state, candidates, libraryChange)
+	state.Preview = buildReplacementPreview(state, libraryChange)
 	state.Preview.ConfirmationToken, err = replacementToken(state)
 	return state, err
 }
@@ -105,14 +105,12 @@ func (service *Service) replacementLibraryChange(ctx context.Context, target rep
 	return change, err
 }
 
-func buildReplacementPreview(state replacementState, candidates []DuplicateCandidate, libraryChange TrackReplacementLibraryChange) TrackReplacementPreview {
+func buildReplacementPreview(state replacementState, libraryChange TrackReplacementLibraryChange) TrackReplacementPreview {
 	target := state.Target
 	metadata := state.Inspection.Metadata
 	audio := state.Inspection.Audio
 	artwork := state.Inspection.AlbumArtwork
-	if candidates == nil {
-		candidates = []DuplicateCandidate{}
-	}
+
 	return TrackReplacementPreview{
 		TrackID:      target.TrackID,
 		TrackTitle:   target.Title,
@@ -152,7 +150,6 @@ func buildReplacementPreview(state replacementState, candidates []DuplicateCandi
 		OldFile:            TrackReplacementFileDeletion{Path: filepath.ToSlash(target.RelativePath), SizeBytes: target.SizeBytes},
 		PlaylistReferences: target.Playlists,
 		QueueReferences:    target.Queues,
-		PossibleDuplicates: candidates,
 	}
 }
 
@@ -274,9 +271,9 @@ func (service *Service) replayedReplacementResult(ctx context.Context, job impor
 }
 
 func (service *Service) prepareReplacementConfirmation(ctx context.Context, job importJob) (replacementState, error) {
-	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
+	inspection, err := service.inspectStagedJob(ctx, job)
 	if err != nil {
-		return replacementState{}, validationError(err)
+		return replacementState{}, err
 	}
 	if inspection.FileSHA256 != job.ContentSHA256 {
 		reason := "staged file changed after Import Preview"

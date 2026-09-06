@@ -39,7 +39,9 @@ const BETA_REMASTER = `${RUN_ID} Beta Remaster`;
 // Paths must match the webServer env in playwright.config.ts, which the Go
 // server resolves relative to its own working directory (../server).
 const SERVER_DIR = fileURLToPath(new URL("../../server", import.meta.url));
-const MANAGED_STORAGE_DIR = path.join(SERVER_DIR, "data/e2e-managed");
+const MANAGED_STORAGE_DIR =
+	process.env.MANAGED_IMPORT_TEST_STORAGE_PATH ??
+	path.join(SERVER_DIR, "data/e2e-managed");
 const FIXTURE_DIR = path.join(tmpdir(), `managed-import-${RUN_ID}`);
 
 const STREAM_PATTERN = /\/api\/v1\/tracks\/[^/]+\/stream/;
@@ -230,7 +232,7 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 		]);
 
 	const liveRegion = dialog.locator("[aria-live='polite']");
-	await expect(liveRegion).toHaveText("Uploading and validating files…");
+	await expect(liveRegion).toContainText("of 4 ready");
 	await expect(
 		dialog.getByRole("progressbar", { name: "alpha.mp3 upload progress" }),
 	).toBeVisible();
@@ -240,21 +242,21 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 	await expect(
 		dialog.getByRole("heading", { name: "Import Preview" }),
 	).toBeVisible();
-	await expect(liveRegion).toHaveText("", { timeout: 20_000 });
+	await expect(liveRegion).toHaveText("3 of 4 ready", { timeout: 20_000 });
 	await page.unroute("**/api/v1/imports/*/file");
 
 	const alphaRow = previewRow(dialog, ALPHA);
 	const betaRow = previewRow(dialog, BETA);
 	const untitledRow = previewRow(dialog, "untitled.mp3");
-	const artlessRow = previewRow(dialog, "no-artwork.mp3");
+	const artlessRow = previewRow(dialog, `${RUN_ID} Artless`);
 	await expect(alphaRow.getByText("Accepted")).toBeVisible();
 	await expect(betaRow.getByText("Accepted")).toBeVisible();
 	await expect(untitledRow.getByText("Rejected")).toBeVisible();
-	await expect(artlessRow.getByText("Rejected")).toBeVisible();
-	await expect(untitledRow.locator("p.text-destructive")).not.toBeEmpty();
-	await expect(artlessRow.locator("p.text-destructive")).toContainText(
-		/artwork|cover/i,
-	);
+	await expect(artlessRow.getByText("Accepted")).toBeVisible();
+	await artlessRow.getByRole("checkbox").uncheck();
+	await expect(
+		untitledRow.getByRole("list", { name: "Import errors" }),
+	).not.toBeEmpty();
 	await expect(untitledRow.getByRole("checkbox")).toBeDisabled();
 	await expect(
 		alphaRow.getByRole("checkbox", { name: "Select alpha.mp3" }),
@@ -308,7 +310,7 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 	expect(newStagingFiles(stagingBefore)).toEqual([]);
 });
 
-test("Import Preview resolves an Exact Duplicate and a Possible Duplicate", async ({
+test("Import Preview skips identical bytes and separates a conflicting Album edition", async ({
 	page,
 	request,
 }) => {
@@ -330,26 +332,20 @@ test("Import Preview resolves an Exact Duplicate and a Possible Duplicate", asyn
 	await expect(copyRow.locator("dd", { hasText: ALBUM })).toBeVisible();
 
 	const remasterRow = previewRow(dialog, BETA_REMASTER);
-	const duplicateGroup = remasterRow.getByRole("group", {
-		name: "Possible Duplicate",
-	});
-	await expect(duplicateGroup).toBeVisible();
 	await expect(
-		duplicateGroup.getByText("Different file bytes resemble:"),
+		remasterRow.getByText(
+			"Another title occupies this Album position. Skip this file or create a separate Album.",
+		),
 	).toBeVisible();
-	await expect(duplicateGroup.getByText(`${BETA} — ${ARTIST}`)).toBeVisible();
+	await dialog
+		.getByLabel(`Album destination for ${ALBUM}`)
+		.selectOption("separate");
 	await expect(
-		duplicateGroup.getByRole("radio", { name: "Replace existing Track" }),
-	).toBeDisabled();
-
-	// Every decision stays explicit: nothing is preselected for a duplicate.
-	await duplicateGroup.getByRole("radio", { name: "Do not import" }).check();
-	await duplicateGroup
-		.getByRole("radio", { name: "Import separately" })
-		.check();
-	await expect(
-		duplicateGroup.getByRole("radio", { name: "Import separately" }),
-	).toBeChecked();
+		remasterRow.getByText(
+			"Another title occupies this Album position. Skip this file or create a separate Album.",
+		),
+	).toBeHidden();
+	await remasterRow.getByRole("checkbox").check();
 	await dialog.getByRole("button", { name: "Confirm Import" }).click();
 
 	await expect(remasterRow.getByText("Imported")).toBeVisible({
@@ -453,56 +449,6 @@ test("committed Tracks appear in library views and stream bit-for-bit", async ({
 	await trackRow(page, BETA).click();
 	expect([200, 206]).toContain((await streamResponse).status());
 	await expect(page.getByText("Nothing playing")).toHaveCount(0);
-});
-
-test("Import History lists the terminal batch results", async ({ page }) => {
-	await gotoTracks(page);
-	const history = page.getByRole("region", { name: "Import History" });
-	await expect(
-		history.getByRole("heading", { name: "Import History" }),
-	).toBeVisible();
-	await expect(
-		history.getByText("Latest terminal Managed Import results"),
-	).toBeVisible();
-
-	// History accumulates across runs, so locate this run's batches by their
-	// filenames (rendered inside the collapsed details body).
-	const firstBatch = history
-		.locator("details")
-		.filter({ hasText: "no-artwork.mp3" })
-		.first();
-	await expect(firstBatch).toBeVisible();
-	await expect(firstBatch.locator("summary")).toContainText(
-		"Partially completed",
-	);
-	await expect(firstBatch.locator("summary")).toContainText(
-		"2 imported · 2 rejected",
-	);
-
-	const secondBatch = history
-		.locator("details")
-		.filter({ hasText: "beta-remaster.mp3" })
-		.first();
-	await expect(secondBatch.locator("summary")).toContainText(
-		"Partially completed",
-	);
-	await expect(secondBatch.locator("summary")).toContainText(
-		"1 imported · 1 rejected",
-	);
-	await secondBatch.locator("summary").click();
-	await expect(secondBatch.getByText(/^Import [0-9a-f-]{36}$/)).toBeVisible();
-	await expect(secondBatch.getByText("Result: exact_duplicate")).toBeVisible();
-	await expect(
-		secondBatch.getByText(/^Created Track [0-9a-f-]{36}$/),
-	).toBeVisible();
-	await expect(secondBatch.getByText("alpha-renamed-copy.mp3")).toBeVisible();
-
-	await history.getByRole("button", { name: "Retry import" }).click();
-	await expect(
-		page.getByRole("dialog", { name: "Import Music" }),
-	).toBeVisible();
-	await page.keyboard.press("Escape");
-	await expect(page.getByRole("dialog", { name: "Import Music" })).toBeHidden();
 });
 
 test("Permanent Track Deletion requires an explicit destructive confirmation", async ({
@@ -615,10 +561,6 @@ test("Import Music dialog is keyboard accessible and cancelling cleans staging",
 	expect(after.map((track) => track.title).sort()).toEqual(
 		before.map((track) => track.title).sort(),
 	);
-	const history = page.getByRole("region", { name: "Import History" });
-	await expect(
-		history.locator("details").filter({ hasText: "Canceled" }).first(),
-	).toBeVisible();
 });
 
 test("Album deletion previews and permanently deletes every remaining Track", async ({

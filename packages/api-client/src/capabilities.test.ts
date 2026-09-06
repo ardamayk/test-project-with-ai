@@ -20,6 +20,9 @@ const currentServer = {
     MANAGED_TRACK_DELETION_CAPABILITY,
     MANAGED_TRACK_REPLACEMENT_CAPABILITY,
   ],
+  dependencies: [
+    { name: 'ffmpeg', required: true, available: true, version: '7.1' },
+  ],
 };
 
 describe('Server Capability gating', () => {

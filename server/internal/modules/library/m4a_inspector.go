@@ -52,24 +52,25 @@ func inspectM4A(ctx context.Context, path string, reportProgress InspectionProgr
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	audioStream, artworkStream, err := validateM4AStreams(probe)
-	if err != nil {
-		return MediaInspection{}, err
+	audioStream, artworkStream, artworkErr := validateM4AStreams(probe)
+	if audioStream.CodecType != "audio" {
+		return MediaInspection{}, artworkErr
 	}
-	structuredCredits, err := readMP4StructuredCredits(path)
-	if err != nil {
-		return MediaInspection{}, inspectionError(INSPECTION_ERROR_INVALID_METADATA, "credits", err)
+	structuredCredits, creditsErr := readMP4StructuredCredits(path)
+	if creditsErr != nil {
+		creditsErr = inspectionError(INSPECTION_ERROR_INVALID_METADATA, "credits", creditsErr)
 	}
-	metadata, err := inspectM4AMetadata(probe.Format.Tags, structuredCredits)
-	if err != nil {
-		return MediaInspection{}, err
+	metadata, metadataErr := inspectM4AMetadata(probe.Format.Tags, structuredCredits)
+	if creditsErr != nil {
+		metadataErr = errors.Join(creditsErr, excludeInspectionFields(metadataErr, []string{"ARTIST", "ALBUMARTIST"}))
 	}
-	artwork, err := inspectM4AArtwork(ctx, path, artworkStream)
-	if err != nil {
-		return MediaInspection{}, err
+	var artwork AlbumArtwork
+	if artworkErr == nil {
+		artwork, artworkErr = inspectM4AArtwork(ctx, path, artworkStream)
 	}
-	audio, err := inspectM4AAudio(ctx, path, audioStream, reportProgress)
-	if err != nil {
+	artwork, artworkErr = optionalArtwork(artwork, artworkErr)
+	audio, audioErr := inspectM4AAudio(ctx, path, audioStream, reportProgress)
+	if err := errors.Join(metadataErr, artworkErr, audioErr); err != nil {
 		return MediaInspection{}, err
 	}
 	return MediaInspection{Metadata: metadata, AlbumArtwork: artwork, Audio: audio, FileSHA256: fileHash}, nil
@@ -156,10 +157,10 @@ func validateM4AStreams(probe m4aProbe) (m4aProbeStream, m4aProbeStream, error) 
 		return m4aProbeStream{}, m4aProbeStream{}, inspectionError(INSPECTION_ERROR_UNSUPPORTED_FORMAT, "codec", fmt.Errorf("unsupported M4A codec %q", audioStreams[0].CodecName))
 	}
 	if len(artworkStreams) == 0 {
-		return m4aProbeStream{}, m4aProbeStream{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
+		return audioStreams[0], m4aProbeStream{}, inspectionError(INSPECTION_ERROR_MISSING_ARTWORK, "artwork", errors.New("embedded front cover is required"))
 	}
 	if len(artworkStreams) != 1 {
-		return m4aProbeStream{}, m4aProbeStream{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple front covers are ambiguous"))
+		return audioStreams[0], m4aProbeStream{}, inspectionError(INSPECTION_ERROR_INVALID_ARTWORK, "artwork", errors.New("multiple front covers are ambiguous"))
 	}
 	return audioStreams[0], artworkStreams[0], nil
 }
@@ -178,27 +179,7 @@ func inspectM4AMetadata(rawTags map[string]string, structuredCredits map[string]
 	if albumArtists := structuredCredits["ALBUMARTISTS"]; len(albumArtists) > 0 {
 		tags["ALBUMARTIST"] = albumArtists
 	}
-	names, err := inspectVorbisNames(tags)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	trackPosition, err := inspectTrackPosition(tags)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	discPosition, err := inspectDiscPosition(tags)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	year, err := optionalYear(tags)
-	if err != nil {
-		return NormalizedMediaMetadata{}, err
-	}
-	return NormalizedMediaMetadata{
-		Title: names.Title, Artists: names.Artists, AlbumArtists: names.AlbumArtists, Album: names.Album,
-		TrackPosition: trackPosition, DiscPosition: discPosition, HasDiscNumber: len(tags["DISCNUMBER"]) > 0,
-		Genres: names.Genres, Year: year, ReplayGain: readReplayGainStringMetadata(rawTags),
-	}, nil
+	return normalizeMediaMetadata(tags, readReplayGainStringMetadata(rawTags))
 }
 
 func m4aTagValue(tags map[string]string, key string) string {

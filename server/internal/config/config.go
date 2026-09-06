@@ -38,6 +38,9 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:         getEnv("SERVER_ADDR", "127.0.0.1:8090"),
 		DatabasePath: getEnv("DATABASE_PATH", "./data/app.db"),

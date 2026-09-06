@@ -97,16 +97,11 @@ func (input wavInspectionInput) inspect(ctx context.Context) (MediaInspection, e
 	if err != nil {
 		return MediaInspection{}, err
 	}
-	metadata, err := normalizeMediaMetadata(chunks.tags, ReplayGainMetadata{})
-	if err != nil {
-		return MediaInspection{}, err
-	}
-	embeddedArtwork, err := inspectWAVArtwork(chunks.pictures)
-	if err != nil {
-		return MediaInspection{}, err
-	}
-	audio, err := input.decodePCM(ctx, chunks.format, chunks.data)
-	if err != nil {
+	metadata, metadataErr := normalizeMediaMetadata(chunks.tags, ReplayGainMetadata{})
+	embeddedArtwork, artworkErr := inspectWAVArtwork(chunks.pictures)
+	embeddedArtwork, artworkErr = optionalArtwork(embeddedArtwork, artworkErr)
+	audio, audioErr := input.decodePCM(ctx, chunks.format, chunks.data)
+	if err := errors.Join(metadataErr, artworkErr, audioErr); err != nil {
 		return MediaInspection{}, err
 	}
 	return MediaInspection{Metadata: metadata, AlbumArtwork: embeddedArtwork, Audio: audio, FileSHA256: input.fileHash}, nil

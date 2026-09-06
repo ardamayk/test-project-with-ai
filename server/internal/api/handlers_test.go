@@ -12,7 +12,7 @@ import (
 )
 
 func TestGetHealth(t *testing.T) {
-	h := api.NewHandler(config.Config{Version: "0.1.0-test"})
+	h := api.NewHandler(config.Config{Version: "0.1.0-test"}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -53,10 +53,13 @@ func TestGetHealth(t *testing.T) {
 	if !slices.Contains(body.Capabilities, "managed-album-deletion.v1") {
 		t.Fatalf("capabilities = %v, want managed-album-deletion.v1", body.Capabilities)
 	}
+	if slices.Contains(body.Capabilities, "recording-identification.v1") {
+		t.Fatalf("capabilities = %v, unexpected removed capability", body.Capabilities)
+	}
 }
 
 func TestGetMe(t *testing.T) {
-	h := api.NewHandler(config.Config{Version: "0.1.0-test"})
+	h := api.NewHandler(config.Config{Version: "0.1.0-test"}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	rec := httptest.NewRecorder()
 

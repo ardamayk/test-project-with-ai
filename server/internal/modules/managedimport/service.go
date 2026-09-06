@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -45,15 +45,18 @@ type uploadLock struct {
 }
 
 type activeUpload struct {
-	cancel       context.CancelFunc
-	done         chan struct{}
-	lastActivity time.Time
+	cancel           context.CancelFunc
+	done             chan struct{}
+	lastActivity     time.Time
+	phase            string
+	transferredBytes int64
+	totalBytes       int64
 }
 
 type uploadActivityReader struct {
 	ctx    context.Context
 	source io.Reader
-	onRead func()
+	onRead func(int)
 }
 
 func (reader *uploadActivityReader) Read(buffer []byte) (int, error) {
@@ -62,7 +65,7 @@ func (reader *uploadActivityReader) Read(buffer []byte) (int, error) {
 	}
 	read, err := reader.source.Read(buffer)
 	if read > 0 {
-		reader.onRead()
+		reader.onRead(read)
 	}
 	return read, err
 }
@@ -90,12 +93,17 @@ func (service *Service) CreateJob(ctx context.Context, batchID, clientFileID str
 	return service.store.CreateJob(ctx, batchID, clientFileID)
 }
 
-func (service *Service) CreateBatch(ctx context.Context) (Batch, error) {
-	return service.store.CreateBatch(ctx)
+func (service *Service) CreateBatch(ctx context.Context, options BatchOptions) (Batch, error) {
+	return service.store.CreateBatch(ctx, options)
 }
 
 func (service *Service) GetBatch(ctx context.Context, batchID string) (Batch, error) {
-	return service.store.GetBatch(ctx, batchID)
+	batch, err := service.store.GetBatch(ctx, batchID)
+	if err == nil {
+		service.addBatchProgress(&batch)
+		err = service.populateAlbumPreviews(ctx, &batch)
+	}
+	return batch, err
 }
 
 func (service *Service) ListHistory(ctx context.Context) (HistoryList, error) {
@@ -111,7 +119,11 @@ func (service *Service) GetJob(ctx context.Context, jobID string) (Job, error) {
 }
 
 func (service *Service) CancelBatch(ctx context.Context, batchID string) error {
-	return service.cancelBatch(ctx, batchID, nil)
+	err := service.cancelBatch(ctx, batchID, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (service *Service) cancelBatch(ctx context.Context, batchID string, updatedBefore *time.Time) error {
@@ -152,7 +164,11 @@ func (service *Service) cancelBatch(ctx context.Context, batchID string, updated
 }
 
 func (service *Service) CancelJob(ctx context.Context, jobID string) error {
-	return service.cancelJob(ctx, jobID, nil)
+	err := service.cancelJob(ctx, jobID, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (service *Service) cancelJob(ctx context.Context, jobID string, updatedBefore *time.Time) error {
@@ -252,7 +268,7 @@ func (service *Service) clearCancelingJobs(jobs []importJob) {
 
 func (service *Service) startActiveUpload(ctx context.Context, jobID string) (context.Context, *activeUpload) {
 	uploadCtx, cancel := context.WithCancel(ctx)
-	active := &activeUpload{cancel: cancel, done: make(chan struct{}), lastActivity: time.Now()}
+	active := &activeUpload{cancel: cancel, done: make(chan struct{}), lastActivity: time.Now(), phase: "uploading"}
 	service.activeUploadsMu.Lock()
 	service.activeUploads[jobID] = active
 	if service.cancelingJobs[jobID] {
@@ -272,11 +288,12 @@ func (service *Service) finishActiveUpload(jobID string, active *activeUpload) {
 	service.activeUploadsMu.Unlock()
 }
 
-func (service *Service) recordUploadActivity(jobID string) {
+func (service *Service) recordUploadActivity(jobID string, count int) {
 	service.activeUploadsMu.Lock()
 	defer service.activeUploadsMu.Unlock()
 	if active := service.activeUploads[jobID]; active != nil {
 		active.lastActivity = time.Now()
+		active.transferredBytes += int64(count)
 	}
 }
 
@@ -294,7 +311,7 @@ func (service *Service) removeUncommittedStaging(jobs []importJob) error {
 }
 
 func (service *Service) CleanupInactive(ctx context.Context, now time.Time) error {
-	cutoff := now.Add(-IMPORT_INACTIVITY_TIMEOUT)
+	cutoff := now.UTC().Add(-IMPORT_INACTIVITY_TIMEOUT)
 	return service.cleanupUncommitted(ctx, &cutoff)
 }
 
@@ -421,9 +438,20 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 		unlock()
 		service.finishActiveUpload(jobID, active)
 	}()
+	if source, ok := body.(interface{ Interrupt() error }); ok {
+		stopInterrupt := context.AfterFunc(ctx, func() {
+			if err := source.Interrupt(); err != nil {
+				slog.ErrorContext(ctx, "interrupt Managed Import upload read", "jobId", jobID, "error", err)
+			}
+		})
+		defer stopInterrupt()
+	}
 	if err := ctx.Err(); err != nil {
 		return Preview{}, err
 	}
+	service.activeUploadsMu.Lock()
+	active.totalBytes = max(0, contentLength)
+	service.activeUploadsMu.Unlock()
 	job, err := service.getUploadingJob(ctx, jobID)
 	if err != nil {
 		return Preview{}, err
@@ -436,7 +464,7 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, "", err)
 	}
-	body = &uploadActivityReader{ctx: ctx, source: body, onRead: func() { service.recordUploadActivity(jobID) }}
+	body = &uploadActivityReader{ctx: ctx, source: body, onRead: func(count int) { service.recordUploadActivity(jobID, count) }}
 	body = service.batchUploadReader(ctx, job, body, contentLength)
 	upload, err := service.storage.StageUpload(body, contentLength)
 	if err != nil {
@@ -448,11 +476,20 @@ func (service *Service) Upload(ctx context.Context, jobID, originalFilename stri
 			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 		}
 	}
+	service.setUploadPhase(job.ID, "validating")
 	inspection, err := service.validateStagedUpload(ctx, job, upload)
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 	}
 	return service.persistPreview(ctx, job, originalFilename, upload, inspection)
+}
+
+func (service *Service) inspectStagedJob(ctx context.Context, job importJob) (library.MediaInspection, error) {
+	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
+	if err != nil {
+		return library.MediaInspection{}, validationError(err)
+	}
+	return service.applyImportPlan(ctx, job, inspection)
 }
 
 func (service *Service) handleUploadFailure(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {
@@ -563,17 +600,19 @@ func (service *Service) validateStagedUpload(ctx context.Context, job importJob,
 	if inspection.FileSHA256 != upload.SHA256 {
 		return library.MediaInspection{}, &ValidationError{Code: "staged_file_changed", Field: "file", Reason: "staged file differs from uploaded bytes", Err: errors.New("staged file hash differs from uploaded bytes")}
 	}
-	if err := service.validateAlbumPositionsExcluding(ctx, job.ID, inspection.Metadata, job.ReplaceTrackID); err != nil {
-		if ctx.Err() != nil {
-			err = validationCancellationError(ctx)
+	if job.BatchID == "" {
+		if err := service.validateAlbumPositionsExcluding(ctx, job.ID, inspection.Metadata, job.ReplaceTrackID); err != nil {
+			if ctx.Err() != nil {
+				err = validationCancellationError(ctx)
+			}
+			return library.MediaInspection{}, err
 		}
-		return library.MediaInspection{}, err
 	}
 	return inspection, nil
 }
 
 func (service *Service) persistPreview(ctx context.Context, job importJob, originalFilename string, upload stagedUpload, inspection library.MediaInspection) (Preview, error) {
-	classification, candidates, err := service.store.ClassifyDuplicateExcluding(ctx, inspection, job.ReplaceTrackID)
+	classification, candidates, err := service.store.ClassifyDuplicate(ctx, inspection)
 	if err != nil {
 		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
 	}
@@ -585,8 +624,13 @@ func (service *Service) persistPreview(ctx context.Context, job importJob, origi
 	previewJob.Revision++
 	previewJob.OriginalFilename = originalFilename
 	preview := previewFromInspection(previewJob, inspection)
+	preview.File.SizeBytes = upload.Size
 	preview.DuplicateClassification = classification
 	preview.DuplicateCandidates = candidates
+	preview.MatchingTracks, err = service.store.positionCandidates(ctx, inspection.Metadata, job.ReplaceTrackID)
+	if err != nil {
+		return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
+	}
 	if job.ReplaceTrackID != "" && classification != DUPLICATE_EXACT {
 		state, stateErr := service.buildReplacementState(ctx, job, inspection, upload.Path)
 		if stateErr != nil {
@@ -595,6 +639,11 @@ func (service *Service) persistPreview(ctx context.Context, job importJob, origi
 		preview.DuplicateClassification = DUPLICATE_NONE
 		preview.DuplicateCandidates = nil
 		preview.Replacement = &state.Preview
+	}
+	if job.BatchID != "" && inspection.AlbumArtwork.SHA256 != "" {
+		if err = service.store.saveArtwork(ctx, job.BatchID, job.ID, job.ID, albumPreviewKey(preview.File), inspection.AlbumArtwork); err != nil {
+			return Preview{}, service.handleUploadFailure(ctx, job, originalFilename, upload.Path, err)
+		}
 	}
 	previewBytes, err := json.Marshal(preview)
 	if err != nil {
@@ -752,6 +801,19 @@ func (service *Service) confirmJobWithEdition(ctx context.Context, job importJob
 	if err != nil {
 		return Result{}, err
 	}
+	replacementJournal, hasReplacement, err := service.store.FindIncompleteReplacementJournal(ctx, job.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	if hasReplacement {
+		if err = service.recoverReplacement(ctx, replacementJournal); err != nil {
+			return Result{}, err
+		}
+		job, err = service.store.GetJob(ctx, job.ID)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	journal, hasJournal, err := service.store.FindIncompleteCommitJournal(ctx, job.ID)
 	if err != nil {
 		return Result{}, err
@@ -794,9 +856,9 @@ func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, d
 	if err != nil {
 		return Result{}, err
 	}
-	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
+	inspection, err := service.inspectStagedJob(ctx, job)
 	if err != nil {
-		return Result{}, validationError(err)
+		return Result{}, err
 	}
 	if positionErr := service.validateAlbumPositions(ctx, job.ID, inspection.Metadata); positionErr != nil {
 		return Result{}, positionErr
@@ -816,13 +878,43 @@ func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, d
 	if classification == DUPLICATE_EXACT {
 		return Result{}, service.rejectExactDuplicate(ctx, job)
 	}
-	storedClassification, err := storedDuplicateClassification(job)
+	if isSeparateEdition {
+		inspection.Metadata.AlbumIdentityKey = separateAlbumIdentityKey(job, inspection.Metadata)
+	}
+	candidates, err := service.store.positionCandidates(ctx, inspection.Metadata, "")
 	if err != nil {
 		return Result{}, err
 	}
-	isPossibleDuplicate := storedClassification == DUPLICATE_POSSIBLE || classification == DUPLICATE_POSSIBLE
-	if err := validateDuplicateAction(isPossibleDuplicate, decision); err != nil {
-		return Result{}, err
+	if len(candidates) > 0 {
+		if len(candidates) != 1 || normalizeIdentity(candidates[0].Title) != normalizeIdentity(inspection.Metadata.Title) {
+			return Result{}, albumPositionConflict()
+		}
+		if decision != DUPLICATE_ACTION_REPLACE_EXISTING {
+			return Result{}, fmt.Errorf("%w: confirm Track Replacement or skip this file", ErrInvalidUpload)
+		}
+		if job.ReplaceTrackID != "" && job.ReplaceTrackID != candidates[0].TrackID {
+			return Result{}, ErrRevisionConflict
+		}
+		plan, err := decodeImportPlan(job)
+		if err != nil {
+			return Result{}, err
+		}
+		if plan.TargetRevision != 0 && plan.TargetRevision != candidates[0].Revision {
+			return Result{}, ErrRevisionConflict
+		}
+		job.ReplaceTrackID = candidates[0].TrackID
+		if _, err = service.store.database.ExecContext(ctx, `UPDATE managed_import_jobs SET replace_track_id = ? WHERE id = ?`, job.ReplaceTrackID, job.ID); err != nil {
+			return Result{}, err
+		}
+		state, err := service.buildReplacementState(ctx, job, inspection, job.StagedFilePath)
+		if err != nil {
+			return Result{}, err
+		}
+		result, err := service.commitReplacement(ctx, job, state)
+		return Result{JobID: result.JobID, Status: result.Status, Revision: result.Revision, TrackID: result.TrackID}, err
+	}
+	if decision != "" && decision != DUPLICATE_ACTION_IMPORT_SEPARATELY {
+		return Result{}, ErrRevisionConflict
 	}
 	if preflightErr := service.preflightCommit(stagedBytes, inspection); preflightErr != nil {
 		return Result{}, preflightErr
@@ -832,25 +924,6 @@ func (service *Service) confirmAwaitingJob(ctx context.Context, job importJob, d
 		albumKey = separateAlbumIdentityKey(job, inspection.Metadata)
 	}
 	return service.commit(ctx, job, inspection, albumKey)
-}
-
-func validateDuplicateAction(isPossibleDuplicate bool, decision DuplicateAction) error {
-	if !isPossibleDuplicate && decision == "" {
-		return nil
-	}
-	if isPossibleDuplicate && decision == DUPLICATE_ACTION_IMPORT_SEPARATELY {
-		return nil
-	}
-	if isPossibleDuplicate && decision == "" {
-		return fmt.Errorf("%w: every Possible Duplicate requires an explicit decision", ErrInvalidUpload)
-	}
-	if decision == DUPLICATE_ACTION_REPLACE_EXISTING {
-		return fmt.Errorf("%w: Track Replacement is not available in this import operation", ErrInvalidUpload)
-	}
-	if decision == DUPLICATE_ACTION_DO_NOT_IMPORT {
-		return fmt.Errorf("%w: use cancellation to decline a standalone import", ErrInvalidUpload)
-	}
-	return fmt.Errorf("%w: duplicate decision is not valid for this import", ErrInvalidUpload)
 }
 
 func separateAlbumIdentityKey(job importJob, metadata library.NormalizedMediaMetadata) string {
@@ -902,18 +975,15 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 		return Batch{}, err
 	}
 	if batch.Status == BATCH_STATUS_UPLOADING {
-		isRefreshed, refreshErr := service.refreshLateDuplicatePreviews(ctx, jobs, selectedIDs)
-		if refreshErr != nil {
-			return Batch{}, refreshErr
-		}
-		if isRefreshed {
+		if confirmation.Revision != batch.Revision {
 			return Batch{}, ErrRevisionConflict
 		}
+		err = service.prepareBatchPlans(ctx, batch, jobs, selectedIDs, confirmation)
+		if err != nil {
+			return Batch{}, err
+		}
 	}
-	decisionsByJob, decisionErr := validateDuplicateDecisions(jobs, selectedIDs, confirmation.DuplicateDecisions)
-	if decisionErr != nil {
-		return Batch{}, decisionErr
-	}
+
 	err = service.startOrResumeBatch(ctx, batch, confirmation.Revision, selectedIDs)
 	if err != nil {
 		return Batch{}, err
@@ -922,79 +992,10 @@ func (service *Service) ConfirmBatch(ctx context.Context, batchID string, confir
 	if err != nil {
 		return Batch{}, err
 	}
-	if err := service.confirmBatchJobs(ctx, jobs, decisionsByJob); err != nil {
+	if err := service.confirmBatchJobs(ctx, jobs); err != nil {
 		return Batch{}, err
 	}
 	return service.completeBatch(ctx, batchID)
-}
-
-func (service *Service) refreshLateDuplicatePreviews(ctx context.Context, jobs []importJob, selectedIDs map[string]bool) (bool, error) {
-	isRefreshed := false
-	priorJobs := make([]importJob, 0, len(jobs))
-	for _, job := range jobs {
-		if !selectedIDs[job.ID] || job.Status != STATUS_AWAITING_CONFIRMATION {
-			continue
-		}
-		refreshed, err := service.refreshLateDuplicatePreview(ctx, job, priorJobs)
-		if err != nil {
-			return false, err
-		}
-		isRefreshed = isRefreshed || refreshed
-		priorJobs = append(priorJobs, job)
-	}
-	return isRefreshed, nil
-}
-
-func (service *Service) refreshLateDuplicatePreview(ctx context.Context, job importJob, priorJobs []importJob) (bool, error) {
-	classification, err := storedDuplicateClassification(job)
-	if err != nil || classification != DUPLICATE_NONE {
-		return false, err
-	}
-	inspection, err := service.inspector.Inspect(ctx, job.StagedFilePath, nil)
-	if err != nil {
-		return false, validationError(err)
-	}
-	classification, candidates, err := service.store.ClassifyDuplicate(ctx, inspection)
-	if err != nil {
-		return false, err
-	}
-	if classification == DUPLICATE_EXACT {
-		return false, nil
-	}
-	stagedCandidates, err := stagedDuplicateCandidates(job, priorJobs)
-	if err != nil {
-		return false, err
-	}
-	candidates = append(candidates, stagedCandidates...)
-	if len(candidates) == 0 {
-		return false, nil
-	}
-	previewJSON, err := refreshedDuplicatePreviewJSON(job, candidates)
-	if err != nil {
-		return false, err
-	}
-	return true, service.store.RefreshDuplicatePreview(ctx, job.ID, previewJSON)
-}
-
-func stagedDuplicateCandidates(job importJob, priorJobs []importJob) ([]DuplicateCandidate, error) {
-	preview, err := decodeStoredPreview(job)
-	if err != nil {
-		return nil, err
-	}
-	candidates := make([]DuplicateCandidate, 0, len(priorJobs))
-	for _, priorJob := range priorJobs {
-		if job.ContentSHA256 == priorJob.ContentSHA256 {
-			continue
-		}
-		priorPreview, decodeErr := decodeStoredPreview(priorJob)
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		if previewFilesMayDuplicate(preview.File, priorPreview.File) {
-			candidates = append(candidates, duplicateCandidateFromPreview(priorJob.ID, priorPreview.File))
-		}
-	}
-	return candidates, nil
 }
 
 func decodeStoredPreview(job importJob) (Preview, error) {
@@ -1005,23 +1006,9 @@ func decodeStoredPreview(job importJob) (Preview, error) {
 	return preview, nil
 }
 
-func previewFilesMayDuplicate(first, second PreviewFile) bool {
-	if previewAlbumKey(first) != previewAlbumKey(second) {
-		return false
-	}
-	if first.DiscNo == second.DiscNo && first.TrackNo == second.TrackNo {
-		return true
-	}
-	return normalizeIdentity(first.Title) == normalizeIdentity(second.Title) && normalizedCreditsEqual(first.Artists, second.Artists)
-}
-
 func previewAlbumKey(file PreviewFile) string {
 	credits := normalizeCredits(file.AlbumArtists)
-	return strings.Join(credits, "\x1e") + "\x1f" + normalizeIdentity(file.Album) + "\x1f" + fmt.Sprint(file.Year)
-}
-
-func normalizedCreditsEqual(first, second []string) bool {
-	return slices.Equal(normalizeCredits(first), normalizeCredits(second))
+	return strings.Join(credits, "\x1e") + "\x1f" + normalizeIdentity(file.Album)
 }
 
 func normalizeCredits(credits []string) []string {
@@ -1030,79 +1017,6 @@ func normalizeCredits(credits []string) []string {
 		normalized[index] = normalizeIdentity(credit)
 	}
 	return normalized
-}
-
-func duplicateCandidateFromPreview(trackID string, file PreviewFile) DuplicateCandidate {
-	return DuplicateCandidate{TrackID: trackID, Title: file.Title, Artists: file.Artists, Album: file.Album,
-		DiscNo: file.DiscNo, TrackNo: file.TrackNo, Format: file.Format, DurationMs: file.DurationMs}
-}
-
-func refreshedDuplicatePreviewJSON(job importJob, candidates []DuplicateCandidate) (string, error) {
-	var preview Preview
-	if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
-		return "", fmt.Errorf("decode late duplicate preview for job %q: %w", job.ID, err)
-	}
-	preview.Revision++
-	preview.DuplicateClassification = DUPLICATE_POSSIBLE
-	preview.DuplicateCandidates = candidates
-	previewJSON, err := json.Marshal(preview)
-	if err != nil {
-		return "", fmt.Errorf("encode late duplicate preview for job %q: %w", job.ID, err)
-	}
-	return string(previewJSON), nil
-}
-
-func validateDuplicateDecisions(jobs []importJob, selectedIDs map[string]bool, decisions []DuplicateDecision) (map[string]DuplicateAction, error) {
-	decisionsByJob := make(map[string]DuplicateAction, len(decisions))
-	possibleJobIDs := make(map[string]bool)
-	for _, decision := range decisions {
-		if decision.JobID == "" || decisionsByJob[decision.JobID] != "" {
-			return nil, fmt.Errorf("%w: duplicate decisions require unique non-empty job IDs", ErrInvalidUpload)
-		}
-		decisionsByJob[decision.JobID] = decision.Action
-	}
-	for _, job := range jobs {
-		classification, err := storedDuplicateClassification(job)
-		if err != nil {
-			return nil, err
-		}
-		if classification != DUPLICATE_POSSIBLE {
-			continue
-		}
-		possibleJobIDs[job.ID] = true
-		action := decisionsByJob[job.ID]
-		switch action {
-		case DUPLICATE_ACTION_IMPORT_SEPARATELY:
-			if !selectedIDs[job.ID] {
-				return nil, fmt.Errorf("%w: import-separately decision must select its file", ErrInvalidUpload)
-			}
-		case DUPLICATE_ACTION_DO_NOT_IMPORT:
-			if selectedIDs[job.ID] {
-				return nil, fmt.Errorf("%w: do-not-import decision must not select its file", ErrInvalidUpload)
-			}
-		case DUPLICATE_ACTION_REPLACE_EXISTING:
-			return nil, fmt.Errorf("%w: Track Replacement is not available in this import operation", ErrInvalidUpload)
-		default:
-			return nil, fmt.Errorf("%w: every Possible Duplicate requires an explicit decision", ErrInvalidUpload)
-		}
-	}
-	for jobID := range decisionsByJob {
-		if !possibleJobIDs[jobID] {
-			return nil, fmt.Errorf("%w: duplicate decision does not identify a Possible Duplicate", ErrInvalidUpload)
-		}
-	}
-	return decisionsByJob, nil
-}
-
-func storedDuplicateClassification(job importJob) (DuplicateClassification, error) {
-	if job.PreviewJSON == "" {
-		return DUPLICATE_NONE, nil
-	}
-	var preview Preview
-	if err := json.Unmarshal([]byte(job.PreviewJSON), &preview); err != nil {
-		return "", fmt.Errorf("decode Import Preview for duplicate decision on job %q: %w", job.ID, err)
-	}
-	return preview.DuplicateClassification, nil
 }
 
 func selectedFileIDs(fileIDs []string) (map[string]bool, error) {
@@ -1129,55 +1043,42 @@ func (service *Service) startOrResumeBatch(ctx context.Context, batch Batch, rev
 	return service.store.StartBatchConfirmation(ctx, batch.ID, revision, selectedIDs)
 }
 
-func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob, decisions map[string]DuplicateAction) error {
-	separateAlbumKeys, err := selectedSeparateAlbumKeys(jobs, decisions)
-	if err != nil {
-		return err
-	}
+func (service *Service) confirmBatchJobs(ctx context.Context, jobs []importJob) error {
 	for _, job := range jobs {
 		if job.Outcome != "" {
 			continue
 		}
 		if !job.Selected {
-			if err := service.finishUncommittedBatchFile(ctx, job, OUTCOME_NOT_ATTEMPTED, "", ""); err != nil {
+			outcome, code, reason := OUTCOME_NOT_ATTEMPTED, job.ErrorCode, job.ErrorReason
+			plan, err := decodeImportPlan(job)
+			if err != nil {
+				return err
+			}
+			if plan.SkipExact && job.ContentSHA256 != "" {
+				var exists bool
+				if err := service.store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM track_sources WHERE content_sha256 = ?)`, job.ContentSHA256).Scan(&exists); err != nil {
+					return fmt.Errorf("check skipped import hash: %w", err)
+				}
+				if exists {
+					outcome, code, reason = OUTCOME_REJECTED, ERROR_CODE_EXACT_DUPLICATE, "identical file already exists in the library"
+				}
+			}
+			if err := service.finishUncommittedBatchFile(ctx, job, outcome, code, reason); err != nil {
 				return err
 			}
 			continue
 		}
-		albumKey, keyErr := storedPreviewAlbumKey(job)
-		if keyErr != nil {
-			return keyErr
+		plan, planErr := decodeImportPlan(job)
+		if planErr != nil {
+			return planErr
 		}
-		if _, err := service.confirmJobWithEdition(ctx, job, job.Revision, decisions[job.ID], separateAlbumKeys[albumKey]); err != nil {
+		if _, err := service.confirmJobWithEdition(ctx, job, job.Revision, plan.Action, false); err != nil {
 			if handleErr := service.handleBatchConfirmationError(ctx, job, err); handleErr != nil {
 				return handleErr
 			}
 		}
 	}
 	return nil
-}
-
-func selectedSeparateAlbumKeys(jobs []importJob, decisions map[string]DuplicateAction) (map[string]bool, error) {
-	keys := make(map[string]bool)
-	for _, job := range jobs {
-		if decisions[job.ID] != DUPLICATE_ACTION_IMPORT_SEPARATELY {
-			continue
-		}
-		key, err := storedPreviewAlbumKey(job)
-		if err != nil {
-			return nil, err
-		}
-		keys[key] = true
-	}
-	return keys, nil
-}
-
-func storedPreviewAlbumKey(job importJob) (string, error) {
-	preview, err := decodeStoredPreview(job)
-	if err != nil {
-		return "", err
-	}
-	return previewAlbumKey(preview.File), nil
 }
 
 func (service *Service) handleBatchConfirmationError(ctx context.Context, job importJob, confirmationErr error) error {
@@ -1206,6 +1107,13 @@ func (service *Service) handleBatchConfirmationError(ctx context.Context, job im
 		return errors.Join(confirmationErr, journalErr)
 	}
 	if hasJournal {
+		return confirmationErr
+	}
+	_, hasReplacement, replacementErr := service.store.FindIncompleteReplacementJournal(ctx, job.ID)
+	if replacementErr != nil {
+		return errors.Join(confirmationErr, replacementErr)
+	}
+	if hasReplacement {
 		return confirmationErr
 	}
 	errorCode, reason := failureDetails(confirmationErr)
@@ -1372,13 +1280,15 @@ func (service *Service) rollbackFilesystemCommit(ctx context.Context, journal co
 func (service *Service) failUpload(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {
 	errorCode, reason := failureDetails(uploadErr)
 	errorField := ""
+	var issues ValidationIssues
 	var validationErr *ValidationError
 	if errors.As(uploadErr, &validationErr) {
 		errorField = validationErr.Field
+		issues = validationErr.validationIssues()
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), VALIDATION_CLEANUP_TIMEOUT)
 	defer cancel()
-	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, job.ID, originalFilename, errorCode, errorField, reason))
+	return errors.Join(uploadErr, service.storage.RemoveStaged(stagedPath), service.store.MarkFailed(cleanupCtx, job.ID, originalFilename, errorCode, errorField, reason, issues))
 }
 
 func (service *Service) markUploadInterrupted(ctx context.Context, job importJob, originalFilename, stagedPath string, uploadErr error) error {
@@ -1431,17 +1341,26 @@ func failureDetails(err error) (string, string) {
 	}
 }
 
+// VALIDATION_PROGRESS_PERSIST_STEP_PERCENT is the minimum advance between two
+// persisted validation progress values. Decoders report progress per frame, so
+// persisting every percent would issue up to 100 UPDATE statements per file.
+const VALIDATION_PROGRESS_PERSIST_STEP_PERCENT = 5
+
 func (service *Service) validationProgressReporter(ctx context.Context, jobID string) library.InspectionProgressReporter {
-	lastProgress := 0
+	lastPersistedPercent := -1
 	return func(progress library.InspectionProgress) error {
-		service.recordUploadActivity(jobID)
-		if progress.Percent <= lastProgress {
+		service.recordUploadActivity(jobID, 0)
+		if progress.Percent <= lastPersistedPercent {
+			return nil
+		}
+		isMilestone := progress.Percent >= 100 || progress.Percent-lastPersistedPercent >= VALIDATION_PROGRESS_PERSIST_STEP_PERCENT
+		if lastPersistedPercent >= 0 && !isMilestone {
 			return nil
 		}
 		if err := service.store.UpdateValidationProgress(ctx, jobID, progress.Percent); err != nil {
 			return err
 		}
-		lastProgress = progress.Percent
+		lastPersistedPercent = progress.Percent
 		return nil
 	}
 }

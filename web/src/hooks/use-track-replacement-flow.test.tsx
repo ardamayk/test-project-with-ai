@@ -108,7 +108,6 @@ const replacement: TrackReplacementPreview = {
 	oldFile: { path: "library/x/y/01-01-welcome-t1.flac", sizeBytes: 10 },
 	playlistReferences: [],
 	queueReferences: [{ userId: "user-1", itemCount: 1 }],
-	possibleDuplicates: [],
 	confirmationToken: "token-1",
 };
 

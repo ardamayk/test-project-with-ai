@@ -10,6 +10,7 @@ import {
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
+import { ImportSessionProvider } from "#/components/import-session-provider";
 import { RootErrorComponent } from "#/components/root-error";
 import { ThemeSync } from "#/components/theme-sync";
 import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
@@ -102,9 +103,11 @@ function ConnectedRootLayout() {
 			<div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
 				<ThemeSync />
 				<PlaybackProvider api={playbackApi} engine={playbackEngine}>
-					<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
-						<Outlet />
-					</AppShell>
+					<ImportSessionProvider>
+						<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
+							<Outlet />
+						</AppShell>
+					</ImportSessionProvider>
 				</PlaybackProvider>
 			</div>
 		</LayoutProvider>

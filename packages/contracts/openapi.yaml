@@ -338,6 +338,12 @@ paths:
       tags: [imports]
       operationId: createManagedImportBatch
       summary: Create one multi-file Managed Import Batch
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagedImportBatchCreate"
       responses:
         "201":
           description: Managed Import Batch created
@@ -386,6 +392,74 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/import-batches/{batchId}/heartbeat:
+    post:
+      tags: [imports]
+      operationId: heartbeatManagedImportBatch
+      summary: Keep an unfinished import alive without changing its preview revision
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+      responses:
+        "204":
+          description: Client liveness recorded
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/import-batches/{batchId}/albums/{albumKey}/artwork:
+    parameters:
+      - $ref: "#/components/parameters/batchId"
+      - name: albumKey
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      operationId: uploadManagedImportArtwork
+      summary: Stage a JPEG or PNG cover for an import Album
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Validated artwork option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedImportArtworkOption"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v1/import-batches/{batchId}/artwork/{artworkId}:
+    parameters:
+      - $ref: "#/components/parameters/batchId"
+      - name: artworkId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getManagedImportArtwork
+      summary: Preview staged Album artwork
+      responses:
+        "200":
+          description: Validated image bytes
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/import-batches/{batchId}/confirm:
     post:
       tags: [imports]
@@ -1387,7 +1461,7 @@ components:
   schemas:
     HealthResponse:
       type: object
-      required: [status, version, capabilities]
+      required: [status, version, capabilities, dependencies]
       properties:
         status:
           type: string
@@ -1405,11 +1479,39 @@ components:
             Managed Import tracer bullet as managed-import.v1. Multi-file Managed
             Import Batches are advertised as managed-import-batches.v1, Permanent
             Track Deletion as managed-track-deletion.v1, explicit Track
-            Replacement as managed-track-replacement.v1, and Album deletion
+            Replacement as managed-track-replacement.v1, Album deletion
             (one Permanent Track Deletion per Track, previewed once) as
             managed-album-deletion.v1. Clients gate optional
             behavior on the exact capability name and must ignore unknown
             entries so newer servers stay compatible with older clients.
+        dependencies:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServerDependency"
+          description: >-
+            Server Dependencies probed once at startup, in a stable order
+            (ffmpeg, ffprobe). They describe the deployment environment
+            so an operator can see what the installation supports.
+    ServerDependency:
+      type: object
+      required: [name, required, available]
+      properties:
+        name:
+          type: string
+          description: Program name as invoked by the Music Server.
+        required:
+          type: boolean
+          description: >-
+            True when Managed Import cannot work without the program; false for
+            an optional dependency whose absence only disables a feature.
+        available:
+          type: boolean
+          description: True when the program was found on PATH at startup.
+        version:
+          type: string
+          description: >-
+            Version parsed from the program's own version output. Absent when
+            the program is missing or its output could not be parsed.
     User:
       type: object
       required: [id, username]
@@ -1487,10 +1589,26 @@ components:
           $ref: "#/components/schemas/ThemePreferences"
         layout:
           $ref: "#/components/schemas/LayoutPreferences"
+    ValidationIssue:
+      type: object
+      required: [code, field, reason]
+      properties:
+        code:
+          type: string
+        field:
+          type: string
+        reason:
+          type: string
+          description: Safe, actionable description of one validation failure.
     ErrorResponse:
       type: object
       required: [error, code, message]
       properties:
+        issues:
+          type: array
+          description: All independently detectable validation failures, in check order.
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
         error:
           type: string
         code:
@@ -1543,10 +1661,17 @@ components:
           type: string
           format: uuid
           description: Client-generated identifier used to correlate a Batch file when the create response is lost.
+    ManagedImportBatchCreate:
+      type: object
+      properties:
     ManagedImportBatch:
       type: object
       required: [id, status, revision, files]
       properties:
+        albums:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportAlbumPreview"
         id:
           type: string
           format: uuid
@@ -1564,6 +1689,24 @@ components:
       type: object
       required: [jobId, state, status, revision, validationProgress, selected]
       properties:
+        phase:
+          type: string
+          enum: [queued, uploading, validating, ready, failed, committing, completed]
+          description: Current server processing phase, separate from byte transfer progress.
+        transferredBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        totalBytes:
+          type: integer
+          format: int64
+          minimum: 0
+
+        issues:
+          type: array
+          description: All independently detectable validation failures, in check order.
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
         jobId:
           type: string
           format: uuid
@@ -1661,6 +1804,11 @@ components:
       type: object
       required: [fileId, jobId, startedAt, completedAt, resultCode]
       properties:
+        issues:
+          type: array
+          description: All independently detectable validation failures, in check order.
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
         fileId:
           type: string
           format: uuid
@@ -1687,11 +1835,75 @@ components:
           format: uuid
         replacedTrackId:
           type: string
-          format: uuid
+    ManagedImportAlbumPreview:
+      type: object
+      required: [key, title, albumArtists, existingAlbums, artworks]
+      properties:
+        key:
+          type: string
+        title:
+          type: string
+        albumArtists:
+          type: array
+          items:
+            type: string
+        existingAlbums:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportAlbumMatch"
+        artworks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportArtworkOption"
+    ManagedImportAlbumMatch:
+      type: object
+      required: [id, hasArtwork, tracks]
+      properties:
+        id:
+          type: string
+        year:
+          type: integer
+        hasArtwork:
+          type: boolean
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
+    ManagedImportArtworkOption:
+      type: object
+      required: [id, mediaType, contentSha256]
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        mediaType:
+          type: string
+        contentSha256:
+          type: string
+    ManagedImportAlbumDecision:
+      type: object
+      required: [albumKey, createSeparate, artworkMode]
+      properties:
+        albumKey:
+          type: string
+        albumId:
+          type: string
+        createSeparate:
+          type: boolean
+        artworkId:
+          type: string
+        artworkMode:
+          type: string
+          enum: [auto, none, selected]
     ManagedImportBatchConfirmation:
       type: object
       required: [revision, selectedFileIds]
       properties:
+        albumDecisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportAlbumDecision"
         revision:
           type: integer
           minimum: 1
@@ -1710,6 +1922,12 @@ components:
       type: object
       required: [jobId, action]
       properties:
+        targetRevision:
+          type: integer
+          minimum: 1
+        trackId:
+          type: string
+          format: uuid
         jobId:
           type: string
           format: uuid
@@ -1720,6 +1938,10 @@ components:
       type: object
       required: [jobId, status, revision, file, duplicateClassification]
       properties:
+        matchingTracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
         jobId:
           type: string
           format: uuid
@@ -1733,7 +1955,8 @@ components:
           $ref: "#/components/schemas/ManagedImportPreviewFile"
         duplicateClassification:
           type: string
-          enum: [none, exact_duplicate, possible_duplicate]
+          enum: [none, exact_duplicate]
+          description: Only identical full-file SHA-256 values are duplicates.
         duplicateCandidates:
           type: array
           items:
@@ -1744,6 +1967,13 @@ components:
       type: object
       required: [trackId, title, artists, album, discNo, trackNo, format, durationMs]
       properties:
+        revision:
+          type: integer
+          minimum: 1
+        titleKey:
+          type: string
+        currentFile:
+          $ref: "#/components/schemas/ManagedImportPreviewFile"
         trackId:
           type: string
           format: uuid
@@ -1801,6 +2031,19 @@ components:
         - bitrateKbps
         - artworkMediaType
       properties:
+        hasDiscNumber:
+          type: boolean
+        titleKey:
+          type: string
+        albumKey:
+          type: string
+        contentSha256:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        artworkWarning:
+          type: string
         originalFilename:
           type: string
         title:
@@ -1819,7 +2062,6 @@ components:
           type: string
         genres:
           type: array
-          minItems: 1
           items:
             type: string
         trackNo:
@@ -1850,7 +2092,7 @@ components:
           minimum: 1
         artworkMediaType:
           type: string
-          enum: [image/jpeg, image/png, image/webp]
+          enum: ["", image/jpeg, image/png, image/webp]
     ManagedImportFlacPreviewFile:
       allOf:
         - $ref: "#/components/schemas/ManagedImportPreviewFileCommon"
@@ -2177,6 +2419,32 @@ components:
           type: integer
         replayGain:
           $ref: "#/components/schemas/ReplayGainMetadata"
+        titleSort:
+          type: string
+          description: Normalized title the library sorts and matches by.
+        filePath:
+          type: string
+          description: Canonical Library Path of the authoritative audio file in Managed Storage.
+        fileMtime:
+          type: integer
+          format: int64
+          description: Modification time of the managed file, seconds since the Unix epoch.
+        contentSha256:
+          type: string
+          description: Full-file SHA-256 of the managed audio bytes.
+        identityKey:
+          type: string
+          description: Strict position-and-title identity within the Album.
+        revision:
+          type: integer
+          minimum: 1
+          description: Increments on every Track Replacement.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     ReplayGainMetadata:
       type: object
       required: [trackGainDb, trackPeak, albumGainDb, albumPeak]
@@ -2603,7 +2871,6 @@ components:
         - oldFile
         - playlistReferences
         - queueReferences
-        - possibleDuplicates
         - confirmationToken
       properties:
         trackId:
@@ -2639,11 +2906,6 @@ components:
           description: Queue references that stay attached to the unchanged Track ID.
           items:
             $ref: "#/components/schemas/TrackDeletionQueueReference"
-        possibleDuplicates:
-          type: array
-          description: Other Tracks whose metadata resembles the replacement; informational only.
-          items:
-            $ref: "#/components/schemas/ManagedImportDuplicateCandidate"
         confirmationToken:
           type: string
           description: Opaque token binding confirmation to the reviewed Track, managed file, references, and replacement bytes

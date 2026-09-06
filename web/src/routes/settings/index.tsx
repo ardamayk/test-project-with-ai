@@ -3,9 +3,11 @@ import { useLayout } from "@repo/ui";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "#/components/ui/button";
+import { getDesktopMpvStatus, isDesktopClient } from "#/desktop/bridge";
 import { apiClient } from "#/lib/api";
 import { cn } from "#/lib/utils";
 import { themePresetOptions } from "#/themes/presets";
+import { ServerDependenciesSection } from "./-server-dependencies";
 
 const themeModes: ThemePreferences["mode"][] = ["light", "dark", "system"];
 
@@ -19,6 +21,13 @@ function SettingsPage() {
 	const health = useQuery({
 		queryKey: ["health"],
 		queryFn: () => apiClient.getHealth(),
+	});
+
+	const isDesktop = isDesktopClient();
+	const desktopMpv = useQuery({
+		queryKey: ["desktop-mpv-status"],
+		queryFn: () => getDesktopMpvStatus(),
+		enabled: isDesktop,
 	});
 
 	const saveTheme = (theme: Partial<ThemePreferences>) => {
@@ -90,6 +99,21 @@ function SettingsPage() {
 					))}
 				</div>
 			</section>
+
+			<ServerDependenciesSection
+				health={health.data}
+				desktopMpv={
+					desktopMpv.data ??
+					(desktopMpv.isError
+						? {
+								available: false,
+								pinned: false,
+								pinnedVersion: "",
+								detail: "status unavailable",
+							}
+						: null)
+				}
+			/>
 		</div>
 	);
 }

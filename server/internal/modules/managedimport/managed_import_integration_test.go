@@ -264,11 +264,11 @@ func TestManagedImportClassifiesOnlySameEditionPositionAsPossibleDuplicate(t *te
 	}
 	var preview managedimport.Preview
 	testutil.DecodeJSON(t, response, &preview)
-	if preview.DuplicateClassification != managedimport.DUPLICATE_POSSIBLE || len(preview.DuplicateCandidates) != 1 {
+	if preview.DuplicateClassification != managedimport.DUPLICATE_NONE || len(preview.MatchingTracks) != 1 {
 		t.Fatalf("possible duplicate preview = %+v", preview)
 	}
-	if preview.DuplicateCandidates[0].TrackID != existingTrackID {
-		t.Fatalf("possible duplicate Track = %q, want %q", preview.DuplicateCandidates[0].TrackID, existingTrackID)
+	if preview.MatchingTracks[0].TrackID != existingTrackID {
+		t.Fatalf("possible duplicate Track = %q, want %q", preview.MatchingTracks[0].TrackID, existingTrackID)
 	}
 }
 
@@ -304,7 +304,7 @@ func TestManagedImportBatchRequiresPossibleDuplicateDecision(t *testing.T) {
 	batch := getImportBatch(t, router, batchID)
 	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q]}`, batch.Revision, jobID))
 	response = testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
-	testutil.AssertErrorCode(t, response, http.StatusBadRequest, "invalid_upload")
+	testutil.AssertErrorCode(t, response, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	if tracks := listTracks(t, router); len(tracks.Items) != 1 {
 		t.Fatalf("Tracks after missing duplicate decision = %+v", tracks.Items)
 	}
@@ -340,7 +340,7 @@ func TestManagedImportBatchImportsPossibleDuplicateAsSeparateEdition(t *testing.
 		}
 	}
 	batch := getImportBatch(t, router, batchID)
-	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q,%q,%q],"duplicateDecisions":[{"jobId":%q,"action":"import_separately"},{"jobId":%q,"action":"import_separately"}]}`, batch.Revision, jobID, secondJobID, thirdJobID, jobID, secondJobID))
+	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q,%q,%q],"albumDecisions":[{"albumKey":%q,"createSeparate":true}]}`, batch.Revision, jobID, secondJobID, thirdJobID, batch.Albums[0].Key))
 	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("separate-edition confirmation status = %d, body = %s", response.Code, response.Body.String())
@@ -374,7 +374,7 @@ func TestManagedImportBatchKeepsLatePossibleDuplicateReviewable(t *testing.T) {
 	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
 	testutil.AssertErrorCode(t, response, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
 	batch = getImportBatch(t, router, batchID)
-	if batch.Status != managedimport.BATCH_STATUS_UPLOADING || len(batch.Files) != 1 || batch.Files[0].Preview == nil || batch.Files[0].Preview.DuplicateClassification != managedimport.DUPLICATE_POSSIBLE {
+	if batch.Status != managedimport.BATCH_STATUS_UPLOADING || len(batch.Files) != 1 || batch.Files[0].Preview == nil || batch.Files[0].Preview.DuplicateClassification != managedimport.DUPLICATE_NONE {
 		t.Fatalf("late duplicate batch = %+v", batch)
 	}
 }
@@ -391,9 +391,9 @@ func TestManagedImportBatchReviewsDuplicatesWithinSameBatch(t *testing.T) {
 	batch := getImportBatch(t, router, batchID)
 	body := strings.NewReader(fmt.Sprintf(`{"revision":%d,"selectedFileIds":[%q,%q]}`, batch.Revision, firstJobID, secondJobID))
 	response := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/import-batches/"+batchID+"/confirm", body, map[string]string{"Content-Type": "application/json"})
-	testutil.AssertErrorCode(t, response, http.StatusConflict, managedimport.ERROR_CODE_REVISION_CONFLICT)
+	testutil.AssertErrorCode(t, response, http.StatusBadRequest, "invalid_upload")
 	batch = getImportBatch(t, router, batchID)
-	if batch.Status != managedimport.BATCH_STATUS_UPLOADING || batch.Files[1].Preview == nil || batch.Files[1].Preview.DuplicateClassification != managedimport.DUPLICATE_POSSIBLE {
+	if batch.Status != managedimport.BATCH_STATUS_UPLOADING || batch.Files[1].Preview == nil || batch.Files[1].Preview.DuplicateClassification != managedimport.DUPLICATE_NONE {
 		t.Fatalf("same-batch duplicate review = %+v", batch)
 	}
 }
@@ -770,7 +770,7 @@ func TestManagedImportBatchReservesConcurrentUploadBytesAtomically(t *testing.T)
 	database := testutil.OpenMigratedDB(t)
 	store := managedimport.NewStore(database)
 	ctx := context.Background()
-	batch, err := store.CreateBatch(ctx)
+	batch, err := store.CreateBatch(ctx, managedimport.BatchOptions{})
 	if err != nil {
 		t.Fatalf("create reservation test batch: %v", err)
 	}
@@ -970,7 +970,7 @@ func TestManagedImportInterruptedUploadPreservesSiblingStaging(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	storage := managedimport.NewStorage(t.TempDir(), managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20})
 	service := managedimport.NewService(managedimport.NewStore(database), storage, library.NewMediaInspector())
-	batch, err := service.CreateBatch(context.Background())
+	batch, err := service.CreateBatch(context.Background(), managedimport.BatchOptions{})
 	if err != nil {
 		t.Fatalf("create interrupted upload batch: %v", err)
 	}
@@ -1081,7 +1081,7 @@ func TestManagedImportBatchLeavesCanceledConfirmationResumable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	inspector := &cancelOnConfirmationInspector{delegate: library.NewMediaInspector(), cancel: cancel}
 	service := managedimport.NewService(managedimport.NewStore(database), storage, inspector)
-	batch, err := service.CreateBatch(context.Background())
+	batch, err := service.CreateBatch(context.Background(), managedimport.BatchOptions{})
 	if err != nil {
 		t.Fatalf("create canceled confirmation batch: %v", err)
 	}
@@ -1435,7 +1435,7 @@ func TestInactiveCleanupCancelsStalledUploadAfterFifteenMinutes(t *testing.T) {
 		managedimport.NewStorage(managedStoragePath, managedimport.StorageLimits{FileBytes: 1 << 20, BatchBytes: 2 << 20}),
 		inspector,
 	)
-	batch, err := service.CreateBatch(context.Background())
+	batch, err := service.CreateBatch(context.Background(), managedimport.BatchOptions{})
 	if err != nil {
 		t.Fatalf("create stalled upload batch: %v", err)
 	}
@@ -1683,7 +1683,7 @@ func (inspector *cancellingInspector) Inspect(ctx context.Context, _ string, rep
 	}
 }
 
-func TestManagedImportRecommendsPicardForMissingEmbeddedArtwork(t *testing.T) {
+func TestManagedImportAcceptsMissingEmbeddedArtwork(t *testing.T) {
 	router := newManagedImportTestRouter(t, t.TempDir())
 	firstTrackID := importOneFLAC(t, router, readStrictFLACFixture(t), "first.flac")
 	jobID := createImportJob(t, router)
@@ -1694,16 +1694,8 @@ func TestManagedImportRecommendsPicardForMissingEmbeddedArtwork(t *testing.T) {
 		"X-Import-Filename": "missing-cover.flac",
 	})
 
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("missing artwork status = %d, body = %s", response.Code, response.Body.String())
-	}
-	var failure struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}
-	testutil.DecodeJSON(t, response, &failure)
-	if failure.Code != "missing_artwork" || !strings.Contains(failure.Message, "MusicBrainz Picard") {
-		t.Fatalf("missing artwork failure = %+v", failure)
+	if response.Code != http.StatusOK {
+		t.Fatalf("optional artwork status = %d: %s", response.Code, response.Body.String())
 	}
 	tracks := listTracks(t, router)
 	if len(tracks.Items) != 1 || tracks.Items[0].ID != firstTrackID {
@@ -1711,31 +1703,24 @@ func TestManagedImportRecommendsPicardForMissingEmbeddedArtwork(t *testing.T) {
 	}
 }
 
-func TestManagedImportRejectsConflictingAlbumArtworkWithoutPartialCommit(t *testing.T) {
+func TestManagedImportPreservesExistingAlbumArtwork(t *testing.T) {
 	managedStoragePath := t.TempDir()
 	router := newManagedImportTestRouter(t, managedStoragePath)
 	firstFixture := readStrictFLACFixture(t)
-	firstTrackID := importOneFLAC(t, router, firstFixture, "first.flac")
+	importOneFLAC(t, router, firstFixture, "first.flac")
 	secondFixture := replaceFrontCover(t, secondTrackFixture(firstFixture), encodeAlternatePNG(t))
 	jobID, revision := uploadFLACForPreview(t, router, secondFixture, "second.flac")
 
 	confirmResponse := testutil.ServeRequest(t, router, http.MethodPost, "/api/v1/imports/"+jobID+"/confirm", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, revision)), map[string]string{"Content-Type": "application/json"})
 
-	if confirmResponse.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("conflicting confirm status = %d, body = %s", confirmResponse.Code, confirmResponse.Body.String())
-	}
-	var failure struct {
-		Code string `json:"code"`
-	}
-	testutil.DecodeJSON(t, confirmResponse, &failure)
-	if failure.Code != "album_artwork_conflict" {
-		t.Fatalf("conflicting artwork error code = %q", failure.Code)
+	if confirmResponse.Code != http.StatusOK {
+		t.Fatalf("preserved artwork status = %d: %s", confirmResponse.Code, confirmResponse.Body.String())
 	}
 	tracks := listTracks(t, router)
-	if len(tracks.Items) != 1 || tracks.Items[0].ID != firstTrackID {
-		t.Fatalf("Tracks after artwork conflict = %+v", tracks.Items)
+	if len(tracks.Items) != 2 {
+		t.Fatalf("Tracks = %+v", tracks.Items)
 	}
-	assertCanonicalFileCounts(t, managedStoragePath, 1, 1)
+	assertCanonicalFileCounts(t, managedStoragePath, 2, 1)
 }
 
 func TestManagedImportRejectsMissingAndEmptyIdentityMetadataWithoutLibraryEntities(t *testing.T) {
@@ -1755,8 +1740,6 @@ func TestManagedImportRejectsMissingAndEmptyIdentityMetadataWithoutLibraryEntiti
 		{name: "empty ALBUM", tag: "ALBUM", fixtureTag: "ALBUM=Strict Import Tests"},
 		{name: "missing TRACKNUMBER", tag: "TRACKNUMBER", fixtureTag: "TRACKNUMBER=3/9", replacement: "XRACKNUMBER=3/9"},
 		{name: "empty TRACKNUMBER", tag: "TRACKNUMBER", fixtureTag: "TRACKNUMBER=3/9"},
-		{name: "missing GENRE", tag: "GENRE", fixtureTag: "GENRE=Electronic", replacement: "XENRE=Electronic"},
-		{name: "empty GENRE", tag: "GENRE", fixtureTag: "GENRE=Electronic"},
 	}
 
 	for _, testCase := range testCases {

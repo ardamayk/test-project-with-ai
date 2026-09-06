@@ -1,3 +1,4 @@
+import { ApiError } from "@repo/api-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	act,
@@ -7,21 +8,24 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ImportSessionProvider } from "#/components/import-session-provider";
 import { TracksPage } from "./-tracks-page";
 
 const mocks = vi.hoisted(() => ({
 	getHealth: vi.fn(),
 	listTracks: vi.fn(),
-	listImportHistory: vi.fn(),
 	listPlaylists: vi.fn(),
 	getPlaylist: vi.fn(),
 	addPlaylistTrack: vi.fn(),
 	removePlaylistTrack: vi.fn(),
 	createManagedImportBatch: vi.fn(),
 	getManagedImportBatch: vi.fn(),
+	heartbeatManagedImportBatch: vi.fn().mockResolvedValue(undefined),
 	confirmManagedImportBatch: vi.fn(),
 	cancelManagedImportBatch: vi.fn(),
+	cancelManagedImport: vi.fn(),
 	createManagedImportJob: vi.fn(),
 	uploadManagedImportFile: vi.fn(),
 	confirmManagedImport: vi.fn(),
@@ -57,15 +61,16 @@ vi.mock("#/lib/api", () => ({
 	apiClient: {
 		getHealth: mocks.getHealth,
 		listTracks: mocks.listTracks,
-		listImportHistory: mocks.listImportHistory,
 		listPlaylists: mocks.listPlaylists,
 		getPlaylist: mocks.getPlaylist,
 		addPlaylistTrack: mocks.addPlaylistTrack,
 		removePlaylistTrack: mocks.removePlaylistTrack,
 		createManagedImportBatch: mocks.createManagedImportBatch,
 		getManagedImportBatch: mocks.getManagedImportBatch,
+		heartbeatManagedImportBatch: mocks.heartbeatManagedImportBatch,
 		confirmManagedImportBatch: mocks.confirmManagedImportBatch,
 		cancelManagedImportBatch: mocks.cancelManagedImportBatch,
+		cancelManagedImport: mocks.cancelManagedImport,
 		createManagedImportJob: mocks.createManagedImportJob,
 		uploadManagedImportFile: mocks.uploadManagedImportFile,
 		confirmManagedImport: mocks.confirmManagedImport,
@@ -124,7 +129,9 @@ function renderWithQuery(ui: React.ReactElement) {
 		defaultOptions: { queries: { retry: false } },
 	});
 	return render(
-		<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+		<QueryClientProvider client={queryClient}>
+			<ImportSessionProvider>{ui}</ImportSessionProvider>
+		</QueryClientProvider>,
 	);
 }
 
@@ -180,6 +187,13 @@ function createImportPreview(jobId: string) {
 		revision: 2,
 		file: {
 			originalFilename: `${jobId}.flac`,
+			albumKey: "album-key",
+			contentSha256: jobId,
+			format: "flac",
+			discNo: 1,
+			trackNo:
+				jobId === "import-2" ? 4 : jobId === "remaster-selection" ? 5 : 3,
+			albumArtists: ["Test Album Artist"],
 			title: jobId,
 			artists: ["Test Artist"],
 			album: "Strict Import Tests",
@@ -225,25 +239,20 @@ function mockDeferredUploads() {
 }
 
 function mockRetryableBatchResponses() {
-	mocks.getManagedImportBatch
-		.mockResolvedValueOnce({
+	mocks.getManagedImportBatch.mockImplementation(async () => {
+		const attempts = mocks.uploadManagedImportFile.mock.calls.filter(
+			([jobId]) => jobId === "import-1",
+		).length;
+		return {
 			id: "batch-1",
 			status: "uploading",
 			revision: 3,
 			files: [
-				createBatchFile("import-1", false),
+				createBatchFile("import-1", attempts > 1),
 				createBatchFile("import-2", true),
 			],
-		})
-		.mockResolvedValueOnce({
-			id: "batch-1",
-			status: "uploading",
-			revision: 4,
-			files: [
-				createBatchFile("import-1", true),
-				createBatchFile("import-2", true),
-			],
-		});
+		};
+	});
 }
 
 function mockInterruptedFolderUpload() {
@@ -274,7 +283,173 @@ function expectUploadAttempts(jobId: string, count: number) {
 }
 
 describe("tracks route", () => {
+	it("releases retry slots for queued files and cancels pending retries", async () => {
+		mocks.createManagedImportJob
+			.mockReset()
+			.mockImplementation(async (_batchId, clientFileId) => ({
+				id: clientFileId,
+				status: "uploading",
+				revision: 1,
+			}));
+		mocks.getManagedImportBatch.mockImplementation(async () => ({
+			id: "batch-1",
+			status: "uploading",
+			revision: 4,
+			files: mocks.createManagedImportJob.mock.calls.map(([, jobId]) => ({
+				jobId,
+				status: "uploading",
+				state: "unresolved",
+				revision: 1,
+				validationProgress: 0,
+				selected: false,
+				errorCode: "upload_interrupted",
+			})),
+		}));
+		mocks.uploadManagedImportFile.mockImplementation(
+			(_jobId, filename, _file, _onProgress, signal) => {
+				if (filename === "first.flac")
+					return Promise.reject(new TypeError("Connection lost"));
+				return new Promise((_resolve, reject) =>
+					signal.addEventListener("abort", () => reject(signal.reason), {
+						once: true,
+					}),
+				);
+			},
+		);
+		vi.spyOn(window, "confirm").mockReturnValue(true);
+		await openImportMusicDialog();
+		vi.useFakeTimers();
+		await act(async () =>
+			selectAudioFolder(
+				["first", "second", "third"].map(
+					(name) => new File(["audio"], `${name}.flac`),
+				),
+			),
+		);
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3);
+		await act(async () =>
+			fireEvent.click(screen.getByRole("button", { name: "Cancel" })),
+		);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(60000);
+		});
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3);
+		expect(mocks.cancelManagedImportBatch).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("dialog", { name: "Import Music" })).toBeNull();
+	});
+
+	it("keeps the import available across page navigation and renews its staging lease", async () => {
+		function Navigation() {
+			const [isTracksPage, setIsTracksPage] = useState(true);
+			return (
+				<>
+					<button type="button" onClick={() => setIsTracksPage(!isTracksPage)}>
+						Navigate
+					</button>
+					{isTracksPage ? <TracksPage /> : <p>Another page</p>}
+				</>
+			);
+		}
+		renderWithQuery(<Navigation />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		mocks.uploadManagedImportFile.mockImplementation(
+			() => new Promise(() => {}),
+		);
+		vi.useFakeTimers();
+		await act(async () =>
+			selectAudioFolder([new File(["audio"], "first.flac")]),
+		);
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(1);
+		fireEvent.click(screen.getByRole("button", { name: "Close Import Music" }));
+		fireEvent.click(screen.getByRole("button", { name: "Navigate" }));
+		expect(screen.getByText("Another page")).toBeTruthy();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Open current import" }),
+		);
+		expect(screen.getByRole("dialog", { name: "Import Music" })).toBeTruthy();
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(60000);
+		});
+		expect(mocks.heartbeatManagedImportBatch).toHaveBeenCalledWith("batch-1");
+		expect(mocks.cancelManagedImportBatch).not.toHaveBeenCalled();
+	});
+
+	it("retries interrupted transfers after 2, 5, and 10 seconds and restarts only on manual retry", async () => {
+		mocks.uploadManagedImportFile.mockRejectedValue(
+			new TypeError("Network disconnected"),
+		);
+		mocks.getManagedImportBatch.mockResolvedValue({
+			id: "batch-1",
+			status: "uploading",
+			revision: 2,
+			files: [
+				{
+					jobId: "import-1",
+					state: "unresolved",
+					status: "uploading",
+					revision: 1,
+					validationProgress: 0,
+					selected: false,
+					errorCode: "upload_interrupted",
+				},
+			],
+		});
+		await openImportMusicDialog();
+		vi.useFakeTimers();
+		await act(async () =>
+			selectAudioFolder([new File(["audio"], "first.flac")]),
+		);
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(1);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1999);
+		});
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(1);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1);
+		});
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(2);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(5000);
+		});
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(10000);
+		});
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(4);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(20000);
+		});
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(4);
+		await act(async () =>
+			fireEvent.click(
+				screen.getByRole("button", { name: "Retry failed uploads" }),
+			),
+		);
+		expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(5);
+	});
+
+	it("minimizes an active import and reopens it without canceling", async () => {
+		mocks.uploadManagedImportFile.mockImplementation(
+			() => new Promise(() => {}),
+		);
+		await openImportMusicDialog();
+		selectAudioFolder([new File(["audio"], "first.flac")]);
+		await waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(1),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Close Import Music" }));
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog", { name: "Import Music" })).toBeNull(),
+		);
+		expect(mocks.cancelManagedImportBatch).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		expect(screen.getByRole("dialog", { name: "Import Music" })).toBeTruthy();
+		expect(mocks.createManagedImportBatch).toHaveBeenCalledTimes(1);
+	});
+
 	beforeEach(() => {
+		mocks.heartbeatManagedImportBatch.mockClear();
 		mocks.getHealth.mockReset();
 		mocks.getHealth.mockResolvedValue({
 			status: "ok",
@@ -286,7 +461,6 @@ describe("tracks route", () => {
 			],
 		});
 		mocks.listTracks.mockReset();
-		mocks.listImportHistory.mockReset();
 		mocks.createManagedImportJob.mockReset();
 		mocks.createManagedImportBatch.mockReset();
 		mocks.getManagedImportBatch.mockReset();
@@ -304,7 +478,6 @@ describe("tracks route", () => {
 		mocks.listTracks.mockResolvedValue({
 			items: libraryTracks,
 		});
-		mocks.listImportHistory.mockResolvedValue({ items: [] });
 		mocks.listPlaylists.mockResolvedValue({
 			items: [{ id: "favorites", name: "Favorites", isDefault: true }],
 		});
@@ -410,6 +583,7 @@ describe("tracks route", () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 		vi.useRealTimers();
 		cleanup();
@@ -546,53 +720,6 @@ describe("tracks route", () => {
 		expect(mocks.listTracks).toHaveBeenCalledTimes(1);
 	});
 
-	it("shows terminal Import History and starts a fresh workflow on retry", async () => {
-		mocks.listImportHistory.mockResolvedValueOnce({
-			items: [
-				{
-					importId: "00000000-0000-4000-8000-000000000010",
-					startedAt: "2026-09-02T10:00:00Z",
-					completedAt: "2026-09-02T10:01:00Z",
-					resultCode: "partially_completed",
-					counts: {
-						total: 2,
-						imported: 1,
-						rejected: 1,
-						failed: 0,
-						replaced: 0,
-						notAttempted: 0,
-						canceled: 0,
-					},
-					files: [
-						{
-							fileId: "00000000-0000-4000-8000-000000000011",
-							jobId: "00000000-0000-4000-8000-000000000012",
-							safeFilename: "strict-import.flac",
-							startedAt: "2026-09-02T10:00:00Z",
-							completedAt: "2026-09-02T10:01:00Z",
-							contentSha256: "0".repeat(64),
-							resultCode: "imported",
-							createdTrackId: "00000000-0000-4000-8000-000000000013",
-						},
-					],
-				},
-			],
-		});
-
-		renderWithQuery(<TracksPage />);
-
-		await screen.findByRole("heading", { name: "Import History" });
-		await screen.findByText("Partially completed");
-		expect(screen.getByText("1 imported · 1 rejected")).toBeTruthy();
-		expect(screen.getByText("strict-import.flac")).toBeTruthy();
-
-		fireEvent.click(screen.getByRole("button", { name: "Retry import" }));
-
-		expect(screen.getByRole("dialog")).toBeTruthy();
-		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
-		expect(mocks.createManagedImportBatch).not.toHaveBeenCalled();
-	});
-
 	it("keeps filtered local results visible if the debounced search request fails", async () => {
 		mocks.listTracks
 			.mockResolvedValueOnce({ items: libraryTracks })
@@ -664,8 +791,8 @@ describe("tracks route", () => {
 		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalled();
 		expect(await screen.findByText("import-1")).toBeTruthy();
 		expect(
-			screen.getByRole("button", { name: "Select audio folder" }),
-		).toHaveProperty("disabled", true);
+			screen.queryByRole("button", { name: "Select audio folder" }),
+		).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 		await vi.waitFor(() =>
 			expect(mocks.releaseDesktopImportSelections).toHaveBeenCalledWith([
@@ -813,17 +940,18 @@ describe("tracks route", () => {
 		const remasterPreview = {
 			...createImportPreview("remaster-selection"),
 			file: {
+				...createImportPreview("remaster-selection").file,
 				originalFilename: "remaster.opus",
 				title: "Remaster",
 				artists: ["Test Artist"],
 				album: "Strict Import Tests",
 				format: "opus",
 			},
-			duplicateClassification: "possible_duplicate",
-			duplicateCandidates: [
+			duplicateClassification: "none",
+			matchingTracks: [
 				{
 					trackId: "existing-track",
-					title: "Original",
+					title: "Remaster",
 					artists: ["Test Artist"],
 					album: "Strict Import Tests",
 					discNo: 1,
@@ -890,7 +1018,7 @@ describe("tracks route", () => {
 				},
 				{
 					...createBatchFile("remaster-selection", true),
-					selected: false,
+					selected: true,
 					preview: remasterPreview,
 				},
 			],
@@ -947,8 +1075,8 @@ describe("tracks route", () => {
 			expect(progressbar.getAttribute("aria-valuenow")).toBe("45"),
 		);
 		expect(mocks.uploadManagedImportFile).not.toHaveBeenCalled();
-		// Native uploads run one at a time, so the sibling files wait.
-		expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(1);
+		// A second slot processes siblings while the first transfer remains active.
+		expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(3);
 		releaseAcceptedUpload?.();
 
 		// Structured server rejections render as Web does.
@@ -961,11 +1089,13 @@ describe("tracks route", () => {
 		).toHaveProperty("checked", true);
 
 		// A Possible Duplicate requires an explicit decision before confirming.
-		await screen.findByText("Possible Duplicate");
+		await screen.findByText("Track Replacement");
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", true);
-		fireEvent.click(screen.getByRole("radio", { name: "Import separately" }));
+		fireEvent.click(
+			screen.getByRole("radio", { name: "Replace existing Track" }),
+		);
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", false);
@@ -976,7 +1106,14 @@ describe("tracks route", () => {
 				"batch-1",
 				3,
 				["accepted-selection", "remaster-selection"],
-				[{ jobId: "remaster-selection", action: "import_separately" }],
+				[
+					{
+						jobId: "remaster-selection",
+						action: "replace_existing",
+						trackId: "existing-track",
+					},
+				],
+				undefined,
 			),
 		);
 		expect(await screen.findAllByText("Imported")).toHaveLength(2);
@@ -990,7 +1127,7 @@ describe("tracks route", () => {
 		);
 	});
 
-	it("limits recursive folder uploads to three concurrent files", async () => {
+	it("limits recursive folder uploads to two concurrent files", async () => {
 		mockClientFileJobs();
 		const uploads = mockDeferredUploads();
 		await openImportMusicDialog();
@@ -1001,9 +1138,13 @@ describe("tracks route", () => {
 		);
 
 		await vi.waitFor(() =>
+			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(2),
+		);
+		expect(uploads.getMaximumActiveUploads()).toBe(2);
+		uploads.releases.shift()?.();
+		await vi.waitFor(() =>
 			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3),
 		);
-		expect(uploads.getMaximumActiveUploads()).toBe(3);
 		uploads.releases.shift()?.();
 		await vi.waitFor(() =>
 			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(4),
@@ -1016,30 +1157,79 @@ describe("tracks route", () => {
 		mockRetryableBatchResponses();
 		const finishRetry = mockInterruptedFolderUpload();
 		await openImportMusicDialog();
-		selectAudioFolder([
-			new File(["one"], "one.flac"),
-			new File(["two"], "two.flac"),
-		]);
+		vi.useFakeTimers();
+		await act(async () =>
+			selectAudioFolder([
+				new File(["one"], "one.flac"),
+				new File(["two"], "two.flac"),
+			]),
+		);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(2000);
+		});
 
 		await vi.waitFor(() =>
 			expect(mocks.uploadManagedImportFile).toHaveBeenCalledTimes(3),
 		);
 		const interruptedRow = screen.getByText("one.flac").closest("article");
-		expect(interruptedRow?.textContent).toContain("Unresolved");
+		expect(interruptedRow?.textContent).toContain("Uploading");
 		expect(
 			interruptedRow
 				?.querySelector('[role="progressbar"]')
 				?.getAttribute("aria-valuenow"),
 		).toBe("45");
+		const details = screen.getByRole("button", {
+			name: "Details for one.flac",
+		});
+		fireEvent.click(details);
 		finishRetry();
 		await vi.waitFor(() =>
 			expect(interruptedRow?.textContent).toContain("Accepted"),
 		);
+		expect(details.isConnected).toBe(true);
+		expect(details.getAttribute("aria-expanded")).toBe("true");
 		expectUploadAttempts("import-1", 2);
 		expectUploadAttempts("import-2", 1);
 		expect(mocks.uploadManagedImportFile.mock.calls[2]?.[4]).toBeInstanceOf(
 			AbortSignal,
 		);
+	});
+
+	it("groups album metadata and reveals per-file details only on request", async () => {
+		mocks.uploadManagedImportFile.mockImplementation(async (jobId: string) => ({
+			...createImportPreview(jobId),
+		}));
+		mocks.getManagedImportBatch.mockResolvedValue({
+			id: "batch-1",
+			status: "uploading",
+			revision: 5,
+			files: [
+				createBatchFile("import-1", true),
+				createBatchFile("import-2", true),
+			],
+		});
+		await openImportMusicDialog();
+		selectAudioFolder([
+			new File(["one"], "one.flac"),
+			new File(["two"], "two.flac"),
+		]);
+		await screen.findByText("2 of 2 ready");
+		expect(screen.getAllByText("Strict Import Tests")).toHaveLength(1);
+		expect(screen.getAllByText("Test Artist")).toHaveLength(2);
+		expect(screen.getAllByText("import-1")).toHaveLength(1);
+		expect(
+			screen.queryByText("Identification is off", { exact: false }),
+		).toBeNull();
+		const details = screen.getByRole("button", {
+			name: "Details for import-1.flac",
+		});
+		fireEvent.click(details);
+		expect(details.getAttribute("aria-expanded")).toBe("true");
+		expect(
+			screen.queryByText("Identification is off", { exact: false }),
+		).toBeNull();
+		fireEvent.click(details);
+		expect(screen.queryByText("File tags · Identification is off")).toBeNull();
 	});
 
 	it("imports a selected file and reports a rejected sibling independently", async () => {
@@ -1096,7 +1286,13 @@ describe("tracks route", () => {
 					},
 				};
 			})
-			.mockRejectedValueOnce(new Error("TITLE is required"));
+			.mockRejectedValueOnce(
+				new ApiError(422, {
+					error: "invalid_metadata",
+					code: "invalid_metadata",
+					message: "TITLE is required",
+				}),
+			);
 		fireEvent.change(fileInput, {
 			target: { files: [acceptedFile, rejectedFile] },
 		});
@@ -1135,9 +1331,13 @@ describe("tracks route", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 
 		await screen.findByText("Inspection Fixture");
-		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
-			"import-1",
-		]);
+		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+			"batch-1",
+			3,
+			["import-1"],
+			undefined,
+			undefined,
+		);
 		await vi.waitFor(() => expect(mocks.listTracks).toHaveBeenCalledTimes(2));
 		expect(screen.getByText("Imported")).toBeTruthy();
 		expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1198,11 +1398,11 @@ describe("tracks route", () => {
 			...(await mocks.uploadManagedImportFile.getMockImplementation()?.(
 				"import-1",
 			)),
-			duplicateClassification: "possible_duplicate",
-			duplicateCandidates: [
+			duplicateClassification: "none",
+			matchingTracks: [
 				{
 					trackId: "existing-track",
-					title: "Existing Track",
+					title: "Inspection Fixture",
 					artists: ["Test Artist"],
 					album: "Strict Import Tests",
 					discNo: 1,
@@ -1234,11 +1434,13 @@ describe("tracks route", () => {
 			target: { files: [new File(["different"], "candidate.flac")] },
 		});
 
-		await screen.findByText("Possible Duplicate");
+		await screen.findByText("Track Replacement");
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", true);
-		fireEvent.click(screen.getByRole("radio", { name: "Import separately" }));
+		fireEvent.click(
+			screen.getByRole("radio", { name: "Replace existing Track" }),
+		);
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", false);
@@ -1248,7 +1450,14 @@ describe("tracks route", () => {
 				"batch-1",
 				3,
 				["import-1"],
-				[{ jobId: "import-1", action: "import_separately" }],
+				[
+					{
+						jobId: "import-1",
+						action: "replace_existing",
+						trackId: "existing-track",
+					},
+				],
+				undefined,
 			),
 		);
 		expect(
@@ -1262,11 +1471,11 @@ describe("tracks route", () => {
 			...(await mocks.uploadManagedImportFile.getMockImplementation()?.(
 				"import-1",
 			)),
-			duplicateClassification: "possible_duplicate",
-			duplicateCandidates: [
+			duplicateClassification: "none",
+			matchingTracks: [
 				{
 					trackId: "late-track",
-					title: "Late Track",
+					title: "Inspection Fixture",
 					artists: ["Test Artist"],
 					album: "Strict Import Tests",
 					discNo: 1,
@@ -1324,7 +1533,7 @@ describe("tracks route", () => {
 			expect(mocks.getManagedImportBatch).toHaveBeenCalledTimes(2),
 		);
 		expect(mocks.confirmManagedImportBatch).not.toHaveBeenCalled();
-		await screen.findByText("Possible Duplicate");
+		await screen.findByText("Track Replacement");
 		expect(
 			screen.getByRole("button", { name: "Confirm Import" }),
 		).toHaveProperty("disabled", true);
@@ -1382,7 +1591,13 @@ describe("tracks route", () => {
 			},
 		});
 
-		await screen.findByText("preview refresh unavailable");
+		await waitFor(
+			() =>
+				expect(
+					screen.getByRole("button", { name: "Confirm Import" }),
+				).toHaveProperty("disabled", false),
+			{ timeout: 4000 },
+		);
 		const confirmButton = screen.getByRole("button", {
 			name: "Confirm Import",
 		});
@@ -1391,9 +1606,212 @@ describe("tracks route", () => {
 
 		await screen.findByText("Imported");
 		expect(mocks.getManagedImportBatch).toHaveBeenCalledTimes(2);
-		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith("batch-1", 3, [
-			"import-1",
+		expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
+			"batch-1",
+			3,
+			["import-1"],
+			undefined,
+			undefined,
+		);
+	});
+
+	it("shows every validation issue on a separate readable line", async () => {
+		mocks.uploadManagedImportFile.mockRejectedValueOnce(
+			new ApiError(422, {
+				error: "invalid_metadata",
+				code: "invalid_metadata",
+				message: "Validation failed",
+				issues: [
+					{
+						code: "invalid_metadata",
+						field: "GENRE",
+						reason: "required tag is missing",
+					},
+					{
+						code: "missing_artwork",
+						field: "artwork",
+						reason: "embedded front cover is required",
+					},
+				],
+			}),
+		);
+		mocks.getManagedImportBatch.mockRejectedValueOnce(
+			new Error("Refresh unavailable"),
+		);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [new File(["audio"], "broken.flac", { type: "audio/flac" })],
+			},
+		});
+		const genre = await screen.findByText("Genre: required tag is missing");
+		const artwork = screen.getByText(
+			"Embedded front cover not found. Add an image marked as Front Cover.",
+		);
+		expect(genre.tagName).toBe("LI");
+		expect(artwork.tagName).toBe("LI");
+		expect(screen.queryByText("missing_artwork")).toBeNull();
+	});
+
+	it("does not retry an unavailable Desktop file selection", async () => {
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "selection", name: "missing.flac", size: 42 },
+			{ id: "ready-selection", name: "ready.flac", size: 42 },
 		]);
+		mocks.desktopUploadImportFile.mockRejectedValueOnce({
+			code: "selection_unavailable",
+			message: "Selected file is no longer available",
+		});
+		mocks.desktopUploadImportFile.mockResolvedValue(
+			new Response(JSON.stringify(createImportPreview("import-2")), {
+				status: 200,
+			}),
+		);
+		let hasCanceledJob = false;
+		mocks.cancelManagedImport.mockImplementation(async () => {
+			hasCanceledJob = true;
+		});
+
+		mocks.getManagedImportBatch.mockImplementation(async () => ({
+			id: "batch-1",
+			status: "uploading",
+			revision: hasCanceledJob ? 3 : 2,
+			files: [
+				...(hasCanceledJob
+					? []
+					: [{ ...createBatchFile("import-1", false), phase: "queued" }]),
+				createBatchFile("import-2", true),
+			],
+		}));
+		await openImportMusicDialog();
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+		await screen.findByText("Selected file is no longer available");
+		expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(2);
+		expect(
+			screen.queryByRole("button", { name: "Retry failed uploads" }),
+		).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
+		await vi.waitFor(() =>
+			expect(mocks.confirmManagedImportBatch).toHaveBeenCalled(),
+		);
+		expect(mocks.cancelManagedImport).toHaveBeenCalledWith("import-1");
+	});
+
+	it("preserves native validation issues after batch refresh", async () => {
+		mocks.isDesktopClient.mockReturnValue(true);
+		mocks.selectDesktopImportFiles.mockResolvedValue([
+			{ id: "selection", name: "broken.flac", size: 42 },
+		]);
+		const issues = [
+			{
+				code: "invalid_metadata",
+				field: "GENRE",
+				reason: "required tag is missing",
+			},
+			{
+				code: "missing_artwork",
+				field: "artwork",
+				reason: "embedded front cover is required",
+			},
+		];
+		mocks.desktopUploadImportFile.mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: "invalid_metadata",
+					code: "invalid_metadata",
+					message: "Validation failed",
+					issues,
+				}),
+				{ status: 422 },
+			),
+		);
+		mocks.getManagedImportBatch.mockResolvedValue({
+			id: "batch-1",
+			status: "uploading",
+			revision: 2,
+			files: [
+				{
+					jobId: "import-1",
+					state: "rejected",
+					status: "failed",
+					revision: 1,
+					validationProgress: 100,
+					selected: false,
+					errorCode: "invalid_metadata",
+					errorReason: "required tag is missing",
+					issues,
+				},
+			],
+		});
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
+		await waitFor(() => expect(mocks.getManagedImportBatch).toHaveBeenCalled());
+		expect(
+			(await screen.findByText("Genre: required tag is missing")).tagName,
+		).toBe("LI");
+		expect(
+			screen.getByText(
+				"Embedded front cover not found. Add an image marked as Front Cover.",
+			).tagName,
+		).toBe("LI");
+	});
+
+	it("closes a rejected-only import when the batch is already gone", async () => {
+		const confirmClose = vi.spyOn(window, "confirm").mockReturnValue(true);
+		mocks.uploadManagedImportFile.mockRejectedValueOnce(
+			new ApiError(422, {
+				error: "audio_decode_failed",
+				code: "audio_decode_failed",
+				message: "audio stream failed full decode",
+			}),
+		);
+		mocks.getManagedImportBatch.mockResolvedValueOnce({
+			id: "batch-1",
+			status: "uploading",
+			revision: 2,
+			files: [
+				{
+					jobId: "import-1",
+					state: "rejected",
+					status: "failed",
+					revision: 1,
+					validationProgress: 100,
+					originalFilename: "broken.flac",
+					selected: false,
+					errorCode: "audio_decode_failed",
+					errorReason: "audio stream failed full decode",
+				},
+			],
+		});
+		mocks.cancelManagedImportBatch.mockRejectedValueOnce(
+			new ApiError(404, {
+				error: "not_found",
+				code: "import_not_found",
+				message: "Managed Import Job not found",
+			}),
+		);
+		renderWithQuery(<TracksPage />);
+		await screen.findByText("Anti-Hero");
+		fireEvent.click(screen.getByRole("button", { name: "Import Music" }));
+		fireEvent.change(screen.getByLabelText("Audio files"), {
+			target: {
+				files: [new File(["broken"], "broken.flac", { type: "audio/flac" })],
+			},
+		});
+		await screen.findByText("audio stream failed full decode");
+
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(screen.queryByText("Managed Import Job not found")).toBeNull();
+		expect(mocks.cancelManagedImportBatch).toHaveBeenCalledWith("batch-1");
+		expect(confirmClose).not.toHaveBeenCalled();
+		confirmClose.mockRestore();
 	});
 
 	it("confirms modal close and cancels uncommitted server staging", async () => {
@@ -1523,7 +1941,13 @@ describe("tracks route", () => {
 				],
 			},
 		});
-		await screen.findByText("preview refresh unavailable");
+		await waitFor(
+			() =>
+				expect(
+					screen.getByRole("button", { name: "Confirm Import" }),
+				).toHaveProperty("disabled", false),
+			{ timeout: 4000 },
+		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 
@@ -1532,6 +1956,8 @@ describe("tracks route", () => {
 				"batch-1",
 				3,
 				["import-1"],
+				undefined,
+				undefined,
 			),
 		);
 		expect(screen.queryByText("upload response lost")).toBeNull();
@@ -1683,13 +2109,10 @@ describe("tracks route", () => {
 		fireEvent.click(checkbox);
 		fireEvent.click(screen.getByRole("button", { name: "Confirm Import" }));
 
-		await vi.waitFor(() =>
-			expect(mocks.confirmManagedImportBatch).toHaveBeenCalledWith(
-				"batch-1",
-				3,
-				[],
-			),
-		);
+		expect(
+			screen.getByRole("button", { name: "Confirm Import" }),
+		).toHaveProperty("disabled", true);
+		expect(mocks.confirmManagedImportBatch).not.toHaveBeenCalled();
 	});
 
 	it("freezes file selection while confirmation is pending", async () => {
@@ -1743,7 +2166,7 @@ describe("tracks route", () => {
 					},
 				],
 			})
-			.mockResolvedValueOnce({
+			.mockResolvedValue({
 				id: "batch-1",
 				status: "confirming",
 				revision: 4,
@@ -1781,14 +2204,14 @@ describe("tracks route", () => {
 		expect(checkbox).toHaveProperty("disabled", true);
 		expect(
 			screen.getByRole("button", { name: "Close Import Music" }),
-		).toHaveProperty("disabled", true);
+		).toHaveProperty("disabled", false);
 		expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty(
 			"disabled",
 			true,
 		);
 	});
 
-	it("uploads one desktop file at a time", async () => {
+	it("uploads at most two desktop files at a time", async () => {
 		mocks.isDesktopClient.mockReturnValue(true);
 		mocks.selectDesktopImportFiles.mockResolvedValue([
 			{ id: "selection-1", name: "one.flac", size: 3 },
@@ -1833,18 +2256,14 @@ describe("tracks route", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Select audio files" }));
 
 		await vi.waitFor(() =>
-			expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(1),
-		);
-		releases.shift()?.();
-		await vi.waitFor(() =>
 			expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(2),
 		);
 		releases.shift()?.();
 		await vi.waitFor(() =>
 			expect(mocks.desktopUploadImportFile).toHaveBeenCalledTimes(3),
 		);
-		releases.shift()?.();
+		for (const release of releases) release();
 		await vi.waitFor(() => expect(activeUploads).toBe(0));
-		expect(maximumActiveUploads).toBe(1);
+		expect(maximumActiveUploads).toBe(2);
 	});
 });

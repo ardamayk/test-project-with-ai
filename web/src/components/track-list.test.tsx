@@ -95,6 +95,13 @@ const sampleTrack: Track = {
 		albumGainDb: -6.5,
 		albumPeak: 1.01,
 	},
+	titleSort: "welcome to new york",
+	filePath: "/managed/t1.flac",
+	fileMtime: 1_700_000_000,
+	contentSha256: "ab".repeat(32),
+	revision: 2,
+	createdAt: "2026-09-05T15:02:17Z",
+	updatedAt: "2026-09-05T15:02:17Z",
 };
 
 describe("TrackList", () => {
@@ -347,7 +354,6 @@ describe("TrackList", () => {
 				},
 				playlistReferences: [{ id: "p1", name: "Road Trip" }],
 				queueReferences: [{ userId: "user-1", itemCount: 2 }],
-				possibleDuplicates: [],
 				confirmationToken: "token-1",
 			},
 		};
@@ -418,6 +424,10 @@ describe("TrackList", () => {
 			within(dialog).getByText("1856 kbps (Calculated by app)"),
 		).toBeTruthy();
 		expect(within(dialog).getByText("Sample rate")).toBeTruthy();
+		expect(within(dialog).queryByText("Metadata source")).toBeNull();
+		expect(within(dialog).getByText("File path")).toBeTruthy();
+		expect(within(dialog).getByText("SHA-256")).toBeTruthy();
+		expect(within(dialog).getByText("Revision")).toBeTruthy();
 		expect(within(dialog).getByText("Bit depth")).toBeTruthy();
 		expect(within(dialog).getByText("Genre")).toBeTruthy();
 		expect(within(dialog).getByText("Size")).toBeTruthy();

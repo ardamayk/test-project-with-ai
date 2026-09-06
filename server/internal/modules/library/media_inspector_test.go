@@ -196,10 +196,12 @@ func TestMediaInspectorAppliesFLACArtworkRulesToOGG(t *testing.T) {
 			if err := os.WriteFile(path, fixture, 0o600); err != nil {
 				t.Fatalf("write artwork OGG fixture: %v", err)
 			}
-			_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
-			var inspectionErr *library.InspectionError
-			if !errors.As(err, &inspectionErr) || inspectionErr.Code != testCase.expectedCode || inspectionErr.Field != "artwork" {
-				t.Fatalf("inspection error = %T %+v", err, inspectionErr)
+			inspection, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+			if err != nil || len(inspection.AlbumArtwork.Data) != 0 {
+				t.Fatalf("optional artwork = %+v, %v", inspection.AlbumArtwork, err)
+			}
+			if testCase.expectedCode == library.INSPECTION_ERROR_INVALID_ARTWORK && inspection.AlbumArtwork.Warning == "" {
+				t.Fatal("missing invalid artwork warning")
 			}
 		})
 	}
@@ -541,13 +543,12 @@ func TestMediaInspectorRejectsUnsafeEmbeddedArtwork(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			path := writeFLACWithPictures(t, testCase.pictures)
 
-			_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
-			var inspectionErr *library.InspectionError
-			if !errors.As(err, &inspectionErr) {
-				t.Fatalf("error = %T %v", err, err)
+			inspection, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+			if err != nil || len(inspection.AlbumArtwork.Data) != 0 || inspection.AlbumArtwork.SHA256 != "" {
+				t.Fatalf("unsafe artwork retained: %+v, %v", inspection.AlbumArtwork, err)
 			}
-			if inspectionErr.Code != testCase.expectedCode || inspectionErr.Field != "artwork" {
-				t.Fatalf("inspection error = %+v", inspectionErr)
+			if testCase.expectedCode == library.INSPECTION_ERROR_INVALID_ARTWORK && inspection.AlbumArtwork.Warning == "" {
+				t.Fatal("missing invalid artwork warning")
 			}
 		})
 	}

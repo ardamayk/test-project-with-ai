@@ -44,7 +44,14 @@ func (handlers *Handlers) CreateJob(writer http.ResponseWriter, request *http.Re
 }
 
 func (handlers *Handlers) CreateBatch(writer http.ResponseWriter, request *http.Request) {
-	batch, err := handlers.service.CreateBatch(request.Context())
+	var creation BatchCreate
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, MAX_JOB_CREATE_BODY_BYTES))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&creation); err != nil && !errors.Is(err, io.EOF) {
+		respond.Error(writer, http.StatusBadRequest, "invalid_import_batch", "Managed Import Batch request is invalid")
+		return
+	}
+	batch, err := handlers.service.CreateBatch(request.Context(), BatchOptions(creation))
 	if err != nil {
 		handleError(writer, request, err)
 		return
@@ -214,11 +221,13 @@ func (handlers *Handlers) UploadFile(writer http.ResponseWriter, request *http.R
 		respond.Error(writer, http.StatusBadRequest, "invalid_import_filename", "Managed Import filename encoding is invalid")
 		return
 	}
+	controller := http.NewResponseController(writer)
+
 	preview, err := handlers.service.Upload(
 		request.Context(),
 		chi.URLParam(request, "importId"),
 		filename,
-		request.Body,
+		&uploadDeadlineReader{source: request.Body, controller: controller},
 		request.ContentLength,
 	)
 	if err != nil {
@@ -296,7 +305,11 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 		var validationErr *ValidationError
 		if errors.As(err, &validationErr) {
 			reason := strictValidationReason(validationErr)
-			respond.ErrorWithField(writer, http.StatusUnprocessableEntity, validationErr.Code, strictValidationMessage(validationErr, reason), validationErr.Field, reason)
+			respond.JSON(writer, http.StatusUnprocessableEntity, struct {
+				respond.ErrorResponse
+				Issues ValidationIssues `json:"issues"`
+			}{respond.ErrorResponse{Error: validationErr.Code, Code: validationErr.Code,
+				Message: strictValidationMessage(validationErr, reason), Field: validationErr.Field, Reason: reason}, validationErr.validationIssues()})
 			return
 		}
 		slog.ErrorContext(request.Context(), "Managed Import request failed", "path", request.URL.Path, "error", err)
@@ -306,7 +319,7 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 
 func strictValidationMessage(validationErr *ValidationError, reason string) string {
 	if validationErr.Code == string(library.INSPECTION_ERROR_MISSING_ARTWORK) {
-		return "Embedded front-cover artwork is required; add one with MusicBrainz Picard and retry"
+		return "Choose valid Album artwork or continue without a cover"
 	}
 	if validationErr.Field == "" {
 		return fmt.Sprintf("File failed the Strict Import Profile: %s", reason)

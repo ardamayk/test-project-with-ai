@@ -297,7 +297,17 @@ impl HttpBridge {
             ));
         }
 
-        let mut outgoing = self.client.request(method, url);
+        // Batch confirmation rechecks and commits every selected file before
+        // responding, so it can outlast the ordinary API request deadline.
+        let client = if method == reqwest::Method::POST
+            && url.path().starts_with("/api/v1/import-batches/")
+            && url.path().ends_with("/confirm")
+        {
+            &self.streaming_client
+        } else {
+            &self.client
+        };
+        let mut outgoing = client.request(method, url);
         for (name, value) in request.headers {
             if !ALLOWED_REQUEST_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
                 return Err(ConnectionError::new(
@@ -1090,6 +1100,38 @@ mod tests {
         );
         assert_eq!(response.status, 200);
         fs::remove_file(fixture).expect("remove fixture");
+    }
+
+    #[tokio::test]
+    async fn http_bridge_waits_for_slow_import_confirmation() {
+        const CONFIRMATION_DELAY: Duration = Duration::from_secs(11);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept confirmation");
+            let mut request = [0_u8; 4096];
+            let bytes_read = stream.read(&mut request).expect("read confirmation");
+            assert!(bytes_read > 0, "confirmation request must not be empty");
+            thread::sleep(CONFIRMATION_DELAY);
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: 22\r\nConnection: close\r\n\r\n{{\"status\":\"completed\"}}")
+                .expect("write confirmation result");
+        });
+        let origin = ServerOrigin::parse(&format!("http://{address}")).expect("origin");
+        let response = HttpBridge::new()
+            .expect("create bridge")
+            .send(
+                &origin,
+                HttpRequest {
+                    method: "POST".to_owned(),
+                    url: "/api/v1/import-batches/batch-1/confirm".to_owned(),
+                    headers: Default::default(),
+                    body: Some(br#"{"revision":45,"selectedFileIds":[]}"#.to_vec()),
+                },
+            )
+            .await
+            .expect("a running server must not be reported as unreachable during confirmation");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, br#"{"status":"completed"}"#);
     }
 
     #[tokio::test]

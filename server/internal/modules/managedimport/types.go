@@ -1,6 +1,7 @@
 package managedimport
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,9 +62,8 @@ type ImportStatus string
 type DuplicateClassification string
 
 const (
-	DUPLICATE_NONE     DuplicateClassification = "none"
-	DUPLICATE_EXACT    DuplicateClassification = "exact_duplicate"
-	DUPLICATE_POSSIBLE DuplicateClassification = "possible_duplicate"
+	DUPLICATE_NONE  DuplicateClassification = "none"
+	DUPLICATE_EXACT DuplicateClassification = "exact_duplicate"
 )
 
 type commitPhase string
@@ -123,38 +123,54 @@ type JobCreate struct {
 }
 
 type Batch struct {
-	ID       string      `json:"id"`
-	Status   BatchStatus `json:"status"`
-	Revision int         `json:"revision"`
-	Files    []BatchFile `json:"files"`
+	Albums   []AlbumPreview `json:"albums"`
+	ID       string         `json:"id"`
+	Status   BatchStatus    `json:"status"`
+	Revision int            `json:"revision"`
+	Files    []BatchFile    `json:"files"`
+}
+
+// BatchOptions are the choices made when an Import Batch is created.
+type BatchOptions struct {
+}
+
+// BatchCreate is the optional request body of POST /api/v1/import-batches.
+type BatchCreate struct {
 }
 
 type BatchFile struct {
-	JobID              string         `json:"jobId"`
-	ClientFileID       string         `json:"clientFileId,omitempty"`
-	State              BatchFileState `json:"state"`
-	Status             ImportStatus   `json:"status"`
-	Revision           int            `json:"revision"`
-	ValidationProgress int            `json:"validationProgress"`
-	OriginalFilename   string         `json:"originalFilename,omitempty"`
-	Selected           bool           `json:"selected"`
-	Preview            *Preview       `json:"preview,omitempty"`
-	ErrorCode          string         `json:"errorCode,omitempty"`
-	ErrorField         string         `json:"errorField,omitempty"`
-	ErrorReason        string         `json:"errorReason,omitempty"`
-	Outcome            ImportOutcome  `json:"outcome,omitempty"`
-	TrackID            string         `json:"trackId,omitempty"`
+	Phase              string           `json:"phase,omitempty"`
+	TransferredBytes   int64            `json:"transferredBytes,omitempty"`
+	TotalBytes         int64            `json:"totalBytes,omitempty"`
+	Issues             ValidationIssues `json:"issues,omitempty"`
+	JobID              string           `json:"jobId"`
+	ClientFileID       string           `json:"clientFileId,omitempty"`
+	State              BatchFileState   `json:"state"`
+	Status             ImportStatus     `json:"status"`
+	Revision           int              `json:"revision"`
+	ValidationProgress int              `json:"validationProgress"`
+	OriginalFilename   string           `json:"originalFilename,omitempty"`
+	Selected           bool             `json:"selected"`
+	Preview            *Preview         `json:"preview,omitempty"`
+	ErrorCode          string           `json:"errorCode,omitempty"`
+	ErrorField         string           `json:"errorField,omitempty"`
+	ErrorReason        string           `json:"errorReason,omitempty"`
+	Outcome            ImportOutcome    `json:"outcome,omitempty"`
+	TrackID            string           `json:"trackId,omitempty"`
 }
 
 type BatchConfirmation struct {
+	AlbumDecisions     []AlbumDecision     `json:"albumDecisions,omitempty"`
 	Revision           int                 `json:"revision"`
 	SelectedFileIDs    []string            `json:"selectedFileIds"`
 	DuplicateDecisions []DuplicateDecision `json:"duplicateDecisions,omitempty"`
 }
 
 type DuplicateDecision struct {
-	JobID  string          `json:"jobId"`
-	Action DuplicateAction `json:"action"`
+	TargetRevision int             `json:"targetRevision,omitempty"`
+	TrackID        string          `json:"trackId,omitempty"`
+	JobID          string          `json:"jobId"`
+	Action         DuplicateAction `json:"action"`
 }
 
 type DuplicateAction string
@@ -166,6 +182,7 @@ const (
 )
 
 type Preview struct {
+	MatchingTracks          []DuplicateCandidate     `json:"matchingTracks,omitempty"`
 	JobID                   string                   `json:"jobId"`
 	Status                  ImportStatus             `json:"status"`
 	Revision                int                      `json:"revision"`
@@ -176,17 +193,26 @@ type Preview struct {
 }
 
 type DuplicateCandidate struct {
-	TrackID    string   `json:"trackId"`
-	Title      string   `json:"title"`
-	Artists    []string `json:"artists"`
-	Album      string   `json:"album"`
-	DiscNo     int      `json:"discNo"`
-	TrackNo    int      `json:"trackNo"`
-	Format     string   `json:"format"`
-	DurationMs int      `json:"durationMs"`
+	Revision    int          `json:"revision"`
+	TitleKey    string       `json:"titleKey"`
+	CurrentFile *PreviewFile `json:"currentFile,omitempty"`
+	TrackID     string       `json:"trackId"`
+	Title       string       `json:"title"`
+	Artists     []string     `json:"artists"`
+	Album       string       `json:"album"`
+	DiscNo      int          `json:"discNo"`
+	TrackNo     int          `json:"trackNo"`
+	Format      string       `json:"format"`
+	DurationMs  int          `json:"durationMs"`
 }
 
 type PreviewFile struct {
+	HasDiscNumber    bool     `json:"hasDiscNumber"`
+	TitleKey         string   `json:"titleKey"`
+	AlbumKey         string   `json:"albumKey"`
+	ContentSHA256    string   `json:"contentSha256"`
+	SizeBytes        int64    `json:"sizeBytes"`
+	ArtworkWarning   string   `json:"artworkWarning,omitempty"`
 	OriginalFilename string   `json:"originalFilename"`
 	Title            string   `json:"title"`
 	Artists          []string `json:"artists"`
@@ -245,18 +271,21 @@ type HistoryCounts struct {
 }
 
 type HistoryFile struct {
-	FileID          string    `json:"fileId"`
-	JobID           string    `json:"jobId"`
-	SafeFilename    string    `json:"safeFilename,omitempty"`
-	StartedAt       time.Time `json:"startedAt"`
-	CompletedAt     time.Time `json:"completedAt"`
-	ContentSHA256   string    `json:"contentSha256,omitempty"`
-	ResultCode      string    `json:"resultCode"`
-	CreatedTrackID  string    `json:"createdTrackId,omitempty"`
-	ReplacedTrackID string    `json:"replacedTrackId,omitempty"`
+	Issues          ValidationIssues `json:"issues,omitempty"`
+	FileID          string           `json:"fileId"`
+	JobID           string           `json:"jobId"`
+	SafeFilename    string           `json:"safeFilename,omitempty"`
+	StartedAt       time.Time        `json:"startedAt"`
+	CompletedAt     time.Time        `json:"completedAt"`
+	ContentSHA256   string           `json:"contentSha256,omitempty"`
+	ResultCode      string           `json:"resultCode"`
+	CreatedTrackID  string           `json:"createdTrackId,omitempty"`
+	ReplacedTrackID string           `json:"replacedTrackId,omitempty"`
 }
 
 type importJob struct {
+	ImportPlanJSON string
+	Issues         ValidationIssues `json:"issues,omitempty"`
 	Job
 	BatchID          string
 	ClientFileID     string
@@ -286,6 +315,7 @@ type commitJournal struct {
 }
 
 type ValidationError struct {
+	Issues ValidationIssues `json:"issues,omitempty"`
 	Code   string
 	Field  string
 	Reason string
@@ -306,7 +336,7 @@ func (validationErr *ValidationError) Unwrap() error {
 func validationError(err error) error {
 	var inspectionErr *library.InspectionError
 	if errors.As(err, &inspectionErr) {
-		return &ValidationError{Code: string(inspectionErr.Code), Field: inspectionErr.Field, Reason: inspectionErr.Reason, Err: inspectionErr.Err}
+		return &ValidationError{Code: string(inspectionErr.Code), Field: inspectionErr.Field, Reason: inspectionErr.Reason, Err: err, Issues: ValidationIssues(library.InspectionIssues(err))}
 	}
 	return err
 }
@@ -325,8 +355,13 @@ func previewFileFromInspection(originalFilename string, inspection library.Media
 	metadata := inspection.Metadata
 	audio := inspection.Audio
 	return PreviewFile{
+		AlbumKey:         fmt.Sprintf("%x", sha256.Sum256([]byte(albumIdentityKey(metadata)))),
+		ContentSHA256:    inspection.FileSHA256,
+		ArtworkWarning:   inspection.AlbumArtwork.Warning,
 		OriginalFilename: originalFilename,
 		Title:            metadata.Title,
+		TitleKey:         normalizeIdentity(metadata.Title),
+		HasDiscNumber:    metadata.HasDiscNumber,
 		Artists:          metadata.Artists,
 		AlbumArtists:     metadata.AlbumArtists,
 		Album:            metadata.Album,
@@ -361,6 +396,7 @@ func batchFileFromJob(job importJob) (BatchFile, error) {
 		ErrorCode:          job.ErrorCode,
 		ErrorField:         job.ErrorField,
 		ErrorReason:        job.ErrorReason,
+		Issues:             job.Issues,
 		Outcome:            job.Outcome,
 		TrackID:            job.TrackID,
 	}

@@ -269,6 +269,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import-batches/{batchId}/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Keep an unfinished import alive without changing its preview revision */
+        post: operations["heartbeatManagedImportBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import-batches/{batchId}/albums/{albumKey}/artwork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                albumKey: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Stage a JPEG or PNG cover for an import Album */
+        put: operations["uploadManagedImportArtwork"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import-batches/{batchId}/artwork/{artworkId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                artworkId: string;
+            };
+            cookie?: never;
+        };
+        /** Preview staged Album artwork */
+        get: operations["getManagedImportArtwork"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import-batches/{batchId}/confirm": {
         parameters: {
             query?: never;
@@ -718,8 +775,20 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, and Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
+            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
             capabilities: string[];
+            /** @description Server Dependencies probed once at startup, in a stable order (ffmpeg, ffprobe). They describe the deployment environment so an operator can see what the installation supports. */
+            dependencies: components["schemas"]["ServerDependency"][];
+        };
+        ServerDependency: {
+            /** @description Program name as invoked by the Music Server. */
+            name: string;
+            /** @description True when Managed Import cannot work without the program; false for an optional dependency whose absence only disables a feature. */
+            required: boolean;
+            /** @description True when the program was found on PATH at startup. */
+            available: boolean;
+            /** @description Version parsed from the program's own version output. Absent when the program is missing or its output could not be parsed. */
+            version?: string;
         };
         User: {
             /** Format: uuid */
@@ -755,7 +824,15 @@ export interface components {
             theme?: components["schemas"]["ThemePreferences"];
             layout?: components["schemas"]["LayoutPreferences"];
         };
+        ValidationIssue: {
+            code: string;
+            field: string;
+            /** @description Safe, actionable description of one validation failure. */
+            reason: string;
+        };
         ErrorResponse: {
+            /** @description All independently detectable validation failures, in check order. */
+            issues?: components["schemas"]["ValidationIssue"][];
             error: string;
             code: string;
             message: string;
@@ -796,7 +873,9 @@ export interface components {
              */
             clientFileId: string;
         };
+        ManagedImportBatchCreate: Record<string, never>;
         ManagedImportBatch: {
+            albums?: components["schemas"]["ManagedImportAlbumPreview"][];
             /** Format: uuid */
             id: string;
             /** @enum {string} */
@@ -805,6 +884,17 @@ export interface components {
             files: components["schemas"]["ManagedImportBatchFile"][];
         };
         ManagedImportBatchFile: {
+            /**
+             * @description Current server processing phase, separate from byte transfer progress.
+             * @enum {string}
+             */
+            phase?: "queued" | "uploading" | "validating" | "ready" | "failed" | "committing" | "completed";
+            /** Format: int64 */
+            transferredBytes?: number;
+            /** Format: int64 */
+            totalBytes?: number;
+            /** @description All independently detectable validation failures, in check order. */
+            issues?: components["schemas"]["ValidationIssue"][];
             /** Format: uuid */
             jobId: string;
             /** Format: uuid */
@@ -851,6 +941,8 @@ export interface components {
             canceled: number;
         };
         ManagedImportHistoryFile: {
+            /** @description All independently detectable validation failures, in check order. */
+            issues?: components["schemas"]["ValidationIssue"][];
             /** Format: uuid */
             fileId: string;
             /** Format: uuid */
@@ -864,33 +956,70 @@ export interface components {
             resultCode: string;
             /** Format: uuid */
             createdTrackId?: string;
-            /** Format: uuid */
             replacedTrackId?: string;
         };
+        ManagedImportAlbumPreview: {
+            key: string;
+            title: string;
+            albumArtists: string[];
+            existingAlbums: components["schemas"]["ManagedImportAlbumMatch"][];
+            artworks: components["schemas"]["ManagedImportArtworkOption"][];
+        };
+        ManagedImportAlbumMatch: {
+            id: string;
+            year?: number;
+            hasArtwork: boolean;
+            tracks: components["schemas"]["ManagedImportDuplicateCandidate"][];
+        };
+        ManagedImportArtworkOption: {
+            id: string;
+            jobId?: string;
+            mediaType: string;
+            contentSha256: string;
+        };
+        ManagedImportAlbumDecision: {
+            albumKey: string;
+            albumId?: string;
+            createSeparate: boolean;
+            artworkId?: string;
+            /** @enum {string} */
+            artworkMode: "auto" | "none" | "selected";
+        };
         ManagedImportBatchConfirmation: {
+            albumDecisions?: components["schemas"]["ManagedImportAlbumDecision"][];
             revision: number;
             selectedFileIds: string[];
             duplicateDecisions?: components["schemas"]["ManagedImportDuplicateDecision"][];
         };
         ManagedImportDuplicateDecision: {
+            targetRevision?: number;
+            /** Format: uuid */
+            trackId?: string;
             /** Format: uuid */
             jobId: string;
             /** @enum {string} */
             action: "import_separately" | "replace_existing" | "do_not_import";
         };
         ManagedImportPreview: {
+            matchingTracks?: components["schemas"]["ManagedImportDuplicateCandidate"][];
             /** Format: uuid */
             jobId: string;
             /** @enum {string} */
             status: "awaiting_confirmation" | "failed";
             revision: number;
             file: components["schemas"]["ManagedImportPreviewFile"];
-            /** @enum {string} */
-            duplicateClassification: "none" | "exact_duplicate" | "possible_duplicate";
+            /**
+             * @description Only identical full-file SHA-256 values are duplicates.
+             * @enum {string}
+             */
+            duplicateClassification: "none" | "exact_duplicate";
             duplicateCandidates?: components["schemas"]["ManagedImportDuplicateCandidate"][];
             replacement?: components["schemas"]["TrackReplacementPreview"];
         };
         ManagedImportDuplicateCandidate: {
+            revision?: number;
+            titleKey?: string;
+            currentFile?: components["schemas"]["ManagedImportPreviewFile"];
             /** Format: uuid */
             trackId: string;
             title: string;
@@ -903,6 +1032,13 @@ export interface components {
         };
         ManagedImportPreviewFile: components["schemas"]["ManagedImportFlacPreviewFile"] | components["schemas"]["ManagedImportWavPreviewFile"] | components["schemas"]["ManagedImportM4aPreviewFile"] | components["schemas"]["ManagedImportMp3PreviewFile"] | components["schemas"]["ManagedImportOggPreviewFile"] | components["schemas"]["ManagedImportOpusPreviewFile"];
         ManagedImportPreviewFileCommon: {
+            hasDiscNumber?: boolean;
+            titleKey?: string;
+            albumKey?: string;
+            contentSha256?: string;
+            /** Format: int64 */
+            sizeBytes?: number;
+            artworkWarning?: string;
             originalFilename: string;
             title: string;
             artists: string[];
@@ -919,7 +1055,7 @@ export interface components {
             channelCount: number;
             bitrateKbps: number;
             /** @enum {string} */
-            artworkMediaType: "image/jpeg" | "image/png" | "image/webp";
+            artworkMediaType: "" | "image/jpeg" | "image/png" | "image/webp";
         };
         ManagedImportFlacPreviewFile: components["schemas"]["ManagedImportPreviewFileCommon"] & {
             /** @enum {string} */
@@ -1124,6 +1260,25 @@ export interface components {
             bitrateKbps?: number;
             sizeBytes?: number;
             replayGain?: components["schemas"]["ReplayGainMetadata"];
+            /** @description Normalized title the library sorts and matches by. */
+            titleSort?: string;
+            /** @description Canonical Library Path of the authoritative audio file in Managed Storage. */
+            filePath?: string;
+            /**
+             * Format: int64
+             * @description Modification time of the managed file, seconds since the Unix epoch.
+             */
+            fileMtime?: number;
+            /** @description Full-file SHA-256 of the managed audio bytes. */
+            contentSha256?: string;
+            /** @description Strict position-and-title identity within the Album. */
+            identityKey?: string;
+            /** @description Increments on every Track Replacement. */
+            revision?: number;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
         };
         ReplayGainMetadata: {
             /** Format: double */
@@ -1341,8 +1496,6 @@ export interface components {
             playlistReferences: components["schemas"]["TrackDeletionPlaylistReference"][];
             /** @description Queue references that stay attached to the unchanged Track ID. */
             queueReferences: components["schemas"]["TrackDeletionQueueReference"][];
-            /** @description Other Tracks whose metadata resembles the replacement; informational only. */
-            possibleDuplicates: components["schemas"]["ManagedImportDuplicateCandidate"][];
             /** @description Opaque token binding confirmation to the reviewed Track, managed file, references, and replacement bytes */
             confirmationToken: string;
         };
@@ -1892,7 +2045,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ManagedImportBatchCreate"];
+            };
+        };
         responses: {
             /** @description Managed Import Batch created */
             201: {
@@ -1968,6 +2125,81 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    heartbeatManagedImportBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client liveness recorded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    uploadManagedImportArtwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                albumKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Validated artwork option */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedImportArtworkOption"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getManagedImportArtwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batchId: components["parameters"]["batchId"];
+                artworkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validated image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                    "image/jpeg": string;
+                    "image/webp": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     confirmManagedImportBatch: {

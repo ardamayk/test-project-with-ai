@@ -14,6 +14,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/db"
+	"github.com/ardam/navidrome-replacement/server/internal/dependencies"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 )
@@ -50,7 +51,9 @@ func main() {
 		}
 	}()
 
-	assembled := newAssembledServer(cfg, sqlDB)
+	report := dependencies.SystemProbe().Run(ctx)
+	logServerDependencies(report)
+	assembled := newAssembledServer(cfg, sqlDB, report)
 	registry := assembled.registry
 
 	server := newHTTPServer(cfg.Addr, assembled.router)
@@ -104,6 +107,12 @@ func isUnboundedRequest(request *http.Request) bool {
 	if isStreamPath(request.URL.Path) {
 		return true
 	}
+	// Batch confirmation rechecks and commits all selected files synchronously.
+	if request.Method == http.MethodPost &&
+		strings.HasPrefix(request.URL.Path, "/api/v1/import-batches/") &&
+		strings.HasSuffix(request.URL.Path, "/confirm") {
+		return true
+	}
 	if request.Method == http.MethodDelete &&
 		request.Header.Get("X-Permanent-Delete") == "1" &&
 		strings.HasPrefix(request.URL.Path, "/api/v1/library/tracks/") {
@@ -141,4 +150,21 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 	server.RegisterOnShutdown(cancelRequests)
 	return server
+}
+
+// logServerDependencies records each probed Server Dependency once at startup
+// so an operator can see why an optional feature such as Recording
+// Identification is inactive without opening the Settings page.
+func logServerDependencies(report dependencies.Report) {
+	for _, dependency := range report {
+		attributes := []any{"name", dependency.Name, "required", dependency.Required, "version", dependency.Version}
+		switch {
+		case dependency.Available:
+			slog.Info("server dependency found", attributes...)
+		case dependency.Required:
+			slog.Error("required server dependency missing", attributes...)
+		default:
+			slog.Warn("optional server dependency missing; dependent features stay disabled", attributes...)
+		}
+	}
 }

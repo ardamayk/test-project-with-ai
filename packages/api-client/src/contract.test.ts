@@ -54,7 +54,7 @@ describe('generated Managed Import contract', () => {
     >().toEqualTypeOf<number>();
     expectTypeOf<
       Schemas['ManagedImportPreview']['duplicateClassification']
-    >().toEqualTypeOf<'none' | 'exact_duplicate' | 'possible_duplicate'>();
+    >().toEqualTypeOf<'none' | 'exact_duplicate'>();
     expectTypeOf<
       Schemas['ManagedImportDuplicateDecision']['action']
     >().toEqualTypeOf<
@@ -122,6 +122,7 @@ describe('generated Managed Import contract', () => {
       message: string;
       field?: string;
       reason?: string;
+      issues?: { code: string; field: string; reason: string }[];
     }>();
     expectTypeOf<
       operations['uploadManagedImportFile']['responses'][422]['content']['application/json']

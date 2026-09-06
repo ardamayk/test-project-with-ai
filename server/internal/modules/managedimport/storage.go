@@ -136,7 +136,7 @@ func (storage *Storage) writeStagedUpload(root *os.Root, source io.Reader, conte
 	hash := sha256.New()
 	streamLimit, limitErr := storage.streamLimit()
 	destination := io.MultiWriter(file, hash)
-	written, copyErr := io.Copy(&capacityWriter{storage: storage, destination: destination}, io.LimitReader(source, streamLimit+1))
+	written, copyErr := io.Copy(&capacityWriter{storage: storage, destination: destination, remainingBytes: contentLength}, io.LimitReader(source, streamLimit+1))
 	closeErr := closeManagedStorageFile(file, "Managed Import staging file")
 	isShortUpload := contentLength >= 0 && written < contentLength
 	if copyErr != nil || closeErr != nil || written > streamLimit || isShortUpload {
@@ -309,8 +309,10 @@ func (storage *Storage) VerifyPlacement(placement placedFiles, audioSHA256, artw
 	if err := verifyRootedFileHash(root, placement.audioRelative, audioSHA256); err != nil {
 		return fmt.Errorf("verify canonical Managed Track: %w", err)
 	}
-	if err := verifyRootedFileHash(root, placement.artworkRelative, artworkSHA256); err != nil {
-		return fmt.Errorf("verify canonical Album Artwork: %w", err)
+	if placement.artworkRelative != "" {
+		if err := verifyRootedFileHash(root, placement.artworkRelative, artworkSHA256); err != nil {
+			return fmt.Errorf("verify canonical Album Artwork: %w", err)
+		}
 	}
 	return nil
 }
@@ -324,7 +326,7 @@ func (storage *Storage) placementFromJournal(journal commitJournal) (placedFiles
 	if err != nil {
 		return placedFiles{}, err
 	}
-	artworkRelative, err := storage.relativePath(journal.ArtworkFilePath)
+	artworkRelative, err := storage.optionalRelativePath(journal.ArtworkFilePath)
 	if err != nil {
 		return placedFiles{}, err
 	}
@@ -346,7 +348,10 @@ func (storage *Storage) planPlacement(stagedPath string, inspection library.Medi
 		slug(metadata.AlbumArtists[0])+"-"+identity.AlbumArtistID,
 		slug(metadata.Album)+"-"+identity.AlbumID,
 	)
-	artworkRelative := filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
+	artworkRelative := ""
+	if inspection.AlbumArtwork.SHA256 != "" {
+		artworkRelative = filepath.Join(albumRelative, "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType))
+	}
 	if identity.ExistingArtworkPath != "" {
 		var err error
 		artworkRelative, albumRelative, err = storage.existingCanonicalAlbum(identity, inspection)
@@ -370,7 +375,7 @@ func (storage *Storage) planPlacementInAlbum(stagedPath string, inspection libra
 	audioFilename := fmt.Sprintf("%02d-%02d-%s-%s%s", metadata.DiscPosition.Number, metadata.TrackPosition.Number, slug(metadata.Title), trackID, extension)
 	audioRelative := filepath.Join(albumRelative, audioFilename)
 	return placedFiles{
-		AudioPath: storage.absolutePath(audioRelative), ArtworkPath: storage.absolutePath(artworkRelative),
+		AudioPath: storage.absolutePath(audioRelative), ArtworkPath: storage.optionalAbsolutePath(artworkRelative),
 		audioRelative: audioRelative, artworkRelative: artworkRelative, stagedRelative: stagedRelative,
 	}, nil
 }
@@ -385,7 +390,7 @@ func (storage *Storage) existingCanonicalAlbum(identity commitIdentity, inspecti
 	isCanonical := len(parts) == 3 && parts[0] == CANONICAL_LIBRARY_ROOT &&
 		strings.HasSuffix(parts[1], "-"+identity.AlbumArtistID) &&
 		strings.HasSuffix(parts[2], "-"+identity.AlbumID) &&
-		filepath.Base(artworkRelative) == "cover"+artworkExtension(inspection.AlbumArtwork.MIMEType)
+		strings.HasPrefix(filepath.Base(artworkRelative), "cover.")
 	if !isCanonical {
 		return "", "", fmt.Errorf("%w: existing Album Artwork path is not canonical", ErrUnsafeStoragePath)
 	}
@@ -394,18 +399,13 @@ func (storage *Storage) existingCanonicalAlbum(identity commitIdentity, inspecti
 
 func (storage *Storage) prepareArtwork(root *os.Root, placement *placedFiles, inspection library.MediaInspection, identity commitIdentity) (bool, error) {
 	if identity.ExistingArtworkPath != "" {
-		if identity.ExistingArtworkSHA256 != inspection.AlbumArtwork.SHA256 {
-			return false, &ValidationError{
-				Code:   "album_artwork_conflict",
-				Field:  "artwork",
-				Reason: "embedded Album Artwork differs from the existing Album",
-				Err:    errors.New("embedded Album Artwork differs from the existing Album"),
-			}
-		}
 		placement.ArtworkPath = identity.ExistingArtworkPath
 		if err := verifyRootedFileHash(root, placement.artworkRelative, identity.ExistingArtworkSHA256); err != nil {
 			return false, fmt.Errorf("verify existing Album Artwork: %w", err)
 		}
+		return false, nil
+	}
+	if placement.artworkRelative == "" {
 		return false, nil
 	}
 	if _, err := root.Stat(placement.artworkRelative); err == nil {
@@ -773,16 +773,43 @@ func addByteCounts(values ...int64) (int64, error) {
 	return total, nil
 }
 
+// CAPACITY_CHECK_INTERVAL_BYTES bounds how much of an upload may be written
+// between two capacity probes. Probing on every io.Copy chunk (32 KiB) costs an
+// open/stat/statfs round trip per chunk, which is pure overhead for a multi-MiB
+// audio file. Each probe asks for the bytes that will land before the next
+// probe, so the safety reserve is never silently consumed between probes.
+const CAPACITY_CHECK_INTERVAL_BYTES = 4 << 20
+
 type capacityWriter struct {
-	storage     *Storage
-	destination io.Writer
+	storage         *Storage
+	destination     io.Writer
+	remainingBytes  int64 // negative when the upload length is unknown
+	bytesSinceCheck int64
+	hasCheckedOnce  bool
 }
 
 func (writer *capacityWriter) Write(buffer []byte) (int, error) {
-	if err := writer.storage.Preflight(StorageRequirement{SelectedBytes: int64(len(buffer))}); err != nil {
-		return 0, err
+	if !writer.hasCheckedOnce || writer.bytesSinceCheck+int64(len(buffer)) >= CAPACITY_CHECK_INTERVAL_BYTES {
+		if err := writer.storage.Preflight(StorageRequirement{SelectedBytes: writer.nextProbeBytes(len(buffer))}); err != nil {
+			return 0, err
+		}
+		writer.hasCheckedOnce = true
+		writer.bytesSinceCheck = 0
 	}
-	return writer.destination.Write(buffer)
+	written, err := writer.destination.Write(buffer)
+	writer.bytesSinceCheck += int64(written)
+	if writer.remainingBytes >= 0 {
+		writer.remainingBytes -= int64(written)
+	}
+	return written, err
+}
+
+func (writer *capacityWriter) nextProbeBytes(bufferLength int) int64 {
+	probeBytes := int64(CAPACITY_CHECK_INTERVAL_BYTES)
+	if writer.remainingBytes >= 0 && writer.remainingBytes < probeBytes {
+		probeBytes = writer.remainingBytes
+	}
+	return max(probeBytes, int64(bufferLength))
 }
 
 func (storage *Storage) streamLimit() (int64, error) {
@@ -838,4 +865,17 @@ func slug(value string) string {
 		return "untitled"
 	}
 	return value
+}
+
+func (storage *Storage) optionalAbsolutePath(relative string) string {
+	if relative == "" {
+		return ""
+	}
+	return storage.absolutePath(relative)
+}
+func (storage *Storage) optionalRelativePath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	return storage.relativePath(path)
 }

@@ -39,6 +39,18 @@ mise run dev    # Go :8090 + Vite :3000
 
 Open http://localhost:3000/library/tracks and use **Import Music** to upload files or a local folder. The Music Server validates every file, shows an Import Preview, and stores accepted files in Managed Storage only after you confirm.
 
+## Server dependencies
+
+The Music Server calls these programs at runtime and reports each of them, with its version, in the health response and on the Settings page.
+
+| Program | Required | Used for |
+|---------|----------|----------|
+| `ffmpeg` / `ffprobe` | yes | media inspection and full-stream decode during Managed Import |
+
+Install FFmpeg from your distribution; the container image includes it. Settings reports FFmpeg and ffprobe availability.
+
+Managed Import uses file tags locally. TITLE, ARTIST, ALBUMARTIST, ALBUM, and TRACKNUMBER are required. DISCNUMBER is required for multi-disc albums and defaults to one otherwise. GENRE, DATE, artwork, totals, and ReplayGain are optional. Album matching uses album artist and the full album title, preserving edition qualifiers. Only identical full-file SHA-256 values are duplicates. Different bytes at the same album/disc/track/title require explicit replacement approval. New albums may use an embedded cover, a JPEG/PNG upload, or no cover. See [ADR 0019](docs/adr/0019-tag-based-import-and-album-artwork.md).
+
 ## Build
 
 ```bash

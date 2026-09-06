@@ -35,7 +35,6 @@ type TrackReplacementPreview struct {
 	OldFile             TrackReplacementFileDeletion     `json:"oldFile"`
 	PlaylistReferences  []TrackDeletionPlaylistReference `json:"playlistReferences"`
 	QueueReferences     []TrackDeletionQueueReference    `json:"queueReferences"`
-	PossibleDuplicates  []DuplicateCandidate             `json:"possibleDuplicates"`
 	ConfirmationToken   string                           `json:"confirmationToken"`
 }
 

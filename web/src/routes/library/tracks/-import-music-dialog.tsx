@@ -1,12 +1,31 @@
-import { X } from "lucide-react";
+import {
+	Check,
+	ChevronDown,
+	CircleAlert,
+	CircleCheck,
+	CircleX,
+	Disc3,
+	LoaderCircle,
+	X,
+} from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
+import { memo, useId, useState } from "react";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { isDesktopClient } from "#/desktop/bridge";
+import { cn } from "#/lib/utils.ts";
+import {
+	ImportAlbumReview,
+	ImportFileAlternatives,
+} from "./-import-album-review";
+import { ImportErrors } from "./-import-errors";
+import { ImportTransferDetails, importPhaseLabel } from "./-import-progress";
+import { normalizeImportTitle } from "./-import-review";
 import {
 	type DuplicateDecision,
 	type ImportFileEntry,
-	type ImportState,
 	SUPPORTED_AUDIO_FILE_ACCEPT,
+	summarizeImportEntries,
 	useManagedImportWorkflow,
 } from "./-managed-import-workflow";
 
@@ -25,49 +44,146 @@ export function ImportMusicDialog({
 	const workflow = useManagedImportWorkflow({ onOpenChange, onCommitted });
 
 	return (
-		<DialogPrimitive.Root
-			open={isOpen}
-			onOpenChange={workflow.handleOpenChange}
-		>
-			<DialogPrimitive.Portal>
-				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
-				<DialogPrimitive.Content
-					aria-describedby="import-music-description"
-					onCloseAutoFocus={onCloseAutoFocus}
-					className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 grid max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl gap-5 overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl outline-none"
+		<>
+			{!isOpen && workflow.entries.length > 0 ? (
+				<Button
+					type="button"
+					onClick={() => onOpenChange(true)}
+					className="fixed bottom-24 right-6 z-40 shadow-lg"
+					aria-label="Open current import"
 				>
-					<ImportDialogHeader isBusy={workflow.isCloseLocked} />
-					<ImportFilePicker
-						isBusy={workflow.isPickerLocked}
-						onFiles={workflow.handleFiles}
-						onDesktopSelection={workflow.handleDesktopSelection}
+					{workflow.isCompleted
+						? "Import results"
+						: workflow.isBusy
+							? "Import in progress"
+							: "Ready for review"}
+				</Button>
+			) : null}
+			<DialogPrimitive.Root
+				open={isOpen}
+				onOpenChange={workflow.handleOpenChange}
+			>
+				<DialogPrimitive.Portal>
+					{/*
+					 * The desktop client skips backdrop-blur: the dialog repaints on
+					 * every progress tick, and a blurred full-screen backdrop makes
+					 * WebKitGTK re-rasterize the whole window for each repaint.
+					 */}
+					<DialogPrimitive.Overlay
+						className={cn(
+							"fixed inset-0 z-50 bg-background/80",
+							!isDesktopClient() && "backdrop-blur-sm",
+						)}
 					/>
-					<ImportActivity
-						importState={workflow.importState}
-						errorMessage={workflow.errorMessage}
-					/>
-					<ImportFileList
-						entries={workflow.entries}
-						isBusy={workflow.isSelectionLocked}
-						onSelectionChange={workflow.handleSelectionChange}
-						onDuplicateDecisionChange={workflow.handleDuplicateDecisionChange}
-					/>
-					<ImportDialogFooter
-						canConfirm={workflow.canConfirm}
-						isBusy={workflow.isCloseLocked}
-						isCompleted={workflow.isCompleted}
-						onCancel={() => workflow.handleOpenChange(false)}
-						onConfirm={workflow.handleConfirm}
-					/>
-				</DialogPrimitive.Content>
-			</DialogPrimitive.Portal>
-		</DialogPrimitive.Root>
+					<DialogPrimitive.Content
+						aria-describedby="import-music-description"
+						onCloseAutoFocus={onCloseAutoFocus}
+						className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 flex max-h-[90dvh] w-[calc(100vw-1rem)] max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl outline-none sm:w-[calc(100vw-3rem)]"
+					>
+						<ImportDialogHeader isBusy={false} />
+						<div
+							hidden={workflow.entries.length > 0}
+							className={
+								workflow.entries.length > 0
+									? "hidden"
+									: "grid gap-5 overflow-y-auto px-4 py-5 sm:px-6"
+							}
+						>
+							<ImportFilePicker
+								isBusy={workflow.isPickerLocked}
+								onFiles={workflow.handleFiles}
+								onDesktopSelection={workflow.handleDesktopSelection}
+							/>
+						</div>
+						<ImportActivity errorMessage={workflow.errorMessage} />
+						<ImportSummary
+							entries={workflow.entries}
+							isConfirming={workflow.isConfirming}
+							isCompleted={workflow.isCompleted}
+						/>
+						<div className="min-h-0 flex-1 overflow-y-auto">
+							{!workflow.isCompleted && workflow.batchId ? (
+								<ImportAlbumReview
+									batchId={workflow.batchId}
+									albums={workflow.albums}
+									decisions={workflow.albumDecisions}
+									isBusy={workflow.isSelectionLocked}
+									onChange={workflow.handleAlbumDecision}
+									onUploaded={workflow.handleArtworkUploaded}
+									onUploadStateChange={workflow.handleArtworkUploadState}
+								/>
+							) : null}
+							{!workflow.isCompleted ? (
+								<ImportFileAlternatives
+									entries={workflow.entries}
+									isBusy={workflow.isSelectionLocked}
+									onSelect={workflow.handleSelectionChange}
+								/>
+							) : null}
+							{!workflow.isBusy && !workflow.isCompleted
+								? workflow.reviewProblems.map((problem) => (
+										<p
+											key={problem}
+											aria-live="polite"
+											className="px-4 py-1 text-amber-600 text-sm sm:px-6"
+										>
+											{problem}
+										</p>
+									))
+								: null}
+							<ImportFileList
+								entries={workflow.entries}
+								isBusy={workflow.isSelectionLocked}
+								isConfirming={workflow.isConfirming}
+								onSelectionChange={workflow.handleSelectionChange}
+								onDuplicateDecisionChange={
+									workflow.handleDuplicateDecisionChange
+								}
+							/>
+						</div>
+						<div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-border border-t px-4 py-3 sm:px-6">
+							{workflow.canRetry ? (
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => void workflow.handleRetry()}
+								>
+									Retry failed uploads
+								</Button>
+							) : null}
+							{workflow.canConfirm &&
+							workflow.entries.some((entry) => entry.state !== "accepted") ? (
+								<p className="text-caption text-sm">
+									{
+										workflow.entries.filter(
+											(entry) => entry.state !== "accepted",
+										).length
+									}{" "}
+									unsuccessful files will not be imported.
+								</p>
+							) : null}
+							<ImportDialogFooter
+								canConfirm={workflow.canConfirm}
+								isBusy={workflow.isCloseLocked}
+								isCompleted={workflow.isCompleted}
+								onCancel={
+									workflow.isCompleted
+										? () => workflow.handleOpenChange(false)
+										: workflow.handleCancel
+								}
+								onConfirm={workflow.handleConfirm}
+							/>
+						</div>
+					</DialogPrimitive.Content>
+				</DialogPrimitive.Portal>
+			</DialogPrimitive.Root>
+		</>
 	);
 }
 
 function ImportDialogHeader({ isBusy }: { isBusy: boolean }) {
 	return (
-		<div className="flex items-start justify-between gap-4">
+		<div className="flex shrink-0 items-start justify-between gap-4 border-border border-b px-4 py-4 sm:px-6">
 			<div>
 				<DialogPrimitive.Title className="font-semibold text-heading text-xl">
 					Import Music
@@ -175,130 +291,450 @@ function ImportFileInput({
 	);
 }
 
-function ImportActivity({
-	importState,
-	errorMessage,
+function ImportActivity({ errorMessage }: { errorMessage: string }) {
+	if (!errorMessage) return null;
+	return (
+		<p
+			role="alert"
+			className="mx-4 my-3 rounded-md bg-destructive/10 px-3 py-2 text-destructive text-sm sm:mx-6"
+		>
+			{errorMessage}
+		</p>
+	);
+}
+
+function ImportSummary({
+	entries,
+	isConfirming,
+	isCompleted,
 }: {
-	importState: ImportState;
-	errorMessage: string;
+	entries: ImportFileEntry[];
+	isConfirming: boolean;
+	isCompleted: boolean;
+}) {
+	if (entries.length === 0) return null;
+	const summary = summarizeImportEntries(entries);
+	const queued = entries.filter((entry) => entry.phase === "queued").length;
+	const processing = entries.filter(
+		(entry) => entry.state === "unresolved" && entry.phase !== "queued",
+	).length;
+	const selected = entries.filter((entry) => entry.selected).length;
+	const imported = entries.filter(
+		(entry) => entry.outcome === "imported" || entry.outcome === "replaced",
+	).length;
+	const percent = isCompleted
+		? 100
+		: isConfirming
+			? selected > 0
+				? Math.round((summary.completed / selected) * 100)
+				: 0
+			: summary.percent;
+	return (
+		<section
+			aria-label="Import progress"
+			className="shrink-0 space-y-2 border-border border-b px-4 py-3 sm:px-6"
+		>
+			<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
+				<p aria-live="polite" className="font-medium text-heading">
+					{isCompleted
+						? `Import complete · ${imported} imported`
+						: isConfirming
+							? `Importing ${summary.completed} of ${selected}`
+							: `${summary.accepted} of ${summary.total} ready`}
+				</p>
+				<div className="flex flex-wrap gap-x-3 text-caption text-xs">
+					{processing > 0 && !isConfirming ? (
+						<SummaryCount count={processing} label="processing" />
+					) : null}
+					{queued > 0 && !isConfirming ? (
+						<SummaryCount count={queued} label="queued" />
+					) : null}
+					{summary.needsReview > 0 ? (
+						<SummaryCount count={summary.needsReview} label="need review" />
+					) : null}
+					{summary.rejected > 0 ? (
+						<SummaryCount count={summary.rejected} label="unsuccessful" />
+					) : null}
+				</div>
+			</div>
+			<ProgressBar
+				label={
+					isConfirming ? "Importing selected tracks" : "Overall import progress"
+				}
+				percent={percent}
+				className="h-1"
+			/>
+		</section>
+	);
+}
+
+function ProgressBar({
+	label,
+	percent,
+	isIndeterminate = false,
+	className,
+}: {
+	label: string;
+	percent: number;
+	isIndeterminate?: boolean;
+	className?: string;
 }) {
 	return (
-		<>
-			<p aria-live="polite" className="text-caption text-sm">
-				{importState === "uploading" ? "Uploading and validating files…" : null}
-				{importState === "confirming" ? "Committing selected Tracks…" : null}
-			</p>
-			{errorMessage ? (
-				<p role="alert" className="text-destructive text-sm">
-					{errorMessage}
-				</p>
-			) : null}
-		</>
+		<div
+			className={cn(
+				"h-2 overflow-hidden rounded-full bg-primary/15",
+				className,
+			)}
+			role="progressbar"
+			aria-label={label}
+			aria-valuenow={percent}
+			aria-valuemin={0}
+			aria-valuemax={100}
+		>
+			<div
+				className={cn(
+					"h-full rounded-full bg-primary",
+					isIndeterminate && "opacity-60",
+				)}
+				style={{ width: `${percent}%` }}
+			/>
+		</div>
 	);
+}
+
+function SummaryCount({ count, label }: { count: number; label: string }) {
+	return (
+		<span>
+			<span className="font-medium text-heading tabular-nums">{count}</span>{" "}
+			{label}
+		</span>
+	);
+}
+
+type ImportAlbumGroup = {
+	key: string;
+	album: string;
+	artists: string;
+	entries: ImportFileEntry[];
+};
+
+function groupImportEntries(entries: ImportFileEntry[]): ImportAlbumGroup[] {
+	const groups = new Map<string, ImportAlbumGroup>();
+	for (const entry of entries) {
+		const file = entry.preview?.file;
+		const album = file?.album ?? "Selected files";
+		const artists = (file?.albumArtists ?? file?.artists ?? []).join(", ");
+		const key = JSON.stringify([album, artists]);
+		let group = groups.get(key);
+		if (!group) {
+			group = { key, album, artists, entries: [] };
+			groups.set(key, group);
+		}
+		group.entries.push(entry);
+	}
+	return Array.from(groups.values());
 }
 
 function ImportFileList({
 	entries,
 	isBusy,
+	isConfirming,
 	onSelectionChange,
 	onDuplicateDecisionChange,
 }: {
 	entries: ImportFileEntry[];
 	isBusy: boolean;
+	isConfirming: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
 	onDuplicateDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
 	if (entries.length === 0) return null;
 	return (
-		<section aria-label="Import Preview" className="grid gap-3">
-			<h3 className="font-semibold text-heading">Import Preview</h3>
-			{entries.map((entry) => (
-				<ImportFileRow
-					key={entry.key}
-					entry={entry}
-					isBusy={isBusy}
-					onSelectionChange={onSelectionChange}
-					onDuplicateDecisionChange={onDuplicateDecisionChange}
-				/>
-			))}
+		<section
+			aria-label="Import Preview"
+			className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+		>
+			<h3 className="sr-only">Import Preview</h3>
+			{groupImportEntries(entries).flatMap((group) => [
+				<ImportAlbumHeader key={`album-${group.key}`} group={group} />,
+				...group.entries.map((entry) => (
+					<ImportFileRow
+						key={entry.key}
+						entry={entry}
+						albumArtists={group.artists}
+						isBusy={isBusy}
+						isConfirming={isConfirming}
+						onSelectionChange={onSelectionChange}
+						onDuplicateDecisionChange={onDuplicateDecisionChange}
+					/>
+				)),
+			])}
 		</section>
 	);
 }
 
-function ImportFileRow({
+function ImportAlbumHeader({ group }: { group: ImportAlbumGroup }) {
+	return (
+		<div className="flex items-center gap-3 bg-muted/30 px-4 py-3 sm:px-6">
+			<Disc3 aria-hidden="true" className="size-8 shrink-0 text-caption" />
+			<div className="min-w-0 flex-1">
+				<h4 className="break-words font-medium text-heading text-sm">
+					{group.album}
+				</h4>
+				{group.artists ? (
+					<p className="break-words text-caption text-xs">{group.artists}</p>
+				) : null}
+			</div>
+			<span className="shrink-0 text-caption text-xs tabular-nums">
+				{group.entries.length} {group.entries.length === 1 ? "track" : "tracks"}
+			</span>
+		</div>
+	);
+}
+
+// Memoized so a progress tick on one upload only re-renders that row.
+const ImportFileRow = memo(function ImportFileRow({
 	entry,
+	albumArtists,
+	isConfirming,
 	isBusy,
 	onSelectionChange,
 	onDuplicateDecisionChange,
 }: {
 	entry: ImportFileEntry;
+	albumArtists: string;
+	isConfirming: boolean;
 	isBusy: boolean;
 	onSelectionChange: (key: string, selected: boolean) => void;
 	onDuplicateDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
+	const [isExpanded, setIsExpanded] = useState(false);
+	const detailsId = useId();
 	const filename = entry.preview?.file.originalFilename ?? entry.file.name;
 	const duplicateClassification =
 		entry.preview?.duplicateClassification ?? "none";
+	const isUploading =
+		entry.phase === "uploading" ||
+		(!entry.phase && entry.state === "unresolved" && entry.progress < 100);
 	return (
-		<article className="grid gap-2 rounded-lg border border-border bg-muted/30 p-4">
-			<div className="flex items-start justify-between gap-3">
-				<div className="flex min-w-0 items-start gap-3">
-					{duplicateClassification === "none" ? (
-						<input
-							type="checkbox"
-							aria-label={`Select ${filename}`}
-							checked={entry.selected}
-							disabled={isBusy || entry.state !== "accepted"}
-							onChange={(event) =>
-								onSelectionChange(entry.key, event.target.checked)
-							}
-						/>
-					) : null}
-					<span className="min-w-0">
-						<span className="block truncate font-medium text-heading">
-							{entry.preview?.file.title ?? filename}
-						</span>
-						{entry.preview ? (
-							<span className="block text-caption text-sm">
-								<span>{entry.preview.file.artists.join(", ")}</span>
-								{" · "}
-								<span>{entry.preview.file.album}</span>
-							</span>
-						) : null}
+		<article className="border-border/50 border-b px-4 py-1.5 transition-colors hover:bg-muted/20 sm:px-6">
+			<div className="flex min-h-10 items-center gap-3">
+				{duplicateClassification === "none" ? (
+					<SelectionCheckbox
+						label={`Select ${filename}`}
+						checked={entry.selected}
+						disabled={isBusy || entry.state !== "accepted"}
+						onChange={(selected) => onSelectionChange(entry.key, selected)}
+					/>
+				) : (
+					<DuplicateMarker classification={duplicateClassification} />
+				)}
+				<span className="min-w-0 flex-1">
+					<span
+						className={cn(
+							"block text-heading text-sm",
+							isExpanded ? "break-words" : "truncate",
+						)}
+						title={entry.preview?.file.title ?? filename}
+					>
+						{entry.preview?.file.title ?? filename}
 					</span>
-				</div>
-				<span className="rounded-full bg-secondary px-2 py-1 font-medium text-xs">
-					{entry.outcome
-						? outcomeLabel(entry.outcome)
-						: stateLabel(entry.state)}
+					<RowCaption
+						entry={entry}
+						albumArtists={albumArtists}
+						isExpanded={isExpanded}
+					/>
+				</span>
+				<span className="flex shrink-0 items-center gap-2">
+					{isUploading ? (
+						<span className="text-caption text-xs tabular-nums">
+							{entry.progress}%
+						</span>
+					) : null}
+					<StatusBadge entry={entry} isConfirming={isConfirming} />
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="size-7 text-caption"
+						aria-label={`Details for ${filename}`}
+						aria-expanded={isExpanded}
+						aria-controls={isExpanded ? detailsId : undefined}
+						onClick={() => setIsExpanded(!isExpanded)}
+					>
+						<ChevronDown
+							aria-hidden="true"
+							className={cn(
+								"size-4 transition-transform",
+								isExpanded && "rotate-180",
+							)}
+						/>
+					</Button>
 				</span>
 			</div>
+			{isUploading ? (
+				<ProgressBar
+					label={`${filename} upload progress`}
+					percent={entry.progress}
+					className="h-1.5"
+				/>
+			) : null}
+			{entry.phase === "uploading" || entry.phase === "retry_wait" ? (
+				<ImportTransferDetails entry={entry} />
+			) : null}
+			{isExpanded ? (
+				<div
+					id={detailsId}
+					className="ml-7 space-y-2 border-border/50 border-t py-3 text-caption text-xs"
+				>
+					<p className="break-all">
+						<span className="font-medium">File:</span> {filename}
+					</p>
+					<ImportTransferDetails entry={entry} isExpanded />
+				</div>
+			) : null}
 			<DuplicateReview
 				entry={entry}
 				isBusy={isBusy}
 				onDecisionChange={onDuplicateDecisionChange}
 			/>
-			{entry.state === "unresolved" ? (
-				<div
-					className="h-2 overflow-hidden rounded-full bg-secondary"
-					role="progressbar"
-					aria-label={`${filename} upload progress`}
-					aria-valuenow={entry.progress}
-					aria-valuemin={0}
-					aria-valuemax={100}
-				>
-					<div
-						className="h-full bg-primary transition-[width]"
-						style={{ width: `${entry.progress}%` }}
-					/>
-				</div>
-			) : null}
-			{entry.errorMessage ? (
-				<p className="text-destructive text-sm">{entry.errorMessage}</p>
-			) : null}
+			<ImportErrors message={entry.errorMessage} />
 		</article>
 	);
+});
+
+function RowCaption({
+	entry,
+	albumArtists,
+	isExpanded,
+}: {
+	entry: ImportFileEntry;
+	albumArtists: string;
+	isExpanded: boolean;
+}) {
+	const artists = entry.preview?.file.artists.join(", ");
+	if (!artists || artists === albumArtists) return null;
+	return (
+		<span
+			className={cn(
+				"block text-caption text-xs",
+				isExpanded ? "break-words" : "truncate",
+			)}
+			title={artists}
+		>
+			{artists}
+		</span>
+	);
 }
+
+function SelectionCheckbox({
+	label,
+	checked,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	checked: boolean;
+	disabled: boolean;
+	onChange: (checked: boolean) => void;
+}) {
+	return (
+		<span className="relative flex size-4 shrink-0 items-center justify-center">
+			<input
+				type="checkbox"
+				aria-label={label}
+				checked={checked}
+				disabled={disabled}
+				onChange={(event) => onChange(event.target.checked)}
+				className="peer size-4 cursor-pointer appearance-none rounded border border-input bg-background transition-colors checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40"
+			/>
+			<Check
+				aria-hidden="true"
+				className="pointer-events-none absolute size-3 text-primary-foreground opacity-0 peer-checked:opacity-100"
+			/>
+		</span>
+	);
+}
+
+function DuplicateMarker({
+	classification,
+}: {
+	classification: "exact_duplicate";
+}) {
+	const Icon = classification === "exact_duplicate" ? CircleX : CircleAlert;
+	return (
+		<Icon
+			aria-hidden="true"
+			className={cn(
+				"size-4 shrink-0",
+				classification === "exact_duplicate"
+					? "text-destructive"
+					: "text-caption",
+			)}
+		/>
+	);
+}
+
+function StatusBadge({
+	entry,
+	isConfirming,
+}: {
+	entry: ImportFileEntry;
+	isConfirming: boolean;
+}) {
+	if (isConfirming && entry.selected && !entry.outcome) {
+		return (
+			<span className="flex items-center gap-1.5 text-caption text-xs">
+				<LoaderCircle aria-hidden="true" className="size-3 animate-spin" />
+				Importing…
+			</span>
+		);
+	}
+	const badge = entry.outcome
+		? outcomeBadges[entry.outcome]
+		: stateBadges[entry.state];
+	return (
+		<Badge
+			variant={badge.variant}
+			className={cn(
+				"border-0 bg-transparent px-0 font-normal text-xs dark:bg-transparent",
+				badge.variant === "destructive" ? "text-destructive" : "text-caption",
+			)}
+		>
+			<badge.Icon aria-hidden="true" className={badge.iconClassName} />
+			{entry.state === "unresolved" ? importPhaseLabel(entry) : badge.label}
+		</Badge>
+	);
+}
+
+type StatusBadgeSpec = {
+	label: string;
+	variant: "default" | "secondary" | "destructive" | "outline";
+	iconClassName?: string;
+	Icon: typeof Check;
+};
+
+const stateBadges: Record<ImportFileEntry["state"], StatusBadgeSpec> = {
+	accepted: { label: "Accepted", variant: "outline", Icon: CircleCheck },
+	rejected: { label: "Rejected", variant: "destructive", Icon: CircleX },
+	unresolved: { label: "Unresolved", variant: "secondary", Icon: LoaderCircle },
+	completed: { label: "Completed", variant: "default", Icon: CircleCheck },
+};
+
+const outcomeBadges: Record<
+	NonNullable<ImportFileEntry["outcome"]>,
+	StatusBadgeSpec
+> = {
+	imported: { label: "Imported", variant: "default", Icon: CircleCheck },
+	replaced: { label: "Replaced", variant: "default", Icon: CircleCheck },
+	rejected: { label: "Rejected", variant: "destructive", Icon: CircleX },
+	failed: { label: "Failed", variant: "destructive", Icon: CircleX },
+	not_attempted: {
+		label: "Not attempted",
+		variant: "secondary",
+		Icon: CircleAlert,
+	},
+};
 
 function DuplicateReview({
 	entry,
@@ -310,24 +746,40 @@ function DuplicateReview({
 	onDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
 	const preview = entry.preview;
-	if (!preview?.duplicateCandidates?.length) return null;
-	if (preview.duplicateClassification === "exact_duplicate") {
+	if (!preview) return null;
+	if (preview.duplicateClassification === "exact_duplicate")
 		return <ExactDuplicateReview preview={preview} />;
-	}
-	if (preview.duplicateClassification !== "possible_duplicate") return null;
+	const candidates = preview.matchingTracks ?? [];
+	if (!candidates.length)
+		return preview.file.artworkWarning ? (
+			<p className="text-amber-600 text-sm">{preview.file.artworkWarning}</p>
+		) : null;
+	if (
+		candidates.some(
+			(candidate) =>
+				(candidate.titleKey ?? normalizeImportTitle(candidate.title)) !==
+				(preview.file.titleKey ?? normalizeImportTitle(preview.file.title)),
+		)
+	)
+		return (
+			<p className="text-destructive text-sm">
+				Another title occupies this Album position. Skip this file or create a
+				separate Album.
+			</p>
+		);
 	return (
-		<fieldset className="grid gap-2 rounded-md border border-border bg-background p-3">
-			<legend className="px-1 font-medium text-heading text-sm">
-				Possible Duplicate
-			</legend>
-			<p className="text-caption text-sm">Different file bytes resemble:</p>
-			<ul className="list-disc pl-5 text-caption text-sm">
-				{preview.duplicateCandidates.map((candidate) => (
-					<li key={candidate.trackId}>
-						{candidate.title} — {candidate.artists.join(", ")}
-					</li>
-				))}
-			</ul>
+		<fieldset className="grid gap-2 rounded border border-border p-3">
+			<legend className="px-1 font-medium">Track Replacement</legend>
+			<p className="text-caption text-sm">
+				Replace {candidates[0]?.title} ({candidates[0]?.format}) with this{" "}
+				{preview.file.format} file? Track identity and playlist references will
+				be preserved.
+			</p>
+			<p className="text-caption text-sm">
+				Artist credits: {candidates[0]?.artists.join(", ")} / incoming:{" "}
+				{preview.file.artists.join(", ")}
+			</p>
+			<ReplacementMetadataChanges preview={preview} />
 			{duplicateDecisionOptions.map((option) => (
 				<DuplicateDecisionOption
 					key={option.value}
@@ -382,7 +834,6 @@ function DuplicateDecisionOption({
 	option: (typeof duplicateDecisionOptions)[number];
 	onDecisionChange: (key: string, decision: DuplicateDecision) => void;
 }) {
-	const isReplacement = option.value === "replace_existing";
 	return (
 		<label className="flex items-center gap-2 text-sm">
 			<input
@@ -390,12 +841,7 @@ function DuplicateDecisionOption({
 				name={`duplicate-decision-${entry.key}`}
 				value={option.value}
 				checked={entry.duplicateDecision === option.value}
-				disabled={isBusy || isReplacement}
-				title={
-					isReplacement
-						? "Track Replacement requires the replacement workflow"
-						: undefined
-				}
+				disabled={isBusy}
 				onChange={() => onDecisionChange(entry.key, option.value)}
 			/>
 			{option.label}
@@ -407,7 +853,6 @@ const duplicateDecisionOptions: Array<{
 	value: DuplicateDecision;
 	label: string;
 }> = [
-	{ value: "import_separately", label: "Import separately" },
 	{ value: "replace_existing", label: "Replace existing Track" },
 	{ value: "do_not_import", label: "Do not import" },
 ];
@@ -426,7 +871,7 @@ function ImportDialogFooter({
 	onConfirm: () => Promise<void>;
 }) {
 	return (
-		<div className="flex justify-end gap-2 border-border border-t pt-4">
+		<div className="ml-auto flex shrink-0 justify-end gap-2">
 			<Button
 				type="button"
 				variant="outline"
@@ -448,23 +893,73 @@ function ImportDialogFooter({
 	);
 }
 
-function stateLabel(state: ImportFileEntry["state"]): string {
-	return {
-		accepted: "Accepted",
-		rejected: "Rejected",
-		unresolved: "Unresolved",
-		completed: "Completed",
-	}[state];
-}
-
-function outcomeLabel(
-	outcome: NonNullable<ImportFileEntry["outcome"]>,
-): string {
-	return {
-		imported: "Imported",
-		rejected: "Rejected",
-		failed: "Failed",
-		replaced: "Replaced",
-		not_attempted: "Not attempted",
-	}[outcome];
+function ReplacementMetadataChanges({
+	preview,
+}: {
+	preview: NonNullable<ImportFileEntry["preview"]>;
+}) {
+	const current = preview.matchingTracks?.[0]?.currentFile;
+	if (!current) return null;
+	const incoming = preview.file;
+	const fields = [
+		"title",
+		"artists",
+		"albumArtists",
+		"album",
+		"year",
+		"genres",
+		"discNo",
+		"trackNo",
+		"discTotal",
+		"trackTotal",
+		"format",
+		"container",
+		"codec",
+		"durationMs",
+		"sampleRateHz",
+		"channelCount",
+		"bitDepth",
+		"bitrateKbps",
+		"sizeBytes",
+	] as const;
+	const read = (file: typeof current, field: string): string => {
+		const value = Reflect.get(file, field);
+		return Array.isArray(value)
+			? value.join(", ")
+			: value == null || value === ""
+				? "Not tagged"
+				: String(value);
+	};
+	const changes = fields
+		.map((field) => ({
+			field,
+			previous: read(current, field),
+			incoming: read(incoming, field),
+		}))
+		.filter((change) => change.previous !== change.incoming);
+	return (
+		<details>
+			<summary className="cursor-pointer text-sm">
+				Review metadata and audio changes ({changes.length})
+			</summary>
+			<table className="w-full text-left text-sm">
+				<thead>
+					<tr>
+						<th>Field</th>
+						<th>Existing</th>
+						<th>Incoming</th>
+					</tr>
+				</thead>
+				<tbody>
+					{changes.map((change) => (
+						<tr key={change.field}>
+							<th>{change.field}</th>
+							<td>{change.previous}</td>
+							<td>{change.incoming}</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</details>
+	);
 }

@@ -398,7 +398,7 @@ func prepareBatchCommitRecoveryJob(t *testing.T, database *sql.DB, storage *Stor
 	t.Helper()
 	content, inspection := commitRecoveryFixture()
 	service := NewService(NewStore(database), storage, recoveryInspector{inspection: inspection})
-	batch, err := service.store.CreateBatch(context.Background())
+	batch, err := service.store.CreateBatch(context.Background(), BatchOptions{})
 	if err != nil {
 		t.Fatalf("create recovery Batch: %v", err)
 	}

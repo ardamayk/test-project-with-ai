@@ -119,7 +119,7 @@ describe("desktop bridge", () => {
 			controller.signal,
 		);
 		expect(await response.json()).toEqual({ jobId: "job-1" });
-		expect(onProgress).toHaveBeenCalledWith(50);
+		expect(onProgress).toHaveBeenCalledWith(50, 5);
 		const uploadCall = invokeMock.mock.calls.find(
 			([command]) => command === "desktop_upload_import_file",
 		);

@@ -92,6 +92,12 @@ func (storage *Storage) planReplacementArtwork(placement *replacementPlacement, 
 		}
 		placement.previousArtworkRelative = previousArtworkRelative
 	}
+	if identity.ExistingArtworkPath == "" && inspection.AlbumArtwork.SHA256 == "" {
+		placement.ArtworkMode = "none"
+		placement.ArtworkPath = ""
+		placement.artworkRelative = ""
+		return nil
+	}
 	if identity.ExistingArtworkPath == "" {
 		placement.ArtworkMode = REPLACEMENT_ARTWORK_MODE_CREATE
 		return nil
@@ -190,6 +196,8 @@ func (storage *Storage) PlaceReplacement(placement replacementPlacement, inspect
 
 func (storage *Storage) placeReplacementArtwork(root *os.Root, placement replacementPlacement, inspection library.MediaInspection, identity commitIdentity, artworkCreated func() error) (bool, error) {
 	switch placement.ArtworkMode {
+	case "none":
+		return false, nil
 	case REPLACEMENT_ARTWORK_MODE_EXISTING:
 		if err := verifyRootedFileHash(root, placement.artworkRelative, identity.ExistingArtworkSHA256); err != nil {
 			return false, fmt.Errorf("verify existing Album Artwork: %w", err)
@@ -215,6 +223,9 @@ func (storage *Storage) VerifyReplacement(placement replacementPlacement, audioS
 	artworkRelative := placement.artworkRelative
 	if placement.ArtworkMode == REPLACEMENT_ARTWORK_MODE_REPLACE {
 		artworkRelative = placement.pendingArtworkRelative
+	}
+	if artworkRelative == "" {
+		return nil
 	}
 	if err := verifyRootedFileHash(root, artworkRelative, artworkSHA256); err != nil {
 		return fmt.Errorf("verify replacement Album Artwork: %w", err)

@@ -38,6 +38,21 @@ export function isDesktopClient(): boolean {
 	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export type DesktopMpvStatus = {
+	/** The mpv executable starts and answers --version. */
+	available: boolean;
+	/** The found version equals the pinned version the Desktop Client requires. */
+	pinned: boolean;
+	pinnedVersion: string;
+	version?: string | null;
+	detail?: string | null;
+};
+
+/** Pinned mpv sidecar status for the Settings page; Desktop Client only. */
+export function getDesktopMpvStatus(): Promise<DesktopMpvStatus> {
+	return invoke("get_desktop_mpv_status");
+}
+
 export function getServerConnection(): Promise<ServerConnection | null> {
 	return invoke("get_server_connection");
 }
@@ -71,7 +86,7 @@ export function releaseDesktopImportSelections(
 export async function desktopUploadImportFile(
 	selectionId: string,
 	jobId: string,
-	onProgress?: (progress: number) => void,
+	onProgress?: (progress: number, transferredBytes?: number) => void,
 	signal?: AbortSignal,
 ): Promise<Response> {
 	if (signal?.aborted) {
@@ -81,7 +96,7 @@ export async function desktopUploadImportFile(
 	const progressChannel = new Channel<DesktopImportProgress>();
 	progressChannel.onmessage = ({ sentBytes, totalBytes }) => {
 		if (totalBytes > 0) {
-			onProgress?.(Math.round((sentBytes / totalBytes) * 100));
+			onProgress?.(Math.round((sentBytes / totalBytes) * 100), sentBytes);
 		}
 	};
 	const handleAbort = () => {

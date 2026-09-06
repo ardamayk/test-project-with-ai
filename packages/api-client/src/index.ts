@@ -78,7 +78,11 @@ export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track };
 export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] };
 export type ErrorResponse = Schemas['ErrorResponse'];
 export type ManagedImportJob = Schemas['ManagedImportJob'];
+export type ManagedImportAlbumDecision = Schemas['ManagedImportAlbumDecision'];
+export type ManagedImportAlbumPreview = Schemas['ManagedImportAlbumPreview'];
+export type ManagedImportArtworkOption = Schemas['ManagedImportArtworkOption'];
 export type ManagedImportBatch = Schemas['ManagedImportBatch'];
+export type ManagedImportBatchCreate = Schemas['ManagedImportBatchCreate'];
 export type ManagedImportBatchFile = Schemas['ManagedImportBatchFile'];
 export type ManagedImportDuplicateDecision =
   Schemas['ManagedImportDuplicateDecision'];
@@ -90,7 +94,10 @@ export type ManagedImportHistoryItem = Schemas['ManagedImportHistoryItem'];
 export type ManagedImportHistoryFile = Schemas['ManagedImportHistoryFile'];
 export type AlbumDeletionPreview = Schemas['AlbumDeletionPreview'];
 export type AlbumDeletionResult = Schemas['AlbumDeletionResult'];
-export type ManagedImportUploadProgress = (progress: number) => void;
+export type ManagedImportUploadProgress = (
+  progress: number,
+  transferredBytes?: number,
+) => void;
 export type QueueConflictResponse = Omit<
   Schemas['QueueConflictResponse'],
   'queue'
@@ -281,7 +288,10 @@ export function createApiClient(config: ApiClientConfig) {
       if (token) upload.setRequestHeader('Authorization', `Bearer ${token}`);
       upload.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && event.total > 0) {
-          onProgress?.(Math.round((event.loaded / event.total) * 100));
+          onProgress?.(
+            Math.round((event.loaded / event.total) * 100),
+            event.loaded,
+          );
         }
       });
       upload.addEventListener('load', () => {
@@ -442,23 +452,52 @@ export function createApiClient(config: ApiClientConfig) {
       ),
     listImportHistory: () =>
       request<ManagedImportHistoryList>('/api/v1/import-history'),
-    createManagedImportBatch: () =>
-      request<ManagedImportBatch>('/api/v1/import-batches', { method: 'POST' }),
+    createManagedImportBatch: (options?: ManagedImportBatchCreate) =>
+      request<ManagedImportBatch>('/api/v1/import-batches', {
+        method: 'POST',
+        body: options ? JSON.stringify(options) : undefined,
+      }),
+    uploadManagedImportArtwork: (
+      batchId: string,
+      albumKey: string,
+      file: File,
+    ) =>
+      request<ManagedImportArtworkOption>(
+        `/api/v1/import-batches/${batchId}/albums/${albumKey}/artwork`,
+        {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        },
+      ),
+    getManagedImportArtworkUrl: (batchId: string, artworkId: string) =>
+      `${getMediaBaseUrl()}/api/v1/import-batches/${batchId}/artwork/${encodeURIComponent(artworkId)}`,
+    heartbeatManagedImportBatch: (batchId: string) =>
+      request<void>(`/api/v1/import-batches/${batchId}/heartbeat`, {
+        method: 'POST',
+      }),
     getManagedImportBatch: (batchId: string) =>
       request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}`),
-    cancelManagedImportBatch: (batchId: string) =>
+    cancelManagedImportBatch: (batchId: string, keepalive = false) =>
       request<void>(`/api/v1/import-batches/${batchId}`, {
         method: 'DELETE',
+        keepalive,
       }),
     confirmManagedImportBatch: (
       batchId: string,
       revision: number,
       selectedFileIds: string[],
       duplicateDecisions?: ManagedImportDuplicateDecision[],
+      albumDecisions?: ManagedImportAlbumDecision[],
     ) =>
       request<ManagedImportBatch>(`/api/v1/import-batches/${batchId}/confirm`, {
         method: 'POST',
-        body: JSON.stringify({ revision, selectedFileIds, duplicateDecisions }),
+        body: JSON.stringify({
+          revision,
+          selectedFileIds,
+          duplicateDecisions,
+          albumDecisions,
+        }),
       }),
     createManagedImportJob: (batchId?: string, clientFileId?: string) =>
       request<ManagedImportJob>('/api/v1/imports', {
