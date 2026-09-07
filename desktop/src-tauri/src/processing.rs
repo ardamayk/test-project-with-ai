@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -85,6 +86,9 @@ struct PersistedProcessingSettings {
     output_mode: OutputMode,
     #[serde(default)]
     selected_output_device_id: Option<String>,
+    /// Last software volume per output route, keyed by `output_volume_key`.
+    #[serde(default)]
+    volume_by_output_device: BTreeMap<String, f64>,
     profile: ProcessingProfile,
     software_volume: f64,
     replay_gain_mode: ReplayGainMode,
@@ -162,21 +166,43 @@ pub struct ProcessingController {
     storage: Box<dyn ProcessingSettingsStorage>,
     output_mode: OutputMode,
     selected_output_device_id: Option<String>,
+    volume_by_output_device: BTreeMap<String, f64>,
     state: ProcessingState,
+}
+
+/// Key under which the software volume is remembered for an output route.
+/// ALSA device ids are machine-local, so this memory stays in the desktop's
+/// own settings file rather than in the server-side preferences.
+pub fn output_volume_key(output_mode: OutputMode, device_id: Option<&str>) -> String {
+    match (output_mode, device_id) {
+        (OutputMode::DirectAlsa, Some(device_id)) => format!("alsa:{device_id}"),
+        _ => "system".to_owned(),
+    }
 }
 
 impl ProcessingController {
     pub fn open(storage: Box<dyn ProcessingSettingsStorage>) -> Result<Self, String> {
-        let (state, output_mode, selected_output_device_id) = match storage.load()? {
+        let loaded = match storage.load()? {
             Some(value) => state_from_json(&value)?,
-            None => (default_state(), OutputMode::System, None),
+            None => LoadedProcessingSettings::default(),
         };
         Ok(Self {
             storage,
-            output_mode,
-            selected_output_device_id,
-            state,
+            output_mode: loaded.output_mode,
+            selected_output_device_id: loaded.selected_output_device_id,
+            volume_by_output_device: loaded.volume_by_output_device,
+            state: loaded.state,
         })
+    }
+
+    /// Software volume last used on the active output route, if any.
+    pub fn remembered_volume(&self) -> Option<f64> {
+        self.volume_by_output_device
+            .get(&output_volume_key(
+                self.output_mode,
+                self.selected_output_device_id.as_deref(),
+            ))
+            .copied()
     }
 
     pub fn state(&self) -> &ProcessingState {
@@ -231,7 +257,9 @@ impl ProcessingController {
         } else {
             0.0
         };
-        self.commit(|state| {
+        let key = output_volume_key(self.output_mode, self.selected_output_device_id.as_deref());
+        let previous = self.volume_by_output_device.insert(key.clone(), volume);
+        let result = self.commit(|state| {
             let is_transition = state.profile == ProcessingProfile::Direct && volume != 1.0;
             state.software_volume = volume;
             transition_to_processed(
@@ -240,7 +268,14 @@ impl ProcessingController {
                 "Software volume requires the Processed Profile.",
             );
             Ok(())
-        })
+        });
+        if result.is_err() {
+            match previous {
+                Some(previous) => self.volume_by_output_device.insert(key, previous),
+                None => self.volume_by_output_device.remove(&key),
+            };
+        }
+        result
     }
 
     pub fn enable_replay_gain(&mut self, mode: ReplayGainMode) -> Result<(), String> {
@@ -345,8 +380,12 @@ impl ProcessingController {
         output_mode: OutputMode,
         selected_output_device_id: Option<&str>,
     ) -> Result<(), String> {
-        let settings =
-            PersistedProcessingSettings::from_state(state, output_mode, selected_output_device_id);
+        let settings = PersistedProcessingSettings::from_state(
+            state,
+            output_mode,
+            selected_output_device_id,
+            &self.volume_by_output_device,
+        );
         let value = serde_json::to_string(&settings)
             .map_err(|error| format!("Failed to serialize Processing Profile settings: {error}"))?;
         self.storage.save(&value)
@@ -387,10 +426,12 @@ impl PersistedProcessingSettings {
         state: &ProcessingState,
         output_mode: OutputMode,
         selected_output_device_id: Option<&str>,
+        volume_by_output_device: &BTreeMap<String, f64>,
     ) -> Self {
         Self {
             output_mode,
             selected_output_device_id: selected_output_device_id.map(str::to_owned),
+            volume_by_output_device: volume_by_output_device.clone(),
             profile: state.profile,
             software_volume: state.software_volume,
             replay_gain_mode: state.replay_gain_mode,
@@ -400,13 +441,32 @@ impl PersistedProcessingSettings {
     }
 }
 
-fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode, Option<String>), String> {
+struct LoadedProcessingSettings {
+    state: ProcessingState,
+    output_mode: OutputMode,
+    selected_output_device_id: Option<String>,
+    volume_by_output_device: BTreeMap<String, f64>,
+}
+
+impl Default for LoadedProcessingSettings {
+    fn default() -> Self {
+        Self {
+            state: default_state(),
+            output_mode: OutputMode::System,
+            selected_output_device_id: None,
+            volume_by_output_device: BTreeMap::new(),
+        }
+    }
+}
+
+fn state_from_json(value: &str) -> Result<LoadedProcessingSettings, String> {
     let settings: PersistedProcessingSettings = serde_json::from_str(value)
         .map_err(|error| format!("Failed to parse Processing Profile settings: {error}"))?;
     let output_mode = settings.output_mode;
     let selected_output_device_id = settings.selected_output_device_id.clone();
-    Ok((
-        ProcessingState {
+    let volume_by_output_device = settings.volume_by_output_device.clone();
+    Ok(LoadedProcessingSettings {
+        state: ProcessingState {
             profile: settings.profile,
             software_volume: settings.software_volume,
             replay_gain_mode: settings.replay_gain_mode,
@@ -422,7 +482,8 @@ fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode, Option<S
         },
         output_mode,
         selected_output_device_id,
-    ))
+        volume_by_output_device,
+    })
 }
 
 fn default_state() -> ProcessingState {

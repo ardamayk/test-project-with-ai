@@ -229,3 +229,47 @@ fn temporary_path(file_name: &str) -> std::path::PathBuf {
     );
     std::env::temp_dir().join(unique)
 }
+
+#[test]
+fn software_volume_is_remembered_per_output_route() {
+    let path = temporary_path("volume-memory.json");
+    let storage = FileProcessingSettingsStorage::new(path.clone());
+    let mut controller =
+        ProcessingController::open(Box::new(storage)).expect("open file-backed controller");
+
+    controller
+        .set_software_volume(0.4)
+        .expect("set system volume");
+    controller
+        .select_direct_alsa_output("hw:1,0")
+        .expect("select direct output");
+    assert_eq!(controller.remembered_volume(), None);
+    controller
+        .set_software_volume(0.9)
+        .expect("set direct volume");
+    assert_eq!(controller.remembered_volume(), Some(0.9));
+
+    controller
+        .set_output_mode(OutputMode::System)
+        .expect("back to system");
+    assert_eq!(controller.remembered_volume(), Some(0.4));
+
+    let reopened = ProcessingController::open(Box::new(FileProcessingSettingsStorage::new(path)))
+        .expect("reopen controller");
+    assert_eq!(reopened.remembered_volume(), Some(0.4));
+    assert_eq!(
+        earthly_audio_desktop::processing::output_volume_key(
+            OutputMode::DirectAlsa,
+            Some("hw:1,0")
+        ),
+        "alsa:hw:1,0"
+    );
+}
+
+#[test]
+fn failed_volume_persistence_does_not_remember_the_volume() {
+    let mut controller = ProcessingController::open(Box::new(FailingSettingsStorage))
+        .expect("open failing storage fixture");
+    assert!(controller.set_software_volume(0.3).is_err());
+    assert_eq!(controller.remembered_volume(), None);
+}

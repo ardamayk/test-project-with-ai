@@ -475,7 +475,11 @@ fn desktop_playback_select_direct_alsa_output(
             "Direct ALSA Output preference could not be saved. The previous Output Mode was restored.",
         ));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        &state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn is_valid_direct_selection(state: &PlaybackSessionState, device_id: &str) -> bool {
@@ -572,7 +576,11 @@ fn select_normal_output(state: &AppState) -> Result<PlaybackSessionState, Playba
             "Normal Output preference could not be saved: {error}"
         )));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn select_exclusive_output(
@@ -611,7 +619,11 @@ fn select_exclusive_output(
             "Exclusive Output preference could not be saved. Normal Output was restored.",
         ));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn active_output_error_message(error: &ActiveOutputError) -> String {
@@ -666,6 +678,33 @@ fn restore_exclusive_device(
     processing.select_direct_alsa_output(&device.id)
 }
 
+/// After an output route switch, bring back the volume last used on that
+/// route. Failures only log: the switch itself already succeeded.
+fn restore_remembered_volume(
+    state: &AppState,
+    processing: &mut ProcessingController,
+    playback_state: PlaybackSessionState,
+) -> PlaybackSessionState {
+    let Some(volume) = processing.remembered_volume() else {
+        return playback_state;
+    };
+    if (volume - processing.state().software_volume).abs() < f64::EPSILON {
+        return playback_state;
+    }
+    match update_processing_locked(state, processing, |processing| {
+        processing.set_software_volume(volume)
+    }) {
+        Ok(restored) => restored,
+        Err(error) => {
+            eprintln!(
+                "Remembered output volume could not be restored: {}",
+                error.message
+            );
+            playback_state
+        }
+    }
+}
+
 fn update_processing(
     state: &AppState,
     change: impl FnOnce(&mut ProcessingController) -> Result<(), String>,
@@ -674,8 +713,16 @@ fn update_processing(
         .processing
         .lock()
         .map_err(|_| PlaybackCommandError::new("Processing Profile state is unavailable."))?;
+    update_processing_locked(state, &mut processing, change)
+}
+
+fn update_processing_locked(
+    state: &AppState,
+    processing: &mut ProcessingController,
+    change: impl FnOnce(&mut ProcessingController) -> Result<(), String>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
     let previous_state = processing.state().clone();
-    change(&mut processing).map_err(PlaybackCommandError::new)?;
+    change(processing).map_err(PlaybackCommandError::new)?;
     let processing_state = processing.state().clone();
     let configuration = processing.mpv_configuration();
     match state
@@ -684,13 +731,13 @@ fn update_processing(
     {
         Ok(playback_state) => {
             if let Err(error) = processing.restore(playback_state.processing.clone()) {
-                rollback_processing(&state.playback, &mut processing, previous_state);
+                rollback_processing(&state.playback, processing, previous_state);
                 return Err(PlaybackCommandError::new(error));
             }
             Ok(playback_state)
         }
         Err(error) => {
-            rollback_processing(&state.playback, &mut processing, previous_state);
+            rollback_processing(&state.playback, processing, previous_state);
             Err(error)
         }
     }
