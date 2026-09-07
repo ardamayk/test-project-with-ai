@@ -219,10 +219,7 @@ func TestWaveformHandlerAnswersPendingWhileGenerationRuns(t *testing.T) {
 
 	close(release)
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if fixture.get(t, fixture.trackID).Code == http.StatusOK {
-			break
-		}
+	for fixture.get(t, fixture.trackID).Code != http.StatusOK {
 		if time.Now().After(deadline) {
 			t.Fatal("waveform never finished")
 		}
