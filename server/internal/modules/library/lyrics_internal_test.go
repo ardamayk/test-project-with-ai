@@ -21,7 +21,7 @@ func TestStoreGetTrackLyrics(t *testing.T) {
 	if err != nil || lyrics != "" {
 		t.Fatalf("lyrics before update = %q, %v", lyrics, err)
 	}
-	if _, err := db.ExecContext(context.Background(), `UPDATE tracks SET lyrics = ? WHERE id = ?`, "Line A\nLine B", trackID); err != nil {
+	if _, err = db.ExecContext(context.Background(), `UPDATE tracks SET lyrics = ? WHERE id = ?`, "Line A\nLine B", trackID); err != nil {
 		t.Fatal(err)
 	}
 	lyrics, err = store.GetTrackLyrics(context.Background(), trackID)
