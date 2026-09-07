@@ -325,8 +325,9 @@ fn desktop_playback_quit(
     dispatch_application_action(&app, &state, DesktopPlaybackAction::Quit)
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_play(
+async fn desktop_playback_play(
     state: State<'_, AppState>,
     source: Option<Value>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
@@ -336,22 +337,25 @@ fn desktop_playback_play(
     state.playback.play(source)
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_pause(
+async fn desktop_playback_pause(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.pause()
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_stop(
+async fn desktop_playback_stop(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.stop()
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_toggle_play(
+async fn desktop_playback_toggle_play(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.toggle_play()
@@ -369,15 +373,17 @@ fn desktop_playback_sync_queue_context(
     state.playback.sync_queue_context(sources, current_index)
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_previous(
+async fn desktop_playback_previous(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.previous()
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_next(
+async fn desktop_playback_next(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.next()
@@ -389,6 +395,30 @@ fn desktop_playback_seek(
     seconds: f64,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.seek(seconds)
+}
+
+#[tauri::command]
+fn desktop_playback_set_playback_rate(
+    state: State<'_, AppState>,
+    rate: f64,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.set_playback_rate(rate)
+}
+
+#[tauri::command]
+fn desktop_playback_set_stop_after_current(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.set_stop_after_current(enabled)
+}
+
+#[tauri::command]
+fn desktop_playback_set_transition_fade(
+    state: State<'_, AppState>,
+    milliseconds: u64,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.set_transition_fade_ms(milliseconds)
 }
 
 #[tauri::command]
@@ -1125,6 +1155,9 @@ pub fn run() -> tauri::Result<()> {
             desktop_playback_next,
             desktop_playback_seek,
             desktop_playback_set_volume,
+            desktop_playback_set_playback_rate,
+            desktop_playback_set_stop_after_current,
+            desktop_playback_set_transition_fade,
             desktop_playback_set_processing_profile,
             desktop_playback_set_replay_gain,
             desktop_playback_set_equalizer_preset,
