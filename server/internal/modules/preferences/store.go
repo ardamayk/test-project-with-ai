@@ -43,11 +43,11 @@ func themeToColumn(theme ThemePreferences) string {
 }
 
 func (s *Store) Get(ctx context.Context, userID string) (UserPreferences, error) {
-	var themeRaw, layoutJSON string
+	var themeRaw, layoutJSON, playbackJSON string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT theme, layout_json FROM user_preferences WHERE user_id = ?`,
+		`SELECT theme, layout_json, playback_json FROM user_preferences WHERE user_id = ?`,
 		userID,
-	).Scan(&themeRaw, &layoutJSON)
+	).Scan(&themeRaw, &layoutJSON, &playbackJSON)
 	if err != nil {
 		return UserPreferences{}, fmt.Errorf("get preferences: %w", err)
 	}
@@ -58,12 +58,13 @@ func (s *Store) Get(ctx context.Context, userID string) (UserPreferences, error)
 	}
 
 	return UserPreferences{
-		Theme:  parseThemeColumn(themeRaw),
-		Layout: normalizeLayout(layout),
+		Theme:    parseThemeColumn(themeRaw),
+		Layout:   normalizeLayout(layout),
+		Playback: parsePlaybackColumn(playbackJSON),
 	}, nil
 }
 
-func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferences) (UserPreferences, error) {
+func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferencesPatch) (UserPreferences, error) {
 	current, err := s.Get(ctx, userID)
 	if err != nil {
 		return UserPreferences{}, err
@@ -99,15 +100,20 @@ func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferences)
 	}
 
 	current.Layout = normalizeLayout(current.Layout)
+	applyPlaybackPatch(&current.Playback, patch.Playback)
 
 	layoutJSON, err := json.Marshal(current.Layout)
 	if err != nil {
 		return UserPreferences{}, fmt.Errorf("encode layout: %w", err)
 	}
+	playbackJSON, err := json.Marshal(current.Playback)
+	if err != nil {
+		return UserPreferences{}, fmt.Errorf("encode playback: %w", err)
+	}
 
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE user_preferences SET theme = ?, layout_json = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`,
-		themeToColumn(current.Theme), string(layoutJSON), userID,
+		`UPDATE user_preferences SET theme = ?, layout_json = ?, playback_json = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`,
+		themeToColumn(current.Theme), string(layoutJSON), string(playbackJSON), userID,
 	)
 	if err != nil {
 		return UserPreferences{}, fmt.Errorf("update preferences: %w", err)

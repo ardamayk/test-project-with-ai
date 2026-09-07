@@ -28,9 +28,13 @@ func (m *Module) handlePatch(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusUnauthorized, "unauthorized", err.Error())
 		return
 	}
-	var patch UserPreferences
+	var patch UserPreferencesPatch
 	if decodeErr := json.NewDecoder(r.Body).Decode(&patch); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if validationErr := ValidatePlaybackPatch(patch.Playback); validationErr != nil {
+		respond.Error(w, http.StatusBadRequest, "bad_request", validationErr.Error())
 		return
 	}
 

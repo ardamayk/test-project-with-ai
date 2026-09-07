@@ -836,13 +836,47 @@ export interface components {
             /** @enum {string} */
             preset: "earthly" | "tokyo-night" | "vintage-harbor" | "night-ember" | "dusty-earth" | "coastal-mist" | "sage-hearth";
         };
+        /** @description Player Bar behaviour shared by the Web and Desktop Clients. */
+        PlaybackPreferences: {
+            /** @description Seconds moved by the arrow-key seek shortcut. */
+            seekStepSeconds: number;
+            /** @description Seconds moved by the Shift+arrow seek shortcut. */
+            seekStepLargeSeconds: number;
+            /** @description Default playback speed multiplier. */
+            playbackRate: number;
+            /** @description Volume ramp applied on user-initiated transitions; 0 disables it. */
+            transitionFadeMs: number;
+            showWaveform: boolean;
+            /** @description Tint the Player Bar from the current album cover. */
+            accentFromCover: boolean;
+            /** @description Show the next queued track beside the now-playing info. */
+            showUpNext: boolean;
+            /** @description Countdown before a failed track is skipped; 0 waits for the user. */
+            autoSkipOnErrorSeconds: number;
+            /** @description Show the hovered position as a timestamp over the seek bar. */
+            hoverTimestamp: boolean;
+        };
+        /** @description Sparse form of PlaybackPreferences; absent fields are left unchanged. */
+        PlaybackPreferencesPatch: {
+            seekStepSeconds?: number;
+            seekStepLargeSeconds?: number;
+            playbackRate?: number;
+            transitionFadeMs?: number;
+            showWaveform?: boolean;
+            accentFromCover?: boolean;
+            showUpNext?: boolean;
+            autoSkipOnErrorSeconds?: number;
+            hoverTimestamp?: boolean;
+        };
         UserPreferences: {
             theme: components["schemas"]["ThemePreferences"];
             layout: components["schemas"]["LayoutPreferences"];
+            playback: components["schemas"]["PlaybackPreferences"];
         };
         UserPreferencesPatch: {
             theme?: components["schemas"]["ThemePreferences"];
             layout?: components["schemas"]["LayoutPreferences"];
+            playback?: components["schemas"]["PlaybackPreferencesPatch"];
         };
         ValidationIssue: {
             code: string;

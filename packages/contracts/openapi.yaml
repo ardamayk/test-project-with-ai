@@ -1591,14 +1591,98 @@ components:
             - dusty-earth
             - coastal-mist
             - sage-hearth
+    PlaybackPreferences:
+      type: object
+      description: Player Bar behaviour shared by the Web and Desktop Clients.
+      required:
+        - seekStepSeconds
+        - seekStepLargeSeconds
+        - playbackRate
+        - transitionFadeMs
+        - showWaveform
+        - accentFromCover
+        - showUpNext
+        - autoSkipOnErrorSeconds
+        - hoverTimestamp
+      properties:
+        seekStepSeconds:
+          type: integer
+          minimum: 1
+          maximum: 120
+          description: Seconds moved by the arrow-key seek shortcut.
+        seekStepLargeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 120
+          description: Seconds moved by the Shift+arrow seek shortcut.
+        playbackRate:
+          type: number
+          minimum: 0.5
+          maximum: 2
+          description: Default playback speed multiplier.
+        transitionFadeMs:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: Volume ramp applied on user-initiated transitions; 0 disables it.
+        showWaveform:
+          type: boolean
+        accentFromCover:
+          type: boolean
+          description: Tint the Player Bar from the current album cover.
+        showUpNext:
+          type: boolean
+          description: Show the next queued track beside the now-playing info.
+        autoSkipOnErrorSeconds:
+          type: integer
+          minimum: 0
+          maximum: 60
+          description: Countdown before a failed track is skipped; 0 waits for the user.
+        hoverTimestamp:
+          type: boolean
+          description: Show the hovered position as a timestamp over the seek bar.
+    PlaybackPreferencesPatch:
+      type: object
+      description: Sparse form of PlaybackPreferences; absent fields are left unchanged.
+      properties:
+        seekStepSeconds:
+          type: integer
+          minimum: 1
+          maximum: 120
+        seekStepLargeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 120
+        playbackRate:
+          type: number
+          minimum: 0.5
+          maximum: 2
+        transitionFadeMs:
+          type: integer
+          minimum: 0
+          maximum: 2000
+        showWaveform:
+          type: boolean
+        accentFromCover:
+          type: boolean
+        showUpNext:
+          type: boolean
+        autoSkipOnErrorSeconds:
+          type: integer
+          minimum: 0
+          maximum: 60
+        hoverTimestamp:
+          type: boolean
     UserPreferences:
       type: object
-      required: [theme, layout]
+      required: [theme, layout, playback]
       properties:
         theme:
           $ref: "#/components/schemas/ThemePreferences"
         layout:
           $ref: "#/components/schemas/LayoutPreferences"
+        playback:
+          $ref: "#/components/schemas/PlaybackPreferences"
     UserPreferencesPatch:
       type: object
       properties:
@@ -1606,6 +1690,8 @@ components:
           $ref: "#/components/schemas/ThemePreferences"
         layout:
           $ref: "#/components/schemas/LayoutPreferences"
+        playback:
+          $ref: "#/components/schemas/PlaybackPreferencesPatch"
     ValidationIssue:
       type: object
       required: [code, field, reason]

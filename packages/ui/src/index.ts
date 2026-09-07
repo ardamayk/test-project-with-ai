@@ -74,6 +74,7 @@ export { ThemeProvider } from "./theme/ThemeProvider";
 export * from "./widgets";
 export {
 	defaultLayout,
+	defaultPlayback,
 	defaultPreferences,
 	defaultTheme,
 } from "./widgets/types";
