@@ -78,6 +78,46 @@ func TestPatchWithoutPlaybackLeavesPlaybackAlone(t *testing.T) {
 	}
 }
 
+func TestConcurrentPlaybackPatchesPreserveIndependentFields(t *testing.T) {
+	store := newStore(t)
+	const concurrentRounds = 20
+	for round := range concurrentRounds {
+		seekStep := 10 + round
+		seekStepLarge := 40 + round
+		fade := 100 + round
+		autoSkip := 10 + round
+		patches := []PlaybackPreferencesPatch{
+			{SeekStepSeconds: &seekStep},
+			{SeekStepLargeSeconds: &seekStepLarge},
+			{TransitionFadeMs: &fade},
+			{AutoSkipOnErrorSeconds: &autoSkip},
+		}
+		start := make(chan struct{})
+		results := make(chan error, len(patches))
+		for _, patch := range patches {
+			go func() {
+				<-start
+				_, err := store.Patch(ctx(), auth.DefaultUserID, UserPreferencesPatch{Playback: &patch})
+				results <- err
+			}()
+		}
+		close(start)
+		for range patches {
+			if err := <-results; err != nil {
+				t.Errorf("round %d: patch preferences: %v", round, err)
+			}
+		}
+		current, err := store.Get(ctx(), auth.DefaultUserID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Playback.SeekStepSeconds != seekStep || current.Playback.SeekStepLargeSeconds != seekStepLarge ||
+			current.Playback.TransitionFadeMs != fade || current.Playback.AutoSkipOnErrorSeconds != autoSkip {
+			t.Fatalf("round %d: concurrent patches lost updates: %+v", round, current.Playback)
+		}
+	}
+}
+
 func TestParsePlaybackColumnFillsMissingFieldsWithDefaults(t *testing.T) {
 	playback := parsePlaybackColumn(`{"seekStepSeconds":15}`)
 	if playback.SeekStepSeconds != 15 || playback.AutoSkipOnErrorSeconds != 5 || !playback.ShowUpNext {

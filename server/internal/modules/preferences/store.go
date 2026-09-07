@@ -43,8 +43,16 @@ func themeToColumn(theme ThemePreferences) string {
 }
 
 func (s *Store) Get(ctx context.Context, userID string) (UserPreferences, error) {
+	return getPreferences(ctx, s.db, userID)
+}
+
+type preferencesQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func getPreferences(ctx context.Context, querier preferencesQuerier, userID string) (UserPreferences, error) {
 	var themeRaw, layoutJSON, playbackJSON string
-	err := s.db.QueryRowContext(ctx,
+	err := querier.QueryRowContext(ctx,
 		`SELECT theme, layout_json, playback_json FROM user_preferences WHERE user_id = ?`,
 		userID,
 	).Scan(&themeRaw, &layoutJSON, &playbackJSON)
@@ -65,7 +73,15 @@ func (s *Store) Get(ctx context.Context, userID string) (UserPreferences, error)
 }
 
 func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferencesPatch) (UserPreferences, error) {
-	current, err := s.Get(ctx, userID)
+	// The database uses BEGIN IMMEDIATE, locking before the read so concurrent
+	// sparse patches merge with the latest committed preferences.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UserPreferences{}, fmt.Errorf("begin preferences patch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	current, err := getPreferences(ctx, tx, userID)
 	if err != nil {
 		return UserPreferences{}, err
 	}
@@ -111,12 +127,15 @@ func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferencesP
 		return UserPreferences{}, fmt.Errorf("encode playback: %w", err)
 	}
 
-	_, err = s.db.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE user_preferences SET theme = ?, layout_json = ?, playback_json = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`,
 		themeToColumn(current.Theme), string(layoutJSON), string(playbackJSON), userID,
 	)
 	if err != nil {
 		return UserPreferences{}, fmt.Errorf("update preferences: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return UserPreferences{}, fmt.Errorf("commit preferences patch: %w", err)
 	}
 
 	return current, nil
