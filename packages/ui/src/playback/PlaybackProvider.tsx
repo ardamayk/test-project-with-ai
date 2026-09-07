@@ -18,10 +18,10 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { toast } from "sonner";
 import type {
 	PlaybackEngine,
 	PlaybackError,
+	PlaybackErrorCause,
 	PlaybackSessionState,
 	PlaybackSource,
 	RepeatMode,
@@ -46,6 +46,12 @@ export type { PlaybackQueueApi } from "./use-synchronized-queue";
 
 export type PlaybackAssetApi = {
 	getStreamUrl: (trackId: string) => string;
+	/**
+	 * Optional HEAD probe used to explain a failed Track: a 404 means the
+	 * file is missing on the server, a rejection means the server is
+	 * unreachable. Hosts without it get an "unknown" cause.
+	 */
+	headTrackStream?: (trackId: string) => Promise<{ status: number }>;
 	getAlbumCoverUrl: (albumId: string) => string;
 	/** Lyrics text stored for a Track; optional for hosts without the endpoint. */
 	getTrackLyrics?: (trackId: string) => Promise<{ lyrics: string }>;
@@ -95,6 +101,8 @@ type PlaybackContextValue = {
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	playbackError: PlaybackError | null;
+	/** Present while a Track failed and the user can retry or skip it. */
+	errorRecovery: PlaybackErrorRecovery | null;
 	processingState: ProcessingState | null;
 	playbackTelemetry: PlaybackTelemetry | null;
 	queueConflict: string | null;
@@ -130,6 +138,16 @@ type PlaybackContextValue = {
 	getTrackLyrics: (trackId: string) => Promise<{ lyrics: string } | null>;
 };
 
+export type PlaybackErrorRecovery = {
+	cause: PlaybackErrorCause | null;
+	/** Seconds until the Track is skipped automatically; null once stopped. */
+	countdownSeconds: number | null;
+	canSkip: boolean;
+	retry: () => void;
+	skip: () => void;
+	cancelCountdown: () => void;
+};
+
 const PlaybackContext = createContext<PlaybackContextValue | null>(null);
 const PlaylistLibraryContext = createContext<PlaylistLibraryApi | null>(null);
 
@@ -137,10 +155,13 @@ export function PlaybackProvider({
 	children,
 	api,
 	engine,
+	autoSkipOnErrorSeconds = 5,
 }: {
 	children: ReactNode;
 	api: PlaybackApi;
 	engine: PlaybackEngine;
+	/** Countdown before a failed Track is skipped; 0 waits for the user. */
+	autoSkipOnErrorSeconds?: number;
 }) {
 	const apiRef = useRef(api);
 	const {
@@ -317,31 +338,97 @@ export function PlaybackProvider({
 
 	// A Track can stop being playable while it sits in the Queue: ADR 0010 lets
 	// a deletion elsewhere leave the playing source in place, so its next play
-	// fails. Announce the failure and move on instead of leaving the Player
-	// stuck; a native engine that owns Queue advancement is only told.
-	const announcedErrorRef = useRef<PlaybackError | null>(null);
-	useEffect(() => {
-		if (session.status !== "error" || session.source?.type !== "track") {
-			announcedErrorRef.current = null;
+	// fails. Explain the failure in the bar, let the user retry or skip, and
+	// skip on their behalf after a countdown so the Player never sits stuck.
+	const failedSource = session.status === "error" ? session.source : null;
+	const failedTrackId =
+		failedSource?.type === "track" ? failedSource.track.id : null;
+	const [errorCause, setErrorCause] = useState<PlaybackErrorCause | null>(null);
+	const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
+	const skipFailedTrack = useCallback(() => {
+		setCountdownSeconds(null);
+		if (engine.syncQueueContext) {
+			engine.next();
 			return;
 		}
-		if (!session.error || announcedErrorRef.current === session.error) return;
-		announcedErrorRef.current = session.error;
-		const currentIndex = queueRef.current.findIndex(
+		advanceToNextQueueItem();
+	}, [advanceToNextQueueItem, engine]);
+	const retryFailedTrack = useCallback(() => {
+		setCountdownSeconds(null);
+		if (!failedSource) return;
+		void engine.play(failedSource).catch(() => undefined);
+	}, [engine, failedSource]);
+
+	useEffect(() => {
+		if (!failedTrackId) {
+			setErrorCause(null);
+			setCountdownSeconds(null);
+			return undefined;
+		}
+		let cancelled = false;
+		setErrorCause(null);
+		setCountdownSeconds(
+			autoSkipOnErrorSeconds > 0 ? autoSkipOnErrorSeconds : null,
+		);
+		const probe = apiRef.current.headTrackStream;
+		if (!probe) {
+			setErrorCause("unknown");
+			return undefined;
+		}
+		probe(failedTrackId)
+			.then(({ status }) => {
+				if (cancelled) return;
+				setErrorCause(status === 404 ? "file-missing" : "unknown");
+			})
+			.catch(() => {
+				if (!cancelled) setErrorCause("network");
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [autoSkipOnErrorSeconds, failedTrackId]);
+
+	useEffect(() => {
+		if (countdownSeconds === null || !failedTrackId) return undefined;
+		if (countdownSeconds <= 0) {
+			skipFailedTrack();
+			return undefined;
+		}
+		const timer = window.setTimeout(
+			() => setCountdownSeconds((current) => (current ?? 1) - 1),
+			1000,
+		);
+		return () => window.clearTimeout(timer);
+	}, [countdownSeconds, failedTrackId, skipFailedTrack]);
+
+	const hasNextQueueItem = useMemo(() => {
+		const currentIndex = queue.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
 		);
-		const hasNext =
-			!engine.syncQueueContext && currentIndex >= 0
-				? currentIndex + 1 < queueRef.current.length
-				: false;
-		toast.error(`Couldn't play ${session.source.track.title}`, {
-			description: hasNext
-				? `${session.error.message}. Skipping to the next track.`
-				: session.error.message,
-		});
-		if (engine.syncQueueContext) return;
-		advanceToNextQueueItem();
-	}, [advanceToNextQueueItem, engine, session]);
+		return currentIndex >= 0 && currentIndex + 1 < queue.length;
+	}, [queue]);
+
+	const errorRecovery = useMemo<PlaybackErrorRecovery | null>(
+		() =>
+			failedTrackId
+				? {
+						cause: errorCause,
+						countdownSeconds,
+						canSkip: hasNextQueueItem,
+						retry: retryFailedTrack,
+						skip: skipFailedTrack,
+						cancelCountdown: () => setCountdownSeconds(null),
+					}
+				: null,
+		[
+			failedTrackId,
+			errorCause,
+			countdownSeconds,
+			hasNextQueueItem,
+			retryFailedTrack,
+			skipFailedTrack,
+		],
+	);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {
@@ -466,7 +553,10 @@ export function PlaybackProvider({
 			volume: session.volume,
 			shuffleEnabled: session.shuffleEnabled,
 			repeatMode: session.repeatMode,
-			playbackError: session.error,
+			playbackError: session.error
+				? { ...session.error, cause: errorCause ?? session.error.cause }
+				: null,
+			errorRecovery,
 			processingState: session.processing ?? null,
 			playbackTelemetry: session.telemetry ?? null,
 			queueConflict,
@@ -510,6 +600,8 @@ export function PlaybackProvider({
 			currentRadioStation,
 			radioNowPlaying,
 			session,
+			errorCause,
+			errorRecovery,
 			playTrack,
 			playRadioStation,
 			playRadioCatalogPreview,

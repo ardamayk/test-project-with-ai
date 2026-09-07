@@ -34,6 +34,7 @@ const playbackApi: PlaybackApi = {
 	subscribeQueueEvents: (onEvent, onError) =>
 		apiClient.subscribePlaybackQueueEvents(onEvent, onError),
 	getStreamUrl: (trackId) => apiClient.getTrackStreamUrl(trackId),
+	headTrackStream: (trackId) => apiClient.headTrackStream(trackId),
 	getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
 	getTrackLyrics: (trackId) => apiClient.getTrackLyrics(trackId),
 	getRadioStationStreamUrl: (stationId) =>
@@ -118,7 +119,11 @@ function ConnectedRootLayout() {
 		>
 			<div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
 				<ThemeSync />
-				<PlaybackProvider api={playbackApi} engine={playbackEngine}>
+				<PlaybackProvider
+					api={playbackApi}
+					engine={playbackEngine}
+					autoSkipOnErrorSeconds={initial.playback.autoSkipOnErrorSeconds}
+				>
 					<ImportSessionProvider>
 						<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
 							<Outlet />

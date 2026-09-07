@@ -51,7 +51,11 @@ export type PlaybackError = {
 		| "mpv-recovery-lifecycle-unavailable"
 		| "mpv-recovery-transition-invalid";
 	message: string;
+	/** Filled in by the provider after probing the stream; absent until then. */
+	cause?: PlaybackErrorCause;
 };
+
+export type PlaybackErrorCause = "file-missing" | "network" | "unknown";
 
 export type PlaybackSessionState = {
 	source: PlaybackSource | null;

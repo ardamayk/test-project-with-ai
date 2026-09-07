@@ -8,6 +8,7 @@ export {
 } from "./LayoutProvider";
 export { LyricsOverlay } from "./LyricsOverlay";
 export { MiniPlayer } from "./MiniPlayer";
+export { PlaybackErrorBanner } from "./PlaybackErrorBanner";
 export { PlaybackSignal } from "./PlaybackSignal";
 export { PlayerBar } from "./PlayerBar";
 export { QueuePanel } from "./QueuePanel";

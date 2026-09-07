@@ -608,6 +608,23 @@ export function createApiClient(config: ApiClientConfig) {
       `${getStreamBaseUrl()}/api/v1/radio/preview/${stationUuid}/stream`,
     getTrackStreamUrl: (trackId: string) =>
       `${getStreamBaseUrl()}/api/v1/tracks/${trackId}/stream`,
+    /**
+     * Checks whether a Track's stream is reachable without downloading it.
+     * Resolves with the HTTP status; rejects only when the request itself
+     * fails (offline, DNS, refused connection).
+     */
+    headTrackStream: async (trackId: string): Promise<{ status: number }> => {
+      const headers = new Headers();
+      const token = getToken?.();
+      if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      const response = await transport(
+        `${getStreamBaseUrl()}/api/v1/tracks/${trackId}/stream`,
+        { method: 'HEAD', headers },
+      );
+      return { status: response.status };
+    },
     getAlbumCoverUrl: (albumId: string) =>
       `${getMediaBaseUrl()}/api/v1/library/albums/${albumId}/cover`,
   };

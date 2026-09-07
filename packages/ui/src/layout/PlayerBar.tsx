@@ -34,6 +34,7 @@ import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
 import { LyricsOverlay } from "./LyricsOverlay";
+import { PlaybackErrorBanner } from "./PlaybackErrorBanner";
 import { PlaybackSignal } from "./PlaybackSignal";
 import {
 	PlaybackControls,
@@ -150,6 +151,7 @@ export function PlayerBar({
 		shuffleEnabled,
 		repeatMode,
 		playbackError,
+		errorRecovery,
 		togglePlay,
 		navigatePrevious,
 		navigateNext,
@@ -331,8 +333,7 @@ export function PlayerBar({
 		? formatRadioQualityLabel(currentRadioStation)
 		: formatQualityLabel(currentTrack);
 	const hasActiveSource = currentTrack !== null || currentRadioStation !== null;
-	const playbackAlert =
-		playbackError?.message ?? outputDeviceIssue?.message ?? null;
+	const outputAlert = playbackError ? null : outputDeviceIssue?.message;
 	const qualityDetailRows = useMemo(
 		() =>
 			hasActiveSource
@@ -517,12 +518,14 @@ export function PlayerBar({
 
 	return (
 		<footer className="relative h-[80px] rounded-2xl border border-[var(--player-border)] bg-player px-5 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]">
-			{playbackAlert ? (
+			{playbackError ? (
+				<PlaybackErrorBanner error={playbackError} recovery={errorRecovery} />
+			) : outputAlert ? (
 				<p
 					role="alert"
 					className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2 rounded-md border border-destructive/40 bg-popover px-3 py-2 text-destructive text-sm shadow-lg"
 				>
-					{playbackAlert}
+					{outputAlert}
 				</p>
 			) : null}
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">

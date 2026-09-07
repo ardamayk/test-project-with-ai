@@ -6,6 +6,7 @@ export { NowPlayingAnnouncer } from "./playback/NowPlayingAnnouncer";
 export type {
 	PlaybackEngine,
 	PlaybackError,
+	PlaybackErrorCause,
 	PlaybackNavigationDirection,
 	PlaybackNavigationListener,
 	PlaybackSessionListener,
@@ -18,6 +19,7 @@ export { DEFAULT_PLAYBACK_SESSION_STATE } from "./playback/PlaybackEngine";
 export type {
 	PlaybackApi,
 	PlaybackAssetApi,
+	PlaybackErrorRecovery,
 	PlaybackQueueApi,
 	PlaylistLibraryApi,
 	RadioPlaybackApi,

@@ -430,6 +430,27 @@ describe("PlayerBar", () => {
 		expect(screen.getByLabelText("Quality High Quality")).toBeTruthy();
 	});
 
+	it("shows an inline error banner with Retry and Skip after a failed Track", async () => {
+		const { engine } = renderPlayerBar();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		await act(async () =>
+			engine.fail({ code: "playback-failed", message: "Playback failed" }),
+		);
+		await act(async () => {});
+
+		const banner = screen.getByTestId("playback-error-banner");
+		expect(banner.textContent).toContain("Playback failed");
+		expect(within(banner).getByRole("button", { name: "Retry" })).toBeTruthy();
+		// The test queue holds one item, so there is nothing to skip to.
+		expect(within(banner).queryByRole("button", { name: "Skip" })).toBeNull();
+
+		const play = vi.spyOn(engine, "play");
+		fireEvent.click(within(banner).getByRole("button", { name: "Retry" }));
+		expect(play).toHaveBeenCalledOnce();
+	});
+
 	it("favorites the current saved Radio Station from the Player Bar", async () => {
 		const onToggleStationFavorite = vi.fn();
 		render(
