@@ -50,6 +50,8 @@ type PlaybackControlsProps = {
 	bufferedEnd?: number | null;
 	waveform?: number[] | null;
 	showHoverTimestamp?: boolean;
+	keyboardStepSeconds?: number;
+	keyboardLargeStepSeconds?: number;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	onTogglePlay: () => void;
@@ -255,6 +257,8 @@ function PlaybackProgress({
 	bufferedEnd = null,
 	waveform = null,
 	showHoverTimestamp = true,
+	keyboardStepSeconds,
+	keyboardLargeStepSeconds,
 	onSeek,
 }: {
 	isRadioPlaying: boolean;
@@ -264,6 +268,8 @@ function PlaybackProgress({
 	bufferedEnd?: number | null;
 	waveform?: number[] | null;
 	showHoverTimestamp?: boolean;
+	keyboardStepSeconds?: number;
+	keyboardLargeStepSeconds?: number;
 	onSeek: (seconds: number) => void;
 }) {
 	return (
@@ -281,6 +287,8 @@ function PlaybackProgress({
 					waveform={waveform}
 					disabled={!hasCurrentTrack}
 					showHoverTimestamp={showHoverTimestamp}
+					keyboardStepSeconds={keyboardStepSeconds}
+					keyboardLargeStepSeconds={keyboardLargeStepSeconds}
 					onSeek={onSeek}
 				/>
 			)}

@@ -847,6 +847,8 @@ export function PlayerBar({
 					bufferedEnd={bufferedEnd}
 					waveform={waveform}
 					showHoverTimestamp={playbackPreferences.hoverTimestamp}
+					keyboardStepSeconds={playbackPreferences.seekStepSeconds}
+					keyboardLargeStepSeconds={playbackPreferences.seekStepLargeSeconds}
 					shuffleEnabled={shuffleEnabled}
 					repeatMode={repeatMode}
 					onTogglePlay={togglePlay}

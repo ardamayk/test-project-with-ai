@@ -121,6 +121,29 @@ describe("SeekBar", () => {
 		);
 	});
 
+	it("moves by the configured steps from the arrow keys", () => {
+		const onSeek = vi.fn();
+		render(
+			<SeekBar
+				currentTime={40}
+				duration={100}
+				keyboardStepSeconds={10}
+				keyboardLargeStepSeconds={70}
+				onSeek={onSeek}
+			/>,
+		);
+		// The harness keeps currentTime at 40, so every press starts from 40.
+		const input = screen.getByLabelText("Seek");
+		fireEvent.keyDown(input, { key: "ArrowRight" });
+		expect(onSeek).toHaveBeenLastCalledWith(50);
+		fireEvent.keyDown(input, { key: "ArrowLeft" });
+		expect(onSeek).toHaveBeenLastCalledWith(30);
+		fireEvent.keyDown(input, { key: "ArrowRight", shiftKey: true });
+		expect(onSeek).toHaveBeenLastCalledWith(100);
+		fireEvent.keyDown(input, { key: "ArrowLeft", shiftKey: true });
+		expect(onSeek).toHaveBeenLastCalledWith(0);
+	});
+
 	it("keeps the keyboard path on the native range input", () => {
 		const onSeek = vi.fn();
 		render(<SeekBar currentTime={0} duration={100} onSeek={onSeek} />);

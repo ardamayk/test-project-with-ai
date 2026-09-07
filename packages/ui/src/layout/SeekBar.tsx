@@ -1,3 +1,4 @@
+import type React from "react";
 import {
 	type CSSProperties,
 	type PointerEvent as ReactPointerEvent,
@@ -34,6 +35,9 @@ type SeekBarProps = {
 	waveform?: number[] | null;
 	disabled?: boolean;
 	showHoverTimestamp?: boolean;
+	/** Arrow-key step on the focused bar; Shift uses the large step. */
+	keyboardStepSeconds?: number;
+	keyboardLargeStepSeconds?: number;
 	onSeek: (seconds: number) => void;
 	className?: string;
 };
@@ -51,10 +55,24 @@ export function SeekBar({
 	waveform = null,
 	disabled = false,
 	showHoverTimestamp = true,
+	keyboardStepSeconds = 5,
+	keyboardLargeStepSeconds = 30,
 	onSeek,
 	className,
 }: SeekBarProps) {
 	const hasWaveform = Boolean(waveform && waveform.length > 0);
+	// The global shortcuts leave focused range inputs alone, so the bar
+	// handles its own arrows and applies the same seek steps as the shortcuts.
+	const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+		if (!canSeek) return;
+		if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+		event.preventDefault();
+		const step = event.shiftKey
+			? keyboardLargeStepSeconds
+			: keyboardStepSeconds;
+		const delta = event.key === "ArrowRight" ? step : -step;
+		onSeek(Math.min(duration, Math.max(0, currentTime + delta)));
+	};
 	const rootRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const tooltipId = useId();
@@ -170,10 +188,11 @@ export function SeekBar({
 				step={0.001}
 				value={displayedFraction}
 				onChange={(event) => {
-					// Keyboard path: the pointer path never reaches onChange because
-					// the wrapper claims pointer events.
+					// Home/End and page keys still arrive here; arrows are handled
+					// above with the configured steps.
 					if (canSeek) onSeek(Number(event.target.value) * duration);
 				}}
+				onKeyDown={handleKeyDown}
 				className={cn(
 					"player-seek-slider relative min-w-0 flex-1 disabled:opacity-100",
 					hasWaveform && "player-seek-slider--waveform",

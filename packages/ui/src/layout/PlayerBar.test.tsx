@@ -536,6 +536,26 @@ describe("PlayerBar", () => {
 		expect(screen.queryByRole("dialog", { name: "Lyrics" })).toBeNull();
 	});
 
+	it("gives every Player Bar control an accessible name", async () => {
+		renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ outputMode: "system" }),
+		);
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		const bar = screen.getByTestId("player-bar");
+		const unnamed = Array.from(bar.querySelectorAll("button, input")).filter(
+			(control) =>
+				!(
+					control.getAttribute("aria-label") ||
+					control.getAttribute("aria-labelledby") ||
+					control.textContent?.trim()
+				),
+		);
+		expect(unnamed).toEqual([]);
+	});
+
 	it("favorites the current saved Radio Station from the Player Bar", async () => {
 		const onToggleStationFavorite = vi.fn();
 		render(
