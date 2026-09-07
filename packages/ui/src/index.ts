@@ -61,6 +61,7 @@ export {
 	getTrackGenreNames,
 	type TrackDetailRow,
 } from "./playback/track-details";
+export { usePlaybackKeyboardShortcuts } from "./playback/use-playback-keyboard-shortcuts";
 export { ThemeProvider } from "./theme/ThemeProvider";
 export * from "./widgets";
 export {

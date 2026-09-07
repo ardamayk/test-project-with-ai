@@ -26,6 +26,7 @@ import {
 	formatBitDepth,
 	formatSampleRate,
 } from "../playback/track-details";
+import { usePlaybackKeyboardShortcuts } from "../playback/use-playback-keyboard-shortcuts";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
@@ -149,6 +150,7 @@ export function PlayerBar({
 		getAlbumCoverUrl,
 		getTrackLyrics,
 	} = usePlayback();
+	usePlaybackKeyboardShortcuts({ togglePlay, navigatePrevious, navigateNext });
 	const {
 		listPlaylists,
 		getPlaylist,
