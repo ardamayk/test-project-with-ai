@@ -27,6 +27,9 @@ type DesktopPlaybackBridge = {
 	togglePlay(): Promise<PlaybackSessionState>;
 	seek(seconds: number): Promise<PlaybackSessionState>;
 	setVolume(value: number): Promise<PlaybackSessionState>;
+	setPlaybackRate(rate: number): Promise<PlaybackSessionState>;
+	setStopAfterCurrent(enabled: boolean): Promise<PlaybackSessionState>;
+	setTransitionFade(milliseconds: number): Promise<PlaybackSessionState>;
 	setProcessingProfile(
 		profile: ProcessingProfile,
 	): Promise<PlaybackSessionState>;
@@ -57,6 +60,12 @@ const tauriPlaybackBridge: DesktopPlaybackBridge = {
 	togglePlay: () => invoke("desktop_playback_toggle_play"),
 	seek: (seconds) => invoke("desktop_playback_seek", { seconds }),
 	setVolume: (value) => invoke("desktop_playback_set_volume", { value }),
+	setPlaybackRate: (rate) =>
+		invoke("desktop_playback_set_playback_rate", { rate }),
+	setStopAfterCurrent: (enabled) =>
+		invoke("desktop_playback_set_stop_after_current", { enabled }),
+	setTransitionFade: (milliseconds) =>
+		invoke("desktop_playback_set_transition_fade", { milliseconds }),
 	setProcessingProfile: (profile) =>
 		invoke("desktop_playback_set_processing_profile", { profile }),
 	setReplayGainMode: (mode) =>
@@ -153,6 +162,18 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 
 	setVolume(value: number) {
 		this.runCommand(() => this.bridge.setVolume(value));
+	}
+
+	setPlaybackRate(rate: number) {
+		this.runCommand(() => this.bridge.setPlaybackRate(rate));
+	}
+
+	setStopAfterCurrent(enabled: boolean) {
+		this.runCommand(() => this.bridge.setStopAfterCurrent(enabled));
+	}
+
+	setTransitionFade(milliseconds: number) {
+		this.runCommand(() => this.bridge.setTransitionFade(milliseconds));
 	}
 
 	setProcessingProfile(profile: ProcessingProfile) {

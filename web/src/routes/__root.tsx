@@ -1,5 +1,6 @@
 import {
 	AppShell,
+	defaultPlayback,
 	defaultPreferences,
 	LayoutProvider,
 	type PlaybackApi,
@@ -122,7 +123,11 @@ function ConnectedRootLayout() {
 				<PlaybackProvider
 					api={playbackApi}
 					engine={playbackEngine}
-					autoSkipOnErrorSeconds={initial.playback.autoSkipOnErrorSeconds}
+					autoSkipOnErrorSeconds={
+						// Older servers answer without a playback section.
+						initial.playback?.autoSkipOnErrorSeconds ??
+						defaultPlayback.autoSkipOnErrorSeconds
+					}
 				>
 					<ImportSessionProvider>
 						<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>

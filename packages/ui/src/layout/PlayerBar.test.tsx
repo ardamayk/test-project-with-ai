@@ -366,7 +366,7 @@ describe("PlayerBar", () => {
 		expect(screen.getByLabelText("Quality 24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("Add to playlist")).toBeTruthy();
-		expect(screen.queryByText("Play next")).toBeNull();
+		expect(screen.getByRole("menuitem", { name: "Play next" })).toBeTruthy();
 		expect(screen.getByText("Go to album")).toBeTruthy();
 		expect(screen.getByText("Go to artist")).toBeTruthy();
 		expect(
@@ -449,6 +449,66 @@ describe("PlayerBar", () => {
 		const play = vi.spyOn(engine, "play");
 		fireEvent.click(within(banner).getByRole("button", { name: "Retry" }));
 		expect(play).toHaveBeenCalledOnce();
+	});
+
+	it("changes speed, arms the sleep timer and queues the Track from the actions menu", async () => {
+		const { engine } = renderPlayerBar();
+		const setPlaybackRate = vi.spyOn(engine, "setPlaybackRate");
+		await openActionsMenu();
+
+		fireEvent.click(screen.getByRole("menuitemradio", { name: "1.5×" }));
+		expect(setPlaybackRate).toHaveBeenLastCalledWith(1.5);
+
+		fireEvent.click(screen.getByRole("menuitemradio", { name: "After track" }));
+		expect(engine.getState().stopAfterCurrent).toBe(true);
+
+		fireEvent.click(screen.getByRole("menuitem", { name: "Add to queue" }));
+		await act(async () => {});
+		expect(api.appendQueueItem).toHaveBeenCalledWith(
+			track.id,
+			expect.any(String),
+		);
+	});
+
+	it("shows the next Queue item as Up next and jumps to it", async () => {
+		const nextTrack = { ...track, id: "track-2", title: "Track 2" };
+		const twoItemApi: PlaybackApi = {
+			...api,
+			getQueue: vi.fn(async () => ({
+				items: [
+					{ id: "item-1", trackId: track.id, position: 0, track },
+					{
+						id: "item-2",
+						trackId: nextTrack.id,
+						position: 1,
+						track: nextTrack,
+					},
+				],
+				revision: "1",
+			})),
+		};
+		const engine = new InMemoryPlaybackEngine();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={twoItemApi} engine={engine}>
+					<PlaybackStarter />
+					<PlayerBar />
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		await act(async () => {});
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		const upNext = screen.getByTestId("up-next");
+		expect(upNext.textContent).toContain("Track 2");
+		await act(async () => {
+			fireEvent.click(upNext);
+		});
+		expect(engine.getState().source).toMatchObject({
+			track: { id: "track-2" },
+		});
 	});
 
 	it("favorites the current saved Radio Station from the Player Bar", async () => {

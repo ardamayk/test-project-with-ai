@@ -64,6 +64,7 @@ export {
 	getTrackGenreNames,
 	type TrackDetailRow,
 } from "./playback/track-details";
+export { type AbRepeat, useAbRepeat } from "./playback/use-ab-repeat";
 export { useMute } from "./playback/use-mute";
 export {
 	describePlaybackShortcuts,
@@ -72,6 +73,12 @@ export {
 	shouldIgnorePlaybackShortcut,
 	usePlaybackKeyboardShortcuts,
 } from "./playback/use-playback-keyboard-shortcuts";
+export {
+	type SleepTimer,
+	type SleepTimerMode,
+	type SleepTimerRequest,
+	useSleepTimer,
+} from "./playback/use-sleep-timer";
 export { ThemeProvider } from "./theme/ThemeProvider";
 export * from "./widgets";
 export {

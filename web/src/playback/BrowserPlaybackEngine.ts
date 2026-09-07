@@ -19,6 +19,8 @@ export interface BrowserPlaybackMedia extends EventTarget {
 		start(i: number): number;
 		end(i: number): number;
 	};
+	/** Optional: speed multiplier; browsers preserve pitch by default. */
+	playbackRate?: number;
 	canPlayType(type: string): string;
 	play(): Promise<void>;
 	pause(): void;
@@ -78,7 +80,11 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	private readonly loadHlsFactory: BrowserHlsFactoryLoader;
 	private readonly listeners = new Set<PlaybackSessionListener>();
 	private readonly navigationListeners = new Set<PlaybackNavigationListener>();
-	private state: PlaybackSessionState = { ...DEFAULT_PLAYBACK_SESSION_STATE };
+	private state: PlaybackSessionState = {
+		...DEFAULT_PLAYBACK_SESSION_STATE,
+		// The audio element reloads between tracks, so there is always a gap.
+		isGapless: false,
+	};
 	private hls: BrowserHls | null = null;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private stallTimer: ReturnType<typeof setTimeout> | null = null;
@@ -202,6 +208,16 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		const volume = Math.min(1, Math.max(0, value));
 		this.media.volume = volume;
 		this.update({ volume });
+	}
+
+	setPlaybackRate(rate: number) {
+		const playbackRate = Math.min(2, Math.max(0.5, rate));
+		if ("playbackRate" in this.media) this.media.playbackRate = playbackRate;
+		this.update({ playbackRate });
+	}
+
+	setStopAfterCurrent(enabled: boolean) {
+		this.update({ stopAfterCurrent: enabled });
 	}
 
 	toggleShuffle() {
@@ -346,6 +362,10 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.destroyHls();
 		this.media.removeAttribute("src");
 		this.media.load();
+		// load() resets the element's rate in some browsers; keep the setting.
+		if ("playbackRate" in this.media && this.state.playbackRate) {
+			this.media.playbackRate = this.state.playbackRate;
+		}
 		const sourceUrl =
 			source.type === "track" ? source.playbackUrl : source.sourceUrl;
 		const isHlsSource = isHlsStream(sourceUrl);

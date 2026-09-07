@@ -4,10 +4,15 @@ import {
 	Check,
 	ChevronRight,
 	Download,
+	Gauge,
 	Heart,
 	Info,
+	ListEnd,
+	ListPlus,
+	MoonStar,
 	MoreVertical,
 	Plus,
+	Repeat1,
 	X,
 } from "lucide-react";
 import {
@@ -43,6 +48,10 @@ import {
 } from "./PlayerBarControls";
 import { buildQualityDetailRows } from "./QualityDetailsCard";
 import { ShortcutHelpOverlay } from "./ShortcutHelpOverlay";
+import { UpNextPeek } from "./UpNextPeek";
+
+const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
+const SLEEP_TIMER_MINUTES = [15, 30, 60] as const;
 
 const RECENT_PLAYLISTS_KEY = "navidrome-recent-playlists";
 const RECENT_PLAYLIST_LIMIT = 2;
@@ -148,6 +157,10 @@ export function PlayerBar({
 		duration,
 		bufferedEnd,
 		volume,
+		playbackRate,
+		isGapless,
+		sleepTimer,
+		abRepeat,
 		shuffleEnabled,
 		repeatMode,
 		playbackError,
@@ -159,6 +172,10 @@ export function PlayerBar({
 		cycleRepeatMode,
 		seek,
 		setVolume,
+		setPlaybackRate,
+		setTransitionFade,
+		playNext,
+		addToQueue,
 		selectExclusiveOutput,
 		fallbackToSystemOutput,
 		enableAdaptiveSystemRate,
@@ -169,6 +186,20 @@ export function PlayerBar({
 		getTrackLyrics,
 	} = usePlayback();
 	const { toggleMute } = useMute(volume, setVolume);
+	// Playback Preferences are the source of truth for speed and fade; push
+	// them into whichever engine is active when they change. The setters are
+	// read through a ref: they are recreated on every session update, and
+	// depending on them would re-apply the preference in a loop.
+	const engineSettersRef = useRef({ setPlaybackRate, setTransitionFade });
+	engineSettersRef.current = { setPlaybackRate, setTransitionFade };
+	useEffect(() => {
+		engineSettersRef.current.setPlaybackRate(playbackPreferences.playbackRate);
+	}, [playbackPreferences.playbackRate]);
+	useEffect(() => {
+		engineSettersRef.current.setTransitionFade(
+			playbackPreferences.transitionFadeMs,
+		);
+	}, [playbackPreferences.transitionFadeMs]);
 	const canSeek = Boolean(currentTrack);
 	const seekBy = useCallback(
 		(delta: number) => {
@@ -474,6 +505,25 @@ export function PlayerBar({
 		});
 	};
 
+	const handlePlayNext = () => {
+		if (!currentTrack) return;
+		closeActionsMenu();
+		void playNext(currentTrack.id);
+	};
+
+	const handleAddToQueue = () => {
+		if (!currentTrack) return;
+		closeActionsMenu();
+		void addToQueue(currentTrack.id);
+	};
+
+	const sleepTimerLabel =
+		sleepTimer.mode.kind === "after-track"
+			? "After this track"
+			: sleepTimer.mode.kind === "minutes"
+				? `${formatRemaining(sleepTimer.remainingSeconds)} left`
+				: "Off";
+
 	const notifyPlaylistMutated = () => {
 		onPlaylistMutated?.();
 	};
@@ -531,14 +581,14 @@ export function PlayerBar({
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">
 				<section
 					aria-label="Now playing"
-					className="flex min-w-[200px] flex-[1_0_0] items-center gap-4 justify-self-start"
+					className="@container/now-playing flex min-w-[200px] flex-[1_0_0] items-center gap-4 justify-self-start"
 				>
 					<AlbumArt
 						coverUrl={artworkUrl}
 						title={nowPlayingTitle}
 						className="size-14 shrink-0 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
 					/>
-					<div className="min-w-0 overflow-hidden">
+					<div className="min-w-0 flex-1 overflow-hidden">
 						<div className="flex max-w-full min-w-0 items-center">
 							<p
 								className="min-w-0 truncate font-medium text-[var(--player-title)] text-sm"
@@ -639,10 +689,89 @@ export function PlayerBar({
 										}
 										onCreate={() => void handleCreatePlaylist()}
 									/>
+									<MenuButton onClick={handlePlayNext}>
+										<ListEnd className="size-3.5" />
+										Play next
+									</MenuButton>
+									<MenuButton onClick={handleAddToQueue}>
+										<ListPlus className="size-3.5" />
+										Add to queue
+									</MenuButton>
 									<MenuButton onClick={handleGoToAlbum}>Go to album</MenuButton>
 									<MenuButton onClick={handleGoToArtist}>
 										Go to artist
 									</MenuButton>
+									<MenuSection
+										icon={<Gauge className="size-3.5" />}
+										label="Speed"
+										value={`${playbackRate}×`}
+									>
+										{PLAYBACK_RATES.map((rate) => (
+											<MenuChoice
+												key={rate}
+												checked={playbackRate === rate}
+												label={`${rate}×`}
+												onClick={() => setPlaybackRate(rate)}
+											/>
+										))}
+									</MenuSection>
+									<MenuSection
+										icon={<Repeat1 className="size-3.5" />}
+										label="A-B repeat"
+										value={
+											abRepeat.isActive
+												? `${formatMenuTime(abRepeat.a)}–${formatMenuTime(abRepeat.b)}`
+												: abRepeat.a !== null
+													? `A ${formatMenuTime(abRepeat.a)}`
+													: "Off"
+										}
+									>
+										<MenuChoice
+											label="Set A"
+											onClick={() => abRepeat.setPoint("a")}
+										/>
+										<MenuChoice
+											label="Set B"
+											disabled={abRepeat.a === null}
+											onClick={() => abRepeat.setPoint("b")}
+										/>
+										<MenuChoice
+											label="Clear"
+											disabled={abRepeat.a === null && abRepeat.b === null}
+											onClick={abRepeat.clear}
+										/>
+									</MenuSection>
+									<MenuSection
+										icon={<MoonStar className="size-3.5" />}
+										label="Sleep timer"
+										value={sleepTimerLabel}
+									>
+										<MenuChoice
+											checked={sleepTimer.mode.kind === "off"}
+											label="Off"
+											onClick={() => sleepTimer.setSleepTimer({ kind: "off" })}
+										/>
+										<MenuChoice
+											checked={sleepTimer.mode.kind === "after-track"}
+											label="After track"
+											onClick={() =>
+												sleepTimer.setSleepTimer({ kind: "after-track" })
+											}
+										/>
+										{SLEEP_TIMER_MINUTES.map((minutes) => (
+											<MenuChoice
+												key={minutes}
+												checked={
+													sleepTimer.mode.kind === "minutes" &&
+													sleepTimer.mode.minutes === minutes
+												}
+												label={`${minutes} min`}
+												onClick={() =>
+													sleepTimer.setSleepTimer({ kind: "minutes", minutes })
+												}
+											/>
+										))}
+									</MenuSection>
 									<MenuButton disabled>
 										<Download className="size-3.5" />
 										Download
@@ -655,6 +784,7 @@ export function PlayerBar({
 							</Portal>
 						) : null}
 					</div>
+					{playbackPreferences.showUpNext ? <UpNextPeek /> : null}
 				</section>
 
 				<PlaybackControls
@@ -680,6 +810,7 @@ export function PlayerBar({
 					qualityLabel={qualityLabel}
 					isLossless={isLosslessFormat(currentTrack?.format)}
 					qualityDetailRows={qualityDetailRows}
+					isGapless={isGapless === true && hasActiveSource}
 					volume={volume}
 					onToggleMute={toggleMute}
 					signalControl={
@@ -959,5 +1090,89 @@ function TrackInfoDialog({
 				</div>
 			</div>
 		</Portal>
+	);
+}
+
+function formatMenuTime(seconds: number | null): string {
+	if (seconds === null || !Number.isFinite(seconds)) return "–";
+	const minutes = Math.floor(seconds / 60);
+	const remaining = Math.floor(seconds % 60);
+	return `${minutes}:${remaining.toString().padStart(2, "0")}`;
+}
+
+function formatRemaining(seconds: number | null): string {
+	if (seconds === null) return "";
+	const minutes = Math.ceil(seconds / 60);
+	return minutes <= 1 ? "<1 min" : `${minutes} min`;
+}
+
+/** Labelled group inside the actions menu holding a row of choices. */
+function MenuSection({
+	icon,
+	label,
+	value,
+	children,
+}: {
+	icon: ReactNode;
+	label: string;
+	value: string;
+	children: ReactNode;
+}) {
+	return (
+		<fieldset
+			aria-label={label}
+			className="m-0 mt-1 min-w-0 border-0 border-border border-t p-0 pt-1"
+		>
+			<div className="flex items-center justify-between gap-2 px-2 py-1 text-[0.625rem] text-caption uppercase tracking-wide">
+				<span className="flex items-center gap-1.5">
+					{icon}
+					{label}
+				</span>
+				<span className="normal-case tabular-nums">{value}</span>
+			</div>
+			<div className="flex flex-wrap gap-1 px-1 pb-1">{children}</div>
+		</fieldset>
+	);
+}
+
+function MenuChoice({
+	label,
+	checked,
+	disabled = false,
+	onClick,
+}: {
+	label: string;
+	checked?: boolean;
+	disabled?: boolean;
+	onClick: () => void;
+}) {
+	const className = cn(
+		"rounded-sm border border-border px-2 py-0.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50",
+		checked && "border-primary bg-muted text-heading",
+	);
+	if (checked === undefined) {
+		return (
+			<button
+				type="button"
+				role="menuitem"
+				disabled={disabled}
+				className={className}
+				onClick={onClick}
+			>
+				{label}
+			</button>
+		);
+	}
+	return (
+		<button
+			type="button"
+			role="menuitemradio"
+			aria-checked={checked}
+			disabled={disabled}
+			className={className}
+			onClick={onClick}
+		>
+			{label}
+		</button>
 	);
 }

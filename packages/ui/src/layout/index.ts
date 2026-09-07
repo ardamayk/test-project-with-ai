@@ -17,4 +17,5 @@ export { ShortcutHelpOverlay } from "./ShortcutHelpOverlay";
 export { SidebarNav } from "./SidebarNav";
 export { Panel, Slot } from "./Slot";
 export { Toaster } from "./Toaster";
+export { UpNextPeek } from "./UpNextPeek";
 export { WidgetDndProvider, WidgetDock } from "./WidgetDock";

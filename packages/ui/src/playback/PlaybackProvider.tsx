@@ -36,6 +36,8 @@ import type {
 	ReplayGainMode,
 } from "./processing";
 import type { PlaybackTelemetry } from "./telemetry";
+import { type AbRepeat, useAbRepeat } from "./use-ab-repeat";
+import { type SleepTimer, useSleepTimer } from "./use-sleep-timer";
 import {
 	type PlaybackQueueApi,
 	useSynchronizedQueue,
@@ -98,6 +100,11 @@ type PlaybackContextValue = {
 	duration: number;
 	bufferedEnd: number | null;
 	volume: number;
+	playbackRate: number;
+	/** Whether the engine plays consecutive tracks without a gap; null when unknown. */
+	isGapless: boolean | null;
+	sleepTimer: SleepTimer;
+	abRepeat: AbRepeat;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	playbackError: PlaybackError | null;
@@ -119,6 +126,10 @@ type PlaybackContextValue = {
 	cycleRepeatMode: () => void;
 	seek: (seconds: number) => void;
 	setVolume: (value: number) => void;
+	setPlaybackRate: (rate: number) => void;
+	setTransitionFade: (milliseconds: number) => void;
+	/** Appends a Track to the end of the Queue. */
+	addToQueue: (trackId: string) => Promise<void>;
 	setProcessingProfile: (profile: ProcessingProfile) => void;
 	setReplayGainMode: (mode: ReplayGainMode) => void;
 	setEqualizerPreset: (preset: Exclude<EqualizerPreset, "custom">) => void;
@@ -333,8 +344,16 @@ export function PlaybackProvider({
 	useEffect(() => {
 		if (engine.syncQueueContext) return;
 		if (session.status !== "ended" || session.source?.type !== "track") return;
+		if (session.stopAfterCurrent) {
+			// Sleep timer "after this track": stay on the ended Track and disarm.
+			engine.setStopAfterCurrent?.(false);
+			return;
+		}
 		advanceToNextQueueItem();
 	}, [advanceToNextQueueItem, engine, session]);
+
+	const sleepTimer = useSleepTimer(engine, session);
+	const abRepeat = useAbRepeat(engine, session);
 
 	// A Track can stop being playable while it sits in the Queue: ADR 0010 lets
 	// a deletion elsewhere leave the playing source in place, so its next play
@@ -551,6 +570,10 @@ export function PlaybackProvider({
 			duration: session.duration,
 			bufferedEnd: session.bufferedEnd ?? null,
 			volume: session.volume,
+			playbackRate: session.playbackRate ?? 1,
+			isGapless: session.isGapless ?? null,
+			sleepTimer,
+			abRepeat,
 			shuffleEnabled: session.shuffleEnabled,
 			repeatMode: session.repeatMode,
 			playbackError: session.error
@@ -573,6 +596,10 @@ export function PlaybackProvider({
 			cycleRepeatMode: () => engine.cycleRepeatMode(),
 			seek: (seconds) => engine.seek(seconds),
 			setVolume: (value) => engine.setVolume(value),
+			setPlaybackRate: (rate) => engine.setPlaybackRate?.(rate),
+			setTransitionFade: (milliseconds) =>
+				engine.setTransitionFade?.(milliseconds),
+			addToQueue: (trackId) => queueTracks([trackId]),
 			setProcessingProfile: (profile) => engine.setProcessingProfile?.(profile),
 			setReplayGainMode: (mode) => engine.setReplayGainMode?.(mode),
 			setEqualizerPreset: (preset) => engine.setEqualizerPreset?.(preset),
@@ -602,6 +629,8 @@ export function PlaybackProvider({
 			session,
 			errorCause,
 			errorRecovery,
+			sleepTimer,
+			abRepeat,
 			playTrack,
 			playRadioStation,
 			playRadioCatalogPreview,

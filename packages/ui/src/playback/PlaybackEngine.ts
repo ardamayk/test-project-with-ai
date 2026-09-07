@@ -69,6 +69,12 @@ export type PlaybackSessionState = {
 	/** End of the buffered range in seconds; null or absent when unknown. */
 	bufferedEnd?: number | null;
 	volume: number;
+	/** Speed multiplier; absent means 1. */
+	playbackRate?: number;
+	/** Sleep timer "after this track": the engine ends instead of advancing. */
+	stopAfterCurrent?: boolean;
+	/** Whether the engine plays consecutive tracks without a gap; null when unknown. */
+	isGapless?: boolean | null;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	error: PlaybackError | null;
@@ -98,6 +104,10 @@ export interface PlaybackEngine {
 	togglePlay(): void;
 	seek(seconds: number): void;
 	setVolume(value: number): void;
+	setPlaybackRate?(rate: number): void;
+	setStopAfterCurrent?(enabled: boolean): void;
+	/** Volume ramp around user-initiated transitions, in milliseconds; 0 disables. */
+	setTransitionFade?(milliseconds: number): void;
 	setProcessingProfile?(profile: ProcessingProfile): void;
 	setReplayGainMode?(mode: ReplayGainMode): void;
 	setEqualizerPreset?(preset: Exclude<EqualizerPreset, "custom">): void;

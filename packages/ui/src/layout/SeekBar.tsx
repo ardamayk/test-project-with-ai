@@ -125,7 +125,6 @@ export function SeekBar({
 	const showTooltip = showHoverTimestamp && canSeek && tooltipFraction !== null;
 
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: pointer wrapper; the range input inside is the control.
 		<div
 			ref={rootRef}
 			data-testid="seek-bar"

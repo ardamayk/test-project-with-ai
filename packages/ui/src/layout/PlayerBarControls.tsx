@@ -287,6 +287,8 @@ type VolumeAndQueueControlsProps = {
 	isLossless: boolean;
 	/** Stream details shown on hover; empty hides the card. */
 	qualityDetailRows?: QualityDetailRow[];
+	/** Shows a small badge when the engine plays tracks without gaps. */
+	isGapless?: boolean;
 	volume: number;
 	signalControl?: ReactNode;
 	onToggleQueue: () => void;
@@ -306,6 +308,7 @@ export function VolumeAndQueueControls({
 	qualityLabel,
 	isLossless,
 	qualityDetailRows = [],
+	isGapless = false,
 	volume,
 	signalControl,
 	onToggleQueue,
@@ -320,6 +323,15 @@ export function VolumeAndQueueControls({
 			aria-label="Volume and queue"
 			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
+			{isGapless ? (
+				<span
+					data-testid="gapless-badge"
+					className="hidden shrink-0 rounded-full border border-[var(--sidebar-border)] px-2 py-0.5 text-[10px] text-caption uppercase tracking-wide xl:inline"
+					title="Tracks play back to back without a gap"
+				>
+					Gapless
+				</span>
+			) : null}
 			<QualityDetailsCard rows={qualityDetailRows}>
 				{signalControl ?? (
 					<span
