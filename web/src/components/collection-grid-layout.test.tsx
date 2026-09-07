@@ -21,15 +21,12 @@ describe("collection grid layout", () => {
 
 		const container = screen.getByTestId("collection-container");
 		expect(container.className).toContain("w-full");
-		expect(container.className).toContain("min-[1801px]:mx-auto");
-		expect(container.className).toContain("min-[1801px]:max-w-[1476px]");
+		expect(container.className).toContain("page-content-column");
 
 		const grid = screen.getByText("Card").parentElement;
-		expect(grid?.className).toContain("grid-cols-2");
-		expect(grid?.className).toContain("sm:grid-cols-3");
-		expect(grid?.className).toContain("md:grid-cols-4");
-		expect(grid?.className).toContain("lg:grid-cols-4");
-		expect(grid?.className).toContain("xl:grid-cols-5");
+		expect(grid?.className).toContain(
+			"grid-cols-[repeat(auto-fill,min(250px,100%))]",
+		);
 		expect(grid?.className).toContain("gap-3");
 		expect(grid?.getAttribute("aria-busy")).toBe("true");
 	});

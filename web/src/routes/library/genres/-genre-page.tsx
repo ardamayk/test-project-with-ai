@@ -8,6 +8,7 @@ import { DetailPageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
+import { fetchGenreTracks } from "#/lib/collect-genres";
 import { trackHasGenre } from "#/lib/genre-filter";
 import { sortTracksByAddedAt } from "#/lib/sort-tracks";
 import {
@@ -28,7 +29,7 @@ export function GenreDetailContent({ genre }: { genre: string }) {
 	const { playTrack, queueTracks } = usePlayback();
 	const tracks = useQuery({
 		queryKey: ["library", "tracks", "genre", genre],
-		queryFn: () => apiClient.listTracks({ limit: 500 }),
+		queryFn: () => fetchGenreTracks(apiClient.listTracks),
 		staleTime: 60_000,
 	});
 

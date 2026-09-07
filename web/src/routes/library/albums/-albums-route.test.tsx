@@ -72,18 +72,12 @@ describe("albums route", () => {
 		const header = screen
 			.getByRole("heading", { name: "Albums" })
 			.closest("header");
-		const searchInput = screen.getByPlaceholderText("Search albums...");
 
 		expect(header?.className).toContain("sticky");
 		expect(header?.className).toContain("top-0");
 		expect(header?.className).toContain("py-3");
 		expect(header?.className).not.toContain("pt-7");
-		expect(
-			header?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
-		).toBeTruthy();
-		expect(searchInput.closest("header")).toBe(header);
-		expect(searchInput.className).toContain("h-11");
-		expect(searchInput.className).toContain("pl-10");
+		expect(header?.querySelector(".page-content-column")).toBeTruthy();
 		expect(screen.getByTestId("albums-page-shell").className).toContain(
 			"overflow-hidden",
 		);
@@ -98,13 +92,13 @@ describe("albums route", () => {
 		);
 		const collectionContainer = screen
 			.getByTestId("albums-page-content")
-			.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]");
+			.querySelector(".page-content-column");
 		expect(collectionContainer).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "Scan library" })).toBeNull();
 	});
 
-	it("opens album filters in a drawer without moving search out of the header", async () => {
+	it("opens album filters in a drawer from the header", async () => {
 		renderWithQuery(<AlbumsPage />);
 
 		await screen.findByText("1989");
@@ -112,7 +106,7 @@ describe("albums route", () => {
 			.getByRole("heading", { name: "Albums" })
 			.closest("header");
 		expect(
-			screen.getByPlaceholderText("Search albums...").closest("header"),
+			screen.getByRole("button", { name: "Filters" }).closest("header"),
 		).toBe(header);
 		fireEvent.click(screen.getByRole("button", { name: "Filters" }));
 		const drawer = await screen.findByRole("dialog", {
@@ -168,38 +162,12 @@ describe("albums route", () => {
 		expect(screen.queryByRole("status")).toBeNull();
 	});
 
-	it("distinguishes an empty library from filters with no matches", async () => {
+	it("shows the empty-library copy when there are no albums", async () => {
 		mocks.listAlbums.mockResolvedValue({ items: [] });
 
-		const firstRender = renderWithQuery(<AlbumsPage />);
+		renderWithQuery(<AlbumsPage />);
 
 		expect(await screen.findByText("No albums yet")).toBeTruthy();
 		expect(screen.getByText("Import music to get started.")).toBeTruthy();
-		firstRender.unmount();
-
-		mocks.listAlbums.mockResolvedValue({
-			items: [
-				{
-					id: "album-1",
-					title: "1989",
-					artistName: "Taylor Swift",
-					genres: ["Pop"],
-					trackCount: 2,
-				},
-			],
-		});
-		renderWithQuery(<AlbumsPage />);
-		await screen.findByText("1989");
-		mocks.listAlbums.mockResolvedValue({ items: [] });
-		fireEvent.change(screen.getByPlaceholderText("Search albums..."), {
-			target: { value: "unmatched" },
-		});
-
-		expect(
-			await screen.findByText("No albums match your filters"),
-		).toBeTruthy();
-		expect(
-			screen.getByText("Try adjusting your search or filters."),
-		).toBeTruthy();
 	});
 });

@@ -163,12 +163,12 @@ describe("genre routes", () => {
 		expect(
 			screen
 				.getByTestId("genres-page-content")
-				.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+				.querySelector(".page-content-column"),
 		).toBeTruthy();
 		expect(
 			screen
 				.getByTestId("genres-page-content")
-				.querySelector(".xl\\:grid-cols-5"),
+				.querySelector('[class*="auto-fill"]'),
 		).toBeTruthy();
 		expect(
 			container.querySelector('[data-testid="playlist-card-cover-stack"]'),
@@ -215,7 +215,7 @@ describe("genre routes", () => {
 		await screen.findByRole("heading", { name: "Synthpop" });
 		expect(screen.queryByRole("link", { name: /Back to genres/ })).toBeNull();
 		expect(screen.getByTestId("genre-detail-content").className).toContain(
-			"min-[1801px]:max-w-[1476px]",
+			"page-content-column",
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));

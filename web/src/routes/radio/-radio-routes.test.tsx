@@ -195,10 +195,10 @@ describe("radio routes", () => {
 		const headerInner = screen
 			.getByRole("heading", { name: "Radio Stations" })
 			.closest("header")
-			?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]");
+			?.querySelector(".page-content-column");
 		const content = screen
 			.getByTestId("radio-page-content")
-			.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]");
+			.querySelector(".page-content-column");
 		expect(headerInner).toBeTruthy();
 		expect(content).toBeTruthy();
 	});

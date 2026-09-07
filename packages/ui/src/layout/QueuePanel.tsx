@@ -1,6 +1,6 @@
 import type { QueueItem } from "@repo/api-client";
 import { ListMusic, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { type RefObject, useEffect, useRef } from "react";
 import { cn } from "../lib/utils";
 import { usePlayback } from "../playback/PlaybackProvider";
 import { getQueuePanel } from "../widgets/layout-utils";
@@ -23,6 +23,7 @@ export function QueuePanel({
 	embedded?: boolean;
 } = {}) {
 	const { preferences, togglePanel } = useLayout();
+	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const panelSide = getQueuePanel(preferences.layout.sidebarPosition);
 	const isCollapsed = !embedded && preferences.layout.collapsed[panelSide];
 
@@ -95,7 +96,7 @@ export function QueuePanel({
 					/>
 				)}
 			</div>
-			<div className="flex-1 overflow-y-auto p-3">
+			<div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-3">
 				{queueConflict ? (
 					<p
 						role="alert"
@@ -108,6 +109,7 @@ export function QueuePanel({
 					<p className="text-foreground text-sm">Queue is empty</p>
 				) : (
 					<QueueSections
+						scrollContainerRef={scrollContainerRef}
 						queue={queue}
 						currentIndex={currentIndex}
 						getAlbumCoverUrl={getAlbumCoverUrl}
@@ -153,12 +155,14 @@ type QueueRowProps = {
 };
 
 function QueueSections({
+	scrollContainerRef,
 	queue,
 	currentIndex,
 	getAlbumCoverUrl,
 	onPlay,
 	onRemove,
 }: {
+	scrollContainerRef: RefObject<HTMLDivElement | null>;
 	queue: QueueItem[];
 	currentIndex: number;
 	getAlbumCoverUrl: (albumId: string) => string;
@@ -170,11 +174,19 @@ function QueueSections({
 
 	useEffect(() => {
 		if (!currentItemId) return;
-		currentRowRef.current?.scrollIntoView?.({
-			block: "nearest",
-			behavior: "smooth",
-		});
-	}, [currentItemId]);
+		const row = currentRowRef.current;
+		const viewport = scrollContainerRef.current;
+		if (!row || !viewport) return;
+		const rowBounds = row.getBoundingClientRect();
+		const viewportBounds = viewport.getBoundingClientRect();
+		const offset =
+			rowBounds.top < viewportBounds.top
+				? rowBounds.top - viewportBounds.top
+				: Math.max(0, rowBounds.bottom - viewportBounds.bottom);
+		// scrollIntoView also scrolls ancestors, including the shell when the
+		// closed drawer is translated below it. Only move the queue viewport.
+		if (offset !== 0) viewport.scrollBy?.({ top: offset, behavior: "smooth" });
+	}, [currentItemId, scrollContainerRef]);
 
 	const renderRow = (item: QueueItem, index: number) => {
 		const state =

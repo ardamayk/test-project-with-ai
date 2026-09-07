@@ -1,7 +1,6 @@
-import { MANAGED_IMPORT_CAPABILITY, type Track } from "@repo/api-client";
+import { MANAGED_IMPORT_CAPABILITY } from "@repo/api-client";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import {
 	COLLECTION_PAGE_CONTAINER_CLASS,
 	CollectionPageContainer,
@@ -10,27 +9,14 @@ import { useManagedImport } from "#/components/import-session-provider";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { Button } from "#/components/ui/button";
-import { Input } from "#/components/ui/input";
 import {
 	type ServerCapabilityState,
 	useServerCapabilityState,
 } from "#/hooks/use-server-capability";
 import { apiClient } from "#/lib/api";
-import { filterTracksByText } from "#/lib/filter-tracks";
-
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-	const [debounced, setDebounced] = useState(value);
-
-	useEffect(() => {
-		const timeout = window.setTimeout(() => setDebounced(value), delayMs);
-		return () => window.clearTimeout(timeout);
-	}, [value, delayMs]);
-
-	return debounced;
-}
 
 export function TracksPage() {
-	const tracks = useTrackSearch();
+	const tracks = useTrackLibrary();
 	const managedImport = useManagedImport();
 	const importCapability = useServerCapabilityState(MANAGED_IMPORT_CAPABILITY);
 
@@ -40,8 +26,6 @@ export function TracksPage() {
 			contentTestId="tracks-page-content"
 			header={
 				<TracksHeader
-					search={tracks.search}
-					onSearchChange={tracks.setSearch}
 					onImport={managedImport.open}
 					importCapability={importCapability}
 				/>
@@ -54,41 +38,21 @@ export function TracksPage() {
 	);
 }
 
-function useTrackSearch() {
-	const [search, setSearch] = useState("");
-	const [lastTracks, setLastTracks] = useState<Track[]>([]);
-	const debouncedSearch = useDebouncedValue(search.trim(), 250);
+function useTrackLibrary() {
 	const tracks = useQuery({
-		queryKey: ["library", "tracks", debouncedSearch],
-		queryFn: () =>
-			apiClient.listTracks({ limit: 200, q: debouncedSearch || undefined }),
-		placeholderData: (previous) => previous,
+		queryKey: ["library", "tracks"],
+		queryFn: () => apiClient.listTracks({ limit: 200 }),
 	});
-	const sourceTracks = tracks.data?.items ?? lastTracks;
-	const visibleTracks = useMemo(
-		() => filterTracksByText(sourceTracks, search),
-		[sourceTracks, search],
-	);
-
-	useEffect(() => {
-		if (tracks.data?.items) {
-			setLastTracks(tracks.data.items);
-		}
-	}, [tracks.data?.items]);
-	return { search, setSearch, tracks, sourceTracks, visibleTracks };
+	return { tracks, items: tracks.data?.items ?? [] };
 }
 
 const IMPORT_UNSUPPORTED_TITLE =
 	"This Music Server does not support Managed Import. Update the Music Server to import music.";
 
 function TracksHeader({
-	search,
-	onSearchChange,
 	onImport,
 	importCapability,
 }: {
-	search: string;
-	onSearchChange: (search: string) => void;
 	onImport: () => void;
 	importCapability: ServerCapabilityState;
 }) {
@@ -99,56 +63,32 @@ function TracksHeader({
 	return (
 		<PageHeader
 			title="Tracks"
-			description="All tracks in your library"
 			innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 			actions={
-				<>
-					<div className="relative w-full sm:max-w-md">
-						<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-caption" />
-						<Input
-							className="h-11 rounded-xl bg-[var(--player)] pl-10 text-sm"
-							placeholder="Search tracks…"
-							value={search}
-							onChange={(event) => onSearchChange(event.target.value)}
-						/>
-					</div>
-					<Button
-						type="button"
-						aria-label="Import Music"
-						size="icon"
-						className="size-10 rounded-xl"
-						onClick={onImport}
-						disabled={importUnsupported}
-						title={importUnsupported ? IMPORT_UNSUPPORTED_TITLE : undefined}
-					>
-						<Plus className="size-5" />
-					</Button>
-				</>
+				<Button
+					type="button"
+					aria-label="Import Music"
+					size="icon"
+					className="size-10 rounded-xl"
+					onClick={onImport}
+					disabled={importUnsupported}
+					title={importUnsupported ? IMPORT_UNSUPPORTED_TITLE : undefined}
+				>
+					<Plus className="size-5" />
+				</Button>
 			}
 		/>
 	);
 }
 
-function TrackResults({
-	tracks,
-	sourceTracks,
-	visibleTracks,
-}: ReturnType<typeof useTrackSearch>) {
-	if (tracks.isLoading && sourceTracks.length === 0)
+function TrackResults({ tracks, items }: ReturnType<typeof useTrackLibrary>) {
+	if (tracks.isLoading && items.length === 0)
 		return <p className="text-foreground text-sm">Loading tracks…</p>;
-	if (tracks.isError && sourceTracks.length === 0)
+	if (tracks.isError && items.length === 0)
 		return <p className="text-destructive text-sm">Failed to load tracks</p>;
-	if (visibleTracks.length === 0)
-		return (
-			<p className="text-foreground text-sm">No tracks match this search.</p>
-		);
+	if (items.length === 0)
+		return <p className="text-foreground text-sm">No tracks yet.</p>;
 	return (
-		<TrackList
-			tracks={visibleTracks}
-			showFavorite
-			showMeta
-			compact
-			numbering="list"
-		/>
+		<TrackList tracks={items} showFavorite showMeta compact numbering="list" />
 	);
 }

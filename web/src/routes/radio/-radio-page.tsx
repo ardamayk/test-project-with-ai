@@ -78,7 +78,6 @@ export function RadioPage() {
 			header={
 				<PageHeader
 					title="Radio Stations"
-					description="Tune into curated streams from around the globe or add your own custom URLs."
 					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 					actions={
 						<>

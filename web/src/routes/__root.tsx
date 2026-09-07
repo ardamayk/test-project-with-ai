@@ -7,7 +7,6 @@ import {
 	type PlaybackApi,
 	PlaybackProvider,
 	PlayerBar,
-	SidebarNav,
 	usePlayback,
 } from "@repo/ui";
 import type { QueryClient } from "@tanstack/react-query";
@@ -17,7 +16,9 @@ import {
 	Outlet,
 	useRouterState,
 } from "@tanstack/react-router";
+import { useState } from "react";
 import { ImportSessionProvider } from "#/components/import-session-provider";
+import { LibrarySearchDialog } from "#/components/library-search-dialog";
 import { RootErrorComponent } from "#/components/root-error";
 import { ThemeSync } from "#/components/theme-sync";
 import { isDesktopClient } from "#/desktop/bridge";
@@ -107,6 +108,7 @@ function RootLayout() {
 
 function ConnectedRootLayout() {
 	const queryClient = useQueryClient();
+	const [searchOpen, setSearchOpen] = useState(false);
 	const playbackEngine = getSharedPlaybackEngine();
 	const isMiniPlayer = useRouterState({
 		select: (state) => isMiniPlayerRoute(state.location.pathname),
@@ -153,8 +155,15 @@ function ConnectedRootLayout() {
 						<Outlet />
 					) : (
 						<ImportSessionProvider>
-							<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
+							<AppShell
+								bottom={<PlayerBarWithSync />}
+								onSearch={() => setSearchOpen(true)}
+							>
 								<Outlet />
+								<LibrarySearchDialog
+									open={searchOpen}
+									onOpenChange={setSearchOpen}
+								/>
 							</AppShell>
 						</ImportSessionProvider>
 					)}

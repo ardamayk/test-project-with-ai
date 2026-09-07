@@ -103,8 +103,9 @@ describe("album detail route", () => {
 
 		await screen.findByRole("heading", { name: "1989" });
 		const content = screen.getByTestId("album-detail-content");
-		expect(content.className).toContain("min-[1801px]:mx-auto");
-		expect(content.className).toContain("min-[1801px]:max-w-[1476px]");
-		expect(content.parentElement?.className).toContain("md:px-8");
+		expect(content.className).toContain("page-content-column");
+		expect(content.parentElement?.className).toContain(
+			"px-[var(--shell-inset)]",
+		);
 	});
 });

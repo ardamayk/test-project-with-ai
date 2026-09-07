@@ -174,19 +174,17 @@ describe("playlist routes", () => {
 			"[scrollbar-width:none]",
 		);
 		expect(
-			header
-				.closest("header")
-				?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+			header.closest("header")?.querySelector(".page-content-column"),
 		).toBeTruthy();
 		expect(
 			screen
 				.getByTestId("playlists-page-content")
-				.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
+				.querySelector(".page-content-column"),
 		).toBeTruthy();
 		expect(
 			screen
 				.getByTestId("playlists-page-content")
-				.querySelector(".xl\\:grid-cols-5"),
+				.querySelector('[class*="auto-fill"]'),
 		).toBeTruthy();
 
 		const link = await screen.findByRole("link", {
@@ -278,7 +276,7 @@ describe("playlist routes", () => {
 			screen.queryByRole("link", { name: /Back to playlists/ }),
 		).toBeNull();
 		expect(screen.getByTestId("playlist-detail-content").className).toContain(
-			"min-[1801px]:max-w-[1476px]",
+			"page-content-column",
 		);
 		const searchInput = screen.getByPlaceholderText("Search Favorites…");
 		expect(

@@ -476,7 +476,7 @@ export function RadioDiscoverPage() {
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-			<header className="sticky top-0 z-40 shrink-0 border-border border-b bg-background/80 px-6 py-3 backdrop-blur md:px-8">
+			<header className="sticky top-0 z-40 shrink-0 bg-background/80 px-[var(--shell-inset)] py-3 backdrop-blur">
 				<div
 					className={`flex flex-col gap-2 ${COLLECTION_PAGE_CONTAINER_CLASS}`}
 				>
@@ -528,7 +528,7 @@ export function RadioDiscoverPage() {
 				</div>
 			</header>
 
-			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 [scrollbar-width:none] md:px-8 [&::-webkit-scrollbar]:hidden">
+			<div className="min-h-0 flex-1 overflow-y-auto px-[var(--shell-inset)] py-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 				<CollectionPageContainer>
 					{catalog.isLoading ? (
 						<div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,620px),1fr))] gap-4">

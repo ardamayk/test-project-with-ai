@@ -42,14 +42,12 @@ export function PageShell({
 
 export function PageHeader({
 	title,
-	description,
 	actions,
 	footer,
 	className,
 	innerClassName,
 }: {
 	title: string;
-	description?: string;
 	actions?: ReactNode;
 	footer?: ReactNode;
 	className?: string;
@@ -58,7 +56,8 @@ export function PageHeader({
 	return (
 		<header
 			className={cn(
-				"sticky top-0 z-40 shrink-0 border-border border-b bg-background/80 px-6 py-3 backdrop-blur md:px-8",
+				"sticky top-0 z-40 shrink-0 bg-background/80 py-3 backdrop-blur",
+				PAGE_CONTENT_PADDING_CLASS.replace("py-5", ""),
 				className,
 			)}
 		>
@@ -68,11 +67,6 @@ export function PageHeader({
 						<h1 className="font-semibold text-2xl text-heading tracking-normal">
 							{title}
 						</h1>
-						{description ? (
-							<p className="mt-1.5 max-w-2xl text-foreground text-xs">
-								{description}
-							</p>
-						) : null}
 					</div>
 					{actions ? (
 						<div className="flex min-w-0 items-center gap-2 xl:justify-end">

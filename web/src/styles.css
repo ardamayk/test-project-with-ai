@@ -12,6 +12,10 @@
 
 :root {
   --radius: 0.625rem;
+  /* Horizontal inset shared by the Top Nav, page content and Player Bar;
+     wide on large screens, ordinary page padding on small ones. Mirrored by
+     SHELL_INSET_CLASS in packages/ui/src/layout/shell-metrics.ts. */
+  --shell-inset: clamp(1.5rem, 12vw, 17rem);
 }
 
 html[data-theme-preset] {

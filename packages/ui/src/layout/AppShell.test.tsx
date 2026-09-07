@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -6,7 +6,7 @@ import {
 	defaultPreferences,
 	LayoutProvider,
 	PlaybackProvider,
-	SidebarNav,
+	TopNav,
 } from "../index";
 import { InMemoryPlaybackEngine } from "../playback/testing/InMemoryPlaybackEngine";
 
@@ -70,39 +70,65 @@ const mockPlaybackApi = {
 	}),
 };
 
+const collapsedQueuePreferences = {
+	...defaultPreferences,
+	layout: {
+		...defaultPreferences.layout,
+		collapsed: { left: false, right: true },
+	},
+};
+
+function renderShell(
+	ui: ReactNode,
+	preferences: typeof defaultPreferences = defaultPreferences,
+) {
+	return render(
+		<LayoutProvider initialPreferences={preferences}>
+			<PlaybackProvider
+				api={mockPlaybackApi}
+				engine={new InMemoryPlaybackEngine()}
+			>
+				{ui}
+			</PlaybackProvider>
+		</LayoutProvider>,
+	);
+}
+
 describe("AppShell", () => {
 	afterEach(cleanup);
 
-	it("renders main content and widgets", () => {
-		render(
-			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider
-					api={mockPlaybackApi}
-					engine={new InMemoryPlaybackEngine()}
-				>
-					<AppShell>
-						<div>Main content</div>
-					</AppShell>
-				</PlaybackProvider>
-			</LayoutProvider>,
+	it("renders the top nav, main content, queue and widgets", () => {
+		renderShell(
+			<AppShell>
+				<div>Main content</div>
+			</AppShell>,
 		);
 		expect(screen.getByText("Main content")).toBeTruthy();
-		expect(screen.getByText("Nothing playing")).toBeTruthy();
+		expect(screen.getByRole("link", { name: "Albums" })).toBeTruthy();
+		expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
 		expect(screen.getByText("Queue")).toBeTruthy();
+		expect(screen.getByText("Discover (coming soon)")).toBeTruthy();
 	});
 
-	it("aligns the floating player dock with the page content column", () => {
-		const { container } = render(
-			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider
-					api={mockPlaybackApi}
-					engine={new InMemoryPlaybackEngine()}
-				>
-					<AppShell bottom={<div>Player</div>}>
-						<div>Main content</div>
-					</AppShell>
-				</PlaybackProvider>
-			</LayoutProvider>,
+	it("has no side columns: the nav is a top bar and the queue a drawer", () => {
+		const { container } = renderShell(
+			<AppShell>
+				<div>Main content</div>
+			</AppShell>,
+		);
+		expect(container.querySelector("header")).toBeTruthy();
+		expect(container.querySelector("[data-queue-column]")).toBeNull();
+		expect(container.querySelector("[data-queue-drawer]")).toBeTruthy();
+		expect(
+			container.querySelectorAll('[data-slot="resizable-handle"]'),
+		).toHaveLength(0);
+	});
+
+	it("aligns the floating player dock with the shared page inset", () => {
+		const { container } = renderShell(
+			<AppShell bottom={<div>Player</div>}>
+				<div>Main content</div>
+			</AppShell>,
 		);
 		const scrim = container.querySelector("[data-player-scrim]");
 		expect(scrim?.className).toContain("bg-gradient-to-t");
@@ -110,84 +136,76 @@ describe("AppShell", () => {
 		const dock = container.querySelector("[data-player-dock]");
 		const column = container.querySelector("[data-player-dock-column]");
 		expect(dock?.className).toContain("inset-x-0");
-		// Mirrors PAGE_CONTENT_PADDING_CLASS / PAGE_CONTENT_WIDTH_CLASS in web:
-		// padding on the outer region, the centred width box inside it.
-		expect(dock?.className).toContain("px-6");
-		expect(dock?.className).toContain("md:px-8");
-		expect(column?.className).toContain("min-[1801px]:max-w-[1476px]");
-		expect(column?.className).toContain("mx-auto");
+		// Mirrors PAGE_CONTENT_PADDING_CLASS in web: the same --shell-inset.
+		expect(dock?.className).toContain("px-[var(--shell-inset,2rem)]");
+		expect(column?.className).toContain("w-full");
+		expect(column?.className).not.toContain("max-w-");
 	});
 
-	it("does not render resize handles for fixed shell columns", () => {
-		const { container } = render(
-			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider
-					api={mockPlaybackApi}
-					engine={new InMemoryPlaybackEngine()}
-				>
-					<AppShell>
-						<div>Main content</div>
-					</AppShell>
-				</PlaybackProvider>
-			</LayoutProvider>,
+	it("opens the queue drawer and makes room for it in the page", () => {
+		const { container } = renderShell(
+			<AppShell bottom={<div>Player</div>}>
+				<div>Main content</div>
+			</AppShell>,
 		);
-
-		expect(
-			container.querySelectorAll('[data-slot="resizable-handle"]'),
-		).toHaveLength(0);
+		const drawer = container.querySelector(
+			"[data-queue-drawer]",
+		) as HTMLElement;
+		expect(drawer.dataset.state).toBe("open");
+		expect(drawer.getAttribute("aria-hidden")).toBe("false");
+		expect(drawer.className).toContain("translate-y-0");
+		expect(drawer.className).not.toContain("invisible");
+		expect(drawer.style.right).toBe("var(--shell-inset, 2rem)");
+		// Parks above the Player Bar rather than touching it.
+		expect(drawer.style.bottom).toContain("80px");
+		const main = container.querySelector("main") as HTMLElement;
+		expect(main.hasAttribute("data-queue-open")).toBe(true);
+		expect(main.style.paddingRight).toBe("");
+		expect(main.className).toContain(
+			"lg:data-[queue-open]:pr-[var(--queue-drawer-clearance)]",
+		);
 	});
 
-	it("uses a fixed width queue column", () => {
-		const { container } = render(
-			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider
-					api={mockPlaybackApi}
-					engine={new InMemoryPlaybackEngine()}
-				>
-					<AppShell>
-						<div>Main content</div>
-					</AppShell>
-				</PlaybackProvider>
-			</LayoutProvider>,
+	it("keeps the drawer off screen and inert when the queue is collapsed", () => {
+		const { container } = renderShell(
+			<AppShell>
+				<div>Main content</div>
+			</AppShell>,
+			collapsedQueuePreferences,
 		);
-
-		const queueColumn = container.querySelector("[data-queue-column]");
-		expect(queueColumn?.className).toContain("w-80");
+		const drawer = container.querySelector(
+			"[data-queue-drawer]",
+		) as HTMLElement;
+		expect(drawer.dataset.state).toBe("closed");
+		expect(drawer.getAttribute("aria-hidden")).toBe("true");
+		expect(drawer.hasAttribute("inert")).toBe(true);
+		expect(drawer.className).toContain("translate-y-[calc(100%+8rem)]");
+		expect(drawer.className).toContain("invisible");
+		const main = container.querySelector("main") as HTMLElement;
+		expect(main.hasAttribute("data-queue-open")).toBe(false);
+		expect(main.style.paddingRight).toBe("");
+		expect(screen.getByText("Main content")).toBeTruthy();
 	});
 
-	it("sizes the primary nav column to its content instead of saved panel width", () => {
-		const { container } = render(
-			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider
-					api={mockPlaybackApi}
-					engine={new InMemoryPlaybackEngine()}
-				>
-					<AppShell>
-						<div>Main content</div>
-					</AppShell>
-				</PlaybackProvider>
-			</LayoutProvider>,
+	it("closes the drawer from its own close button", () => {
+		const { container } = renderShell(
+			<AppShell>
+				<div>Main content</div>
+			</AppShell>,
 		);
-
-		const navColumn = container.querySelector("aside");
-		expect(navColumn?.className).toContain("w-fit");
-		expect((navColumn as HTMLElement | null)?.style.width).toBe("");
+		fireEvent.click(screen.getByRole("button", { name: "Hide queue" }));
+		const drawer = container.querySelector(
+			"[data-queue-drawer]",
+		) as HTMLElement;
+		expect(drawer.dataset.state).toBe("closed");
 	});
 
-	it("keeps widget content from changing the primary nav column width", () => {
-		const { container } = render(
-			<LayoutProvider initialPreferences={defaultPreferences}>
-				<PlaybackProvider
-					api={mockPlaybackApi}
-					engine={new InMemoryPlaybackEngine()}
-				>
-					<AppShell>
-						<div>Main content</div>
-					</AppShell>
-				</PlaybackProvider>
-			</LayoutProvider>,
+	it("keeps widget content from changing the drawer width", () => {
+		const { container } = renderShell(
+			<AppShell>
+				<div>Main content</div>
+			</AppShell>,
 		);
-
 		const widgetDock = container.querySelector("[data-widget-dock]");
 		expect(widgetDock).toBeTruthy();
 		const className = (widgetDock as HTMLElement | null)?.className ?? "";
@@ -195,48 +213,26 @@ describe("AppShell", () => {
 		expect(className).toContain("min-w-0");
 	});
 
-	it("hides the queue column when the queue panel is collapsed", () => {
-		const collapsedQueuePreferences = {
-			...defaultPreferences,
-			layout: {
-				...defaultPreferences.layout,
-				collapsed: { left: false, right: true },
-			},
-		};
-
-		render(
-			<LayoutProvider initialPreferences={collapsedQueuePreferences}>
-				<PlaybackProvider
-					api={mockPlaybackApi}
-					engine={new InMemoryPlaybackEngine()}
-				>
-					<AppShell>
-						<div>Main content</div>
-					</AppShell>
-				</PlaybackProvider>
-			</LayoutProvider>,
-		);
-
-		expect(screen.queryByText("Queue")).toBeNull();
-		expect(screen.queryByTitle("Queue")).toBeNull();
-		expect(screen.getByText("Main content")).toBeTruthy();
-	});
-
-	it("renders the Figma sidebar navigation treatment", () => {
-		render(
-			<LayoutProvider initialPreferences={defaultPreferences}>
-				<SidebarNav />
-			</LayoutProvider>,
-		);
-
-		const radioLink = screen.getByRole("link", { name: "Radio Stations" });
-		expect(screen.getByText("Premium Account")).toBeTruthy();
-		expect(screen.queryByText("Help (soon)")).toBeNull();
+	it("renders the library sections, Search and Settings in the top nav", () => {
+		const onSearch = vi.fn();
+		render(<TopNav onSearch={onSearch} />);
+		for (const label of [
+			"Albums",
+			"Artists",
+			"Genres",
+			"Radio",
+			"Tracks",
+			"Playlists",
+		]) {
+			expect(screen.getByRole("link", { name: label })).toBeTruthy();
+		}
+		fireEvent.click(screen.getByRole("button", { name: "Search" }));
+		expect(onSearch).toHaveBeenCalledTimes(1);
+		const radioLink = screen.getByRole("link", { name: "Radio" });
 		expect(radioLink.className).toContain(
 			"[&.active]:bg-[var(--shell-active)]",
 		);
-		expect(radioLink.className).toContain(
-			"[&.active]:text-[var(--shell-active-foreground)]",
-		);
+		expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
+		expect(screen.queryByText("Premium Account")).toBeNull();
 	});
 });
