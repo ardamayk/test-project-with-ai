@@ -182,6 +182,7 @@ describe("PlayerBar", () => {
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+		vi.restoreAllMocks();
 	});
 
 	it("renders an empty disabled playback state", () => {
@@ -488,7 +489,116 @@ describe("PlayerBar", () => {
 		expect(screen.getByText("No lyrics yet")).toBeTruthy();
 	});
 
-	it("shows the next Queue item as Up next and jumps to it", async () => {
+	it("keeps loaded lyrics while playback updates without another request", async () => {
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByText("Line one")).toBeTruthy();
+		await act(async () => engine.seek(12));
+		await act(async () => engine.pause());
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("Line two")).toBeTruthy();
+		expect(screen.queryByText("Loading lyrics…")).toBeNull();
+	});
+
+	it("keeps a lyrics failure settled until the view is reopened", async () => {
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+		vi.mocked(api.getTrackLyrics)?.mockRejectedValueOnce(
+			new Error("Server unavailable"),
+		);
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByRole("alert")).toBeTruthy();
+		await act(async () => engine.seek(12));
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("Lyrics could not be loaded")).toBeTruthy();
+		expect(warning).toHaveBeenCalledWith(
+			"Failed to load track lyrics",
+			expect.objectContaining({ trackId: track.id }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Close lyrics" }));
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByText("Line one")).toBeTruthy();
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(2);
+	});
+
+	it("ignores old lyrics that arrive after the track changes", async () => {
+		let finishOldLyrics = (_result: { lyrics: string }) => {};
+		vi.mocked(api.getTrackLyrics)?.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishOldLyrics = resolve;
+				}),
+		);
+		vi.mocked(api.getTrackLyrics)?.mockResolvedValueOnce({
+			lyrics: "Current track lyrics",
+		});
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(screen.getByText("Loading lyrics…")).toBeTruthy();
+		await act(async () =>
+			engine.play({
+				type: "track",
+				track: { ...track, id: "track-2", title: "Track 2" },
+				playbackUrl: "/stream/track-2",
+			}),
+		);
+		expect(await screen.findByText("Current track lyrics")).toBeTruthy();
+		await act(async () => finishOldLyrics({ lyrics: "Stale lyrics" }));
+		expect(screen.queryByText("Stale lyrics")).toBeNull();
+		expect(screen.getByText("Current track lyrics")).toBeTruthy();
+		expect(api.getTrackLyrics).toHaveBeenNthCalledWith(2, "track-2");
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(2);
+	});
+
+	it("shows gapless as an icon before quality only for an active source", async () => {
+		const { engine } = renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ isGapless: true }),
+		);
+		expect(
+			screen.queryByRole("img", { name: "Gapless playback enabled" }),
+		).toBeNull();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		const icon = screen.getByRole("img", { name: "Gapless playback enabled" });
+		expect(icon.textContent).toBe("");
+		const quality = screen.getByRole("note", { name: /^Quality/ });
+		expect(
+			icon.compareDocumentPosition(quality) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		await act(async () => engine.stop());
+		expect(
+			screen.queryByRole("img", { name: "Gapless playback enabled" }),
+		).toBeNull();
+	});
+
+	it("omits the gapless icon when the engine does not support it", async () => {
+		renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ isGapless: false }),
+		);
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		expect(
+			screen.queryByRole("img", { name: "Gapless playback enabled" }),
+		).toBeNull();
+	});
+
+	it.each([
+		"Up next",
+		"Next",
+	] as const)("advances to the next Queue item using %s", async (control) => {
 		const nextTrack = { ...track, id: "track-2", title: "Track 2" };
 		const twoItemApi: PlaybackApi = {
 			...api,
@@ -522,7 +632,11 @@ describe("PlayerBar", () => {
 		const upNext = screen.getByTestId("up-next");
 		expect(upNext.textContent).toContain("Track 2");
 		await act(async () => {
-			fireEvent.click(upNext);
+			fireEvent.click(
+				control === "Up next"
+					? upNext
+					: screen.getByRole("button", { name: "Next" }),
+			);
 		});
 		expect(engine.getState().source).toMatchObject({
 			track: { id: "track-2" },
