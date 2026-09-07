@@ -18,6 +18,7 @@ pub(crate) enum DesktopPlaybackAction {
     SeekTo(f64),
     /// Software volume in 0..=1, from the MPRIS Volume property.
     SetVolume(f64),
+    SetRate(f64),
     ToggleMiniPlayer,
     Quit,
 }
@@ -58,6 +59,7 @@ pub(crate) fn dispatch_desktop_playback_action(
         DesktopPlaybackAction::SetVolume(volume) => shell
             .set_software_volume(volume.clamp(0.0, 1.0))
             .map_err(PlaybackCommandError::new),
+        DesktopPlaybackAction::SetRate(rate) => playback.set_playback_rate(rate).map(|_| ()),
         DesktopPlaybackAction::ToggleMiniPlayer => shell
             .toggle_mini_window()
             .map_err(PlaybackCommandError::new),

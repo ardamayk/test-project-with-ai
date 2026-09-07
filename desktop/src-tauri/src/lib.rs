@@ -607,7 +607,11 @@ fn desktop_playback_enable_adaptive_system_rate(
             "Adaptive System Rate preference could not be saved. System Output was restored.",
         ));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        &state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn restore_native_output_mode(
@@ -790,7 +794,7 @@ fn update_processing_locked(
     processing: &mut ProcessingController,
     change: impl FnOnce(&mut ProcessingController) -> Result<(), String>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-    let previous_state = processing.state().clone();
+    let previous_state = processing.snapshot();
     change(processing).map_err(PlaybackCommandError::new)?;
     let processing_state = processing.state().clone();
     let configuration = processing.mpv_configuration();
@@ -815,13 +819,14 @@ fn update_processing_locked(
 fn rollback_processing(
     playback: &PlaybackController,
     processing: &mut ProcessingController,
-    previous_state: processing::ProcessingState,
+    previous_state: processing::ProcessingSnapshot,
 ) {
-    if let Err(error) = processing.restore(previous_state.clone()) {
+    let configuration = mpv_configuration_for(&previous_state.state);
+    let processing_state = previous_state.state.clone();
+    if let Err(error) = processing.restore_snapshot(previous_state) {
         eprintln!("Processing Profile rollback persistence failed: {error}");
     }
-    let configuration = mpv_configuration_for(&previous_state);
-    if let Err(error) = playback.apply_processing(previous_state, &configuration) {
+    if let Err(error) = playback.apply_processing(processing_state, &configuration) {
         eprintln!(
             "Native mpv Processing Profile rollback failed: {}",
             error.message

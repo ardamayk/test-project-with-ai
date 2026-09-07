@@ -403,8 +403,17 @@ impl PlayerInterface for MprisPlayer {
         Ok(self.view().rate)
     }
 
-    async fn set_rate(&self, _rate: PlaybackRate) -> zbus::Result<()> {
-        Err(zbus::Error::Unsupported)
+    async fn set_rate(&self, rate: PlaybackRate) -> zbus::Result<()> {
+        let supported_rates =
+            crate::playback::MIN_PLAYBACK_RATE..=crate::playback::MAX_PLAYBACK_RATE;
+        if !rate.is_finite() || !supported_rates.contains(&rate) {
+            return Err(fdo::Error::InvalidArgs(
+                "Playback rate must be finite and within the advertised range.".to_owned(),
+            )
+            .into());
+        }
+        self.dispatch(DesktopPlaybackAction::SetRate(rate));
+        Ok(())
     }
 
     async fn shuffle(&self) -> fdo::Result<bool> {
@@ -532,6 +541,34 @@ async fn run_server(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn set_rate_dispatches_supported_rates_and_rejects_invalid_values() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let player = MprisPlayer {
+            dispatch: Arc::new(move |action| sender.send(action).expect("receive action")),
+            view: Arc::new(Mutex::new(MprisView::default())),
+        };
+        let minimum = player.minimum_rate().await.expect("minimum rate");
+        let maximum = player.maximum_rate().await.expect("maximum rate");
+        for rate in [minimum, 1.25, maximum] {
+            player.set_rate(rate).await.expect("supported rate");
+            let action = tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+                .await
+                .expect("dispatch completed");
+            assert_eq!(action, Some(DesktopPlaybackAction::SetRate(rate)));
+        }
+        for rate in [
+            minimum - 0.1,
+            maximum + 0.1,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            assert!(player.set_rate(rate).await.is_err());
+        }
+        assert!(receiver.try_recv().is_err());
+    }
 
     fn track_state() -> PlaybackSessionState {
         let mut state = PlaybackSessionState::default();

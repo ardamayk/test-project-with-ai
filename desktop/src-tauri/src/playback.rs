@@ -1252,8 +1252,10 @@ impl PlaybackController {
         snapshot: &PlaybackSessionSnapshot,
     ) -> Result<PlaybackSessionState, PlaybackCommandError> {
         self.advance_command_revision();
-        let action =
-            self.with_process(|process| apply_snapshot_to_process(process, snapshot, false));
+        let playback_rate = self.state()?.playback_rate;
+        let action = self.with_process(|process| {
+            apply_snapshot_to_process(process, snapshot, false, playback_rate)
+        });
         if let Err(error) = action {
             return self.fail_native(error);
         }
@@ -1895,7 +1897,11 @@ impl PlaybackController {
             Some(source) => {
                 self.fade_out();
                 let result = self.play(Some(source));
-                self.fade_in();
+                if result.is_ok() {
+                    self.fade_in();
+                } else {
+                    self.restore_volume();
+                }
                 result
             }
             None => self.state(),
@@ -2034,9 +2040,11 @@ fn apply_snapshot_to_process(
     process: &dyn MpvProcessAdapter,
     snapshot: &PlaybackSessionSnapshot,
     should_resume: bool,
+    playback_rate: f64,
 ) -> Result<(), String> {
     process.set_paused(true)?;
     process.set_volume(snapshot.volume())?;
+    process.set_speed(playback_rate)?;
     if let Some(source) = snapshot.source() {
         let url = playback_url(source).map_err(|error| error.message)?;
         process.load_at(&url, snapshot.playhead_seconds())?;
@@ -2939,8 +2947,22 @@ fn finish_player_restart(
     next_process: Box<dyn MpvProcessAdapter>,
     next_events: Receiver<MpvEvent>,
 ) -> Result<Receiver<MpvEvent>, RecoveryFailure> {
-    apply_snapshot_to_process(next_process.as_ref(), snapshot, should_resume)
-        .map_err(|message| RecoveryFailure::internal("mpv-restart-failed", message))?;
+    let playback_rate = state
+        .lock()
+        .map_err(|_| {
+            RecoveryFailure::internal(
+                "mpv-recovery-state-unavailable",
+                "Playback speed is unavailable during player recovery.",
+            )
+        })?
+        .playback_rate;
+    apply_snapshot_to_process(
+        next_process.as_ref(),
+        snapshot,
+        should_resume,
+        playback_rate,
+    )
+    .map_err(|message| RecoveryFailure::internal("mpv-restart-failed", message))?;
     *process.lock().map_err(|_| {
         RecoveryFailure::internal(
             "mpv-restart-failed",
@@ -4115,6 +4137,7 @@ mod tests {
         playhead_seconds: f64,
         standalone_seek_calls: usize,
         volume: f64,
+        playback_rate: f64,
     }
 
     struct RestorableMpvProcess {
@@ -4178,6 +4201,11 @@ mod tests {
 
         fn set_volume(&self, value: f64) -> Result<(), String> {
             self.state.lock().expect("process state").volume = value;
+            Ok(())
+        }
+
+        fn set_speed(&self, rate: f64) -> Result<(), String> {
+            self.state.lock().expect("process state").playback_rate = rate;
             Ok(())
         }
 
@@ -5561,6 +5589,9 @@ mod tests {
         });
         controller.play(Some(source.clone())).expect("play Track");
         controller.seek(27.5).expect("seek Track");
+        controller
+            .set_playback_rate(1.5)
+            .expect("set playback speed");
 
         initial_event_sender
             .send(MpvEvent::ExitedUnexpectedly("fixture crash".to_owned()))
@@ -5569,9 +5600,15 @@ mod tests {
             state.status == PlaybackStatus::Playing
                 && state.current_time == 27.5
                 && *starter_calls.lock().expect("starter calls") == 1
+                && recovered_process_state
+                    .lock()
+                    .expect("recovered process")
+                    .playback_rate
+                    == 1.5
         });
 
         assert_eq!(recovered.source, Some(source));
+        assert_eq!(recovered.playback_rate, 1.5);
         assert_eq!(*starter_calls.lock().expect("starter calls"), 1);
         assert!(
             !recovered_process_state
@@ -6259,6 +6296,7 @@ mod tests {
 
     struct RecordingMpvProcess {
         actions: Arc<Mutex<Vec<String>>>,
+        should_fail_load: Arc<AtomicBool>,
     }
 
     impl RecordingMpvProcess {
@@ -6270,6 +6308,9 @@ mod tests {
     impl MpvProcessAdapter for RecordingMpvProcess {
         fn load(&self, url: &str) -> Result<(), String> {
             self.record(format!("load:{url}"));
+            if self.should_fail_load.load(Ordering::Acquire) {
+                return Err("controlled load failure".to_owned());
+            }
             Ok(())
         }
 
@@ -6307,6 +6348,7 @@ mod tests {
         let controller = PlaybackController::start(
             Box::new(RecordingMpvProcess {
                 actions: actions.clone(),
+                should_fail_load: Arc::new(AtomicBool::new(false)),
             }),
             event_receiver,
             |_| {},
@@ -6332,6 +6374,22 @@ mod tests {
             .expect_err("reject an out-of-range speed");
         assert!(error.message.contains("between"));
         assert_eq!(controller.state().expect("state").playback_rate, 1.5);
+    }
+
+    #[test]
+    fn desktop_rate_action_updates_mpv_and_playback_state() {
+        let (controller, actions) = start_recording_controller();
+        dispatch_desktop_playback_action(
+            DesktopPlaybackAction::SetRate(1.25),
+            &controller,
+            &Arc::new(Mutex::new(PlaybackLifecycle::new())),
+            &PlaybackSnapshotStore::new(temporary_path("rate-action-snapshot.json")),
+            &TestDesktopPlaybackShell::default(),
+        )
+        .expect("dispatch playback rate");
+
+        assert_eq!(controller.state().expect("state").playback_rate, 1.25);
+        assert_eq!(*actions.lock().expect("actions"), vec!["speed:1.25"]);
     }
 
     #[test]
@@ -6398,6 +6456,63 @@ mod tests {
             Some("volume:0.80"),
             "the level is restored after pausing: {recorded:?}"
         );
+    }
+
+    #[test]
+    fn failed_faded_navigation_restores_volume_before_later_playback() {
+        for direction in [super::QueueDirection::Next, super::QueueDirection::Previous] {
+            let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+            let actions = Arc::new(Mutex::new(Vec::new()));
+            let should_fail_load = Arc::new(AtomicBool::new(false));
+            let controller = PlaybackController::start(
+                Box::new(RecordingMpvProcess {
+                    actions: actions.clone(),
+                    should_fail_load: should_fail_load.clone(),
+                }),
+                event_receiver,
+                |_| {},
+            );
+            let sources = queue_sources();
+            controller
+                .sync_queue_context(sources.clone(), Some(1))
+                .expect("sync Queue");
+            controller
+                .play(Some(sources[1].clone()))
+                .expect("play middle Track");
+            controller.set_transition_fade_ms(20).expect("enable fade");
+            actions.lock().expect("actions").clear();
+            should_fail_load.store(true, Ordering::Release);
+
+            controller
+                .navigate(direction)
+                .expect_err("navigation load fails");
+            assert_eq!(
+                controller.state().expect("state").status,
+                PlaybackStatus::Error
+            );
+            let recorded = actions.lock().expect("actions").clone();
+            assert_eq!(recorded.first().map(String::as_str), Some("volume:0.00"));
+            assert_eq!(recorded.last().map(String::as_str), Some("volume:0.80"));
+
+            should_fail_load.store(false, Ordering::Release);
+            controller
+                .play(Some(sources[1].clone()))
+                .expect("retry playback");
+            assert_eq!(
+                controller.state().expect("state").status,
+                PlaybackStatus::Playing
+            );
+            assert_eq!(
+                actions
+                    .lock()
+                    .expect("actions")
+                    .iter()
+                    .rev()
+                    .find(|action| action.starts_with("volume:"))
+                    .map(String::as_str),
+                Some("volume:0.80")
+            );
+        }
     }
 
     #[test]
