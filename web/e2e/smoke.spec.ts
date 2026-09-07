@@ -83,3 +83,41 @@ test("swagger reference loads through docs module", async ({ page }) => {
 	).toBeVisible();
 	await expect(page.locator("#swagger-ui")).toBeVisible();
 });
+
+test("queue overlays narrow pages and reserves space on desktop", async ({
+	page,
+}) => {
+	await page.goto("/library/albums");
+	const drawer = page.locator("[data-queue-drawer]");
+	if ((await drawer.getAttribute("data-state")) !== "open") {
+		await page.getByRole("button", { name: "Toggle queue panel" }).click();
+	}
+	await expect(drawer).toHaveAttribute("data-state", "open");
+	await page.setViewportSize({ width: 375, height: 812 });
+	const main = page.locator("main");
+	await expect(main).toHaveCSS("padding-right", "0px");
+	await expect
+		.poll(() => main.evaluate((element) => element.clientWidth))
+		.toBeGreaterThan(300);
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await expect
+		.poll(() =>
+			main.evaluate((element) =>
+				Number.parseFloat(getComputedStyle(element).paddingRight),
+			),
+		)
+		.toBeGreaterThan(300);
+});
+
+test("library search restores its opener after closing and reopening", async ({
+	page,
+}) => {
+	await page.goto("/library/albums");
+	const opener = page.getByRole("button", { name: "Search", exact: true });
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		await opener.click();
+		await expect(page.getByRole("combobox")).toBeFocused();
+		await page.getByRole("combobox").press("Escape");
+		await expect(opener).toBeFocused();
+	}
+});

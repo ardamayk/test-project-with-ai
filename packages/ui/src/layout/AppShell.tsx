@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { useLayout } from "./LayoutProvider";
 import { QueueDrawer } from "./QueueDrawer";
@@ -46,12 +46,14 @@ export function AppShell({
 				<div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 					<main
 						data-queue-open={queueOpen ? "" : undefined}
-						className={`flex h-full min-w-0 flex-1 flex-col overflow-auto bg-background transition-[padding] duration-300 ease-out ${
+						className={`flex h-full min-w-0 flex-1 flex-col overflow-auto bg-background pr-0 lg:data-[queue-open]:pr-[var(--queue-drawer-clearance)] transition-[padding] duration-300 ease-out ${
 							bottom ? PLAYER_DOCK_CONTENT_PADDING : ""
 						}`}
-						style={{
-							paddingRight: queueOpen ? QUEUE_DRAWER_CONTENT_CLEARANCE : 0,
-						}}
+						style={
+							{
+								"--queue-drawer-clearance": QUEUE_DRAWER_CONTENT_CLEARANCE,
+							} as CSSProperties
+						}
 					>
 						{children}
 					</main>

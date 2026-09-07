@@ -40,6 +40,7 @@ export function QueueDrawer({ abovePlayerBar }: { abovePlayerBar: boolean }) {
 			)}
 			style={{
 				width: QUEUE_DRAWER_WIDTH,
+				maxWidth: "calc(100% - 2 * var(--shell-inset, 2rem))",
 				right: "var(--shell-inset, 2rem)",
 				top: QUEUE_DRAWER_TOP,
 				bottom: abovePlayerBar

@@ -4,10 +4,22 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Disc3, ListMusic, Music2, Search, Tags, Users } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useDebouncedValue } from "#/hooks/use-debounced-value";
+import { useReturnFocus } from "#/hooks/use-return-focus";
 import { apiClient } from "#/lib/api";
-import { collectGenres, GENRE_SOURCE_QUERY_KEY } from "#/lib/collect-genres";
+import {
+	collectGenres,
+	fetchGenreTracks,
+	GENRE_SOURCE_QUERY_KEY,
+} from "#/lib/collect-genres";
 import { getAlbumArtistName, getTrackArtistName } from "#/lib/library-display";
 import { playlistQueryKeys } from "#/lib/playlist-query-cache";
 import { cn } from "#/lib/utils";
@@ -52,7 +64,12 @@ export function LibrarySearchDialog({
 	const [query, setQuery] = useState("");
 	const [activeIndex, setActiveIndex] = useState(0);
 	const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
-	const hasQuery = debouncedQuery.length > 0;
+	const hasQuery = query.trim().length > 0;
+	const isDebouncing = query.trim() !== debouncedQuery;
+	const canShowResults = open && hasQuery && !isDebouncing;
+	const inputRef = useRef<HTMLInputElement>(null);
+	const listboxRef = useRef<HTMLDivElement>(null);
+	const returnFocus = useReturnFocus();
 	const navigate = useNavigate();
 	const { playTrack } = usePlayback();
 	const listboxId = useId();
@@ -72,38 +89,38 @@ export function LibrarySearchDialog({
 		queryKey: ["library", "search", "tracks", debouncedQuery],
 		queryFn: () =>
 			apiClient.listTracks({ limit: RESULTS_PER_GROUP, q: debouncedQuery }),
-		enabled: open && hasQuery,
+		enabled: canShowResults,
 	});
 	const albums = useQuery({
 		queryKey: ["library", "search", "albums", debouncedQuery],
 		queryFn: () =>
 			apiClient.listAlbums({ limit: RESULTS_PER_GROUP, q: debouncedQuery }),
-		enabled: open && hasQuery,
+		enabled: canShowResults,
 	});
 	const artists = useQuery({
 		queryKey: ["library", "search", "artists", debouncedQuery],
 		queryFn: () =>
 			apiClient.listArtists({ limit: RESULTS_PER_GROUP, q: debouncedQuery }),
-		enabled: open && hasQuery,
+		enabled: canShowResults,
 	});
 	// Genres and playlists have no server-side search: filter the cached
 	// lists the Genres and Playlists pages already load.
 	const genreSource = useQuery({
 		queryKey: GENRE_SOURCE_QUERY_KEY,
-		queryFn: () => apiClient.listTracks({ limit: 500 }),
+		queryFn: () => fetchGenreTracks(apiClient.listTracks),
 		staleTime: 60_000,
-		enabled: open && hasQuery,
+		enabled: canShowResults,
 	});
 	const playlists = useQuery({
 		queryKey: playlistQueryKeys.list,
 		queryFn: () => apiClient.listPlaylists(),
-		enabled: open && hasQuery,
+		enabled: canShowResults,
 	});
 
 	const close = useCallback(() => onOpenChange(false), [onOpenChange]);
 
 	const groups = useMemo<SearchGroup[]>(() => {
-		if (!hasQuery) return [];
+		if (!canShowResults) return [];
 		const trackResults = (tracks.data?.items ?? []).map(
 			(track: Track): SearchResult => ({
 				key: `track:${track.id}`,
@@ -204,7 +221,7 @@ export function LibrarySearchDialog({
 			{ label: "Playlist", icon: ListMusic, results: playlistResults },
 		].filter((group) => group.results.length > 0);
 	}, [
-		hasQuery,
+		canShowResults,
 		debouncedQuery,
 		tracks.data,
 		albums.data,
@@ -221,12 +238,34 @@ export function LibrarySearchDialog({
 		[groups],
 	);
 	const activeResult = flatResults[activeIndex] ?? flatResults[0];
+	const searchQueries = [tracks, albums, artists, genreSource, playlists];
+	const failedQueries = canShowResults
+		? searchQueries.filter((result) => result.isError)
+		: [];
 	const isSearching =
 		hasQuery &&
-		[tracks, albums, artists, genreSource, playlists].some(
-			(result) => result.isFetching,
+		(isDebouncing || searchQueries.some((result) => result.isFetching));
+	const showEmpty =
+		canShowResults &&
+		!isSearching &&
+		failedQueries.length === 0 &&
+		flatResults.length === 0;
+
+	useEffect(() => {
+		const listbox = listboxRef.current;
+		if (!listbox || !activeResult) return;
+		const option = document.getElementById(
+			optionId(listboxId, activeResult.key),
 		);
-	const showEmpty = hasQuery && !isSearching && flatResults.length === 0;
+		if (!option || !listbox.contains(option)) return;
+		const viewport = listbox.getBoundingClientRect();
+		const row = option.getBoundingClientRect();
+		if (row.top < viewport.top) {
+			listbox.scrollTop += row.top - viewport.top;
+		} else if (row.bottom > viewport.bottom) {
+			listbox.scrollTop += row.bottom - viewport.bottom;
+		}
+	}, [activeResult, listboxId]);
 
 	const onInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
 		if (flatResults.length === 0) return;
@@ -251,6 +290,12 @@ export function LibrarySearchDialog({
 				<DialogPrimitive.Overlay className="fixed inset-0 z-50" />
 				<DialogPrimitive.Content
 					data-testid="library-search-dialog"
+					onOpenAutoFocus={(event) => {
+						returnFocus.capture();
+						event.preventDefault();
+						inputRef.current?.focus();
+					}}
+					onCloseAutoFocus={returnFocus.restore}
 					aria-describedby={undefined}
 					className="fixed top-1/2 left-1/2 z-50 flex max-h-[70vh] w-[min(40rem,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-[0_24px_80px_-20px_var(--player-shadow)] outline-none"
 				>
@@ -260,8 +305,7 @@ export function LibrarySearchDialog({
 					<div className="flex items-center gap-3 border-border border-b px-4">
 						<Search className="size-5 shrink-0 text-caption" />
 						<input
-							// biome-ignore lint/a11y/noAutofocus: the dialog exists to type into.
-							autoFocus
+							ref={inputRef}
 							type="search"
 							role="combobox"
 							aria-expanded={flatResults.length > 0}
@@ -285,6 +329,7 @@ export function LibrarySearchDialog({
 					</div>
 					<div
 						id={listboxId}
+						ref={listboxRef}
 						role="listbox"
 						aria-label="Search results"
 						className="min-h-0 flex-1 overflow-y-auto p-2"
@@ -293,6 +338,25 @@ export function LibrarySearchDialog({
 							<p className="px-3 py-6 text-center text-caption text-sm">
 								Type to search your library.
 							</p>
+						) : null}
+						{failedQueries.length > 0 ? (
+							<div role="alert" className="px-3 py-3 text-sm">
+								<p>
+									{flatResults.length > 0
+										? "Some search results could not be loaded."
+										: "Search results could not be loaded."}
+								</p>
+								<button
+									type="button"
+									className="mt-2 underline"
+									disabled={isSearching}
+									onClick={() => {
+										for (const result of failedQueries) void result.refetch();
+									}}
+								>
+									Retry
+								</button>
+							</div>
 						) : null}
 						{showEmpty ? (
 							<p className="px-3 py-6 text-center text-caption text-sm">

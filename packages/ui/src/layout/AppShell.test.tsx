@@ -160,9 +160,10 @@ describe("AppShell", () => {
 		expect(drawer.style.bottom).toContain("80px");
 		const main = container.querySelector("main") as HTMLElement;
 		expect(main.hasAttribute("data-queue-open")).toBe(true);
-		// jsdom folds the calc(); it only matters that room is reserved.
-		expect(main.style.paddingRight).not.toBe("0px");
-		expect(main.style.paddingRight).toContain("calc(");
+		expect(main.style.paddingRight).toBe("");
+		expect(main.className).toContain(
+			"lg:data-[queue-open]:pr-[var(--queue-drawer-clearance)]",
+		);
 	});
 
 	it("keeps the drawer off screen and inert when the queue is collapsed", () => {
@@ -182,7 +183,7 @@ describe("AppShell", () => {
 		expect(drawer.className).toContain("invisible");
 		const main = container.querySelector("main") as HTMLElement;
 		expect(main.hasAttribute("data-queue-open")).toBe(false);
-		expect(main.style.paddingRight).toBe("0px");
+		expect(main.style.paddingRight).toBe("");
 		expect(screen.getByText("Main content")).toBeTruthy();
 	});
 

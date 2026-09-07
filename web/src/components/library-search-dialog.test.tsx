@@ -1,11 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
 	screen,
+	waitFor,
 	within,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LibrarySearchDialog } from "./library-search-dialog";
 
@@ -191,6 +194,138 @@ describe("LibrarySearchDialog", () => {
 			target: { value: "zzz" },
 		});
 		expect(await screen.findByText(/matches “zzz”/)).toBeTruthy();
+	});
+
+	it("shows failures instead of empty results and retries failed sources", async () => {
+		mocks.listTracks.mockRejectedValue(new Error("Track search unavailable"));
+		mocks.listAlbums.mockResolvedValue({ items: [] });
+		mocks.listArtists.mockResolvedValue({ items: [] });
+		mocks.listPlaylists.mockResolvedValue({ items: [] });
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			"Search results could not be loaded.Retry",
+		);
+		expect(screen.queryByText(/Nothing in your library/)).toBeNull();
+		const albumCalls = mocks.listAlbums.mock.calls.length;
+		mocks.listTracks.mockResolvedValue({ items: [nemo] });
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await screen.findByText("Nemo");
+		await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+		expect(mocks.listAlbums).toHaveBeenCalledTimes(albumCalls);
+	});
+
+	it("keeps successful matches visible when another source fails", async () => {
+		mocks.listArtists.mockRejectedValue(new Error("Artist search unavailable"));
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		await screen.findByText("Nemo");
+		expect(
+			await screen.findByText("Some search results could not be loaded."),
+		).toBeTruthy();
+		expect(screen.queryByText(/Nothing in your library/)).toBeNull();
+	});
+
+	it("hides stale options and blocks Enter until the edited query settles", async () => {
+		mocks.listTracks.mockImplementation(async (params?: { q?: string }) => ({
+			items: params?.q === "ne" ? [nemo] : [],
+		}));
+		mocks.listAlbums.mockResolvedValue({ items: [] });
+		mocks.listArtists.mockResolvedValue({ items: [] });
+		mocks.listPlaylists.mockResolvedValue({ items: [] });
+		renderDialog();
+		const input = screen.getByRole("combobox");
+		fireEvent.change(input, { target: { value: "ne" } });
+		await screen.findByText("Nemo");
+		fireEvent.change(input, { target: { value: "zzz" } });
+		expect(screen.queryAllByRole("option")).toHaveLength(0);
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(mocks.playTrack).not.toHaveBeenCalled();
+		expect(await screen.findByText(/matches “zzz”/)).toBeTruthy();
+	});
+
+	it("starts empty after a rapid close and reopen", async () => {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const dialog = (open: boolean) => (
+			<QueryClientProvider client={client}>
+				<LibrarySearchDialog open={open} onOpenChange={vi.fn()} />
+			</QueryClientProvider>
+		);
+		const { rerender } = render(dialog(true));
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		await screen.findByText("Nemo");
+		rerender(dialog(false));
+		rerender(dialog(true));
+		expect(screen.getByRole("combobox")).toHaveProperty("value", "");
+		expect(screen.queryAllByRole("option")).toHaveLength(0);
+		fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+		expect(mocks.playTrack).not.toHaveBeenCalled();
+	});
+
+	it("scrolls the listbox viewport to reveal keyboard selections without moving the page", async () => {
+		renderDialog();
+		const input = screen.getByRole("combobox");
+		fireEvent.change(input, { target: { value: "ne" } });
+		await screen.findByText("Nemo mix");
+		const listbox = screen.getByRole("listbox");
+		const album = screen.getByRole("option", { name: /Decades/ });
+		const track = screen.getByRole("option", { name: /^Nemo\s*Nightwish/ });
+		vi.spyOn(listbox, "getBoundingClientRect").mockReturnValue({
+			top: 100,
+			bottom: 200,
+		} as DOMRect);
+		vi.spyOn(album, "getBoundingClientRect").mockReturnValue({
+			top: 220,
+			bottom: 260,
+		} as DOMRect);
+		vi.spyOn(track, "getBoundingClientRect").mockReturnValue({
+			top: 40,
+			bottom: 80,
+		} as DOMRect);
+		document.documentElement.scrollTop = 25;
+		fireEvent.keyDown(input, { key: "ArrowDown" });
+		expect(listbox.scrollTop).toBe(60);
+		fireEvent.keyDown(input, { key: "ArrowUp" });
+		expect(listbox.scrollTop).toBe(0);
+		expect(document.documentElement.scrollTop).toBe(25);
+		document.documentElement.scrollTop = 0;
+	});
+
+	it.each([
+		"button",
+		"shortcut",
+	])("restores focus to the %s opener after Escape", async (opener) => {
+		function SearchHarness() {
+			const [open, setOpen] = useState(false);
+			return (
+				<>
+					<button type="button" onClick={() => setOpen(true)}>
+						Open search
+					</button>
+					<LibrarySearchDialog open={open} onOpenChange={setOpen} />
+				</>
+			);
+		}
+		const client = new QueryClient();
+		render(
+			<QueryClientProvider client={client}>
+				<SearchHarness />
+			</QueryClientProvider>,
+		);
+		const button = screen.getByRole("button", { name: "Open search" });
+		button.focus();
+		if (opener === "button") fireEvent.click(button);
+		else fireEvent.keyDown(button, { key: "k", ctrlKey: true });
+		const input = screen.getByRole("combobox");
+		expect(document.activeElement).toBe(input);
+		fireEvent.keyDown(input, { key: "Escape" });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1);
+		});
+		await waitFor(() => expect(document.activeElement).toBe(button));
 	});
 
 	it("opens with Ctrl+K or / and ignores / while typing elsewhere", () => {

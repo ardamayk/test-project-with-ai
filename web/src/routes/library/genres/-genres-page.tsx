@@ -8,12 +8,16 @@ import {
 } from "#/components/collection-grid-layout";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { apiClient } from "#/lib/api";
-import { collectGenres, GENRE_SOURCE_QUERY_KEY } from "#/lib/collect-genres";
+import {
+	collectGenres,
+	fetchGenreTracks,
+	GENRE_SOURCE_QUERY_KEY,
+} from "#/lib/collect-genres";
 
 export function GenresPage() {
 	const tracks = useQuery({
 		queryKey: GENRE_SOURCE_QUERY_KEY,
-		queryFn: () => apiClient.listTracks({ limit: 500 }),
+		queryFn: () => fetchGenreTracks(apiClient.listTracks),
 		staleTime: 60_000,
 	});
 
