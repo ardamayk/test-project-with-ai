@@ -15,3 +15,4 @@ test-results/
 .superpowers/**/state/
 server/music/
 desktop/src-tauri/binaries/
+server/data/
