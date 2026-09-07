@@ -91,6 +91,12 @@ export {
 	type SleepTimerRequest,
 	useSleepTimer,
 } from "./playback/use-sleep-timer";
+export {
+	clearTrackWaveformCache,
+	type TrackWaveformLoader,
+	type TrackWaveformResult,
+	useTrackWaveform,
+} from "./playback/use-track-waveform";
 export { ThemeProvider } from "./theme/ThemeProvider";
 export * from "./widgets";
 export {

@@ -101,6 +101,26 @@ describe("SeekBar", () => {
 		expect(onSeek).not.toHaveBeenCalled();
 	});
 
+	it("draws waveform bars behind the track and clips the played part", () => {
+		render(
+			<SeekBar
+				currentTime={25}
+				duration={100}
+				waveform={[0, 128, 255, 64]}
+				onSeek={() => undefined}
+			/>,
+		);
+		const bar = screen.getByTestId("seek-bar");
+		expect(bar.dataset.waveform).toBe("true");
+		const svg = screen.getByTestId("seek-waveform");
+		expect(svg.querySelectorAll("rect")).toHaveLength(12);
+		const played = screen.getByTestId("seek-waveform-played") as HTMLElement;
+		expect(played.style.clipPath).toBe("inset(0 75.00% 0 0)");
+		expect(screen.getByLabelText("Seek").className).toContain(
+			"player-seek-slider--waveform",
+		);
+	});
+
 	it("keeps the keyboard path on the native range input", () => {
 		const onSeek = vi.fn();
 		render(<SeekBar currentTime={0} duration={100} onSeek={onSeek} />);

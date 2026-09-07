@@ -56,6 +56,9 @@ export type Album = Omit<
   releaseIdentifiers: ReleaseIdentifier[];
 };
 export type TrackLyrics = components['schemas']['TrackLyrics'];
+export type TrackWaveform = components['schemas']['TrackWaveform'];
+export type TrackWaveformPending =
+  components['schemas']['TrackWaveformPending'];
 export type Track = Omit<WireTrack, 'artists' | 'discNo' | 'genres'> & {
   artists: ArtistCredit[];
   discNo: number;
@@ -417,6 +420,11 @@ export function createApiClient(config: ApiClientConfig) {
       ),
     getTrackLyrics: (trackId: string) =>
       request<TrackLyrics>(`/api/v1/library/tracks/${trackId}/lyrics`),
+    /** Resolves the pending shape (HTTP 202) while peaks are still being generated. */
+    getTrackWaveform: (trackId: string) =>
+      request<TrackWaveform | TrackWaveformPending>(
+        `/api/v1/library/tracks/${trackId}/waveform`,
+      ),
     previewAlbumDeletion: (albumId: string) =>
       request<AlbumDeletionPreview>(
         `/api/v1/library/albums/${albumId}/deletion`,

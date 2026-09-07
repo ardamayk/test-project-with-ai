@@ -76,8 +76,11 @@ func TestAssembledServerAdvertisesOnlyDocumentedCapabilities(t *testing.T) {
 	}
 	testutil.DecodeJSON(t, response, &health)
 
-	if !slices.Equal(health.Capabilities, api.ServerCapabilities()) {
-		t.Fatalf("advertised capabilities = %v, want %v", health.Capabilities, api.ServerCapabilities())
+	// Waveforms are gated on the ffmpeg Server Dependency, so the expected
+	// list comes from the same probe the contract server was built with.
+	expected := api.ServerCapabilitiesFor(dependencies.SystemProbe().Run(t.Context()))
+	if !slices.Equal(health.Capabilities, expected) {
+		t.Fatalf("advertised capabilities = %v, want %v", health.Capabilities, expected)
 	}
 	documentation := testutil.Contract(t).Components.Schemas["HealthResponse"].Value.Properties["capabilities"].Value.Description
 	for _, capability := range health.Capabilities {

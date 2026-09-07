@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,10 +12,35 @@ import (
 
 type Handlers struct {
 	service *Service
+	// nil until the module enables waveforms; the handler then answers 503.
+	waveforms *WaveformService
 }
 
 func NewHandlers(service *Service) *Handlers {
 	return &Handlers{service: service}
+}
+
+// GetTrackWaveform answers cached peaks, 202 while they are being generated,
+// 404 for unknown tracks or missing files, and 503 without ffmpeg.
+func (h *Handlers) GetTrackWaveform(w http.ResponseWriter, r *http.Request) {
+	trackID := chi.URLParam(r, "trackId")
+	waveform, err := h.waveforms.Get(r.Context(), trackID)
+	switch {
+	case err == nil:
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		respond.JSON(w, http.StatusOK, waveform)
+	case errors.Is(err, ErrWaveformPending):
+		w.Header().Set("Retry-After", "2")
+		respond.JSON(w, http.StatusAccepted, TrackWaveformPending{Status: "pending", RetryAfterSeconds: 2})
+	case errors.Is(err, ErrNotFound):
+		respond.Error(w, http.StatusNotFound, "not_found", "track or track file not found")
+	case errors.Is(err, ErrWaveformUnavailable):
+		respond.Error(w, http.StatusServiceUnavailable, "dependency_unavailable", "waveforms need ffmpeg on the Music Server")
+	case errors.Is(err, context.Canceled):
+		return
+	default:
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+	}
 }
 
 func (h *Handlers) ListArtists(w http.ResponseWriter, r *http.Request) {

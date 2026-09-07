@@ -276,6 +276,14 @@ body::after {
   .player-seek-slider:focus-visible {
     outline: none;
   }
+  /* With waveform bars drawn behind it, the track itself stays invisible so
+     the bars carry the played/unplayed colouring. */
+  .player-seek-slider--waveform::-webkit-slider-runnable-track {
+    background: transparent;
+  }
+  .player-seek-slider--waveform::-moz-range-track {
+    background: transparent;
+  }
 
   /* Full-screen Lyrics view rising from the player bar. */
   @keyframes lyrics-view-enter {

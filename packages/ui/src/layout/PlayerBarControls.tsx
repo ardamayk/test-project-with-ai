@@ -48,6 +48,7 @@ type PlaybackControlsProps = {
 	currentTime: number;
 	effectiveDuration: number;
 	bufferedEnd?: number | null;
+	waveform?: number[] | null;
 	showHoverTimestamp?: boolean;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
@@ -252,6 +253,7 @@ function PlaybackProgress({
 	currentTime,
 	effectiveDuration,
 	bufferedEnd = null,
+	waveform = null,
 	showHoverTimestamp = true,
 	onSeek,
 }: {
@@ -260,6 +262,7 @@ function PlaybackProgress({
 	currentTime: number;
 	effectiveDuration: number;
 	bufferedEnd?: number | null;
+	waveform?: number[] | null;
 	showHoverTimestamp?: boolean;
 	onSeek: (seconds: number) => void;
 }) {
@@ -275,6 +278,7 @@ function PlaybackProgress({
 					currentTime={currentTime}
 					duration={effectiveDuration}
 					bufferedEnd={bufferedEnd}
+					waveform={waveform}
 					disabled={!hasCurrentTrack}
 					showHoverTimestamp={showHoverTimestamp}
 					onSeek={onSeek}

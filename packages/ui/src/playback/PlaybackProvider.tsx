@@ -42,6 +42,7 @@ import {
 	type PlaybackQueueApi,
 	useSynchronizedQueue,
 } from "./use-synchronized-queue";
+import type { TrackWaveformLoader } from "./use-track-waveform";
 
 export type { RepeatMode } from "./PlaybackEngine";
 export type { PlaybackQueueApi } from "./use-synchronized-queue";
@@ -57,6 +58,8 @@ export type PlaybackAssetApi = {
 	getAlbumCoverUrl: (albumId: string) => string;
 	/** Lyrics text stored for a Track; optional for hosts without the endpoint. */
 	getTrackLyrics?: (trackId: string) => Promise<{ lyrics: string }>;
+	/** Waveform peaks, or a pending marker while the server generates them. */
+	getTrackWaveform?: TrackWaveformLoader;
 };
 
 export type PlaylistLibraryApi = {
@@ -147,6 +150,8 @@ type PlaybackContextValue = {
 	getAlbumCoverUrl: (albumId: string) => string;
 	/** Resolves null when the host exposes no lyrics endpoint. */
 	getTrackLyrics: (trackId: string) => Promise<{ lyrics: string } | null>;
+	/** Null when the host exposes no waveform endpoint. */
+	getTrackWaveform: TrackWaveformLoader | null;
 };
 
 export type PlaybackErrorRecovery = {
@@ -355,6 +360,14 @@ export function PlaybackProvider({
 
 	const sleepTimer = useSleepTimer(engine, session);
 	const abRepeat = useAbRepeat(engine, session);
+	// Stable identity so the waveform hook does not refetch on every render.
+	const getTrackWaveform = useMemo<TrackWaveformLoader | null>(
+		() =>
+			api.getTrackWaveform
+				? (trackId) => apiRef.current.getTrackWaveform?.(trackId) as never
+				: null,
+		[api.getTrackWaveform],
+	);
 
 	// A Track can stop being playable while it sits in the Queue: ADR 0010 lets
 	// a deletion elsewhere leave the playing source in place, so its next play
@@ -620,6 +633,7 @@ export function PlaybackProvider({
 			getAlbumCoverUrl: (albumId) => apiRef.current.getAlbumCoverUrl(albumId),
 			getTrackLyrics: (trackId) =>
 				apiRef.current.getTrackLyrics?.(trackId) ?? Promise.resolve(null),
+			getTrackWaveform,
 		}),
 		[
 			queue,
@@ -632,6 +646,7 @@ export function PlaybackProvider({
 			errorRecovery,
 			sleepTimer,
 			abRepeat,
+			getTrackWaveform,
 			playTrack,
 			playRadioStation,
 			playRadioCatalogPreview,

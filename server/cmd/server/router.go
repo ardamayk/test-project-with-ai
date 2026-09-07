@@ -35,6 +35,7 @@ func newAssembledServer(cfg config.Config, sqlDB *sql.DB, report dependencies.Re
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB)
+	libModule.EnableWaveforms(report.Has(dependencies.FFMPEG))
 	trackAccess := libModule.TrackAccess()
 	queueEvents := playback.NewQueueEventBroker()
 	importModule := managedimport.NewModule(sqlDB, cfg, library.NewMediaInspector(), queueEvents)

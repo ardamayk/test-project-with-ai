@@ -9,6 +9,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/api"
 	"github.com/ardam/navidrome-replacement/server/internal/config"
+	"github.com/ardam/navidrome-replacement/server/internal/dependencies"
 )
 
 func TestGetHealth(t *testing.T) {
@@ -55,6 +56,26 @@ func TestGetHealth(t *testing.T) {
 	}
 	if slices.Contains(body.Capabilities, "recording-identification.v1") {
 		t.Fatalf("capabilities = %v, unexpected removed capability", body.Capabilities)
+	}
+	if slices.Contains(body.Capabilities, "track-waveform.v1") {
+		t.Fatalf("capabilities = %v, waveforms must not be advertised without ffmpeg", body.Capabilities)
+	}
+}
+
+func TestGetHealthAdvertisesWaveformsOnlyWithFFmpeg(t *testing.T) {
+	report := dependencies.Report{{Name: dependencies.FFMPEG, Required: true, Available: true}}
+	h := api.NewHandler(config.Config{Version: "0.1.0-test"}, report)
+	rec := httptest.NewRecorder()
+	h.GetHealth(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+
+	var body struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !slices.Contains(body.Capabilities, "track-waveform.v1") {
+		t.Fatalf("capabilities = %v, want track-waveform.v1 with ffmpeg", body.Capabilities)
 	}
 }
 

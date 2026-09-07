@@ -200,6 +200,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/tracks/{trackId}/waveform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get normalized waveform peaks for a track
+         * @description Peaks are decoded from the managed file with ffmpeg on first request and cached; a replaced file is decoded again. Advertised through the track-waveform.v1 capability, which requires ffmpeg on the Music Server.
+         */
+        get: operations["getTrackWaveform"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/tracks/{trackId}/deletion": {
         parameters: {
             query?: never;
@@ -795,7 +815,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             version: string;
-            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1. Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
+            /** @description Named server behaviors supported by this release. The versioned /api/v1 surface itself is advertised as api.v1. Queue event streaming is advertised as playback.queue-events.v1 and the first strict FLAC Managed Import tracer bullet as managed-import.v1. Multi-file Managed Import Batches are advertised as managed-import-batches.v1, Permanent Track Deletion as managed-track-deletion.v1, explicit Track Replacement as managed-track-replacement.v1, Album deletion (one Permanent Track Deletion per Track, previewed once) as managed-album-deletion.v1, and lazily generated waveform peaks as track-waveform.v1 (only when ffmpeg is installed). Clients gate optional behavior on the exact capability name and must ignore unknown entries so newer servers stay compatible with older clients. */
             capabilities: string[];
             /** @description Server Dependencies probed once at startup, in a stable order (ffmpeg, ffprobe). They describe the deployment environment so an operator can see what the installation supports. */
             dependencies: components["schemas"]["ServerDependency"][];
@@ -1275,6 +1295,18 @@ export interface components {
         };
         AlbumDetail: components["schemas"]["Album"] & {
             tracks: components["schemas"]["Track"][];
+        };
+        TrackWaveform: {
+            /** Format: uuid */
+            trackId: string;
+            peakCount: number;
+            /** @description Loudest sample per equal time slice, normalized to 0..255. */
+            peaks: number[];
+        };
+        TrackWaveformPending: {
+            /** @enum {string} */
+            status: "pending";
+            retryAfterSeconds: number;
         };
         TrackLyrics: {
             /** Format: uuid */
@@ -2071,6 +2103,48 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    getTrackWaveform: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cached waveform peaks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackWaveform"];
+                };
+            };
+            /** @description Peaks are still being generated; retry after the given delay. */
+            202: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackWaveformPending"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description ffmpeg is not installed on the Music Server. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     previewTrackDeletion: {

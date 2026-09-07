@@ -38,6 +38,7 @@ import {
 import { useCoverAccent } from "../playback/use-cover-accent";
 import { useMute } from "../playback/use-mute";
 import { usePlaybackKeyboardShortcuts } from "../playback/use-playback-keyboard-shortcuts";
+import { useTrackWaveform } from "../playback/use-track-waveform";
 import { useResolvedThemeMode } from "../theme/use-resolved-theme-mode";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
@@ -122,6 +123,7 @@ export function PlayerBar({
 	isCurrentStationFavorite = false,
 	onToggleStationFavorite,
 	onToggleMiniPlayer,
+	canShowWaveform = false,
 }: {
 	onPlaylistMutated?: () => void;
 	/** Favorite state of the current Track; the host app owns the Favorites playlist. */
@@ -132,6 +134,8 @@ export function PlayerBar({
 	onToggleStationFavorite?: (stationId: string, isFavorite: boolean) => void;
 	/** Desktop only: opens or closes the always-on-top mini player window. */
 	onToggleMiniPlayer?: () => void;
+	/** Whether the Music Server advertises track-waveform.v1. */
+	canShowWaveform?: boolean;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -193,7 +197,13 @@ export function PlayerBar({
 		playbackSource,
 		getAlbumCoverUrl,
 		getTrackLyrics,
+		getTrackWaveform,
 	} = usePlayback();
+	const waveform = useTrackWaveform({
+		trackId: currentTrack ? currentTrack.id : null,
+		enabled: canShowWaveform && playbackPreferences.showWaveform,
+		load: getTrackWaveform,
+	});
 	const { toggleMute } = useMute(volume, setVolume);
 	// Playback Preferences are the source of truth for speed and fade; push
 	// them into whichever engine is active when they change. The setters are
@@ -835,6 +845,7 @@ export function PlayerBar({
 					currentTime={currentTime}
 					effectiveDuration={effectiveDuration}
 					bufferedEnd={bufferedEnd}
+					waveform={waveform}
 					showHoverTimestamp={playbackPreferences.hoverTimestamp}
 					shuffleEnabled={shuffleEnabled}
 					repeatMode={repeatMode}

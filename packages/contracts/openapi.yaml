@@ -309,6 +309,42 @@ paths:
                 $ref: "#/components/schemas/TrackLyrics"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/library/tracks/{trackId}/waveform:
+    get:
+      tags: [library]
+      operationId: getTrackWaveform
+      summary: Get normalized waveform peaks for a track
+      description: >-
+        Peaks are decoded from the managed file with ffmpeg on first request
+        and cached; a replaced file is decoded again. Advertised through the
+        track-waveform.v1 capability, which requires ffmpeg on the Music Server.
+      parameters:
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "200":
+          description: Cached waveform peaks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackWaveform"
+        "202":
+          description: Peaks are still being generated; retry after the given delay.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackWaveformPending"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: ffmpeg is not installed on the Music Server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/library/tracks/{trackId}/deletion:
     get:
       tags: [library]
@@ -1498,7 +1534,8 @@ components:
             Track Deletion as managed-track-deletion.v1, explicit Track
             Replacement as managed-track-replacement.v1, Album deletion
             (one Permanent Track Deletion per Track, previewed once) as
-            managed-album-deletion.v1. Clients gate optional
+            managed-album-deletion.v1, and lazily generated waveform peaks as
+            track-waveform.v1 (only when ffmpeg is installed). Clients gate optional
             behavior on the exact capability name and must ignore unknown
             entries so newer servers stay compatible with older clients.
         dependencies:
@@ -2454,6 +2491,31 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Track"
+    TrackWaveform:
+      type: object
+      required: [trackId, peakCount, peaks]
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        peakCount:
+          type: integer
+        peaks:
+          type: array
+          description: Loudest sample per equal time slice, normalized to 0..255.
+          items:
+            type: integer
+            minimum: 0
+            maximum: 255
+    TrackWaveformPending:
+      type: object
+      required: [status, retryAfterSeconds]
+      properties:
+        status:
+          type: string
+          enum: [pending]
+        retryAfterSeconds:
+          type: integer
     TrackLyrics:
       type: object
       required: [trackId, lyrics]

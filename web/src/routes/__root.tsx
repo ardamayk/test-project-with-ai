@@ -1,3 +1,4 @@
+import { TRACK_WAVEFORM_CAPABILITY } from "@repo/api-client";
 import {
 	AppShell,
 	defaultPlayback,
@@ -24,6 +25,7 @@ import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
 import { toggleMiniPlayer } from "#/desktop/mini-player-bridge";
 import { useFavoriteRadioStations } from "#/hooks/use-favorite-radio-stations";
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
+import { useServerCapability } from "#/hooks/use-server-capability";
 import { apiClient } from "#/lib/api";
 import { isMiniPlayerRoute } from "#/lib/mini-player-route";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
@@ -45,6 +47,7 @@ const playbackApi: PlaybackApi = {
 	headTrackStream: (trackId) => apiClient.headTrackStream(trackId),
 	getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
 	getTrackLyrics: (trackId) => apiClient.getTrackLyrics(trackId),
+	getTrackWaveform: (trackId) => apiClient.getTrackWaveform(trackId),
 	getRadioStationStreamUrl: (stationId) =>
 		apiClient.getRadioStationStreamUrl(stationId),
 	getRadioCatalogPreviewStreamUrl: (stationUuid) =>
@@ -72,6 +75,7 @@ function PlayerBarWithSync() {
 	const { isFavorite, toggleFavorite } = useFavoriteTracks();
 	const { isStationFavorite, toggleStationFavorite } =
 		useFavoriteRadioStations();
+	const canShowWaveform = useServerCapability(TRACK_WAVEFORM_CAPABILITY);
 	return (
 		<PlayerBar
 			onPlaylistMutated={() => {
@@ -88,6 +92,7 @@ function PlayerBarWithSync() {
 			onToggleMiniPlayer={
 				isDesktopClient() ? () => void toggleMiniPlayer() : undefined
 			}
+			canShowWaveform={canShowWaveform}
 		/>
 	);
 }

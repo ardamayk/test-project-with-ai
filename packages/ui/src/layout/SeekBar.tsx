@@ -30,6 +30,8 @@ type SeekBarProps = {
 	duration: number;
 	/** End of the buffered range, in seconds; null hides the buffered layer. */
 	bufferedEnd?: number | null;
+	/** Normalized peaks (0..255) drawn behind the track; null keeps the thin bar. */
+	waveform?: number[] | null;
 	disabled?: boolean;
 	showHoverTimestamp?: boolean;
 	onSeek: (seconds: number) => void;
@@ -46,11 +48,13 @@ export function SeekBar({
 	currentTime,
 	duration,
 	bufferedEnd = null,
+	waveform = null,
 	disabled = false,
 	showHoverTimestamp = true,
 	onSeek,
 	className,
 }: SeekBarProps) {
+	const hasWaveform = Boolean(waveform && waveform.length > 0);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const tooltipId = useId();
@@ -129,8 +133,10 @@ export function SeekBar({
 			ref={rootRef}
 			data-testid="seek-bar"
 			data-scrubbing={scrubFraction !== null ? "true" : undefined}
+			data-waveform={hasWaveform ? "true" : undefined}
 			className={cn(
-				"relative flex h-6 min-w-0 flex-1 touch-none items-center",
+				"relative flex min-w-0 flex-1 touch-none items-center",
+				hasWaveform ? "h-8" : "h-6",
 				className,
 			)}
 			onPointerDown={handlePointerDown}
@@ -139,6 +145,13 @@ export function SeekBar({
 			onPointerCancel={handlePointerCancel}
 			onPointerLeave={() => setHoverFraction(null)}
 		>
+			{hasWaveform && waveform ? (
+				<WaveformBars
+					peaks={waveform}
+					playedFraction={displayedFraction}
+					bufferedFraction={bufferedFraction}
+				/>
+			) : null}
 			<div
 				aria-hidden
 				data-testid="seek-buffered"
@@ -161,7 +174,10 @@ export function SeekBar({
 					// the wrapper claims pointer events.
 					if (canSeek) onSeek(Number(event.target.value) * duration);
 				}}
-				className="player-seek-slider relative min-w-0 flex-1 disabled:opacity-100"
+				className={cn(
+					"player-seek-slider relative min-w-0 flex-1 disabled:opacity-100",
+					hasWaveform && "player-seek-slider--waveform",
+				)}
 				style={
 					{
 						"--seek-level": `${(displayedFraction * 100).toFixed(2)}%`,
@@ -184,5 +200,65 @@ export function SeekBar({
 				</span>
 			) : null}
 		</div>
+	);
+}
+
+/**
+ * Waveform bars behind the seek track. Played bars take the accent colour
+ * through a clip on a second, coloured copy; buffered bars are lighter.
+ */
+function WaveformBars({
+	peaks,
+	playedFraction,
+	bufferedFraction,
+}: {
+	peaks: number[];
+	playedFraction: number;
+	bufferedFraction: number;
+}) {
+	const bars = peaks.map((peak, index) => {
+		const height = Math.max(1, Math.round((peak / 255) * 100));
+		return (
+			<rect
+				// biome-ignore lint/suspicious/noArrayIndexKey: peaks are positional
+				key={index}
+				x={index}
+				y={(100 - height) / 2}
+				width={0.7}
+				height={height}
+				rx={0.35}
+			/>
+		);
+	});
+	const viewBox = `0 0 ${peaks.length} 100`;
+	return (
+		<svg
+			aria-hidden="true"
+			role="presentation"
+			data-testid="seek-waveform"
+			className="pointer-events-none absolute inset-0 h-full w-full"
+			viewBox={viewBox}
+			preserveAspectRatio="none"
+		>
+			<title>Waveform</title>
+			<g className="fill-[var(--player-foreground)] opacity-25">{bars}</g>
+			<g
+				className="fill-[var(--player-foreground)] opacity-20"
+				style={{
+					clipPath: `inset(0 ${(100 - bufferedFraction * 100).toFixed(2)}% 0 0)`,
+				}}
+			>
+				{bars}
+			</g>
+			<g
+				data-testid="seek-waveform-played"
+				className="fill-[var(--player-live-progress)]"
+				style={{
+					clipPath: `inset(0 ${(100 - playedFraction * 100).toFixed(2)}% 0 0)`,
+				}}
+			>
+				{bars}
+			</g>
+		</svg>
 	);
 }

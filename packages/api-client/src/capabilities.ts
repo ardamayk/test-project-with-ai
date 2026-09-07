@@ -16,6 +16,8 @@ export const MANAGED_TRACK_DELETION_CAPABILITY = 'managed-track-deletion.v1';
 export const MANAGED_TRACK_REPLACEMENT_CAPABILITY =
   'managed-track-replacement.v1';
 export const MANAGED_ALBUM_DELETION_CAPABILITY = 'managed-album-deletion.v1';
+/** Lazily generated waveform peaks; only advertised when ffmpeg is installed. */
+export const TRACK_WAVEFORM_CAPABILITY = 'track-waveform.v1';
 
 export type ServerCapabilities =
   | HealthResponse
