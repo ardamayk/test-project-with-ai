@@ -1,119 +1,79 @@
 import type { ReactNode } from "react";
-import { getNavPanel, getQueuePanel } from "../widgets/layout-utils";
+import { getQueuePanel } from "../widgets/layout-utils";
 import { useLayout } from "./LayoutProvider";
-import { QueuePanel } from "./QueuePanel";
+import { QueueDrawer } from "./QueueDrawer";
+import {
+	QUEUE_DRAWER_CONTENT_CLEARANCE,
+	SHELL_INSET_CLASS,
+} from "./shell-metrics";
 import { Toaster } from "./Toaster";
-import { WidgetDndProvider, WidgetDock } from "./WidgetDock";
+import { TopNav } from "./TopNav";
+import { WidgetDndProvider } from "./WidgetDock";
 
-/** Height of the floating Player Bar; Toaster derives its offset from this. */
-export const PLAYER_BAR_HEIGHT_PX = 80;
-/** Gap between the bottom edge and the Player Bar. */
-export const PLAYER_BAR_INSET_PX = 16;
+export { PLAYER_BAR_HEIGHT_PX, PLAYER_BAR_INSET_PX } from "./shell-metrics";
+
 // Floating player bar: 80px bar + 16px bottom inset + 8px breathing room, so
 // scrolled content never ends hidden under the bar.
 const PLAYER_DOCK_CONTENT_PADDING = "pb-[104px]";
-// The dock follows the page content column so the bar lines up with page
-// headers and lists. Mirrors PAGE_CONTENT_PADDING_CLASS and
-// PAGE_CONTENT_WIDTH_CLASS in web/src/lib/page-layout-classes.ts.
-const PLAYER_DOCK_PADDING_CLASS = "px-6 md:px-8";
-const PLAYER_DOCK_COLUMN_CLASS = "mx-auto w-full min-[1801px]:max-w-[1476px]";
 
+/**
+ * App Shell: Top Nav across the top, the page below it, the Player Bar
+ * floating over the page's bottom edge, and the Queue Drawer sliding up on
+ * the right. Nav, page and bar share one horizontal inset; while the drawer
+ * is open the page gives way to it and the nav and bar stay put.
+ */
 export function AppShell({
 	children,
-	sidebar,
 	bottom,
+	onSearch,
 }: {
 	children?: ReactNode;
-	sidebar?: ReactNode;
 	bottom?: ReactNode;
+	/** Opens the host's library search; shown as "Search" in the Top Nav. */
+	onSearch?: () => void;
 }) {
 	const { preferences } = useLayout();
-	const { layout } = preferences;
-	const navPanel = getNavPanel(layout.sidebarPosition);
-	const queuePanel = getQueuePanel(layout.sidebarPosition);
-	const navCollapsed = layout.collapsed[navPanel];
-	const queueCollapsed = layout.collapsed[queuePanel];
-
-	const navWidgetPanel = navPanel === "left" ? "left" : "right";
-	const queueWidgetPanel = queuePanel === "left" ? "left" : "right";
-
-	const navColumn = (
-		<div className="flex h-full w-full flex-col overflow-hidden bg-sidebar">
-			{sidebar}
-			{!navCollapsed ? (
-				<div className="min-h-0 flex-1 overflow-y-auto border-sidebar-border border-t">
-					<WidgetDock panel={navWidgetPanel} />
-				</div>
-			) : null}
-		</div>
-	);
-	const fixedNavColumn = (
-		<aside className="h-full w-fit min-w-max max-w-[min(22rem,45vw)] shrink-0 overflow-hidden">
-			{navColumn}
-		</aside>
-	);
-
-	const queueColumn = (
-		<div className="flex h-full w-full flex-col overflow-hidden bg-queue text-queue-foreground">
-			<div className="min-h-0 flex-[2] overflow-hidden">
-				<QueuePanel />
-			</div>
-			{!queueCollapsed ? (
-				<div className="min-h-0 flex-1 overflow-y-auto border-border border-t">
-					<WidgetDock panel={queueWidgetPanel} />
-				</div>
-			) : null}
-		</div>
-	);
-	const fixedQueueColumn = (
-		<aside
-			data-queue-column
-			className={`h-full w-80 shrink-0 overflow-hidden border-border ${
-				queuePanel === "left" ? "border-r" : "border-l"
-			}`}
-		>
-			{queueColumn}
-		</aside>
-	);
+	const queuePanel = getQueuePanel(preferences.layout.sidebarPosition);
+	const queueOpen = !preferences.layout.collapsed[queuePanel];
 
 	return (
 		<WidgetDndProvider>
-			<div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background text-foreground">
-				<div className="flex min-h-0 flex-1 overflow-hidden">
-					{navPanel === "left" ? fixedNavColumn : null}
-					{queuePanel === "left" && !queueCollapsed ? fixedQueueColumn : null}
-					<div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-						<main
-							className={`flex h-full min-w-0 flex-1 flex-col overflow-auto bg-background ${
-								bottom ? PLAYER_DOCK_CONTENT_PADDING : ""
-							}`}
+			<div
+				data-app-shell
+				className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background text-foreground"
+			>
+				<TopNav onSearch={onSearch} />
+				<div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+					<main
+						data-queue-open={queueOpen ? "" : undefined}
+						className={`flex h-full min-w-0 flex-1 flex-col overflow-auto bg-background transition-[padding] duration-300 ease-out ${
+							bottom ? PLAYER_DOCK_CONTENT_PADDING : ""
+						}`}
+						style={{
+							paddingRight: queueOpen ? QUEUE_DRAWER_CONTENT_CLEARANCE : 0,
+						}}
+					>
+						{children}
+					</main>
+					{bottom ? (
+						<div
+							data-player-scrim
+							aria-hidden
+							className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-36 bg-gradient-to-t from-background via-background/75 to-transparent"
+						/>
+					) : null}
+					{bottom ? (
+						<div
+							data-player-dock
+							className={`pointer-events-none absolute inset-x-0 bottom-4 z-30 ${SHELL_INSET_CLASS}`}
 						>
-							{children}
-						</main>
-						{bottom ? (
-							<div
-								data-player-scrim
-								aria-hidden
-								className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-36 bg-gradient-to-t from-background via-background/75 to-transparent"
-							/>
-						) : null}
-						{bottom ? (
-							<div
-								data-player-dock
-								className={`pointer-events-none absolute inset-x-0 bottom-4 z-30 ${PLAYER_DOCK_PADDING_CLASS}`}
-							>
-								<div
-									data-player-dock-column
-									className={PLAYER_DOCK_COLUMN_CLASS}
-								>
-									<div className="pointer-events-auto">{bottom}</div>
-								</div>
+							<div data-player-dock-column className="w-full">
+								<div className="pointer-events-auto">{bottom}</div>
 							</div>
-						) : null}
-					</div>
-					{queuePanel === "right" && !queueCollapsed ? fixedQueueColumn : null}
-					{navPanel === "right" ? fixedNavColumn : null}
+						</div>
+					) : null}
 				</div>
+				<QueueDrawer abovePlayerBar={Boolean(bottom)} />
 				<Toaster />
 			</div>
 		</WidgetDndProvider>

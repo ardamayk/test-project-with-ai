@@ -23,21 +23,30 @@ test("navigation links render", async ({ page }) => {
 	await expect(queueHeading).toBeVisible();
 });
 
-test("albums page shows search and filters", async ({ page }) => {
+test("albums page shows filters", async ({ page }) => {
 	await page.goto("/library/albums");
-	await expect(page.getByPlaceholder("Search albums...")).toBeVisible();
 	await page.getByRole("button", { name: "Filters" }).click();
 	await expect(
 		page.getByRole("dialog", { name: "Album filters" }),
 	).toBeVisible();
 });
 
-test("artists page loads from sidebar", async ({ page }) => {
+test("artists page loads from the top nav", async ({ page }) => {
 	await page.goto("/library/albums");
 	await page.getByRole("link", { name: "Artists" }).click();
 	await expect(page).toHaveURL(/\/library\/artists/);
 	await expect(page.getByRole("heading", { name: "Artists" })).toBeVisible();
-	await expect(page.getByPlaceholder("Search artists...")).toBeVisible();
+});
+
+test("library search opens from the top nav and groups results", async ({
+	page,
+}) => {
+	await page.goto("/library/albums");
+	await page.getByRole("button", { name: "Search" }).click();
+	const dialog = page.getByTestId("library-search-dialog");
+	await expect(dialog).toBeVisible();
+	await dialog.getByRole("combobox").fill("a");
+	await expect(dialog.getByText("From Your Library")).toBeVisible();
 });
 
 test("now playing widget shows empty state", async ({ page }) => {

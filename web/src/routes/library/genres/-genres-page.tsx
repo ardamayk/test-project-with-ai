@@ -1,38 +1,18 @@
-import type { Track } from "@repo/api-client";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { CollectionCoverCardStack } from "#/components/collection-cover-strip";
-import { COLLECTION_PAGE_CONTAINER_CLASS } from "#/components/collection-grid-layout";
+import {
+	COLLECTION_GRID_CLASS,
+	COLLECTION_PAGE_CONTAINER_CLASS,
+} from "#/components/collection-grid-layout";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { apiClient } from "#/lib/api";
-import { getTrackGenreNames } from "#/lib/library-display";
-
-function collectGenres(tracks: Track[]) {
-	const byKey = new Map<
-		string,
-		{ name: string; trackCount: number; tracks: Track[] }
-	>();
-	for (const track of tracks) {
-		for (const genre of getTrackGenreNames(track)) {
-			const key = genre.toLowerCase();
-			const current = byKey.get(key);
-			if (current) {
-				current.trackCount += 1;
-				current.tracks.push(track);
-			} else {
-				byKey.set(key, { name: genre, trackCount: 1, tracks: [track] });
-			}
-		}
-	}
-	return [...byKey.values()].sort((a, b) =>
-		a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-	);
-}
+import { collectGenres, GENRE_SOURCE_QUERY_KEY } from "#/lib/collect-genres";
 
 export function GenresPage() {
 	const tracks = useQuery({
-		queryKey: ["library", "tracks", "genres"],
+		queryKey: GENRE_SOURCE_QUERY_KEY,
 		queryFn: () => apiClient.listTracks({ limit: 500 }),
 		staleTime: 60_000,
 	});
@@ -59,7 +39,6 @@ export function GenresPage() {
 			header={
 				<PageHeader
 					title="Genres"
-					description="Browse tracks by genre."
 					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 				/>
 			}
@@ -68,7 +47,7 @@ export function GenresPage() {
 				<p className="text-foreground text-sm">No tagged genres yet.</p>
 			) : (
 				<div
-					className={`${COLLECTION_PAGE_CONTAINER_CLASS} grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5`}
+					className={`${COLLECTION_PAGE_CONTAINER_CLASS} ${COLLECTION_GRID_CLASS}`}
 				>
 					{genres.map((genre) => (
 						<Link

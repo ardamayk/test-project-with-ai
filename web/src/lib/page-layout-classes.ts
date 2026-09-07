@@ -1,16 +1,18 @@
 /**
  * Horizontal padding every page region shares so headers, list content and
- * detail content line up along the same left edge.
+ * detail content line up along the same edges as the Top Nav and the Player
+ * Bar. `--shell-inset` is defined in styles.css and mirrored by the App
+ * Shell in packages/ui (shell-metrics.ts).
  */
-export const PAGE_CONTENT_PADDING_CLASS = "px-6 py-5 md:px-8";
+export const PAGE_CONTENT_PADDING_CLASS = "px-[var(--shell-inset)] py-5";
 
 /**
- * Width the page content is centred at once the viewport grows past the widest
- * supported grid. Every page region that holds content applies this, so a list
- * page and the detail page it links to stay on the same vertical line.
+ * Page content fills the column between the insets; the App Shell narrows
+ * that column while the Queue Drawer is open, so no max-width cap is needed.
+ * `page-content-column` is a marker (no styles) so tests can prove a header
+ * and its content share the column.
  */
-export const PAGE_CONTENT_WIDTH_CLASS =
-	"w-full min-[1801px]:mx-auto min-[1801px]:max-w-[1476px]";
+export const PAGE_CONTENT_WIDTH_CLASS = "page-content-column w-full";
 
 export const HEADER_SEARCH_CONTAINER_CLASS = "relative w-full sm:w-[28rem]";
 export const HEADER_SEARCH_INPUT_CLASS =

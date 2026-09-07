@@ -1,11 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-	Disc3,
-	Search,
-	SlidersHorizontal,
-	TriangleAlert,
-	X,
-} from "lucide-react";
+import { Disc3, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useDeferredValue, useMemo, useState } from "react";
 import {
@@ -23,12 +17,7 @@ import {
 } from "#/components/collection-grid-layout";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { Button } from "#/components/ui/button";
-import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
-import {
-	HEADER_SEARCH_CONTAINER_CLASS,
-	HEADER_SEARCH_INPUT_CLASS,
-} from "#/lib/page-layout-classes";
 
 const defaultFilters: AlbumFilterState = {
 	albumQuery: "",
@@ -109,32 +98,18 @@ export function AlbumsPage() {
 			header={
 				<PageHeader
 					title="Albums"
-					description="Browse albums in your library"
 					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 					actions={
-						<>
-							<div className={HEADER_SEARCH_CONTAINER_CLASS}>
-								<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-caption" />
-								<Input
-									className={HEADER_SEARCH_INPUT_CLASS}
-									placeholder="Search albums..."
-									value={filters.albumQuery}
-									onChange={(e) =>
-										setFilters({ ...filters, albumQuery: e.target.value })
-									}
-								/>
-							</div>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon"
-								aria-label="Filters"
-								className="size-10 text-caption hover:text-heading"
-								onClick={() => setAreFiltersOpen(true)}
-							>
-								<SlidersHorizontal className="size-5" />
-							</Button>
-						</>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							aria-label="Filters"
+							className="size-10 text-caption hover:text-heading"
+							onClick={() => setAreFiltersOpen(true)}
+						>
+							<SlidersHorizontal className="size-5" />
+						</Button>
 					}
 				/>
 			}

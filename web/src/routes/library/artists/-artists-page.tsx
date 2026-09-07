@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Search, TriangleAlert, Users } from "lucide-react";
-import { useState } from "react";
+import { TriangleAlert, Users } from "lucide-react";
 import { ArtistGrid } from "#/components/artist-grid";
 import {
 	COLLECTION_PAGE_CONTAINER_CLASS,
@@ -9,19 +8,16 @@ import {
 	CollectionPageContainer,
 } from "#/components/collection-grid-layout";
 import { PageHeader, PageShell } from "#/components/page-layout";
-import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
-import {
-	HEADER_SEARCH_CONTAINER_CLASS,
-	HEADER_SEARCH_INPUT_CLASS,
-} from "#/lib/page-layout-classes";
 
 export function ArtistsPage({
 	initialSearch = "",
 }: {
 	initialSearch?: string;
 }) {
-	const [search, setSearch] = useState(initialSearch);
+	// Library search routes artist picks here as `?q=`; the page has no
+	// search field of its own.
+	const search = initialSearch;
 	const artists = useQuery({
 		queryKey: ["library", "artists", search],
 		queryFn: () =>
@@ -38,19 +34,7 @@ export function ArtistsPage({
 			header={
 				<PageHeader
 					title="Artists"
-					description="Browse by artist"
 					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
-					actions={
-						<div className={HEADER_SEARCH_CONTAINER_CLASS}>
-							<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-caption" />
-							<Input
-								className={HEADER_SEARCH_INPUT_CLASS}
-								placeholder="Search artists..."
-								value={search}
-								onChange={(event) => setSearch(event.target.value)}
-							/>
-						</div>
-					}
 				/>
 			}
 		>

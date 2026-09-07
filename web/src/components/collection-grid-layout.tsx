@@ -24,6 +24,11 @@ const SKELETON_CARD_KEYS = [
 	"skeleton-10",
 ] as const;
 export const COLLECTION_PAGE_CONTAINER_CLASS = PAGE_CONTENT_WIDTH_CLASS;
+// Cards are exactly 250px wide and never stretch: when the column narrows
+// (Queue Drawer opening, window shrinking) cards wrap to the next row instead
+// of resizing. `min(…,100%)` lets one column fit narrow phones.
+export const COLLECTION_GRID_CLASS =
+	"grid grid-cols-[repeat(auto-fill,min(250px,100%))] gap-3";
 
 export function CollectionPageContainer({
 	className,
@@ -49,10 +54,7 @@ export function CollectionGrid({
 	return (
 		<div
 			aria-busy={isBusy || undefined}
-			className={cn(
-				"grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5",
-				className,
-			)}
+			className={cn(COLLECTION_GRID_CLASS, className)}
 		>
 			{children}
 		</div>

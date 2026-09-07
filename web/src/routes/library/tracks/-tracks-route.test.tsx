@@ -647,7 +647,7 @@ describe("tracks route", () => {
 		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
 	});
 
-	it("keeps track search in the header and debounces API queries", async () => {
+	it("renders the shared compact header and the track list", async () => {
 		renderWithQuery(<TracksPage />);
 
 		await screen.findByText("Anti-Hero");
@@ -655,20 +655,17 @@ describe("tracks route", () => {
 		expect(screen.getByTestId("track-show-favorite").textContent).toBe("true");
 		expect(screen.getByTestId("track-compact").textContent).toBe("true");
 		expect(mocks.listTracks).toHaveBeenCalledTimes(1);
-		expect(mocks.listTracks).toHaveBeenLastCalledWith({
-			limit: 200,
-			q: undefined,
-		});
+		expect(mocks.listTracks).toHaveBeenLastCalledWith({ limit: 200 });
 
-		const input = screen.getByPlaceholderText("Search tracks…");
-		const header = input.closest("header");
+		const header = screen
+			.getByRole("heading", { name: "Tracks" })
+			.closest("header");
 		expect(header).toBeTruthy();
 		expect(header?.className).toContain("sticky");
 		expect(header?.className).toContain("top-0");
 		expect(header?.className).toContain("py-3");
-		expect(
-			header?.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
-		).toBeTruthy();
+		expect(header?.querySelector(".page-content-column")).toBeTruthy();
+		expect(screen.queryByPlaceholderText(/Search/)).toBeNull();
 		expect(screen.getByTestId("tracks-page-shell").className).toContain(
 			"overflow-hidden",
 		);
@@ -678,69 +675,6 @@ describe("tracks route", () => {
 		expect(screen.getByTestId("tracks-page-content").className).toContain(
 			"py-5",
 		);
-		expect(
-			screen
-				.getByTestId("tracks-page-content")
-				.querySelector(".min-\\[1801px\\]\\:max-w-\\[1476px\\]"),
-		).toBeTruthy();
-		expect(input.className).toContain("h-11");
-		expect(input.className).toContain("pl-10");
-		expect(input.parentElement?.className).toContain("sm:max-w-md");
-
-		vi.useFakeTimers();
-		fireEvent.change(input, { target: { value: "blue" } });
-
-		await act(async () => {
-			vi.advanceTimersByTime(249);
-		});
-		expect(mocks.listTracks).toHaveBeenCalledTimes(1);
-
-		await act(async () => {
-			vi.advanceTimersByTime(1);
-			await Promise.resolve();
-		});
-
-		expect(mocks.listTracks).toHaveBeenCalledWith({
-			limit: 200,
-			q: "blue",
-		});
-	});
-
-	it("filters the current track list immediately while debounced search is pending", async () => {
-		renderWithQuery(<TracksPage />);
-
-		await screen.findByText("Anti-Hero");
-		const input = screen.getByPlaceholderText("Search tracks…");
-
-		vi.useFakeTimers();
-		fireEvent.change(input, { target: { value: "anti-hero" } });
-
-		expect(screen.getByText("Anti-Hero")).toBeTruthy();
-		expect(screen.queryByText("Bad Blood")).toBeNull();
-		expect(mocks.listTracks).toHaveBeenCalledTimes(1);
-	});
-
-	it("keeps filtered local results visible if the debounced search request fails", async () => {
-		mocks.listTracks
-			.mockResolvedValueOnce({ items: libraryTracks })
-			.mockRejectedValueOnce(new Error("backend search failed"));
-
-		renderWithQuery(<TracksPage />);
-
-		await screen.findByText("Anti-Hero");
-		const input = screen.getByPlaceholderText("Search tracks…");
-
-		vi.useFakeTimers();
-		fireEvent.change(input, { target: { value: "anti-hero" } });
-		await act(async () => {
-			vi.advanceTimersByTime(250);
-			await Promise.resolve();
-			await Promise.resolve();
-		});
-
-		expect(screen.getByText("Anti-Hero")).toBeTruthy();
-		expect(screen.queryByText("Bad Blood")).toBeNull();
-		expect(screen.queryByText("Failed to load tracks")).toBeNull();
 	});
 
 	it("imports supported folder audio without sending client paths", async () => {

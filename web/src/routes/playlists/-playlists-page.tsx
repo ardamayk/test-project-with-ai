@@ -33,7 +33,6 @@ export function PlaylistsPage() {
 			header={
 				<PageHeader
 					title="Playlists"
-					description="Favorites is your default playlist."
 					innerClassName={COLLECTION_PAGE_CONTAINER_CLASS}
 				/>
 			}
