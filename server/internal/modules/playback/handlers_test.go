@@ -6,8 +6,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -339,5 +342,41 @@ func TestHandlersStreamTrackNotFound(t *testing.T) {
 	h.StreamTrack(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestTrackHeadRouteChecksExistingAndMissingAudio(t *testing.T) {
+	database := testutil.OpenMigratedDB(t)
+	filePath := filepath.Join(t.TempDir(), "audio.flac")
+	if err := os.WriteFile(filePath, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, trackID := testutil.SeedManagedTrack(t, database, testutil.ManagedTrackSpec{FilePath: filePath})
+	tracks := library.NewService(library.NewStore(database))
+	router := chi.NewRouter()
+	NewModule(database, tracks).RegisterRoutes(router)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	checkTrackHead(t, server.URL+"/api/v1/tracks/"+trackID+"/stream", http.StatusOK)
+	if err := os.Remove(filePath); err != nil {
+		t.Fatal(err)
+	}
+	checkTrackHead(t, server.URL+"/api/v1/tracks/"+trackID+"/stream", http.StatusNotFound)
+	checkTrackHead(t, server.URL+"/api/v1/tracks/unknown/stream", http.StatusNotFound)
+}
+
+func checkTrackHead(t *testing.T, url string, status int) {
+	t.Helper()
+	response, err := http.Head(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if response.StatusCode != status || len(body) != 0 {
+		t.Fatalf("HEAD status = %d, body bytes = %d; want %d with no body", response.StatusCode, len(body), status)
 	}
 }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -85,6 +86,9 @@ struct PersistedProcessingSettings {
     output_mode: OutputMode,
     #[serde(default)]
     selected_output_device_id: Option<String>,
+    /// Last software volume per output route, keyed by `output_volume_key`.
+    #[serde(default)]
+    volume_by_output_device: BTreeMap<String, f64>,
     profile: ProcessingProfile,
     software_volume: f64,
     replay_gain_mode: ReplayGainMode,
@@ -162,25 +166,65 @@ pub struct ProcessingController {
     storage: Box<dyn ProcessingSettingsStorage>,
     output_mode: OutputMode,
     selected_output_device_id: Option<String>,
+    volume_by_output_device: BTreeMap<String, f64>,
     state: ProcessingState,
+}
+
+pub(crate) struct ProcessingSnapshot {
+    pub(crate) state: ProcessingState,
+    volume_by_output_device: BTreeMap<String, f64>,
+}
+
+/// Key under which the software volume is remembered for an output route.
+/// ALSA device ids are machine-local, so this memory stays in the desktop's
+/// own settings file rather than in the server-side preferences.
+pub fn output_volume_key(output_mode: OutputMode, device_id: Option<&str>) -> String {
+    match (output_mode, device_id) {
+        (OutputMode::DirectAlsa, Some(device_id)) => format!("alsa:{device_id}"),
+        _ => "system".to_owned(),
+    }
 }
 
 impl ProcessingController {
     pub fn open(storage: Box<dyn ProcessingSettingsStorage>) -> Result<Self, String> {
-        let (state, output_mode, selected_output_device_id) = match storage.load()? {
+        let loaded = match storage.load()? {
             Some(value) => state_from_json(&value)?,
-            None => (default_state(), OutputMode::System, None),
+            None => LoadedProcessingSettings::default(),
         };
         Ok(Self {
             storage,
-            output_mode,
-            selected_output_device_id,
-            state,
+            output_mode: loaded.output_mode,
+            selected_output_device_id: loaded.selected_output_device_id,
+            volume_by_output_device: loaded.volume_by_output_device,
+            state: loaded.state,
         })
+    }
+
+    /// Software volume last used on the active output route, if any.
+    pub fn remembered_volume(&self) -> Option<f64> {
+        self.volume_by_output_device
+            .get(&output_volume_key(
+                self.output_mode,
+                self.selected_output_device_id.as_deref(),
+            ))
+            .copied()
     }
 
     pub fn state(&self) -> &ProcessingState {
         &self.state
+    }
+
+    pub(crate) fn snapshot(&self) -> ProcessingSnapshot {
+        ProcessingSnapshot {
+            state: self.state.clone(),
+            volume_by_output_device: self.volume_by_output_device.clone(),
+        }
+    }
+
+    pub(crate) fn restore_snapshot(&mut self, snapshot: ProcessingSnapshot) -> Result<(), String> {
+        self.state = snapshot.state;
+        self.volume_by_output_device = snapshot.volume_by_output_device;
+        self.persist_state(&self.state)
     }
 
     pub fn output_mode(&self) -> OutputMode {
@@ -231,7 +275,9 @@ impl ProcessingController {
         } else {
             0.0
         };
-        self.commit(|state| {
+        let key = output_volume_key(self.output_mode, self.selected_output_device_id.as_deref());
+        let previous = self.volume_by_output_device.insert(key.clone(), volume);
+        let result = self.commit(|state| {
             let is_transition = state.profile == ProcessingProfile::Direct && volume != 1.0;
             state.software_volume = volume;
             transition_to_processed(
@@ -240,7 +286,14 @@ impl ProcessingController {
                 "Software volume requires the Processed Profile.",
             );
             Ok(())
-        })
+        });
+        if result.is_err() {
+            match previous {
+                Some(previous) => self.volume_by_output_device.insert(key, previous),
+                None => self.volume_by_output_device.remove(&key),
+            };
+        }
+        result
     }
 
     pub fn enable_replay_gain(&mut self, mode: ReplayGainMode) -> Result<(), String> {
@@ -345,8 +398,12 @@ impl ProcessingController {
         output_mode: OutputMode,
         selected_output_device_id: Option<&str>,
     ) -> Result<(), String> {
-        let settings =
-            PersistedProcessingSettings::from_state(state, output_mode, selected_output_device_id);
+        let settings = PersistedProcessingSettings::from_state(
+            state,
+            output_mode,
+            selected_output_device_id,
+            &self.volume_by_output_device,
+        );
         let value = serde_json::to_string(&settings)
             .map_err(|error| format!("Failed to serialize Processing Profile settings: {error}"))?;
         self.storage.save(&value)
@@ -387,10 +444,12 @@ impl PersistedProcessingSettings {
         state: &ProcessingState,
         output_mode: OutputMode,
         selected_output_device_id: Option<&str>,
+        volume_by_output_device: &BTreeMap<String, f64>,
     ) -> Self {
         Self {
             output_mode,
             selected_output_device_id: selected_output_device_id.map(str::to_owned),
+            volume_by_output_device: volume_by_output_device.clone(),
             profile: state.profile,
             software_volume: state.software_volume,
             replay_gain_mode: state.replay_gain_mode,
@@ -400,13 +459,32 @@ impl PersistedProcessingSettings {
     }
 }
 
-fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode, Option<String>), String> {
+struct LoadedProcessingSettings {
+    state: ProcessingState,
+    output_mode: OutputMode,
+    selected_output_device_id: Option<String>,
+    volume_by_output_device: BTreeMap<String, f64>,
+}
+
+impl Default for LoadedProcessingSettings {
+    fn default() -> Self {
+        Self {
+            state: default_state(),
+            output_mode: OutputMode::System,
+            selected_output_device_id: None,
+            volume_by_output_device: BTreeMap::new(),
+        }
+    }
+}
+
+fn state_from_json(value: &str) -> Result<LoadedProcessingSettings, String> {
     let settings: PersistedProcessingSettings = serde_json::from_str(value)
         .map_err(|error| format!("Failed to parse Processing Profile settings: {error}"))?;
     let output_mode = settings.output_mode;
     let selected_output_device_id = settings.selected_output_device_id.clone();
-    Ok((
-        ProcessingState {
+    let volume_by_output_device = settings.volume_by_output_device.clone();
+    Ok(LoadedProcessingSettings {
+        state: ProcessingState {
             profile: settings.profile,
             software_volume: settings.software_volume,
             replay_gain_mode: settings.replay_gain_mode,
@@ -422,7 +500,8 @@ fn state_from_json(value: &str) -> Result<(ProcessingState, OutputMode, Option<S
         },
         output_mode,
         selected_output_device_id,
-    ))
+        volume_by_output_device,
+    })
 }
 
 fn default_state() -> ProcessingState {
@@ -461,4 +540,76 @@ fn create_equalizer_filters(gains_db: &[f64; 10]) -> Vec<String> {
         .zip(gains_db)
         .map(|(frequency, gain)| format!("equalizer=f={frequency}:t=q:w=1:g={gain}"))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct MemoryStorage(Arc<Mutex<Option<String>>>);
+
+    impl ProcessingSettingsStorage for MemoryStorage {
+        fn load(&self) -> Result<Option<String>, String> {
+            Ok(self.0.lock().expect("lock settings").clone())
+        }
+
+        fn save(&self, value: &str) -> Result<(), String> {
+            *self.0.lock().expect("lock settings") = Some(value.to_owned());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn rollback_restores_existing_and_absent_route_volumes_in_memory_and_storage() {
+        for remembered_volume in [None, Some(0.6)] {
+            let storage = MemoryStorage::default();
+            let mut controller = ProcessingController::open(Box::new(storage.clone())).unwrap();
+            controller.select_direct_alsa_output("headphones").unwrap();
+            controller.set_software_volume(0.3).unwrap();
+            controller.set_output_mode(OutputMode::System).unwrap();
+            if let Some(volume) = remembered_volume {
+                controller.set_software_volume(volume).unwrap();
+            }
+            let snapshot = controller.snapshot();
+            let previous_state = controller.state().clone();
+            let previous_volumes = controller.volume_by_output_device.clone();
+
+            controller.set_software_volume(0.9).unwrap();
+            controller.restore_snapshot(snapshot).unwrap();
+
+            assert_eq!(controller.state(), &previous_state);
+            assert_eq!(controller.remembered_volume(), remembered_volume);
+            assert_eq!(controller.volume_by_output_device, previous_volumes);
+            let reopened = ProcessingController::open(Box::new(storage)).unwrap();
+            assert_eq!(
+                reopened.state().software_volume,
+                previous_state.software_volume
+            );
+            assert_eq!(reopened.state().profile, previous_state.profile);
+            assert_eq!(reopened.volume_by_output_device, previous_volumes);
+        }
+    }
+
+    #[test]
+    fn adaptive_output_restores_system_route_volume_after_direct_alsa() {
+        let mut controller =
+            ProcessingController::open(Box::new(MemoryStorage::default())).unwrap();
+        controller.set_software_volume(0.4).unwrap();
+        controller.select_direct_alsa_output("headphones").unwrap();
+        controller.set_software_volume(0.8).unwrap();
+
+        controller
+            .set_output_mode(OutputMode::AdaptiveSystemRate)
+            .unwrap();
+        let volume = controller
+            .remembered_volume()
+            .expect("remember system volume");
+        controller.set_software_volume(volume).unwrap();
+
+        assert_eq!(controller.state().software_volume, 0.4);
+        controller.select_direct_alsa_output("headphones").unwrap();
+        assert_eq!(controller.remembered_volume(), Some(0.8));
+    }
 }

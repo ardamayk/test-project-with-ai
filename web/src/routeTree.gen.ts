@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as MiniRouteImport } from './routes/mini'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
@@ -26,6 +27,11 @@ import { Route as LibraryArtistsIndexRouteImport } from './routes/library/artist
 import { Route as LibraryAlbumsIndexRouteImport } from './routes/library/albums/index'
 import { Route as LibraryGenresGenreRouteImport } from './routes/library/genres/$genre'
 
+const MiniRoute = MiniRouteImport.update({
+  id: '/mini',
+  path: '/mini',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HomeRoute = HomeRouteImport.update({
   id: '/home',
   path: '/home',
@@ -110,6 +116,7 @@ const LibraryGenresGenreRoute = LibraryGenresGenreRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/home': typeof HomeRoute
+  '/mini': typeof MiniRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/radio/$stationId': typeof RadioStationIdRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/home': typeof HomeRoute
+  '/mini': typeof MiniRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/radio/$stationId': typeof RadioStationIdRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/home': typeof HomeRoute
+  '/mini': typeof MiniRoute
   '/library/$albumId': typeof LibraryAlbumIdRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/radio/$stationId': typeof RadioStationIdRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/home'
+    | '/mini'
     | '/library/$albumId'
     | '/playlists/$playlistId'
     | '/radio/$stationId'
@@ -185,6 +195,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/home'
+    | '/mini'
     | '/library/$albumId'
     | '/playlists/$playlistId'
     | '/radio/$stationId'
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/home'
+    | '/mini'
     | '/library/$albumId'
     | '/playlists/$playlistId'
     | '/radio/$stationId'
@@ -222,6 +234,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HomeRoute: typeof HomeRoute
+  MiniRoute: typeof MiniRoute
   LibraryAlbumIdRoute: typeof LibraryAlbumIdRoute
   PlaylistsPlaylistIdRoute: typeof PlaylistsPlaylistIdRoute
   RadioStationIdRoute: typeof RadioStationIdRoute
@@ -240,6 +253,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/mini': {
+      id: '/mini'
+      path: '/mini'
+      fullPath: '/mini'
+      preLoaderRoute: typeof MiniRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/home': {
       id: '/home'
       path: '/home'
@@ -358,6 +378,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HomeRoute: HomeRoute,
+  MiniRoute: MiniRoute,
   LibraryAlbumIdRoute: LibraryAlbumIdRoute,
   PlaylistsPlaylistIdRoute: PlaylistsPlaylistIdRoute,
   RadioStationIdRoute: RadioStationIdRoute,

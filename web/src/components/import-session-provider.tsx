@@ -1,3 +1,4 @@
+import { clearTrackWaveformCache } from "@repo/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, type ReactNode, useContext, useState } from "react";
 import { useReturnFocus } from "#/hooks/use-return-focus";
@@ -34,6 +35,7 @@ function useImportSession() {
 	// the opener to restore focus on close.
 	const returnFocus = useReturnFocus();
 	async function refresh() {
+		clearTrackWaveformCache();
 		await queryClient.invalidateQueries({ queryKey: ["library", "tracks"] });
 	}
 	function handleOpenChange(nextIsOpen: boolean) {

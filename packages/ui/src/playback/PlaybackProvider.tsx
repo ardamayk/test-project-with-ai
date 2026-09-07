@@ -18,10 +18,10 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { toast } from "sonner";
 import type {
 	PlaybackEngine,
 	PlaybackError,
+	PlaybackErrorCause,
 	PlaybackSessionState,
 	PlaybackSource,
 	RepeatMode,
@@ -36,19 +36,30 @@ import type {
 	ReplayGainMode,
 } from "./processing";
 import type { PlaybackTelemetry } from "./telemetry";
+import { type AbRepeat, useAbRepeat } from "./use-ab-repeat";
+import { type SleepTimer, useSleepTimer } from "./use-sleep-timer";
 import {
 	type PlaybackQueueApi,
 	useSynchronizedQueue,
 } from "./use-synchronized-queue";
+import type { TrackWaveformLoader } from "./use-track-waveform";
 
 export type { RepeatMode } from "./PlaybackEngine";
 export type { PlaybackQueueApi } from "./use-synchronized-queue";
 
 export type PlaybackAssetApi = {
 	getStreamUrl: (trackId: string) => string;
+	/**
+	 * Optional HEAD probe used to explain a failed Track: a 404 means the
+	 * file is missing on the server, a rejection means the server is
+	 * unreachable. Hosts without it get an "unknown" cause.
+	 */
+	headTrackStream?: (trackId: string) => Promise<{ status: number }>;
 	getAlbumCoverUrl: (albumId: string) => string;
 	/** Lyrics text stored for a Track; optional for hosts without the endpoint. */
 	getTrackLyrics?: (trackId: string) => Promise<{ lyrics: string }>;
+	/** Waveform peaks, or a pending marker while the server generates them. */
+	getTrackWaveform?: TrackWaveformLoader;
 };
 
 export type PlaylistLibraryApi = {
@@ -90,10 +101,18 @@ type PlaybackContextValue = {
 	isReconnecting: boolean;
 	currentTime: number;
 	duration: number;
+	bufferedEnd: number | null;
 	volume: number;
+	playbackRate: number;
+	/** Whether the engine plays consecutive tracks without a gap; null when unknown. */
+	isGapless: boolean | null;
+	sleepTimer: SleepTimer;
+	abRepeat: AbRepeat;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	playbackError: PlaybackError | null;
+	/** Present while a Track failed and the user can retry or skip it. */
+	errorRecovery: PlaybackErrorRecovery | null;
 	processingState: ProcessingState | null;
 	playbackTelemetry: PlaybackTelemetry | null;
 	queueConflict: string | null;
@@ -110,6 +129,10 @@ type PlaybackContextValue = {
 	cycleRepeatMode: () => void;
 	seek: (seconds: number) => void;
 	setVolume: (value: number) => void;
+	setPlaybackRate: (rate: number) => void;
+	setTransitionFade: (milliseconds: number) => void;
+	/** Appends a Track to the end of the Queue. */
+	addToQueue: (trackId: string) => Promise<void>;
 	setProcessingProfile: (profile: ProcessingProfile) => void;
 	setReplayGainMode: (mode: ReplayGainMode) => void;
 	setEqualizerPreset: (preset: Exclude<EqualizerPreset, "custom">) => void;
@@ -127,6 +150,18 @@ type PlaybackContextValue = {
 	getAlbumCoverUrl: (albumId: string) => string;
 	/** Resolves null when the host exposes no lyrics endpoint. */
 	getTrackLyrics: (trackId: string) => Promise<{ lyrics: string } | null>;
+	/** Null when the host exposes no waveform endpoint. */
+	getTrackWaveform: TrackWaveformLoader | null;
+};
+
+export type PlaybackErrorRecovery = {
+	cause: PlaybackErrorCause | null;
+	/** Seconds until the Track is skipped automatically; null once stopped. */
+	countdownSeconds: number | null;
+	canSkip: boolean;
+	retry: () => void;
+	skip: () => void;
+	cancelCountdown: () => void;
 };
 
 const PlaybackContext = createContext<PlaybackContextValue | null>(null);
@@ -136,10 +171,16 @@ export function PlaybackProvider({
 	children,
 	api,
 	engine,
+	autoSkipOnErrorSeconds = 5,
+	shouldCoordinateQueue = true,
 }: {
 	children: ReactNode;
 	api: PlaybackApi;
 	engine: PlaybackEngine;
+	/** Countdown before a failed Track is skipped; 0 waits for the user. */
+	autoSkipOnErrorSeconds?: number;
+	/** Only the main desktop window coordinates the native queue. */
+	shouldCoordinateQueue?: boolean;
 }) {
 	const apiRef = useRef(api);
 	const {
@@ -219,6 +260,7 @@ export function PlaybackProvider({
 					track: item.track,
 					playbackUrl: apiRef.current.getStreamUrl(item.trackId),
 					queueItemId: item.id,
+					artworkUrl: apiRef.current.getAlbumCoverUrl(item.track.albumId),
 				});
 			} catch {
 				// PlaybackEngine exposes the error through observable session state.
@@ -242,7 +284,7 @@ export function PlaybackProvider({
 	}, [engine, playQueueItemInternal]);
 
 	useEffect(() => {
-		if (!engine.syncQueueContext) return;
+		if (!shouldCoordinateQueue || !engine.syncQueueContext) return;
 		const currentIndex = queue.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
 		);
@@ -254,7 +296,7 @@ export function PlaybackProvider({
 			.catch((error) => {
 				console.warn("Failed to sync native playback Queue context", { error });
 			});
-	}, [engine, queue]);
+	}, [engine, queue, shouldCoordinateQueue]);
 
 	const playTrackInternal = useCallback(
 		async (trackId: string, queueOverride?: QueueItem[]) => {
@@ -280,6 +322,7 @@ export function PlaybackProvider({
 	}, [queue, session.source]);
 
 	useEffect(() => {
+		if (!shouldCoordinateQueue) return;
 		if (session.repeatMode === "off") {
 			repeatCancellationRequestedModeRef.current = null;
 			return;
@@ -292,7 +335,13 @@ export function PlaybackProvider({
 			return;
 		repeatCancellationRequestedModeRef.current = session.repeatMode;
 		engine.cycleRepeatMode();
-	}, [engine, queue.length, session.repeatMode, session.source]);
+	}, [
+		engine,
+		queue.length,
+		session.repeatMode,
+		session.source,
+		shouldCoordinateQueue,
+	]);
 
 	const advanceToNextQueueItem = useCallback(() => {
 		const index = queueRef.current.findIndex(
@@ -311,36 +360,127 @@ export function PlaybackProvider({
 	useEffect(() => {
 		if (engine.syncQueueContext) return;
 		if (session.status !== "ended" || session.source?.type !== "track") return;
+		if (session.stopAfterCurrent) {
+			// Sleep timer "after this track": stay on the ended Track and disarm.
+			engine.stop();
+			engine.setStopAfterCurrent?.(false);
+			return;
+		}
 		advanceToNextQueueItem();
 	}, [advanceToNextQueueItem, engine, session]);
 
+	const sleepTimer = useSleepTimer(engine, session);
+	const abRepeat = useAbRepeat(engine, session);
+	// Stable identity so the waveform hook does not refetch on every render.
+	const getTrackWaveform = useMemo<TrackWaveformLoader | null>(
+		() =>
+			api.getTrackWaveform
+				? (trackId) => apiRef.current.getTrackWaveform?.(trackId) as never
+				: null,
+		[api.getTrackWaveform],
+	);
+
+	const getTrackLyrics = useCallback(
+		(trackId: string) =>
+			apiRef.current.getTrackLyrics?.(trackId) ?? Promise.resolve(null),
+		[],
+	);
+
 	// A Track can stop being playable while it sits in the Queue: ADR 0010 lets
 	// a deletion elsewhere leave the playing source in place, so its next play
-	// fails. Announce the failure and move on instead of leaving the Player
-	// stuck; a native engine that owns Queue advancement is only told.
-	const announcedErrorRef = useRef<PlaybackError | null>(null);
-	useEffect(() => {
-		if (session.status !== "error" || session.source?.type !== "track") {
-			announcedErrorRef.current = null;
+	// fails. Explain the failure in the bar, let the user retry or skip, and
+	// skip on their behalf after a countdown so the Player never sits stuck.
+	const failedSource = session.status === "error" ? session.source : null;
+	const failedTrackId =
+		failedSource?.type === "track" ? failedSource.track.id : null;
+	const [errorCause, setErrorCause] = useState<PlaybackErrorCause | null>(null);
+	const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
+	const skipFailedTrack = useCallback(() => {
+		setCountdownSeconds(null);
+		if (engine.syncQueueContext) {
+			engine.next();
 			return;
 		}
-		if (!session.error || announcedErrorRef.current === session.error) return;
-		announcedErrorRef.current = session.error;
-		const currentIndex = queueRef.current.findIndex(
+		advanceToNextQueueItem();
+	}, [advanceToNextQueueItem, engine]);
+	const retryFailedTrack = useCallback(() => {
+		setCountdownSeconds(null);
+		if (!failedSource) return;
+		void engine.play(failedSource).catch(() => undefined);
+	}, [engine, failedSource]);
+
+	useEffect(() => {
+		if (!failedTrackId) {
+			setErrorCause(null);
+			setCountdownSeconds(null);
+			return undefined;
+		}
+		let cancelled = false;
+		setErrorCause(null);
+		setCountdownSeconds(
+			shouldCoordinateQueue && autoSkipOnErrorSeconds > 0
+				? autoSkipOnErrorSeconds
+				: null,
+		);
+		const probe = apiRef.current.headTrackStream;
+		if (!probe) {
+			setErrorCause("unknown");
+			return undefined;
+		}
+		probe(failedTrackId)
+			.then(({ status }) => {
+				if (cancelled) return;
+				setErrorCause(status === 404 ? "file-missing" : "unknown");
+			})
+			.catch(() => {
+				if (!cancelled) setErrorCause("network");
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [autoSkipOnErrorSeconds, failedTrackId, shouldCoordinateQueue]);
+
+	useEffect(() => {
+		if (countdownSeconds === null || !failedTrackId) return undefined;
+		if (countdownSeconds <= 0) {
+			skipFailedTrack();
+			return undefined;
+		}
+		const timer = window.setTimeout(
+			() => setCountdownSeconds((current) => (current ?? 1) - 1),
+			1000,
+		);
+		return () => window.clearTimeout(timer);
+	}, [countdownSeconds, failedTrackId, skipFailedTrack]);
+
+	const hasNextQueueItem = useMemo(() => {
+		const currentIndex = queue.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
 		);
-		const hasNext =
-			!engine.syncQueueContext && currentIndex >= 0
-				? currentIndex + 1 < queueRef.current.length
-				: false;
-		toast.error(`Couldn't play ${session.source.track.title}`, {
-			description: hasNext
-				? `${session.error.message}. Skipping to the next track.`
-				: session.error.message,
-		});
-		if (engine.syncQueueContext) return;
-		advanceToNextQueueItem();
-	}, [advanceToNextQueueItem, engine, session]);
+		return currentIndex >= 0 && currentIndex + 1 < queue.length;
+	}, [queue]);
+
+	const errorRecovery = useMemo<PlaybackErrorRecovery | null>(
+		() =>
+			failedTrackId
+				? {
+						cause: errorCause,
+						countdownSeconds,
+						canSkip: hasNextQueueItem,
+						retry: retryFailedTrack,
+						skip: skipFailedTrack,
+						cancelCountdown: () => setCountdownSeconds(null),
+					}
+				: null,
+		[
+			failedTrackId,
+			errorCause,
+			countdownSeconds,
+			hasNextQueueItem,
+			retryFailedTrack,
+			skipFailedTrack,
+		],
+	);
 
 	const playTrack = useCallback(
 		async (trackId: string, queueTrackIds?: string[]) => {
@@ -423,22 +563,21 @@ export function PlaybackProvider({
 
 	const playNext = useCallback(
 		async (trackId: string) => {
-			const trackIds = queueRef.current
-				.map((item) => item.track.id)
-				.filter((id) => id !== trackId);
-			const currentIndex = currentTrack
-				? queueRef.current.findIndex(
-						(item) => item.track.id === currentTrack.id,
-					)
-				: -1;
-			trackIds.splice(
-				currentIndex >= 0 ? currentIndex + 1 : trackIds.length,
-				0,
-				trackId,
+			const data = await appendQueueItem(trackId);
+			const itemIds = data.items.map((item) => item.id);
+			const appendedItemId = itemIds.pop();
+			if (!appendedItemId) return;
+			const currentIndex = itemIds.findIndex(
+				(itemId) => itemId === currentQueueItemIdRef.current,
 			);
-			await replaceQueue(trackIds);
+			itemIds.splice(
+				currentIndex >= 0 ? currentIndex + 1 : itemIds.length,
+				0,
+				appendedItemId,
+			);
+			await reorderQueue(itemIds);
 		},
-		[currentTrack, replaceQueue],
+		[appendQueueItem, reorderQueue],
 	);
 
 	const clearQueue = useCallback(async () => {
@@ -461,10 +600,18 @@ export function PlaybackProvider({
 			isReconnecting: session.status === "reconnecting",
 			currentTime: session.currentTime,
 			duration: session.duration,
+			bufferedEnd: session.bufferedEnd ?? null,
 			volume: session.volume,
+			playbackRate: session.playbackRate ?? 1,
+			isGapless: session.isGapless ?? null,
+			sleepTimer,
+			abRepeat,
 			shuffleEnabled: session.shuffleEnabled,
 			repeatMode: session.repeatMode,
-			playbackError: session.error,
+			playbackError: session.error
+				? { ...session.error, cause: errorCause ?? session.error.cause }
+				: null,
+			errorRecovery,
 			processingState: session.processing ?? null,
 			playbackTelemetry: session.telemetry ?? null,
 			queueConflict,
@@ -481,6 +628,10 @@ export function PlaybackProvider({
 			cycleRepeatMode: () => engine.cycleRepeatMode(),
 			seek: (seconds) => engine.seek(seconds),
 			setVolume: (value) => engine.setVolume(value),
+			setPlaybackRate: (rate) => engine.setPlaybackRate?.(rate),
+			setTransitionFade: (milliseconds) =>
+				engine.setTransitionFade?.(milliseconds),
+			addToQueue: (trackId) => queueTracks([trackId]),
 			setProcessingProfile: (profile) => engine.setProcessingProfile?.(profile),
 			setReplayGainMode: (mode) => engine.setReplayGainMode?.(mode),
 			setEqualizerPreset: (preset) => engine.setEqualizerPreset?.(preset),
@@ -498,8 +649,8 @@ export function PlaybackProvider({
 			refreshQueue,
 			stopPlayback: () => engine.stop(),
 			getAlbumCoverUrl: (albumId) => apiRef.current.getAlbumCoverUrl(albumId),
-			getTrackLyrics: (trackId) =>
-				apiRef.current.getTrackLyrics?.(trackId) ?? Promise.resolve(null),
+			getTrackLyrics,
+			getTrackWaveform,
 		}),
 		[
 			queue,
@@ -508,6 +659,12 @@ export function PlaybackProvider({
 			currentRadioStation,
 			radioNowPlaying,
 			session,
+			errorCause,
+			errorRecovery,
+			sleepTimer,
+			abRepeat,
+			getTrackWaveform,
+			getTrackLyrics,
 			playTrack,
 			playRadioStation,
 			playRadioCatalogPreview,
@@ -553,6 +710,7 @@ function queuePlaybackSources(
 		track: item.track,
 		playbackUrl: api.getStreamUrl(item.trackId),
 		queueItemId: item.id,
+		artworkUrl: api.getAlbumCoverUrl(item.track.albumId),
 	}));
 }
 

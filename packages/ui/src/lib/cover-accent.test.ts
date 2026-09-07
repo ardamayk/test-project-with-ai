@@ -1,0 +1,63 @@
+import { describe, expect, it } from "vitest";
+import {
+	accentCssVariables,
+	accentFromPixels,
+	clampAccent,
+	rgbToHsl,
+} from "./cover-accent";
+
+function pixels(colors: Array<[number, number, number]>): Uint8ClampedArray {
+	const data = new Uint8ClampedArray(colors.length * 4);
+	colors.forEach(([r, g, b], index) => {
+		data.set([r, g, b, 255], index * 4);
+	});
+	return data;
+}
+
+describe("cover accent", () => {
+	it("converts RGB to HSL", () => {
+		expect(rgbToHsl(255, 0, 0)).toMatchObject({ h: 0, s: 1, l: 0.5 });
+		expect(rgbToHsl(128, 128, 128).s).toBe(0);
+	});
+
+	it("picks the dominant saturated hue and ignores grey", () => {
+		const accent = accentFromPixels(
+			pixels([
+				[200, 30, 30],
+				[210, 40, 40],
+				[190, 20, 20],
+				[30, 30, 200],
+				[128, 128, 128],
+				[128, 128, 128],
+				[128, 128, 128],
+			]),
+		);
+		expect(accent).not.toBeNull();
+		expect(Math.round(accent?.h ?? -1)).toBe(0);
+	});
+
+	it("returns null for a monochrome image", () => {
+		expect(
+			accentFromPixels(
+				pixels([
+					[10, 10, 10],
+					[240, 240, 240],
+				]),
+			),
+		).toBeNull();
+	});
+
+	it("clamps lightness into the theme band", () => {
+		expect(clampAccent({ h: 200, s: 0.9, l: 0.1 }, "dark").l).toBe(0.55);
+		expect(clampAccent({ h: 200, s: 0.9, l: 0.95 }, "light").l).toBe(0.45);
+	});
+
+	it("emits the bar's control tokens with a readable foreground", () => {
+		const dark = accentCssVariables({ h: 200, s: 0.6, l: 0.65 }, "dark");
+		expect(dark["--player-control-primary"]).toBe("hsl(200 60% 65%)");
+		expect(dark["--player-control-primary-foreground"]).toBe("#111111");
+		const light = accentCssVariables({ h: 200, s: 0.6, l: 0.35 }, "light");
+		expect(light["--player-control-primary-foreground"]).toBe("#ffffff");
+		expect(accentCssVariables(null, "dark")).toEqual({});
+	});
+});

@@ -2,9 +2,11 @@ import {
 	AudioLines,
 	Disc3,
 	Infinity as InfinityIcon,
+	Keyboard,
 	ListMusic,
 	MicVocal,
 	Pause,
+	PictureInPicture2,
 	Play,
 	Repeat,
 	Shuffle,
@@ -23,6 +25,11 @@ import {
 } from "react";
 import { cn } from "../lib/utils";
 import type { RepeatMode } from "../playback/PlaybackProvider";
+import {
+	type QualityDetailRow,
+	QualityDetailsCard,
+} from "./QualityDetailsCard";
+import { SeekBar } from "./SeekBar";
 
 const CONTROL_BUTTON_CLASS =
 	"inline-flex size-6 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40";
@@ -31,6 +38,7 @@ const CONTROL_ICON_CLASS = "size-[18px]";
 const SIDE_ICON_CLASS = "size-5";
 const SIDE_BUTTON_CLASS = "size-7";
 const ACTIVE_CONTROL_BUTTON_CLASS = "text-[var(--player-control-primary)]";
+const VOLUME_WHEEL_STEP = 0.05;
 
 type PlaybackControlsProps = {
 	isRadioPlaying: boolean;
@@ -39,6 +47,11 @@ type PlaybackControlsProps = {
 	hasCurrentTrack: boolean;
 	currentTime: number;
 	effectiveDuration: number;
+	bufferedEnd?: number | null;
+	waveform?: number[] | null;
+	showHoverTimestamp?: boolean;
+	keyboardStepSeconds?: number;
+	keyboardLargeStepSeconds?: number;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	onTogglePlay: () => void;
@@ -117,6 +130,7 @@ function QueueNavigationButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className={CONTROL_BUTTON_CLASS}
 			onClick={() => {
 				if (!disabled) onPlay();
@@ -141,6 +155,7 @@ function ShuffleButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className={cn(
 				CONTROL_BUTTON_CLASS,
 				isEnabled && ACTIVE_CONTROL_BUTTON_CLASS,
@@ -166,15 +181,22 @@ function PrimaryPlaybackButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className="inline-flex size-11 items-center justify-center rounded-full bg-[var(--player-control-primary)] text-[var(--player-control-primary-foreground)] shadow-[0px_10px_15px_-3px_var(--player-control-shadow),0px_4px_6px_-4px_var(--player-control-shadow)] transition hover:scale-105 hover:opacity-95 disabled:opacity-50 disabled:hover:scale-100"
 			onClick={onClick}
 			disabled={disabled}
 			aria-label={isPlaying ? "Pause" : "Play"}
 		>
 			{isPlaying ? (
-				<Pause className={CONTROL_ICON_CLASS} />
+				<Pause
+					key="pause"
+					className={cn(CONTROL_ICON_CLASS, "player-glyph-enter")}
+				/>
 			) : (
-				<Play className={cn(CONTROL_ICON_CLASS, "ml-0.5")} />
+				<Play
+					key="play"
+					className={cn(CONTROL_ICON_CLASS, "player-glyph-enter ml-0.5")}
+				/>
 			)}
 		</button>
 	);
@@ -198,6 +220,7 @@ function RepeatButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className={cn(
 				CONTROL_BUTTON_CLASS,
 				repeatMode !== "off" && ACTIVE_CONTROL_BUTTON_CLASS,
@@ -231,46 +254,49 @@ function PlaybackProgress({
 	hasCurrentTrack,
 	currentTime,
 	effectiveDuration,
+	bufferedEnd = null,
+	waveform = null,
+	showHoverTimestamp = true,
+	keyboardStepSeconds,
+	keyboardLargeStepSeconds,
 	onSeek,
 }: {
 	isRadioPlaying: boolean;
 	hasCurrentTrack: boolean;
 	currentTime: number;
 	effectiveDuration: number;
+	bufferedEnd?: number | null;
+	waveform?: number[] | null;
+	showHoverTimestamp?: boolean;
+	keyboardStepSeconds?: number;
+	keyboardLargeStepSeconds?: number;
 	onSeek: (seconds: number) => void;
 }) {
-	const progress = effectiveDuration > 0 ? currentTime / effectiveDuration : 0;
 	return (
-		<div className="mt-2 flex w-full min-w-0 items-center gap-2 text-[11px] tabular-nums">
+		<div className="mt-1 flex w-full min-w-0 items-center gap-2 text-[11px] tabular-nums">
 			<span className="w-8 shrink-0 text-right text-player-foreground">
 				{isRadioPlaying ? "LIVE" : formatTime(currentTime)}
 			</span>
 			{isRadioPlaying ? (
 				<div className="h-1 min-w-0 flex-1 rounded-full bg-[var(--player-live-progress)]/45" />
 			) : (
-				<input
-					type="range"
-					min={0}
-					max={1}
-					step={0.001}
-					value={progress}
-					onChange={(event) =>
-						effectiveDuration > 0 &&
-						onSeek(Number(event.target.value) * effectiveDuration)
-					}
-					className="player-seek-slider min-w-0 flex-1 disabled:opacity-100"
-					style={
-						{
-							"--seek-level": `${(progress * 100).toFixed(2)}%`,
-						} as CSSProperties
-					}
+				<SeekBar
+					currentTime={currentTime}
+					duration={effectiveDuration}
+					bufferedEnd={bufferedEnd}
+					waveform={waveform}
 					disabled={!hasCurrentTrack}
-					aria-label="Seek"
+					showHoverTimestamp={showHoverTimestamp}
+					keyboardStepSeconds={keyboardStepSeconds}
+					keyboardLargeStepSeconds={keyboardLargeStepSeconds}
+					onSeek={onSeek}
 				/>
 			)}
-			<span className="w-8 shrink-0 text-player-foreground">
-				{isRadioPlaying ? "--:--" : formatTime(effectiveDuration)}
-			</span>
+			{isRadioPlaying ? null : (
+				<span className="w-8 shrink-0 text-player-foreground">
+					{formatTime(effectiveDuration)}
+				</span>
+			)}
 		</div>
 	);
 }
@@ -278,11 +304,19 @@ function PlaybackProgress({
 type VolumeAndQueueControlsProps = {
 	qualityLabel: string;
 	isLossless: boolean;
+	/** Stream details shown on hover; empty hides the card. */
+	qualityDetailRows?: QualityDetailRow[];
+	/** Shows a small badge when the engine plays tracks without gaps. */
+	isGapless?: boolean;
 	volume: number;
 	signalControl?: ReactNode;
 	onToggleQueue: () => void;
 	/** Absent while nothing is playing; the Lyrics button is then disabled. */
 	onOpenLyrics?: () => void;
+	onOpenHelp?: () => void;
+	/** Desktop only; absent hides the button. */
+	onToggleMiniPlayer?: () => void;
+	onToggleMute: () => void;
 	onVolumeChange: (value: number) => void;
 };
 
@@ -294,10 +328,15 @@ export function QualityIconFor({ isLossless }: { isLossless: boolean }) {
 export function VolumeAndQueueControls({
 	qualityLabel,
 	isLossless,
+	qualityDetailRows = [],
+	isGapless = false,
 	volume,
 	signalControl,
 	onToggleQueue,
 	onOpenLyrics,
+	onOpenHelp,
+	onToggleMiniPlayer,
+	onToggleMute,
 	onVolumeChange,
 }: VolumeAndQueueControlsProps) {
 	const QualityIcon = isLossless ? Disc3 : AudioLines;
@@ -306,22 +345,40 @@ export function VolumeAndQueueControls({
 			aria-label="Volume and queue"
 			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
-			{signalControl ?? (
+			{isGapless ? (
 				<span
-					role="note"
-					className="inline-flex h-8 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-3.5 text-player-foreground text-xs"
-					title={qualityLabel}
-					aria-label={`Quality ${qualityLabel}`}
+					data-testid="gapless-badge"
+					className="inline-flex size-7 shrink-0 items-center justify-center text-player-foreground"
+					role="img"
+					aria-label="Gapless playback enabled"
+					title="Tracks play back to back without a gap"
 				>
-					<QualityIcon className="size-4 shrink-0" />
-					<span className="hidden font-medium tabular-nums md:inline">
-						{qualityLabel}
-					</span>
+					<InfinityIcon className={SIDE_ICON_CLASS} aria-hidden />
 				</span>
-			)}
-			<VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
+			) : null}
+			<QualityDetailsCard rows={qualityDetailRows}>
+				{signalControl ?? (
+					<span
+						role="note"
+						className="inline-flex h-8 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-3.5 text-player-foreground text-xs"
+						title={qualityLabel}
+						aria-label={`Quality ${qualityLabel}`}
+					>
+						<QualityIcon className="size-4 shrink-0" />
+						<span className="hidden font-medium tabular-nums md:inline">
+							{qualityLabel}
+						</span>
+					</span>
+				)}
+			</QualityDetailsCard>
+			<VolumeControl
+				volume={volume}
+				onToggleMute={onToggleMute}
+				onVolumeChange={onVolumeChange}
+			/>
 			<button
 				type="button"
+				data-player-control
 				className={cn(
 					CONTROL_BUTTON_CLASS,
 					SIDE_BUTTON_CLASS,
@@ -335,6 +392,7 @@ export function VolumeAndQueueControls({
 			</button>
 			<button
 				type="button"
+				data-player-control
 				className={cn(
 					CONTROL_BUTTON_CLASS,
 					SIDE_BUTTON_CLASS,
@@ -345,25 +403,72 @@ export function VolumeAndQueueControls({
 			>
 				<ListMusic className={SIDE_ICON_CLASS} />
 			</button>
+			{onToggleMiniPlayer ? (
+				<button
+					type="button"
+					data-player-control
+					className={cn(
+						CONTROL_BUTTON_CLASS,
+						SIDE_BUTTON_CLASS,
+						"hidden shrink-0 sm:inline-flex",
+					)}
+					onClick={onToggleMiniPlayer}
+					aria-label="Mini player"
+				>
+					<PictureInPicture2 className={SIDE_ICON_CLASS} />
+				</button>
+			) : null}
+			{onOpenHelp ? (
+				<button
+					type="button"
+					data-player-control
+					className={cn(
+						CONTROL_BUTTON_CLASS,
+						SIDE_BUTTON_CLASS,
+						"hidden shrink-0 lg:inline-flex",
+					)}
+					onClick={onOpenHelp}
+					aria-label="Keyboard shortcuts"
+				>
+					<Keyboard className={SIDE_ICON_CLASS} />
+				</button>
+			) : null}
 		</section>
 	);
 }
 
 function VolumeControl({
 	volume,
+	onToggleMute,
 	onVolumeChange,
 }: {
 	volume: number;
+	onToggleMute: () => void;
 	onVolumeChange: (value: number) => void;
 }) {
 	const VolumeIcon = volume <= 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 	// Touch devices have no hover, so a tap opens the popover instead of muting.
 	const [touchOpen, setTouchOpen] = useState(false);
 	const lastPointerWasTouchRef = useRef(false);
-	const lastAudibleVolumeRef = useRef(volume > 0 ? volume : 1);
-	if (volume > 0) lastAudibleVolumeRef.current = volume;
 
 	const rootRef = useRef<HTMLDivElement>(null);
+	// React registers wheel listeners as passive, so a native listener is the
+	// only way to stop the page behind the bar from scrolling too.
+	const volumeRef = useRef(volume);
+	volumeRef.current = volume;
+	useEffect(() => {
+		const root = rootRef.current;
+		if (!root) return undefined;
+		const adjustFromWheel = (event: WheelEvent) => {
+			if (event.deltaY === 0) return;
+			event.preventDefault();
+			const next =
+				volumeRef.current + (event.deltaY < 0 ? 1 : -1) * VOLUME_WHEEL_STEP;
+			onVolumeChange(Math.min(1, Math.max(0, Number(next.toFixed(2)))));
+		};
+		root.addEventListener("wheel", adjustFromWheel, { passive: false });
+		return () => root.removeEventListener("wheel", adjustFromWheel);
+	}, [onVolumeChange]);
 	useEffect(() => {
 		if (!touchOpen) return undefined;
 		const closeOnOutsideTap = (event: PointerEvent) => {
@@ -373,13 +478,11 @@ function VolumeControl({
 		return () => document.removeEventListener("pointerdown", closeOnOutsideTap);
 	}, [touchOpen]);
 
-	const toggleMute = () =>
-		onVolumeChange(volume <= 0 ? lastAudibleVolumeRef.current : 0);
-
 	return (
 		<div ref={rootRef} className="group relative flex shrink-0 items-center">
 			<button
 				type="button"
+				data-player-control
 				className={cn(
 					CONTROL_BUTTON_CLASS,
 					SIDE_BUTTON_CLASS,
@@ -394,7 +497,7 @@ function VolumeControl({
 						setTouchOpen((open) => !open);
 						return;
 					}
-					toggleMute();
+					onToggleMute();
 				}}
 			>
 				<VolumeIcon className={SIDE_ICON_CLASS} />

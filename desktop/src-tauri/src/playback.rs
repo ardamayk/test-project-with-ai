@@ -80,7 +80,7 @@ impl PlaybackStatus {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum RepeatMode {
+pub(crate) enum RepeatMode {
     Off,
     Once,
     Loop,
@@ -93,6 +93,19 @@ pub(crate) struct PlaybackStateError {
     message: String,
 }
 
+fn default_playback_rate() -> f64 {
+    1.0
+}
+
+fn default_is_gapless() -> bool {
+    true
+}
+
+pub(crate) const MIN_PLAYBACK_RATE: f64 = 0.5;
+pub(crate) const MAX_PLAYBACK_RATE: f64 = 2.0;
+pub(crate) const MAX_TRANSITION_FADE_MS: u64 = 2000;
+const TRANSITION_FADE_STEP: Duration = Duration::from_millis(20);
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PlaybackSessionState {
@@ -104,9 +117,22 @@ pub(crate) struct PlaybackSessionState {
     pub(crate) status: PlaybackStatus,
     pub(crate) current_time: f64,
     pub(crate) duration: f64,
-    volume: f64,
-    shuffle_enabled: bool,
-    repeat_mode: RepeatMode,
+    /// Seconds of audio the demuxer has ahead of the playhead, when known.
+    #[serde(default)]
+    pub(crate) buffered_end: Option<f64>,
+    pub(crate) volume: f64,
+    /// mpv `speed`; pitch is preserved by mpv's default pitch correction.
+    #[serde(default = "default_playback_rate")]
+    pub(crate) playback_rate: f64,
+    /// Sleep timer "after this track": the end-of-file handler pauses instead
+    /// of advancing and clears the flag.
+    #[serde(default)]
+    pub(crate) stop_after_current: bool,
+    /// mpv is launched with --gapless-audio, so native playback is gapless.
+    #[serde(default = "default_is_gapless")]
+    pub(crate) is_gapless: bool,
+    pub(crate) shuffle_enabled: bool,
+    pub(crate) repeat_mode: RepeatMode,
     error: Option<PlaybackStateError>,
     pub(crate) processing: ProcessingState,
     telemetry: PlaybackTelemetry,
@@ -147,7 +173,11 @@ impl Default for PlaybackSessionState {
             status: PlaybackStatus::Idle,
             current_time: 0.0,
             duration: 0.0,
+            buffered_end: None,
             volume: DEFAULT_VOLUME,
+            playback_rate: 1.0,
+            stop_after_current: false,
+            is_gapless: true,
             shuffle_enabled: false,
             repeat_mode: RepeatMode::Off,
             error: None,
@@ -182,6 +212,8 @@ pub(crate) enum MpvEvent {
     LoadBoundary(u64),
     Time(f64),
     Duration(f64),
+    /// `demuxer-cache-time`: absolute position the demuxer has read up to.
+    BufferedEnd(f64),
     Paused(bool),
     Decoder(ObservedMpvProperties),
     Ended,
@@ -198,6 +230,9 @@ pub(crate) trait MpvProcessAdapter: Send + Sync {
     fn set_paused(&self, is_paused: bool) -> Result<(), String>;
     fn seek(&self, seconds: f64) -> Result<(), String>;
     fn set_volume(&self, value: f64) -> Result<(), String>;
+    fn set_speed(&self, _rate: f64) -> Result<(), String> {
+        Ok(())
+    }
     fn load_with_event_boundary(&self, url: &str, load_revision: u64) -> Result<(), String> {
         let _ = load_revision;
         self.load(url)
@@ -283,7 +318,8 @@ impl RealMpvProcess {
         self.command(json!(["observe_property", 1, "time-pos"]))?;
         self.command(json!(["observe_property", 2, "duration"]))?;
         self.command(json!(["observe_property", 3, "pause"]))?;
-        self.command(json!(["observe_property", 4, "audio-params"]))
+        self.command(json!(["observe_property", 4, "audio-params"]))?;
+        self.command(json!(["observe_property", 5, "demuxer-cache-time"]))
             .map(|_| ())
     }
 
@@ -460,6 +496,11 @@ impl MpvProcessAdapter for RealMpvProcess {
             .map(|_| ())
     }
 
+    fn set_speed(&self, rate: f64) -> Result<(), String> {
+        self.command(json!(["set_property", "speed", rate]))
+            .map(|_| ())
+    }
+
     fn load_with_event_boundary(&self, url: &str, load_revision: u64) -> Result<(), String> {
         self.command_with_event_boundary(json!(["loadfile", url, "replace"]), Some(load_revision))
             .map(|_| ())
@@ -621,16 +662,18 @@ fn start_mpv_worker(
     extra_arguments: Vec<String>,
 ) -> Result<MpvWorker, String> {
     let socket_path = ipc_directory.join("control.sock");
+    let (stream, child_stream) = UnixStream::pair()
+        .map_err(|error| format!("Pinned mpv lifetime connection could not be created: {error}"))?;
     let mut command = Command::new(binary);
     configure_mpv_command(&mut command, &socket_path, extra_arguments);
+    command.stdin(Stdio::from(std::os::fd::OwnedFd::from(child_stream)));
     let mut child = command
         .spawn()
         .map_err(|error| format!("Pinned mpv child could not start: {error}"))?;
+    drop(command);
     wait_for_mpv_socket(&mut child, &socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))
         .map_err(|error| format!("Private mpv IPC permissions could not be set: {error}"))?;
-    let stream = UnixStream::connect(&socket_path)
-        .map_err(|error| format!("Pinned mpv IPC connection failed: {error}"))?;
     stream
         .set_read_timeout(Some(EVENT_POLL_INTERVAL))
         .map_err(|error| format!("Pinned mpv IPC timeout could not be set: {error}"))?;
@@ -648,8 +691,12 @@ fn configure_mpv_command(command: &mut Command, socket_path: &Path, extra_argume
         .arg("--terminal=no")
         .arg("--input-terminal=no")
         .arg("--gapless-audio=weak")
+        // Speed changes must not shift pitch; make mpv's default explicit.
+        .arg("--audio-pitch-correction=yes")
         .arg(format!("--volume={}", DEFAULT_VOLUME * 100.0))
         .arg(format!("--input-ipc-server={}", socket_path.display()))
+        // mpv exits on EOF even if the Desktop Client is killed without running Drop.
+        .arg("--input-ipc-client=fd://0")
         .args(extra_arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -880,6 +927,10 @@ fn property_event(message: &Value) -> Option<MpvEvent> {
             .get("data")
             .and_then(Value::as_f64)
             .map(MpvEvent::Duration),
+        Some("demuxer-cache-time") => message
+            .get("data")
+            .and_then(Value::as_f64)
+            .map(MpvEvent::BufferedEnd),
         Some("pause") => message
             .get("data")
             .and_then(Value::as_bool)
@@ -951,6 +1002,7 @@ pub(crate) struct PlaybackController {
     command_revision: Arc<AtomicU64>,
     load_revision: Arc<AtomicU64>,
     published_load_revision: Arc<AtomicU64>,
+    transition_fade_ms: Arc<AtomicU64>,
     event_thread: Option<JoinHandle<()>>,
     listener: StateListener,
 }
@@ -1167,6 +1219,7 @@ impl PlaybackController {
             command_revision,
             load_revision,
             published_load_revision,
+            transition_fade_ms: Arc::new(AtomicU64::new(0)),
             event_thread: Some(event_thread),
             listener,
         }
@@ -1199,8 +1252,10 @@ impl PlaybackController {
         snapshot: &PlaybackSessionSnapshot,
     ) -> Result<PlaybackSessionState, PlaybackCommandError> {
         self.advance_command_revision();
-        let action =
-            self.with_process(|process| apply_snapshot_to_process(process, snapshot, false));
+        let playback_rate = self.state()?.playback_rate;
+        let action = self.with_process(|process| {
+            apply_snapshot_to_process(process, snapshot, false, playback_rate)
+        });
         if let Err(error) = action {
             return self.fail_native(error);
         }
@@ -1220,6 +1275,12 @@ impl PlaybackController {
             return Ok(current);
         };
         let is_new_source = source.is_some();
+        let should_fade_in = !is_new_source
+            && current.status == PlaybackStatus::Paused
+            && self.transition_fade_ms.load(Ordering::Acquire) > 0;
+        if should_fade_in && let Err(error) = self.with_process(|process| process.set_volume(0.0)) {
+            report_native_playback_error(&format!("Transition fade-in setup failed: {error}"));
+        }
         if is_new_source && let Err(error) = self.apply_adaptive_source_rate(&next_source) {
             self.reset_adaptive_after_failure("source rate setup");
             return self.fail_native(error);
@@ -1239,6 +1300,9 @@ impl PlaybackController {
         }
         self.align_queue_to_source(&next_source)?;
         self.mark_player_stable()?;
+        if should_fade_in {
+            self.fade_in();
+        }
         Ok(state)
     }
 
@@ -1315,7 +1379,12 @@ impl PlaybackController {
         if self.state()?.source.is_none() {
             return self.state();
         }
-        if let Err(error) = self.with_process(|process| process.set_paused(true)) {
+        self.fade_out();
+        let paused = self.with_process(|process| process.set_paused(true));
+        // Leave mpv at the real level so the next play starts audible even
+        // when the fade-in is later disabled.
+        self.restore_volume();
+        if let Err(error) = paused {
             return self.fail_native(error);
         }
         self.update(|state| state.status = PlaybackStatus::Paused)
@@ -1323,7 +1392,10 @@ impl PlaybackController {
 
     pub(crate) fn stop(&self) -> Result<PlaybackSessionState, PlaybackCommandError> {
         self.advance_command_revision();
-        if let Err(error) = self.with_process(|process| process.stop()) {
+        self.fade_out();
+        let stopped = self.with_process(|process| process.stop());
+        self.restore_volume();
+        if let Err(error) = stopped {
             return self.fail_native(error);
         }
         self.update(|state| {
@@ -1332,6 +1404,7 @@ impl PlaybackController {
                 effective_replay_gain_mode(state.processing.replay_gain_mode, None);
             state.status = PlaybackStatus::Idle;
             state.current_time = 0.0;
+            state.buffered_end = None;
             state.duration = 0.0;
             state.error = None;
             state.telemetry = telemetry_for_output_mode(
@@ -1723,7 +1796,7 @@ impl PlaybackController {
         sources: Vec<Value>,
         current_index: Option<usize>,
     ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-        let is_shuffle_enabled = self.state()?.shuffle_enabled;
+        let state = self.state()?;
         let mut queue = self
             .queue
             .lock()
@@ -1731,7 +1804,17 @@ impl PlaybackController {
         queue
             .sync(sources, current_index)
             .map_err(PlaybackCommandError::new)?;
-        if is_shuffle_enabled {
+        if let Some(source) = state
+            .source
+            .as_ref()
+            .filter(|source| source["type"] == "track")
+        {
+            // A reattached renderer may not know the native session's current Queue position.
+            queue
+                .align_to_source(source)
+                .map_err(PlaybackCommandError::new)?;
+        }
+        if state.shuffle_enabled {
             queue.shuffle().map_err(PlaybackCommandError::new)?;
         }
         drop(queue);
@@ -1811,8 +1894,114 @@ impl PlaybackController {
             .map_err(|_| PlaybackCommandError::new("Playback Queue context is unavailable."))?
             .adjacent_source(direction, should_wrap);
         match source {
-            Some(source) => self.play(Some(source)),
+            Some(source) => {
+                self.fade_out();
+                let result = self.play(Some(source));
+                if result.is_ok() {
+                    self.fade_in();
+                } else {
+                    self.restore_volume();
+                }
+                result
+            }
             None => self.state(),
+        }
+    }
+
+    /// Set mpv's playback speed. mpv keeps pitch by default, so this is a
+    /// tempo change rather than a pitch shift.
+    pub(crate) fn set_playback_rate(
+        &self,
+        rate: f64,
+    ) -> Result<PlaybackSessionState, PlaybackCommandError> {
+        if !rate.is_finite() || !(MIN_PLAYBACK_RATE..=MAX_PLAYBACK_RATE).contains(&rate) {
+            return self.fail(format!(
+                "Playback speed must be between {MIN_PLAYBACK_RATE} and {MAX_PLAYBACK_RATE}."
+            ));
+        }
+        if let Err(error) = self.with_process(|process| process.set_speed(rate)) {
+            return self.fail_native(error);
+        }
+        self.update(|state| state.playback_rate = rate)
+    }
+
+    pub(crate) fn set_stop_after_current(
+        &self,
+        enabled: bool,
+    ) -> Result<PlaybackSessionState, PlaybackCommandError> {
+        self.update(|state| state.stop_after_current = enabled)
+    }
+
+    /// Length of the volume ramp applied around user-initiated transitions.
+    /// Natural gapless boundaries are never faded.
+    pub(crate) fn set_transition_fade_ms(
+        &self,
+        milliseconds: u64,
+    ) -> Result<PlaybackSessionState, PlaybackCommandError> {
+        self.transition_fade_ms
+            .store(milliseconds.min(MAX_TRANSITION_FADE_MS), Ordering::Release);
+        self.state()
+    }
+
+    #[cfg(test)]
+    fn transition_fade_ms(&self) -> u64 {
+        self.transition_fade_ms.load(Ordering::Acquire)
+    }
+
+    fn fade_out(&self) {
+        let Some((volume, fade_ms)) = self.active_fade() else {
+            return;
+        };
+        self.ramp_volume(volume, 0.0, fade_ms);
+    }
+
+    fn fade_in(&self) {
+        let Some((volume, fade_ms)) = self.active_fade() else {
+            return;
+        };
+        self.ramp_volume(0.0, volume, fade_ms);
+    }
+
+    fn restore_volume(&self) {
+        let fade_ms = self.transition_fade_ms.load(Ordering::Acquire);
+        if fade_ms == 0 {
+            return;
+        }
+        let Ok(state) = self.state() else {
+            return;
+        };
+        if let Err(error) = self.with_process(|process| process.set_volume(state.volume)) {
+            report_native_playback_error(&format!(
+                "Transition fade volume restore failed: {error}"
+            ));
+        }
+    }
+
+    /// Volume and fade length when a fade should run: the fade is enabled
+    /// and something is actually playing.
+    fn active_fade(&self) -> Option<(f64, u64)> {
+        let fade_ms = self.transition_fade_ms.load(Ordering::Acquire);
+        if fade_ms == 0 {
+            return None;
+        }
+        let state = self.state().ok()?;
+        if !state.status.is_active() {
+            return None;
+        }
+        Some((state.volume, fade_ms))
+    }
+
+    fn ramp_volume(&self, from: f64, to: f64, fade_ms: u64) {
+        let steps = (fade_ms / TRANSITION_FADE_STEP.as_millis() as u64).max(1);
+        for step in 1..=steps {
+            let volume = from + (to - from) * (step as f64 / steps as f64);
+            if let Err(error) = self.with_process(|process| process.set_volume(volume)) {
+                report_native_playback_error(&format!("Transition fade step failed: {error}"));
+                return;
+            }
+            if step < steps {
+                thread::sleep(TRANSITION_FADE_STEP);
+            }
         }
     }
 
@@ -1851,9 +2040,11 @@ fn apply_snapshot_to_process(
     process: &dyn MpvProcessAdapter,
     snapshot: &PlaybackSessionSnapshot,
     should_resume: bool,
+    playback_rate: f64,
 ) -> Result<(), String> {
     process.set_paused(true)?;
     process.set_volume(snapshot.volume())?;
+    process.set_speed(playback_rate)?;
     if let Some(source) = snapshot.source() {
         let url = playback_url(source).map_err(|error| error.message)?;
         process.load_at(&url, snapshot.playhead_seconds())?;
@@ -2756,8 +2947,22 @@ fn finish_player_restart(
     next_process: Box<dyn MpvProcessAdapter>,
     next_events: Receiver<MpvEvent>,
 ) -> Result<Receiver<MpvEvent>, RecoveryFailure> {
-    apply_snapshot_to_process(next_process.as_ref(), snapshot, should_resume)
-        .map_err(|message| RecoveryFailure::internal("mpv-restart-failed", message))?;
+    let playback_rate = state
+        .lock()
+        .map_err(|_| {
+            RecoveryFailure::internal(
+                "mpv-recovery-state-unavailable",
+                "Playback speed is unavailable during player recovery.",
+            )
+        })?
+        .playback_rate;
+    apply_snapshot_to_process(
+        next_process.as_ref(),
+        snapshot,
+        should_resume,
+        playback_rate,
+    )
+    .map_err(|message| RecoveryFailure::internal("mpv-restart-failed", message))?;
     *process.lock().map_err(|_| {
         RecoveryFailure::internal(
             "mpv-restart-failed",
@@ -2874,6 +3079,9 @@ fn reduce_mpv_event(
         MpvEvent::Duration(value) if value.is_finite() && value > 0.0 => {
             update_shared_state(state, |state| state.duration = value)
         }
+        MpvEvent::BufferedEnd(value) if value.is_finite() && value >= 0.0 => {
+            update_shared_state(state, |state| state.buffered_end = Some(value))
+        }
         MpvEvent::Paused(is_paused) => update_paused_state(state, is_paused),
         MpvEvent::Decoder(decoder) => {
             update_decoder_telemetry(process, state, decoder, path_observer)
@@ -2883,7 +3091,8 @@ fn reduce_mpv_event(
         MpvEvent::LoadBoundary(_)
         | MpvEvent::ExitedUnexpectedly(_)
         | MpvEvent::Time(_)
-        | MpvEvent::Duration(_) => {
+        | MpvEvent::Duration(_)
+        | MpvEvent::BufferedEnd(_) => {
             return Ok(None);
         }
     };
@@ -3155,11 +3364,18 @@ fn handle_ended_event(
     queue: &Arc<Mutex<PlaybackQueueContext>>,
     adaptive_system_rate: Option<&Mutex<AdaptiveSystemRateController>>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-    let repeat_mode = state
-        .lock()
-        .map_err(|_| PlaybackCommandError::new("Native playback state is unavailable."))?
-        .repeat_mode
-        .clone();
+    let (repeat_mode, stop_after_current) = {
+        let state = state
+            .lock()
+            .map_err(|_| PlaybackCommandError::new("Native playback state is unavailable."))?;
+        (state.repeat_mode.clone(), state.stop_after_current)
+    };
+    if stop_after_current {
+        return update_shared_state(state, |state| {
+            state.stop_after_current = false;
+            state.status = PlaybackStatus::Ended;
+        });
+    }
     if repeat_mode == RepeatMode::Once {
         return repeat_current_source(process, state, adaptive_system_rate);
     }
@@ -3198,6 +3414,7 @@ fn repeat_current_source(
     }
     update_shared_state(state, |state| {
         state.current_time = 0.0;
+        state.buffered_end = None;
         state.status = PlaybackStatus::Playing;
         state.repeat_mode = RepeatMode::Off;
     })
@@ -3359,6 +3576,7 @@ fn set_playing_source(
     state.source = Some(source);
     state.status = PlaybackStatus::Playing;
     state.current_time = 0.0;
+    state.buffered_end = None;
     state.error = None;
 }
 
@@ -3919,6 +4137,7 @@ mod tests {
         playhead_seconds: f64,
         standalone_seek_calls: usize,
         volume: f64,
+        playback_rate: f64,
     }
 
     struct RestorableMpvProcess {
@@ -3982,6 +4201,11 @@ mod tests {
 
         fn set_volume(&self, value: f64) -> Result<(), String> {
             self.state.lock().expect("process state").volume = value;
+            Ok(())
+        }
+
+        fn set_speed(&self, rate: f64) -> Result<(), String> {
+            self.state.lock().expect("process state").playback_rate = rate;
             Ok(())
         }
 
@@ -5365,6 +5589,9 @@ mod tests {
         });
         controller.play(Some(source.clone())).expect("play Track");
         controller.seek(27.5).expect("seek Track");
+        controller
+            .set_playback_rate(1.5)
+            .expect("set playback speed");
 
         initial_event_sender
             .send(MpvEvent::ExitedUnexpectedly("fixture crash".to_owned()))
@@ -5373,9 +5600,15 @@ mod tests {
             state.status == PlaybackStatus::Playing
                 && state.current_time == 27.5
                 && *starter_calls.lock().expect("starter calls") == 1
+                && recovered_process_state
+                    .lock()
+                    .expect("recovered process")
+                    .playback_rate
+                    == 1.5
         });
 
         assert_eq!(recovered.source, Some(source));
+        assert_eq!(recovered.playback_rate, 1.5);
         assert_eq!(*starter_calls.lock().expect("starter calls"), 1);
         assert!(
             !recovered_process_state
@@ -6027,6 +6260,279 @@ mod tests {
     }
 
     #[test]
+    fn native_next_uses_active_source_after_renderer_queue_sync() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let controller = PlaybackController::start(
+            Box::new(FakeMpvProcess {
+                loaded_url: Arc::new(Mutex::new(None)),
+                is_shutdown: Arc::new(AtomicBool::new(false)),
+                load_error: None,
+            }),
+            event_receiver,
+            |_| {},
+        );
+        let sources = queue_sources();
+        controller
+            .play(Some(sources[0].clone()))
+            .expect("restore active Track");
+        controller
+            .sync_queue_context(sources.clone(), None)
+            .expect("renderer attaches Queue");
+        assert_eq!(
+            controller.next().expect("next Track after reopen").source,
+            Some(sources[1].clone())
+        );
+        controller
+            .sync_queue_context(sources.clone(), Some(0))
+            .expect("renderer sends stale index");
+        assert_eq!(
+            controller
+                .next()
+                .expect("next Track after stale sync")
+                .source,
+            Some(sources[2].clone())
+        );
+    }
+
+    struct RecordingMpvProcess {
+        actions: Arc<Mutex<Vec<String>>>,
+        should_fail_load: Arc<AtomicBool>,
+    }
+
+    impl RecordingMpvProcess {
+        fn record(&self, action: String) {
+            self.actions.lock().expect("recorded actions").push(action);
+        }
+    }
+
+    impl MpvProcessAdapter for RecordingMpvProcess {
+        fn load(&self, url: &str) -> Result<(), String> {
+            self.record(format!("load:{url}"));
+            if self.should_fail_load.load(Ordering::Acquire) {
+                return Err("controlled load failure".to_owned());
+            }
+            Ok(())
+        }
+
+        fn set_paused(&self, is_paused: bool) -> Result<(), String> {
+            self.record(format!("pause:{is_paused}"));
+            Ok(())
+        }
+
+        fn seek(&self, seconds: f64) -> Result<(), String> {
+            self.record(format!("seek:{seconds}"));
+            Ok(())
+        }
+
+        fn set_volume(&self, value: f64) -> Result<(), String> {
+            self.record(format!("volume:{value:.2}"));
+            Ok(())
+        }
+
+        fn set_speed(&self, rate: f64) -> Result<(), String> {
+            self.record(format!("speed:{rate}"));
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<(), String> {
+            self.record("stop".to_owned());
+            Ok(())
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    fn start_recording_controller() -> (PlaybackController, Arc<Mutex<Vec<String>>>) {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let controller = PlaybackController::start(
+            Box::new(RecordingMpvProcess {
+                actions: actions.clone(),
+                should_fail_load: Arc::new(AtomicBool::new(false)),
+            }),
+            event_receiver,
+            |_| {},
+        );
+        (controller, actions)
+    }
+
+    #[test]
+    fn playback_rate_is_sent_to_mpv_and_validated() {
+        let (controller, actions) = start_recording_controller();
+
+        let state = controller.set_playback_rate(1.5).expect("set speed");
+        assert_eq!(state.playback_rate, 1.5);
+        assert!(
+            actions
+                .lock()
+                .expect("actions")
+                .contains(&"speed:1.5".to_owned())
+        );
+
+        let error = controller
+            .set_playback_rate(3.0)
+            .expect_err("reject an out-of-range speed");
+        assert!(error.message.contains("between"));
+        assert_eq!(controller.state().expect("state").playback_rate, 1.5);
+    }
+
+    #[test]
+    fn desktop_rate_action_updates_mpv_and_playback_state() {
+        let (controller, actions) = start_recording_controller();
+        dispatch_desktop_playback_action(
+            DesktopPlaybackAction::SetRate(1.25),
+            &controller,
+            &Arc::new(Mutex::new(PlaybackLifecycle::new())),
+            &PlaybackSnapshotStore::new(temporary_path("rate-action-snapshot.json")),
+            &TestDesktopPlaybackShell::default(),
+        )
+        .expect("dispatch playback rate");
+
+        assert_eq!(controller.state().expect("state").playback_rate, 1.25);
+        assert_eq!(*actions.lock().expect("actions"), vec!["speed:1.25"]);
+    }
+
+    #[test]
+    fn stop_after_current_ends_playback_instead_of_advancing_and_resets() {
+        let (event_sender, event_receiver) = std::sync::mpsc::channel();
+        let controller = PlaybackController::start(
+            Box::new(FakeMpvProcess {
+                loaded_url: Arc::new(Mutex::new(None)),
+                is_shutdown: Arc::new(AtomicBool::new(false)),
+                load_error: None,
+            }),
+            event_receiver,
+            |_| {},
+        );
+        let sources = queue_sources();
+        controller
+            .sync_queue_context(sources.clone(), Some(0))
+            .expect("sync Queue context");
+        controller
+            .play(Some(sources[0].clone()))
+            .expect("play first Track");
+        controller
+            .set_stop_after_current(true)
+            .expect("arm sleep timer");
+
+        event_sender.send(MpvEvent::Ended).expect("ended event");
+        let ended = wait_for_state(&controller, |state| state.status == PlaybackStatus::Ended);
+
+        assert_eq!(ended.source, Some(sources[0].clone()));
+        assert!(!ended.stop_after_current, "the flag is one-shot");
+    }
+
+    #[test]
+    fn transition_fade_ramps_volume_around_pause_and_restores_it() {
+        let (controller, actions) = start_recording_controller();
+        let source = json!({
+            "type": "track",
+            "track": { "id": "track-1", "title": "Track 1", "durationMs": 120000 },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+        });
+        controller.play(Some(source)).expect("play Track");
+        controller.set_transition_fade_ms(60).expect("enable fade");
+        assert_eq!(controller.transition_fade_ms(), 60);
+        actions.lock().expect("actions").clear();
+
+        controller.pause().expect("pause with fade");
+
+        let recorded = actions.lock().expect("actions").clone();
+        let pause_index = recorded
+            .iter()
+            .position(|action| action == "pause:true")
+            .expect("pause command recorded");
+        let ramp: Vec<&String> = recorded[..pause_index]
+            .iter()
+            .filter(|action| action.starts_with("volume:"))
+            .collect();
+        assert_eq!(ramp.len(), 3, "60ms fade in 20ms steps: {recorded:?}");
+        assert_eq!(
+            ramp.last().map(|action| action.as_str()),
+            Some("volume:0.00")
+        );
+        assert_eq!(
+            recorded.get(pause_index + 1).map(String::as_str),
+            Some("volume:0.80"),
+            "the level is restored after pausing: {recorded:?}"
+        );
+    }
+
+    #[test]
+    fn failed_faded_navigation_restores_volume_before_later_playback() {
+        for direction in [super::QueueDirection::Next, super::QueueDirection::Previous] {
+            let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+            let actions = Arc::new(Mutex::new(Vec::new()));
+            let should_fail_load = Arc::new(AtomicBool::new(false));
+            let controller = PlaybackController::start(
+                Box::new(RecordingMpvProcess {
+                    actions: actions.clone(),
+                    should_fail_load: should_fail_load.clone(),
+                }),
+                event_receiver,
+                |_| {},
+            );
+            let sources = queue_sources();
+            controller
+                .sync_queue_context(sources.clone(), Some(1))
+                .expect("sync Queue");
+            controller
+                .play(Some(sources[1].clone()))
+                .expect("play middle Track");
+            controller.set_transition_fade_ms(20).expect("enable fade");
+            actions.lock().expect("actions").clear();
+            should_fail_load.store(true, Ordering::Release);
+
+            controller
+                .navigate(direction)
+                .expect_err("navigation load fails");
+            assert_eq!(
+                controller.state().expect("state").status,
+                PlaybackStatus::Error
+            );
+            let recorded = actions.lock().expect("actions").clone();
+            assert_eq!(recorded.first().map(String::as_str), Some("volume:0.00"));
+            assert_eq!(recorded.last().map(String::as_str), Some("volume:0.80"));
+
+            should_fail_load.store(false, Ordering::Release);
+            controller
+                .play(Some(sources[1].clone()))
+                .expect("retry playback");
+            assert_eq!(
+                controller.state().expect("state").status,
+                PlaybackStatus::Playing
+            );
+            assert_eq!(
+                actions
+                    .lock()
+                    .expect("actions")
+                    .iter()
+                    .rev()
+                    .find(|action| action.starts_with("volume:"))
+                    .map(String::as_str),
+                Some("volume:0.80")
+            );
+        }
+    }
+
+    #[test]
+    fn transition_fade_is_skipped_when_disabled() {
+        let (controller, actions) = start_recording_controller();
+        let source = json!({
+            "type": "track",
+            "track": { "id": "track-1", "title": "Track 1", "durationMs": 120000 },
+            "playbackUrl": "http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream"
+        });
+        controller.play(Some(source)).expect("play Track");
+        actions.lock().expect("actions").clear();
+
+        controller.pause().expect("pause without fade");
+
+        let recorded = actions.lock().expect("actions").clone();
+        assert_eq!(recorded, vec!["pause:true".to_owned()]);
+    }
+
+    #[test]
     fn native_shuffle_and_end_advancement_use_the_synced_queue_without_mutating_it() {
         let (event_sender, event_receiver) = std::sync::mpsc::channel();
         let controller = PlaybackController::start(
@@ -6338,6 +6844,40 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires pinned mpv"]
+    fn real_pinned_mpv_exits_when_desktop_lifetime_connection_closes() {
+        let directory = super::create_private_ipc_directory().expect("private IPC directory");
+        let socket_path = directory.join("control.sock");
+        let (lifetime_stream, child_stream) =
+            std::os::unix::net::UnixStream::pair().expect("lifetime socket pair");
+        let mut command = Command::new(super::resolve_mpv_binary());
+        super::configure_mpv_command(&mut command, &socket_path, vec!["--ao=null".to_owned()]);
+        command.stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+            child_stream,
+        )));
+        let mut child = command.spawn().expect("spawn pinned mpv");
+        drop(command);
+        super::wait_for_mpv_socket(&mut child, &socket_path).expect("mpv ready");
+        assert!(child.try_wait().expect("running child status").is_none());
+        drop(lifetime_stream);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut has_exited = false;
+        while Instant::now() < deadline {
+            if child.try_wait().expect("child status").is_some() {
+                has_exited = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        super::terminate_mpv(&mut child);
+        fs::remove_dir_all(directory).expect("remove private IPC directory");
+        assert!(
+            has_exited,
+            "mpv survived the Desktop Client lifetime connection"
+        );
+    }
+
+    #[test]
     fn mpv_uses_only_application_owned_audio_configuration() {
         let mut command = Command::new("mpv");
         let socket_path = PathBuf::from("/private/control.sock");
@@ -6353,6 +6893,7 @@ mod tests {
         assert!(arguments.contains(&"--no-video".to_owned()));
         assert!(arguments.contains(&"--input-terminal=no".to_owned()));
         assert!(arguments.contains(&"--gapless-audio=weak".to_owned()));
+        assert!(arguments.contains(&"--audio-pitch-correction=yes".to_owned()));
         assert!(arguments.contains(&"--input-ipc-server=/private/control.sock".to_owned()));
         assert!(!arguments.iter().any(|argument| {
             argument.contains("audio-exclusive") || argument.contains("exclusive")

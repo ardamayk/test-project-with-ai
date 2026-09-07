@@ -200,6 +200,13 @@ body::after {
     outline: none;
   }
 
+  /* Every Player Bar control shares one keyboard focus ring. */
+  [data-player-control]:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--player-control-primary) 40%, transparent);
+  }
+
   /* Seek bar: thin filled track; the thumb only appears on hover / focus. */
   .player-seek-slider {
     -webkit-appearance: none;
@@ -269,6 +276,14 @@ body::after {
   .player-seek-slider:focus-visible {
     outline: none;
   }
+  /* With waveform bars drawn behind it, the track itself stays invisible so
+     the bars carry the played/unplayed colouring. */
+  .player-seek-slider--waveform::-webkit-slider-runnable-track {
+    background: transparent;
+  }
+  .player-seek-slider--waveform::-moz-range-track {
+    background: transparent;
+  }
 
   /* Full-screen Lyrics view rising from the player bar. */
   @keyframes lyrics-view-enter {
@@ -287,6 +302,49 @@ body::after {
   @media (prefers-reduced-motion: reduce) {
     .lyrics-view-enter {
       animation: none;
+    }
+  }
+
+  /* Player Bar track transitions: the new cover fades in over the old one,
+     the title slides up, and the play/pause glyph pops. Every animation is
+     guarded so reduced-motion users get an instant swap. */
+  @keyframes player-cover-crossfade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes player-title-slide {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 0.35rem, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+  @keyframes player-glyph-pop {
+    from {
+      transform: scale(0.6);
+      opacity: 0.4;
+    }
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .player-cover-enter {
+      animation: player-cover-crossfade 260ms ease-out both;
+    }
+    .player-title-enter {
+      animation: player-title-slide 220ms cubic-bezier(0.22, 0.8, 0.24, 1) both;
+    }
+    .player-glyph-enter {
+      animation: player-glyph-pop 160ms ease-out both;
     }
   }
 }

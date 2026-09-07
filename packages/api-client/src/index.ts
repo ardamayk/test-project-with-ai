@@ -36,6 +36,8 @@ type WireQueueItem = Schemas['QueueItem'];
 export type HealthResponse = Schemas['HealthResponse'];
 export type ThemePreferences = Schemas['ThemePreferences'];
 export type LayoutPreferences = Schemas['LayoutPreferences'];
+export type PlaybackPreferences = Schemas['PlaybackPreferences'];
+export type PlaybackPreferencesPatch = Schemas['PlaybackPreferencesPatch'];
 export type UserPreferences = Schemas['UserPreferences'];
 export type UserPreferencesPatch = Schemas['UserPreferencesPatch'];
 export type User = Schemas['User'];
@@ -54,6 +56,9 @@ export type Album = Omit<
   releaseIdentifiers: ReleaseIdentifier[];
 };
 export type TrackLyrics = components['schemas']['TrackLyrics'];
+export type TrackWaveform = components['schemas']['TrackWaveform'];
+export type TrackWaveformPending =
+  components['schemas']['TrackWaveformPending'];
 export type Track = Omit<WireTrack, 'artists' | 'discNo' | 'genres'> & {
   artists: ArtistCredit[];
   discNo: number;
@@ -415,6 +420,12 @@ export function createApiClient(config: ApiClientConfig) {
       ),
     getTrackLyrics: (trackId: string) =>
       request<TrackLyrics>(`/api/v1/library/tracks/${trackId}/lyrics`),
+    /** Resolves the pending shape (HTTP 202) while peaks are still being generated. */
+    getTrackWaveform: (trackId: string) =>
+      request<TrackWaveform | TrackWaveformPending>(
+        `/api/v1/library/tracks/${trackId}/waveform`,
+        { cache: 'no-cache' },
+      ),
     previewAlbumDeletion: (albumId: string) =>
       request<AlbumDeletionPreview>(
         `/api/v1/library/albums/${albumId}/deletion`,
@@ -606,6 +617,23 @@ export function createApiClient(config: ApiClientConfig) {
       `${getStreamBaseUrl()}/api/v1/radio/preview/${stationUuid}/stream`,
     getTrackStreamUrl: (trackId: string) =>
       `${getStreamBaseUrl()}/api/v1/tracks/${trackId}/stream`,
+    /**
+     * Checks whether a Track's stream is reachable without downloading it.
+     * Resolves with the HTTP status; rejects only when the request itself
+     * fails (offline, DNS, refused connection).
+     */
+    headTrackStream: async (trackId: string): Promise<{ status: number }> => {
+      const headers = new Headers();
+      const token = getToken?.();
+      if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      const response = await transport(
+        `${baseUrl}/api/v1/tracks/${trackId}/stream`,
+        { method: 'HEAD', headers },
+      );
+      return { status: response.status };
+    },
     getAlbumCoverUrl: (albumId: string) =>
       `${getMediaBaseUrl()}/api/v1/library/albums/${albumId}/cover`,
   };

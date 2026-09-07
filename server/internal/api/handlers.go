@@ -12,6 +12,7 @@ import (
 type Handler struct {
 	version      string
 	dependencies dependencies.Report
+	capabilities []string
 }
 
 // NewHandler builds the health and identity handlers. The Server Dependency
@@ -20,6 +21,7 @@ func NewHandler(cfg config.Config, report dependencies.Report) *Handler {
 	return &Handler{
 		version:      cfg.Version,
 		dependencies: report,
+		capabilities: ServerCapabilitiesFor(report),
 	}
 }
 
@@ -50,9 +52,23 @@ var serverCapabilities = []string{
 	"managed-album-deletion.v1",
 }
 
+// TrackWaveformCapability is advertised only when ffmpeg is present, since
+// waveforms are decoded from the managed file on first request.
+const TrackWaveformCapability = "track-waveform.v1"
+
 // ServerCapabilities returns a copy of the advertised Server Capabilities.
 func ServerCapabilities() []string {
 	return append([]string(nil), serverCapabilities...)
+}
+
+// ServerCapabilitiesFor adds the dependency-gated capabilities to the static
+// list for the probed Server Dependencies.
+func ServerCapabilitiesFor(report dependencies.Report) []string {
+	capabilities := ServerCapabilities()
+	if report.Has(dependencies.FFMPEG) {
+		capabilities = append(capabilities, TrackWaveformCapability)
+	}
+	return capabilities
 }
 
 type userResponse struct {
@@ -74,7 +90,7 @@ func (h *Handler) GetHealth(w http.ResponseWriter, _ *http.Request) {
 	respond.JSON(w, http.StatusOK, healthResponse{
 		Status:       "ok",
 		Version:      h.version,
-		Capabilities: serverCapabilities,
+		Capabilities: h.capabilities,
 		Dependencies: reported,
 	})
 }

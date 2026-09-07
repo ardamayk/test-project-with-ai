@@ -3,6 +3,8 @@ pub mod connection;
 pub mod desktop_import;
 mod exclusive_output;
 pub mod media_proxy;
+pub mod mini_window;
+mod mpris;
 pub mod output_device;
 mod playback;
 mod playback_app_actions;
@@ -28,6 +30,8 @@ use desktop_import::{
     SUPPORTED_EXTENSIONS, upload_selection,
 };
 use media_proxy::MediaProxy;
+use mini_window::MiniWindowStore;
+use mpris::MprisBridge;
 use output_device::{
     ActiveOutputError, ActiveOutputResolver, CommandPipeWireActiveOutputResolver, OutputDevice,
 };
@@ -39,7 +43,8 @@ use playback_app_actions::{
 };
 use playback_lifecycle::{PlaybackLifecycle, PlaybackSnapshotStore};
 use playback_tray::{
-    PlaybackTray, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
+    PlaybackPosition, PlaybackTray, PlaybackTrayView, TRAY_MINI_ID, TRAY_NEXT_ID, TRAY_OPEN_ID,
+    TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
 };
 use processing::{
     EqualizerPreset, FileProcessingSettingsStorage, OutputMode, ProcessingController,
@@ -58,6 +63,7 @@ const CONNECTION_FILE_NAME: &str = "server-connection.json";
 const PLAYBACK_SNAPSHOT_FILE_NAME: &str = "playback-session.json";
 const PROCESSING_SETTINGS_FILE_NAME: &str = "processing-settings.json";
 const ADAPTIVE_CLEANUP_MARKER_FILE_NAME: &str = "adaptive-system-rate.cleanup-required";
+const MINI_WINDOW_FILE_NAME: &str = "mini-window.json";
 const PLAYBACK_STATE_EVENT: &str = "desktop-playback-state";
 const CONNECTION_CHANGED_EVENT: &str = "server-connection-changed";
 const QUEUE_EVENTS_ERROR_EVENT: &str = "desktop-queue-events-error";
@@ -87,6 +93,7 @@ struct AppState {
     media_proxy: MediaProxy,
     queue_events: QueueEventService,
     import_selections: ImportSelectionStore,
+    mini_window_store: MiniWindowStore,
 }
 
 #[derive(Clone, Serialize)]
@@ -325,8 +332,9 @@ fn desktop_playback_quit(
     dispatch_application_action(&app, &state, DesktopPlaybackAction::Quit)
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_play(
+async fn desktop_playback_play(
     state: State<'_, AppState>,
     source: Option<Value>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
@@ -336,22 +344,25 @@ fn desktop_playback_play(
     state.playback.play(source)
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_pause(
+async fn desktop_playback_pause(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.pause()
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_stop(
+async fn desktop_playback_stop(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.stop()
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_toggle_play(
+async fn desktop_playback_toggle_play(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.toggle_play()
@@ -369,15 +380,17 @@ fn desktop_playback_sync_queue_context(
     state.playback.sync_queue_context(sources, current_index)
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_previous(
+async fn desktop_playback_previous(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.previous()
 }
 
+// Runs off the main thread: a transition fade may sleep for up to two seconds.
 #[tauri::command]
-fn desktop_playback_next(
+async fn desktop_playback_next(
     state: State<'_, AppState>,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.next()
@@ -389,6 +402,62 @@ fn desktop_playback_seek(
     seconds: f64,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.seek(seconds)
+}
+
+#[tauri::command]
+fn desktop_open_mini_player(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    mini_window::open(&app, &state.mini_window_store).map_err(PlaybackCommandError::new)
+}
+
+#[tauri::command]
+fn desktop_close_mini_player(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    mini_window::close(&app, &state.mini_window_store).map_err(PlaybackCommandError::new)
+}
+
+#[tauri::command]
+fn desktop_toggle_mini_player(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    mini_window::toggle(&app, &state.mini_window_store).map_err(PlaybackCommandError::new)
+}
+
+#[tauri::command]
+fn desktop_show_main_window(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    dispatch_application_action(&app, &state, DesktopPlaybackAction::OpenMainWindow)
+}
+
+#[tauri::command]
+fn desktop_playback_set_playback_rate(
+    state: State<'_, AppState>,
+    rate: f64,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.set_playback_rate(rate)
+}
+
+#[tauri::command]
+fn desktop_playback_set_stop_after_current(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.set_stop_after_current(enabled)
+}
+
+#[tauri::command]
+fn desktop_playback_set_transition_fade(
+    state: State<'_, AppState>,
+    milliseconds: u64,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    state.playback.set_transition_fade_ms(milliseconds)
 }
 
 #[tauri::command]
@@ -475,7 +544,11 @@ fn desktop_playback_select_direct_alsa_output(
             "Direct ALSA Output preference could not be saved. The previous Output Mode was restored.",
         ));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        &state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn is_valid_direct_selection(state: &PlaybackSessionState, device_id: &str) -> bool {
@@ -534,7 +607,11 @@ fn desktop_playback_enable_adaptive_system_rate(
             "Adaptive System Rate preference could not be saved. System Output was restored.",
         ));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        &state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn restore_native_output_mode(
@@ -572,7 +649,11 @@ fn select_normal_output(state: &AppState) -> Result<PlaybackSessionState, Playba
             "Normal Output preference could not be saved: {error}"
         )));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn select_exclusive_output(
@@ -611,7 +692,11 @@ fn select_exclusive_output(
             "Exclusive Output preference could not be saved. Normal Output was restored.",
         ));
     }
-    Ok(playback_state)
+    Ok(restore_remembered_volume(
+        state,
+        &mut processing,
+        playback_state,
+    ))
 }
 
 fn active_output_error_message(error: &ActiveOutputError) -> String {
@@ -666,6 +751,33 @@ fn restore_exclusive_device(
     processing.select_direct_alsa_output(&device.id)
 }
 
+/// After an output route switch, bring back the volume last used on that
+/// route. Failures only log: the switch itself already succeeded.
+fn restore_remembered_volume(
+    state: &AppState,
+    processing: &mut ProcessingController,
+    playback_state: PlaybackSessionState,
+) -> PlaybackSessionState {
+    let Some(volume) = processing.remembered_volume() else {
+        return playback_state;
+    };
+    if (volume - processing.state().software_volume).abs() < f64::EPSILON {
+        return playback_state;
+    }
+    match update_processing_locked(state, processing, |processing| {
+        processing.set_software_volume(volume)
+    }) {
+        Ok(restored) => restored,
+        Err(error) => {
+            eprintln!(
+                "Remembered output volume could not be restored: {}",
+                error.message
+            );
+            playback_state
+        }
+    }
+}
+
 fn update_processing(
     state: &AppState,
     change: impl FnOnce(&mut ProcessingController) -> Result<(), String>,
@@ -674,8 +786,16 @@ fn update_processing(
         .processing
         .lock()
         .map_err(|_| PlaybackCommandError::new("Processing Profile state is unavailable."))?;
-    let previous_state = processing.state().clone();
-    change(&mut processing).map_err(PlaybackCommandError::new)?;
+    update_processing_locked(state, &mut processing, change)
+}
+
+fn update_processing_locked(
+    state: &AppState,
+    processing: &mut ProcessingController,
+    change: impl FnOnce(&mut ProcessingController) -> Result<(), String>,
+) -> Result<PlaybackSessionState, PlaybackCommandError> {
+    let previous_state = processing.snapshot();
+    change(processing).map_err(PlaybackCommandError::new)?;
     let processing_state = processing.state().clone();
     let configuration = processing.mpv_configuration();
     match state
@@ -684,13 +804,13 @@ fn update_processing(
     {
         Ok(playback_state) => {
             if let Err(error) = processing.restore(playback_state.processing.clone()) {
-                rollback_processing(&state.playback, &mut processing, previous_state);
+                rollback_processing(&state.playback, processing, previous_state);
                 return Err(PlaybackCommandError::new(error));
             }
             Ok(playback_state)
         }
         Err(error) => {
-            rollback_processing(&state.playback, &mut processing, previous_state);
+            rollback_processing(&state.playback, processing, previous_state);
             Err(error)
         }
     }
@@ -699,13 +819,14 @@ fn update_processing(
 fn rollback_processing(
     playback: &PlaybackController,
     processing: &mut ProcessingController,
-    previous_state: processing::ProcessingState,
+    previous_state: processing::ProcessingSnapshot,
 ) {
-    if let Err(error) = processing.restore(previous_state.clone()) {
+    let configuration = mpv_configuration_for(&previous_state.state);
+    let processing_state = previous_state.state.clone();
+    if let Err(error) = processing.restore_snapshot(previous_state) {
         eprintln!("Processing Profile rollback persistence failed: {error}");
     }
-    let configuration = mpv_configuration_for(&previous_state);
-    if let Err(error) = playback.apply_processing(previous_state, &configuration) {
+    if let Err(error) = playback.apply_processing(processing_state, &configuration) {
         eprintln!(
             "Native mpv Processing Profile rollback failed: {}",
             error.message
@@ -751,12 +872,36 @@ fn state_error() -> ConnectionError {
     )
 }
 
+/// Sets the main window title from the playing source, only when it changes.
+fn apply_window_title(
+    app: &tauri::AppHandle,
+    last_title: &Mutex<String>,
+    state: &PlaybackSessionState,
+    is_playing: bool,
+) {
+    let title = PlaybackTrayView::from_playback(state.source.as_ref(), is_playing).window_title();
+    let Ok(mut last) = last_title.lock() else {
+        return;
+    };
+    if *last == title {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main")
+        && let Err(error) = window.set_title(&title)
+    {
+        eprintln!("Desktop window title update failed: {error}");
+        return;
+    }
+    *last = title;
+}
+
 fn handle_tray_menu_event(app: &tauri::AppHandle, id: &str) {
     let action = match id {
         TRAY_OPEN_ID => DesktopPlaybackAction::OpenMainWindow,
         TRAY_TOGGLE_ID => DesktopPlaybackAction::TogglePlay,
         TRAY_PREVIOUS_ID => DesktopPlaybackAction::Previous,
         TRAY_NEXT_ID => DesktopPlaybackAction::Next,
+        TRAY_MINI_ID => DesktopPlaybackAction::ToggleMiniPlayer,
         TRAY_QUIT_ID => DesktopPlaybackAction::Quit,
         _ => return,
     };
@@ -811,8 +956,27 @@ impl DesktopPlaybackShell for TauriDesktopPlaybackShell<'_> {
             .ok_or_else(|| "Desktop main window is unavailable.".to_owned())?;
         window
             .show()
+            .and_then(|_| window.unminimize())
             .and_then(|_| window.set_focus())
             .map_err(|error| error.to_string())
+    }
+
+    fn set_software_volume(&self, volume: f64) -> Result<(), String> {
+        let state = self
+            .app
+            .try_state::<AppState>()
+            .ok_or_else(|| "Desktop playback state is unavailable.".to_owned())?;
+        update_processing(&state, |processing| processing.set_software_volume(volume))
+            .map(|_| ())
+            .map_err(|error| error.message)
+    }
+
+    fn toggle_mini_window(&self) -> Result<(), String> {
+        let state = self
+            .app
+            .try_state::<AppState>()
+            .ok_or_else(|| "Desktop playback state is unavailable.".to_owned())?;
+        mini_window::toggle(self.app, &state.mini_window_store)
     }
 
     fn hide_main_window(&self) -> Result<(), String> {
@@ -904,6 +1068,9 @@ async fn cover_protocol_response(
                     builder = builder.header(name, value);
                 }
             }
+            // The renderer samples covers on a canvas for the accent colour;
+            // without this the cross-scheme image would taint the canvas.
+            builder = builder.header("access-control-allow-origin", "*");
             builder.body(response.body).unwrap_or_default()
         }
         Err(error) => tauri::http::Response::builder()
@@ -928,6 +1095,11 @@ fn protocol_error_status(code: ConnectionErrorCode) -> u16 {
 
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Err(error) = (TauriDesktopPlaybackShell { app }).show_main_window() {
+                eprintln!("Desktop relaunch could not restore the main window: {error}");
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .on_window_event(handle_main_window_close)
@@ -982,16 +1154,38 @@ pub fn run() -> tauri::Result<()> {
             let playback_tray = PlaybackTray::start(app.handle(), handle_tray_menu_event)?;
             let playback_event_tray = playback_tray.clone();
             let app_handle = app.handle().clone();
+            let window_title = Arc::new(Mutex::new(String::new()));
+            let mpris_app = app.handle().clone();
+            let mpris = MprisBridge::start(
+                Arc::new(move |action| {
+                    // Commands can arrive before AppState is managed; drop those.
+                    let Some(state) = mpris_app.try_state::<AppState>() else {
+                        return;
+                    };
+                    if let Err(error) = dispatch_application_action(&mpris_app, &state, action) {
+                        eprintln!("MPRIS action {action:?} failed: {}", error.message);
+                    }
+                }),
+                media_proxy.base_url().to_owned(),
+            );
             let playback = PlaybackController::start_default_with_lifecycle(
                 playback_lifecycle.clone(),
                 Arc::new(CommandPipeWireObserver::new()),
                 adaptive_system_rate,
                 move |state| {
-                    if let Err(error) =
-                        playback_event_tray.update(state.source.as_ref(), state.status.is_active())
-                    {
+                    let is_playing = state.status.is_active();
+                    if let Err(error) = playback_event_tray.update(
+                        state.source.as_ref(),
+                        is_playing,
+                        PlaybackPosition {
+                            current_seconds: state.current_time,
+                            duration_seconds: state.duration,
+                        },
+                    ) {
                         eprintln!("Desktop playback tray update failed: {error}");
                     }
+                    apply_window_title(&app_handle, &window_title, &state, is_playing);
+                    mpris.update(state.clone());
                     if let Err(error) = app_handle.emit(PLAYBACK_STATE_EVENT, state) {
                         eprintln!("Desktop playback state event failed: {error}");
                     }
@@ -1049,6 +1243,9 @@ pub fn run() -> tauri::Result<()> {
                 media_proxy,
                 queue_events,
                 import_selections: ImportSelectionStore::default(),
+                mini_window_store: MiniWindowStore::new(
+                    config_directory.join(MINI_WINDOW_FILE_NAME),
+                ),
             });
             Ok(())
         })
@@ -1078,6 +1275,13 @@ pub fn run() -> tauri::Result<()> {
             desktop_playback_next,
             desktop_playback_seek,
             desktop_playback_set_volume,
+            desktop_open_mini_player,
+            desktop_close_mini_player,
+            desktop_toggle_mini_player,
+            desktop_show_main_window,
+            desktop_playback_set_playback_rate,
+            desktop_playback_set_stop_after_current,
+            desktop_playback_set_transition_fade,
             desktop_playback_set_processing_profile,
             desktop_playback_set_replay_gain,
             desktop_playback_set_equalizer_preset,

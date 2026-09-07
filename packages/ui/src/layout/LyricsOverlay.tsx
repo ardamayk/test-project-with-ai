@@ -1,14 +1,14 @@
 import type { Track } from "@repo/api-client";
 import { ChevronDown } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useFocusTrap } from "../lib/use-focus-trap";
 import { AlbumArt } from "./AlbumArt";
+import { CurrentTrackPanel } from "./CurrentTrackPanel";
 import { QueuePanel } from "./QueuePanel";
 
 /**
- * Full-screen "Lyrics" view that slides up over the app: lyrics on the left,
- * the shared Queue on the right. Lyrics are not stored by the Music Server
- * yet, so the left side shows the Track and an empty state until they are.
+ * Full-screen listening view with current Track, stored lyrics, and shared Queue.
  */
 type LyricsState =
 	| { status: "loading" }
@@ -28,6 +28,8 @@ export function LyricsOverlay({
 	onClose: () => void;
 }) {
 	const [state, setState] = useState<LyricsState>({ status: "loading" });
+	const rootRef = useRef<HTMLDivElement>(null);
+	useFocusTrap(rootRef);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -41,7 +43,11 @@ export function LyricsOverlay({
 				if (!cancelled)
 					setState({ status: "loaded", lyrics: result?.lyrics ?? "" });
 			})
-			.catch(() => {
+			.catch((error) => {
+				console.warn("Failed to load track lyrics", {
+					trackId: track.id,
+					error,
+				});
 				if (!cancelled) setState({ status: "failed" });
 			});
 		return () => {
@@ -61,10 +67,12 @@ export function LyricsOverlay({
 
 	return createPortal(
 		<div
+			ref={rootRef}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Lyrics"
-			className="lyrics-view-enter fixed inset-0 z-[60] flex flex-col bg-background text-foreground"
+			tabIndex={-1}
+			className="lyrics-view-enter fixed inset-0 z-[60] flex flex-col bg-background text-foreground outline-none"
 		>
 			<header className="flex shrink-0 items-center justify-between gap-4 border-border border-b px-6 py-3">
 				<div className="flex min-w-0 items-center gap-3">
@@ -92,14 +100,17 @@ export function LyricsOverlay({
 					<ChevronDown className="size-5" />
 				</button>
 			</header>
-			<div className="flex min-h-0 flex-1">
+			<div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+				<div className="shrink-0 border-border border-b md:w-[34%] md:overflow-y-auto md:border-r md:border-b-0">
+					<CurrentTrackPanel track={track} coverUrl={coverUrl} />
+				</div>
 				<section
 					aria-label="Lyrics text"
-					className="flex min-w-0 flex-1 flex-col overflow-y-auto px-8 py-10 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+					className="flex min-h-64 min-w-0 flex-1 flex-col md:overflow-y-auto px-8 py-10 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 				>
 					<LyricsBody state={state} />
 				</section>
-				<aside className="hidden w-[22rem] shrink-0 border-border border-l bg-queue text-queue-foreground md:block">
+				<aside className="hidden w-[clamp(14rem,22vw,18rem)] shrink-0 border-border border-l bg-queue text-queue-foreground md:block">
 					<QueuePanel embedded />
 				</aside>
 			</div>

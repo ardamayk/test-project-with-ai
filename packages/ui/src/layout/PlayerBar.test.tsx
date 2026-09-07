@@ -150,7 +150,10 @@ function renderPlayerBar(
 			<PlaybackProvider api={api} engine={engine}>
 				<PlaybackStarter />
 				<RadioStarter />
-				<PlayerBar onPlaylistMutated={onPlaylistMutated} />
+				<PlayerBar
+					onPlaylistMutated={onPlaylistMutated}
+					onToggleMiniPlayer={vi.fn()}
+				/>
 			</PlaybackProvider>
 		</LayoutProvider>,
 	);
@@ -179,6 +182,7 @@ describe("PlayerBar", () => {
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+		vi.restoreAllMocks();
 	});
 
 	it("renders an empty disabled playback state", () => {
@@ -366,7 +370,7 @@ describe("PlayerBar", () => {
 		expect(screen.getByLabelText("Quality 24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("Add to playlist")).toBeTruthy();
-		expect(screen.queryByText("Play next")).toBeNull();
+		expect(screen.getByRole("menuitem", { name: "Play next" })).toBeTruthy();
 		expect(screen.getByText("Go to album")).toBeTruthy();
 		expect(screen.getByText("Go to artist")).toBeTruthy();
 		expect(
@@ -424,9 +428,376 @@ describe("PlayerBar", () => {
 		});
 
 		expect(screen.getByText("LIVE")).toBeTruthy();
-		expect(screen.getByText("--:--")).toBeTruthy();
+		expect(screen.queryByText("--:--")).toBeNull();
+		expect(screen.queryByText("0:00")).toBeNull();
 		expect(screen.queryByLabelText("Seek")).toBeNull();
 		expect(screen.getByLabelText("Quality High Quality")).toBeTruthy();
+	});
+
+	it("shows an inline error banner with Retry and Skip after a failed Track", async () => {
+		const { engine } = renderPlayerBar();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		await act(async () =>
+			engine.fail({ code: "playback-failed", message: "Playback failed" }),
+		);
+		await act(async () => {});
+
+		const banner = screen.getByTestId("playback-error-banner");
+		expect(banner.textContent).toContain("Playback failed");
+		expect(within(banner).getByRole("button", { name: "Retry" })).toBeTruthy();
+		// The test queue holds one item, so there is nothing to skip to.
+		expect(within(banner).queryByRole("button", { name: "Skip" })).toBeNull();
+
+		const play = vi.spyOn(engine, "play");
+		fireEvent.click(within(banner).getByRole("button", { name: "Retry" }));
+		expect(play).toHaveBeenCalledOnce();
+	});
+
+	it("changes speed, arms the sleep timer and queues the Track from the actions menu", async () => {
+		const { engine } = renderPlayerBar();
+		const setPlaybackRate = vi.spyOn(engine, "setPlaybackRate");
+		await openActionsMenu();
+
+		fireEvent.click(screen.getByRole("menuitemradio", { name: "1.5×" }));
+		expect(setPlaybackRate).toHaveBeenLastCalledWith(1.5);
+
+		fireEvent.click(screen.getByRole("menuitemradio", { name: "After track" }));
+		expect(engine.getState().stopAfterCurrent).toBe(true);
+
+		fireEvent.click(screen.getByRole("menuitem", { name: "Add to queue" }));
+		await act(async () => {});
+		expect(api.appendQueueItem).toHaveBeenCalledWith(
+			track.id,
+			expect.any(String),
+		);
+	});
+
+	it("keeps empty lyrics settled while the playhead advances", async () => {
+		const { engine } = renderPlayerBar();
+		vi.mocked(api.getTrackLyrics)?.mockResolvedValueOnce({ lyrics: "" });
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		vi.mocked(api.getTrackLyrics)?.mockClear();
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByText("No lyrics yet")).toBeTruthy();
+		await act(async () => engine.seek(10));
+		await act(async () => engine.seek(11));
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("No lyrics yet")).toBeTruthy();
+	});
+
+	it("keeps loaded lyrics while playback updates without another request", async () => {
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByText("Line one")).toBeTruthy();
+		await act(async () => engine.seek(12));
+		await act(async () => engine.pause());
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("Line two")).toBeTruthy();
+		expect(screen.queryByText("Loading lyrics…")).toBeNull();
+	});
+
+	it("keeps a lyrics failure settled until the view is reopened", async () => {
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+		vi.mocked(api.getTrackLyrics)?.mockRejectedValueOnce(
+			new Error("Server unavailable"),
+		);
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByRole("alert")).toBeTruthy();
+		await act(async () => engine.seek(12));
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("Lyrics could not be loaded")).toBeTruthy();
+		expect(warning).toHaveBeenCalledWith(
+			"Failed to load track lyrics",
+			expect.objectContaining({ trackId: track.id }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Close lyrics" }));
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByText("Line one")).toBeTruthy();
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(2);
+	});
+
+	it("ignores old lyrics that arrive after the track changes", async () => {
+		let finishOldLyrics = (_result: { lyrics: string }) => {};
+		vi.mocked(api.getTrackLyrics)?.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishOldLyrics = resolve;
+				}),
+		);
+		vi.mocked(api.getTrackLyrics)?.mockResolvedValueOnce({
+			lyrics: "Current track lyrics",
+		});
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(screen.getByText("Loading lyrics…")).toBeTruthy();
+		await act(async () =>
+			engine.play({
+				type: "track",
+				track: { ...track, id: "track-2", title: "Track 2" },
+				playbackUrl: "/stream/track-2",
+			}),
+		);
+		expect(await screen.findByText("Current track lyrics")).toBeTruthy();
+		await act(async () => finishOldLyrics({ lyrics: "Stale lyrics" }));
+		expect(screen.queryByText("Stale lyrics")).toBeNull();
+		expect(screen.getByText("Current track lyrics")).toBeTruthy();
+		expect(api.getTrackLyrics).toHaveBeenNthCalledWith(2, "track-2");
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(2);
+	});
+
+	it("shows gapless as an icon before quality only for an active source", async () => {
+		const { engine } = renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ isGapless: true }),
+		);
+		expect(
+			screen.queryByRole("img", { name: "Gapless playback enabled" }),
+		).toBeNull();
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		const icon = screen.getByRole("img", { name: "Gapless playback enabled" });
+		expect(icon.textContent).toBe("");
+		const quality = screen.getByRole("note", { name: /^Quality/ });
+		expect(
+			icon.compareDocumentPosition(quality) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		await act(async () => engine.stop());
+		expect(
+			screen.queryByRole("img", { name: "Gapless playback enabled" }),
+		).toBeNull();
+	});
+
+	it("omits the gapless icon when the engine does not support it", async () => {
+		renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ isGapless: false }),
+		);
+		await act(async () =>
+			screen.getByRole("button", { name: "Start track" }).click(),
+		);
+		expect(
+			screen.queryByRole("img", { name: "Gapless playback enabled" }),
+		).toBeNull();
+	});
+
+	it.each([
+		"Up next",
+		"Next",
+	] as const)("advances to the next Queue item using %s", async (control) => {
+		const nextTrack = { ...track, id: "track-2", title: "Track 2" };
+		const twoItemApi: PlaybackApi = {
+			...api,
+			getQueue: vi.fn(async () => ({
+				items: [
+					{ id: "item-1", trackId: track.id, position: 0, track },
+					{
+						id: "item-2",
+						trackId: nextTrack.id,
+						position: 1,
+						track: nextTrack,
+					},
+				],
+				revision: "1",
+			})),
+		};
+		const engine = new InMemoryPlaybackEngine();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={twoItemApi} engine={engine}>
+					<PlaybackStarter />
+					<PlayerBar />
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		await act(async () => {});
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		const upNext = screen.getByTestId("up-next");
+		expect(upNext.textContent).toContain("Track 2");
+		await act(async () => {
+			fireEvent.click(
+				control === "Up next"
+					? upNext
+					: screen.getByRole("button", { name: "Next" }),
+			);
+		});
+		expect(engine.getState().source).toMatchObject({
+			track: { id: "track-2" },
+		});
+	});
+
+	it("opens the Now Playing view from the cover and closes it with Escape", async () => {
+		renderPlayerBar();
+		expect(
+			screen.queryByRole("button", { name: "Open now playing" }),
+		).toBeNull();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Open now playing" }));
+		const view = screen.getByRole("dialog", { name: "Now playing" });
+		expect(within(view).getByRole("heading", { name: "Track 1" })).toBeTruthy();
+		expect(within(view).getByRole("button", { name: "Pause" })).toBeTruthy();
+		expect(within(view).getByTestId("tilting-artwork")).toBeTruthy();
+		expect(
+			document.activeElement && view.contains(document.activeElement),
+		).toBe(true);
+
+		fireEvent.click(within(view).getByRole("button", { name: "Lyrics" }));
+		expect(screen.queryByRole("dialog", { name: "Now playing" })).toBeNull();
+		const lyricsView = screen.getByRole("dialog", { name: "Lyrics" });
+		expect(
+			within(lyricsView).getByRole("region", { name: "Current track" }),
+		).toBeTruthy();
+		expect(
+			within(lyricsView).getByRole("region", { name: "Lyrics text" }),
+		).toBeTruthy();
+
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog", { name: "Lyrics" })).toBeNull();
+	});
+
+	it("gives every Player Bar control an accessible name", async () => {
+		renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ outputMode: "system" }),
+		);
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		const bar = screen.getByTestId("player-bar");
+		const unnamed = Array.from(bar.querySelectorAll("button, input")).filter(
+			(control) =>
+				!(
+					control.getAttribute("aria-label") ||
+					control.getAttribute("aria-labelledby") ||
+					control.textContent?.trim()
+				),
+		);
+		expect(unnamed).toEqual([]);
+	});
+
+	it("favorites the current saved Radio Station from the Player Bar", async () => {
+		const onToggleStationFavorite = vi.fn();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={api} engine={new InMemoryPlaybackEngine()}>
+					<RadioStarter />
+					<PlayerBar
+						isCurrentStationFavorite={false}
+						onToggleStationFavorite={onToggleStationFavorite}
+					/>
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		await act(async () => {
+			screen.getByRole("button", { name: "Start radio" }).click();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
+		expect(onToggleStationFavorite).toHaveBeenCalledWith(radioStation.id, true);
+	});
+
+	it("announces the new Track to assistive technology", async () => {
+		vi.useFakeTimers();
+		try {
+			renderPlayerBar();
+			await act(async () => {
+				screen.getByRole("button", { name: "Start track" }).click();
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(screen.getByTestId("now-playing-announcer").textContent).toBe(
+				"Now playing: Track 1 by Artist",
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("shows stream details on the quality pill while a Track plays", async () => {
+		renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ outputMode: "system" }),
+		);
+		expect(screen.queryByTestId("quality-details")).toBeNull();
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		const details = screen.getByTestId("quality-details");
+		expect(within(details).getByText("Output mode")).toBeTruthy();
+		expect(within(details).getByText("Normal")).toBeTruthy();
+	});
+
+	it("hides shortcut and mini player buttons while keeping keyboard help available", () => {
+		renderPlayerBar();
+		expect(
+			screen.queryByRole("button", { name: "Keyboard shortcuts" }),
+		).toBeNull();
+		expect(screen.queryByRole("button", { name: "Mini player" })).toBeNull();
+		fireEvent.keyDown(document.body, { key: "?" });
+		expect(
+			screen.getByRole("dialog", { name: "Keyboard shortcuts" }),
+		).toBeTruthy();
+
+		fireEvent.keyDown(document.body, { key: "Escape" });
+		expect(
+			screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
+		).toBeNull();
+
+		fireEvent.keyDown(document.body, { key: "?" });
+		expect(
+			screen.getByRole("dialog", { name: "Keyboard shortcuts" }),
+		).toBeTruthy();
+	});
+
+	it("seeks and changes volume from the arrow keys", async () => {
+		const { engine } = renderPlayerBar();
+		const seek = vi.spyOn(engine, "seek");
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		fireEvent.keyDown(document.body, { key: "ArrowRight" });
+		expect(seek).toHaveBeenLastCalledWith(5);
+		fireEvent.keyDown(document.body, { key: "ArrowRight", shiftKey: true });
+		expect(seek).toHaveBeenLastCalledWith(35);
+		fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+		expect(seek).toHaveBeenLastCalledWith(30);
+
+		fireEvent.keyDown(document.body, { key: "ArrowDown" });
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0.75",
+		);
+		fireEvent.keyDown(document.body, { key: "m" });
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0",
+		);
+		fireEvent.keyDown(document.body, { key: "m" });
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0.75",
+		);
 	});
 
 	it("renders the actions menu in a portal with anchored coordinates", async () => {

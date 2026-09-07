@@ -5,7 +5,11 @@ import { QueuePanel } from "./QueuePanel";
 import { Toaster } from "./Toaster";
 import { WidgetDndProvider, WidgetDock } from "./WidgetDock";
 
-// Floating player bar: 72px bar + 16px bottom inset + 16px breathing room, so
+/** Height of the floating Player Bar; Toaster derives its offset from this. */
+export const PLAYER_BAR_HEIGHT_PX = 80;
+/** Gap between the bottom edge and the Player Bar. */
+export const PLAYER_BAR_INSET_PX = 16;
+// Floating player bar: 80px bar + 16px bottom inset + 8px breathing room, so
 // scrolled content never ends hidden under the bar.
 const PLAYER_DOCK_CONTENT_PADDING = "pb-[104px]";
 // The dock follows the page content column so the bar lines up with page

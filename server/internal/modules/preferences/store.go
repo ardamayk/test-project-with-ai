@@ -43,11 +43,19 @@ func themeToColumn(theme ThemePreferences) string {
 }
 
 func (s *Store) Get(ctx context.Context, userID string) (UserPreferences, error) {
-	var themeRaw, layoutJSON string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT theme, layout_json FROM user_preferences WHERE user_id = ?`,
+	return getPreferences(ctx, s.db, userID)
+}
+
+type preferencesQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func getPreferences(ctx context.Context, querier preferencesQuerier, userID string) (UserPreferences, error) {
+	var themeRaw, layoutJSON, playbackJSON string
+	err := querier.QueryRowContext(ctx,
+		`SELECT theme, layout_json, playback_json FROM user_preferences WHERE user_id = ?`,
 		userID,
-	).Scan(&themeRaw, &layoutJSON)
+	).Scan(&themeRaw, &layoutJSON, &playbackJSON)
 	if err != nil {
 		return UserPreferences{}, fmt.Errorf("get preferences: %w", err)
 	}
@@ -58,13 +66,22 @@ func (s *Store) Get(ctx context.Context, userID string) (UserPreferences, error)
 	}
 
 	return UserPreferences{
-		Theme:  parseThemeColumn(themeRaw),
-		Layout: normalizeLayout(layout),
+		Theme:    parseThemeColumn(themeRaw),
+		Layout:   normalizeLayout(layout),
+		Playback: parsePlaybackColumn(playbackJSON),
 	}, nil
 }
 
-func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferences) (UserPreferences, error) {
-	current, err := s.Get(ctx, userID)
+func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferencesPatch) (UserPreferences, error) {
+	// The database uses BEGIN IMMEDIATE, locking before the read so concurrent
+	// sparse patches merge with the latest committed preferences.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UserPreferences{}, fmt.Errorf("begin preferences patch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	current, err := getPreferences(ctx, tx, userID)
 	if err != nil {
 		return UserPreferences{}, err
 	}
@@ -99,18 +116,26 @@ func (s *Store) Patch(ctx context.Context, userID string, patch UserPreferences)
 	}
 
 	current.Layout = normalizeLayout(current.Layout)
+	applyPlaybackPatch(&current.Playback, patch.Playback)
 
 	layoutJSON, err := json.Marshal(current.Layout)
 	if err != nil {
 		return UserPreferences{}, fmt.Errorf("encode layout: %w", err)
 	}
+	playbackJSON, err := json.Marshal(current.Playback)
+	if err != nil {
+		return UserPreferences{}, fmt.Errorf("encode playback: %w", err)
+	}
 
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE user_preferences SET theme = ?, layout_json = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`,
-		themeToColumn(current.Theme), string(layoutJSON), userID,
+	_, err = tx.ExecContext(ctx,
+		`UPDATE user_preferences SET theme = ?, layout_json = ?, playback_json = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`,
+		themeToColumn(current.Theme), string(layoutJSON), string(playbackJSON), userID,
 	)
 	if err != nil {
 		return UserPreferences{}, fmt.Errorf("update preferences: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return UserPreferences{}, fmt.Errorf("commit preferences patch: %w", err)
 	}
 
 	return current, nil

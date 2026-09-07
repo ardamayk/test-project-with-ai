@@ -91,3 +91,21 @@ describe('Server Capability gating', () => {
     ]);
   });
 });
+
+describe('track waveform capability', () => {
+  it('is gated on the exact advertised name', async () => {
+    const { TRACK_WAVEFORM_CAPABILITY, hasServerCapability } = await import(
+      './capabilities'
+    );
+    expect(TRACK_WAVEFORM_CAPABILITY).toBe('track-waveform.v1');
+    expect(
+      hasServerCapability(
+        ['api.v1', 'track-waveform.v1'],
+        TRACK_WAVEFORM_CAPABILITY,
+      ),
+    ).toBe(true);
+    expect(hasServerCapability(['api.v1'], TRACK_WAVEFORM_CAPABILITY)).toBe(
+      false,
+    );
+  });
+});

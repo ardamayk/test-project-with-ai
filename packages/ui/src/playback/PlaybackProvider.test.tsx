@@ -141,6 +141,27 @@ function Harness() {
 			<span data-testid="volume">{playback.volume}</span>
 			<span data-testid="repeat">{playback.repeatMode}</span>
 			<span data-testid="queue-conflict">{playback.queueConflict ?? ""}</span>
+			<span data-testid="error-cause">
+				{playback.errorRecovery?.cause ?? ""}
+			</span>
+			<span data-testid="error-countdown">
+				{playback.errorRecovery?.countdownSeconds ?? ""}
+			</span>
+			<button type="button" onClick={() => playback.errorRecovery?.retry()}>
+				Retry
+			</button>
+			<button type="button" onClick={() => playback.errorRecovery?.skip()}>
+				Skip
+			</button>
+			<button
+				type="button"
+				onClick={() => playback.errorRecovery?.cancelCountdown()}
+			>
+				Wait
+			</button>
+			<button type="button" onClick={() => void playback.playNext(track.id)}>
+				Play next
+			</button>
 			<button type="button" onClick={() => void playback.playTrack(track.id)}>
 				Track
 			</button>
@@ -214,29 +235,108 @@ function renderPlayback(
 afterEach(cleanup);
 
 describe("PlaybackProvider", () => {
-	it("announces a Track that fails to play and skips to the next Queue item", async () => {
-		const { engine } = renderPlayback();
+	it("explains a missing file and skips after the countdown", async () => {
+		vi.useFakeTimers();
+		try {
+			const api = createApi();
+			api.headTrackStream = vi.fn(async () => ({ status: 404 }));
+			const { engine } = renderPlayback(api);
+			await act(async () => {});
+			await act(async () =>
+				screen.getByRole("button", { name: "Track" }).click(),
+			);
+
+			await act(async () =>
+				engine.fail({ code: "playback-failed", message: "Playback failed" }),
+			);
+			await act(async () => {});
+
+			expect(api.headTrackStream).toHaveBeenCalledWith("track-1");
+			expect(screen.getByTestId("error-cause").textContent).toBe(
+				"file-missing",
+			);
+			expect(screen.getByTestId("error-countdown").textContent).toBe("5");
+			expect(engine.getState().source).toMatchObject({
+				track: { id: "track-1" },
+			});
+
+			// Each tick schedules the next one from an effect, so advance the
+			// clock one second per act.
+			for (let tick = 0; tick < 5; tick += 1) {
+				await act(async () => {
+					vi.advanceTimersByTime(1000);
+				});
+			}
+			await act(async () => {});
+			expect(engine.getState().source).toMatchObject({
+				track: { id: "track-2" },
+			});
+			expect(screen.getByTestId("error-cause").textContent).toBe("");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("lets the user retry a failed Track and stop the countdown", async () => {
+		vi.useFakeTimers();
+		try {
+			const api = createApi();
+			api.headTrackStream = vi.fn(async () => {
+				throw new Error("offline");
+			});
+			const { engine } = renderPlayback(api);
+			await act(async () => {});
+			await act(async () =>
+				screen.getByRole("button", { name: "Track" }).click(),
+			);
+			await act(async () =>
+				engine.fail({ code: "playback-failed", message: "Playback failed" }),
+			);
+			await act(async () => {});
+			expect(screen.getByTestId("error-cause").textContent).toBe("network");
+
+			await act(async () =>
+				screen.getByRole("button", { name: "Wait" }).click(),
+			);
+			await act(async () => {
+				vi.advanceTimersByTime(10000);
+			});
+			expect(engine.getState().source).toMatchObject({
+				track: { id: "track-1" },
+			});
+			expect(engine.getState().status).toBe("error");
+
+			const play = vi.spyOn(engine, "play");
+			await act(async () =>
+				screen.getByRole("button", { name: "Retry" }).click(),
+			);
+			expect(play).toHaveBeenCalledWith(
+				expect.objectContaining({
+					track: expect.objectContaining({ id: "track-1" }),
+				}),
+			);
+			expect(engine.getState().status).toBe("playing");
+			expect(screen.getByTestId("error-cause").textContent).toBe("");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("skips immediately from the recovery controls and asks a native engine to advance", async () => {
+		const api = createApi();
+		const engine = new InMemoryPlaybackEngine();
+		const next = vi.spyOn(engine, "next");
+		Object.assign(engine, { syncQueueContext: vi.fn(async () => undefined) });
+		renderPlayback(api, engine);
 		await act(async () => {});
 		await act(async () =>
 			screen.getByRole("button", { name: "Track" }).click(),
 		);
-		expect(engine.getState().source).toMatchObject({
-			track: { id: "track-1" },
-		});
-
 		await act(async () =>
 			engine.fail({ code: "playback-failed", message: "Playback failed" }),
 		);
-
-		expect(toastError).toHaveBeenCalledWith(
-			expect.stringContaining("Couldn't play"),
-			expect.objectContaining({
-				description: expect.stringContaining("Skipping to the next track"),
-			}),
-		);
-		expect(engine.getState().source).toMatchObject({
-			track: { id: "track-2" },
-		});
+		await act(async () => screen.getByRole("button", { name: "Skip" }).click());
+		expect(next).toHaveBeenCalledOnce();
 	});
 
 	it("plays previous and next Queue items from native tray navigation", async () => {
@@ -270,6 +370,7 @@ describe("PlaybackProvider", () => {
 			track,
 			playbackUrl: "/stream/track-1",
 			queueItemId: "item-1",
+			artworkUrl: "/cover/album-1",
 		});
 		expect(screen.getByTestId("track").textContent).toBe("Track 1");
 		expect(screen.getByTestId("playing").textContent).toBe("true");
@@ -357,6 +458,75 @@ describe("PlaybackProvider", () => {
 		});
 		expect(screen.getByTestId("volume").textContent).toBe("0.3");
 		expect(screen.getByTestId("repeat").textContent).toBe("once");
+	});
+
+	it("inserts a duplicate after the playing entry without replacing item identities", async () => {
+		const api = createApi();
+		const appended = [
+			...queueItems,
+			{ ...queueItems[0], id: "new-item", position: 2 },
+		];
+		api.appendQueueItem = vi.fn(async () => ({
+			items: appended,
+			revision: "2",
+		}));
+		api.reorderQueue = vi.fn(async (ids: string[]) => ({
+			items: ids.map((id, position) => {
+				const item = appended.find((item) => item.id === id);
+				if (!item) throw new Error(`Unknown queue item: ${id}`);
+				return { ...item, position };
+			}),
+			revision: "3",
+		}));
+		const { engine } = renderPlayback(api);
+		await act(async () =>
+			screen.getByRole("button", { name: /^Track$/ }).click(),
+		);
+		await act(async () =>
+			screen.getByRole("button", { name: /^Play next$/ }).click(),
+		);
+		expect(api.replaceQueue).not.toHaveBeenCalled();
+		expect(api.reorderQueue).toHaveBeenCalledWith(
+			["item-1", "new-item", "item-2"],
+			"2",
+		);
+		expect(engine.getState().source).toMatchObject({ queueItemId: "item-1" });
+		await act(async () => engine.finish());
+		expect(engine.getState().source).toMatchObject({ queueItemId: "new-item" });
+	});
+
+	it("does not coordinate queue, repeat, or error skipping from an observer window", async () => {
+		const engine = new InMemoryPlaybackEngine();
+		await engine.play({
+			type: "track",
+			track,
+			playbackUrl: "/stream/track-1",
+			queueItemId: "item-1",
+		});
+		engine.cycleRepeatMode();
+		const cycleRepeatMode = vi.spyOn(engine, "cycleRepeatMode");
+		const next = vi.spyOn(engine, "next");
+		const syncQueueContext = vi.fn(async () => {});
+		Object.assign(engine, { syncQueueContext });
+		render(
+			<PlaybackProvider
+				api={createApi()}
+				engine={engine}
+				shouldCoordinateQueue={false}
+			>
+				<Harness />
+			</PlaybackProvider>,
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("queue").textContent).toBe("track-1,track-2"),
+		);
+		expect(syncQueueContext).not.toHaveBeenCalled();
+		expect(cycleRepeatMode).not.toHaveBeenCalled();
+		await act(async () =>
+			engine.fail({ code: "playback-failed", message: "Playback failed" }),
+		);
+		expect(screen.getByTestId("error-countdown").textContent).toBe("");
+		expect(next).not.toHaveBeenCalled();
 	});
 
 	it("advances Queue after engine reports Track ended", async () => {

@@ -35,6 +35,13 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v1/library/tracks", m.handlers.ListTracks)
 	r.Get("/api/v1/library/tracks/{trackId}", m.handlers.GetTrack)
 	r.Get("/api/v1/library/tracks/{trackId}/lyrics", m.handlers.GetTrackLyrics)
+	r.Get("/api/v1/library/tracks/{trackId}/waveform", m.handlers.GetTrackWaveform)
+}
+
+// EnableWaveforms wires lazy waveform generation; `available` reflects the
+// ffmpeg Server Dependency and gates both generation and the capability.
+func (m *Module) EnableWaveforms(available bool) {
+	m.handlers.waveforms = NewWaveformService(m.store, FFmpegWaveformGenerator, available)
 }
 
 func (m *Module) TrackAccess() TrackAccess {

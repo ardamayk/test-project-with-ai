@@ -22,14 +22,9 @@ import {
 	HEADER_SEARCH_CONTAINER_CLASS,
 	HEADER_SEARCH_INPUT_CLASS,
 } from "#/lib/page-layout-classes";
+import { radioQueryKeys } from "#/lib/radio-query-keys";
 import { matchesLocalStationFilter } from "#/lib/radio-station-filter";
 import { cn } from "#/lib/utils";
-
-const radioQueryKeys = {
-	stations: ["radio", "stations"] as const,
-	nowPlaying: (stationId: string) =>
-		["radio", "stations", stationId, "now-playing"] as const,
-};
 
 export function RadioPage() {
 	const queryClient = useQueryClient();
