@@ -14,7 +14,12 @@ function Harness({
 	const [session, setSession] = React.useState<PlaybackSessionState>(
 		engine.getState(),
 	);
-	React.useEffect(() => engine.subscribe(setSession), [engine]);
+	React.useEffect(() => {
+		const unsubscribe = engine.subscribe(setSession);
+		return () => {
+			unsubscribe();
+		};
+	}, [engine]);
 	const timer = useSleepTimer(engine, session, now);
 	const request = (value: SleepTimerRequest) => () =>
 		timer.setSleepTimer(value);

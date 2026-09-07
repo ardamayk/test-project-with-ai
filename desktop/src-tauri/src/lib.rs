@@ -981,6 +981,9 @@ async fn cover_protocol_response(
                     builder = builder.header(name, value);
                 }
             }
+            // The renderer samples covers on a canvas for the accent colour;
+            // without this the cross-scheme image would taint the canvas.
+            builder = builder.header("access-control-allow-origin", "*");
             builder.body(response.body).unwrap_or_default()
         }
         Err(error) => tauri::http::Response::builder()

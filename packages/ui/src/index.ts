@@ -1,5 +1,13 @@
 export { toast } from "sonner";
 export * from "./layout";
+export {
+	type Accent,
+	accentCssVariables,
+	accentFromPixels,
+	clampAccent,
+	extractAccent,
+} from "./lib/cover-accent";
+export { focusableElements, useFocusTrap } from "./lib/use-focus-trap";
 export { cn } from "./lib/utils";
 export { formatReplayGainAvailability } from "./playback/format-replay-gain";
 export { NowPlayingAnnouncer } from "./playback/NowPlayingAnnouncer";
@@ -65,6 +73,10 @@ export {
 	type TrackDetailRow,
 } from "./playback/track-details";
 export { type AbRepeat, useAbRepeat } from "./playback/use-ab-repeat";
+export {
+	clearCoverAccentCache,
+	useCoverAccent,
+} from "./playback/use-cover-accent";
 export { useMute } from "./playback/use-mute";
 export {
 	describePlaybackShortcuts,

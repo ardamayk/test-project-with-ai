@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useFocusTrap } from "../lib/use-focus-trap";
 import {
 	describePlaybackShortcuts,
 	type PlaybackKeyboardOptions,
@@ -14,6 +15,8 @@ export function ShortcutHelpOverlay({
 	options?: PlaybackKeyboardOptions;
 	onClose: () => void;
 }) {
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useFocusTrap(dialogRef);
 	useEffect(() => {
 		const closeOnEscape = (event: KeyboardEvent) => {
 			if (event.key === "Escape") onClose();
@@ -29,9 +32,11 @@ export function ShortcutHelpOverlay({
 	return createPortal(
 		<div className="fixed inset-0 z-[70] flex items-center justify-center bg-background/70 p-4">
 			<div
+				ref={dialogRef}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Keyboard shortcuts"
+				tabIndex={-1}
 				className="w-full max-w-md overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl"
 			>
 				<div className="flex items-center justify-between gap-3 border-border border-b p-4">

@@ -1,7 +1,8 @@
 import type { Track } from "@repo/api-client";
 import { ChevronDown } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useFocusTrap } from "../lib/use-focus-trap";
 import { AlbumArt } from "./AlbumArt";
 import { QueuePanel } from "./QueuePanel";
 
@@ -28,6 +29,8 @@ export function LyricsOverlay({
 	onClose: () => void;
 }) {
 	const [state, setState] = useState<LyricsState>({ status: "loading" });
+	const rootRef = useRef<HTMLDivElement>(null);
+	useFocusTrap(rootRef);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -61,10 +64,12 @@ export function LyricsOverlay({
 
 	return createPortal(
 		<div
+			ref={rootRef}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Lyrics"
-			className="lyrics-view-enter fixed inset-0 z-[60] flex flex-col bg-background text-foreground"
+			tabIndex={-1}
+			className="lyrics-view-enter fixed inset-0 z-[60] flex flex-col bg-background text-foreground outline-none"
 		>
 			<header className="flex shrink-0 items-center justify-between gap-4 border-border border-b px-6 py-3">
 				<div className="flex min-w-0 items-center gap-3">

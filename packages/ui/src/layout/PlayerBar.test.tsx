@@ -511,6 +511,31 @@ describe("PlayerBar", () => {
 		});
 	});
 
+	it("opens the Now Playing view from the cover and closes it with Escape", async () => {
+		renderPlayerBar();
+		expect(
+			screen.queryByRole("button", { name: "Open now playing" }),
+		).toBeNull();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Open now playing" }));
+		const view = screen.getByRole("dialog", { name: "Now playing" });
+		expect(within(view).getByRole("heading", { name: "Track 1" })).toBeTruthy();
+		expect(within(view).getByRole("button", { name: "Pause" })).toBeTruthy();
+		expect(
+			document.activeElement && view.contains(document.activeElement),
+		).toBe(true);
+
+		fireEvent.click(within(view).getByRole("button", { name: "Lyrics" }));
+		expect(screen.queryByRole("dialog", { name: "Now playing" })).toBeNull();
+		expect(screen.getByRole("dialog", { name: "Lyrics" })).toBeTruthy();
+
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog", { name: "Lyrics" })).toBeNull();
+	});
+
 	it("favorites the current saved Radio Station from the Player Bar", async () => {
 		const onToggleStationFavorite = vi.fn();
 		render(

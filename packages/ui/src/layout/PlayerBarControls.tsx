@@ -184,9 +184,15 @@ function PrimaryPlaybackButton({
 			aria-label={isPlaying ? "Pause" : "Play"}
 		>
 			{isPlaying ? (
-				<Pause className={CONTROL_ICON_CLASS} />
+				<Pause
+					key="pause"
+					className={cn(CONTROL_ICON_CLASS, "player-glyph-enter")}
+				/>
 			) : (
-				<Play className={cn(CONTROL_ICON_CLASS, "ml-0.5")} />
+				<Play
+					key="play"
+					className={cn(CONTROL_ICON_CLASS, "player-glyph-enter ml-0.5")}
+				/>
 			)}
 		</button>
 	);

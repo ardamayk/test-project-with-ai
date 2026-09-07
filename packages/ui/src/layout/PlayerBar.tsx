@@ -16,6 +16,7 @@ import {
 	X,
 } from "lucide-react";
 import {
+	type CSSProperties,
 	type ReactNode,
 	useCallback,
 	useEffect,
@@ -24,6 +25,7 @@ import {
 	useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useFocusTrap } from "../lib/use-focus-trap";
 import { cn } from "../lib/utils";
 import { NowPlayingAnnouncer } from "../playback/NowPlayingAnnouncer";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
@@ -33,12 +35,15 @@ import {
 	formatBitDepth,
 	formatSampleRate,
 } from "../playback/track-details";
+import { useCoverAccent } from "../playback/use-cover-accent";
 import { useMute } from "../playback/use-mute";
 import { usePlaybackKeyboardShortcuts } from "../playback/use-playback-keyboard-shortcuts";
+import { useResolvedThemeMode } from "../theme/use-resolved-theme-mode";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
 import { LyricsOverlay } from "./LyricsOverlay";
+import { NowPlayingView } from "./NowPlayingView";
 import { PlaybackErrorBanner } from "./PlaybackErrorBanner";
 import { PlaybackSignal } from "./PlaybackSignal";
 import {
@@ -134,6 +139,7 @@ export function PlayerBar({
 	const [infoOpen, setInfoOpen] = useState(false);
 	const [lyricsOpen, setLyricsOpen] = useState(false);
 	const [helpOpen, setHelpOpen] = useState(false);
+	const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
 	const [playlists, setPlaylists] = useState<Playlist[]>([]);
 	const [playlistsLoaded, setPlaylistsLoaded] = useState(false);
 	const [memberPlaylistIds, setMemberPlaylistIds] = useState<Set<string>>(
@@ -352,6 +358,13 @@ export function PlayerBar({
 	const artworkUrl = currentTrack
 		? getAlbumCoverUrl(currentTrack.albumId)
 		: (currentRadioStation?.faviconUrl ?? null);
+	const themeMode = useResolvedThemeMode(preferences.theme.mode);
+	const accentStyle = useCoverAccent({
+		cacheKey: currentTrack ? currentTrack.albumId : null,
+		coverUrl: currentTrack ? artworkUrl : null,
+		enabled: playbackPreferences.accentFromCover,
+		mode: themeMode,
+	}) as CSSProperties;
 
 	const effectiveDuration =
 		duration > 0
@@ -567,7 +580,11 @@ export function PlayerBar({
 	};
 
 	return (
-		<footer className="relative h-[80px] rounded-2xl border border-[var(--player-border)] bg-player px-5 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]">
+		<footer
+			data-testid="player-bar"
+			style={accentStyle}
+			className="relative h-[80px] rounded-2xl border border-[var(--player-border)] bg-player px-5 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]"
+		>
 			{playbackError ? (
 				<PlaybackErrorBanner error={playbackError} recovery={errorRecovery} />
 			) : outputAlert ? (
@@ -583,15 +600,34 @@ export function PlayerBar({
 					aria-label="Now playing"
 					className="@container/now-playing flex min-w-[200px] flex-[1_0_0] items-center gap-4 justify-self-start"
 				>
-					<AlbumArt
-						coverUrl={artworkUrl}
-						title={nowPlayingTitle}
-						className="size-14 shrink-0 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
-					/>
+					{currentTrack ? (
+						<button
+							type="button"
+							data-player-control
+							className="shrink-0 rounded-md"
+							aria-label="Open now playing"
+							onClick={() => setNowPlayingOpen(true)}
+						>
+							<AlbumArt
+								key={artworkUrl ?? "none"}
+								coverUrl={artworkUrl}
+								title={nowPlayingTitle}
+								className="player-cover-enter size-14 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
+							/>
+						</button>
+					) : (
+						<AlbumArt
+							key={artworkUrl ?? "none"}
+							coverUrl={artworkUrl}
+							title={nowPlayingTitle}
+							className="player-cover-enter size-14 shrink-0 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
+						/>
+					)}
 					<div className="min-w-0 flex-1 overflow-hidden">
 						<div className="flex max-w-full min-w-0 items-center">
 							<p
-								className="min-w-0 truncate font-medium text-[var(--player-title)] text-sm"
+								key={nowPlayingTitle}
+								className="player-title-enter min-w-0 truncate font-medium text-[var(--player-title)] text-sm"
 								title={nowPlayingTitle}
 							>
 								{nowPlayingTitle}
@@ -861,6 +897,18 @@ export function PlayerBar({
 					onClose={() => setInfoOpen(false)}
 				/>
 			) : null}
+			{nowPlayingOpen && currentTrack ? (
+				<NowPlayingView
+					track={currentTrack}
+					coverUrl={artworkUrl}
+					accentStyle={accentStyle}
+					onOpenLyrics={() => {
+						setNowPlayingOpen(false);
+						setLyricsOpen(true);
+					}}
+					onClose={() => setNowPlayingOpen(false)}
+				/>
+			) : null}
 		</footer>
 	);
 }
@@ -1051,14 +1099,18 @@ function TrackInfoDialog({
 	onClose: () => void;
 }) {
 	const rows = buildTrackDetailRows(track);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useFocusTrap(dialogRef);
 
 	return (
 		<Portal>
 			<div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4">
 				<div
+					ref={dialogRef}
 					role="dialog"
 					aria-modal="true"
 					aria-label={track.title}
+					tabIndex={-1}
 					className="max-h-[80vh] w-full max-w-2xl overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl"
 				>
 					<div className="flex items-center justify-between gap-3 border-border border-b p-4">

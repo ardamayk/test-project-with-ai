@@ -27,7 +27,12 @@ function Harness({ engine }: { engine: InMemoryPlaybackEngine }) {
 	const [session, setSession] = useState<PlaybackSessionState>(
 		engine.getState(),
 	);
-	useEffect(() => engine.subscribe(setSession), [engine]);
+	useEffect(() => {
+		const unsubscribe = engine.subscribe(setSession);
+		return () => {
+			unsubscribe();
+		};
+	}, [engine]);
 	const ab = useAbRepeat(engine, session);
 	return (
 		<div>
