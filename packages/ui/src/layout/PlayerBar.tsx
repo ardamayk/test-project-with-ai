@@ -886,8 +886,6 @@ export function PlayerBar({
 					}
 					onToggleQueue={toggleQueue}
 					onOpenLyrics={currentTrack ? () => setLyricsOpen(true) : undefined}
-					onOpenHelp={() => setHelpOpen(true)}
-					onToggleMiniPlayer={onToggleMiniPlayer}
 					onVolumeChange={setVolume}
 				/>
 			</div>

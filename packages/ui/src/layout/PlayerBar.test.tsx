@@ -150,7 +150,10 @@ function renderPlayerBar(
 			<PlaybackProvider api={api} engine={engine}>
 				<PlaybackStarter />
 				<RadioStarter />
-				<PlayerBar onPlaylistMutated={onPlaylistMutated} />
+				<PlayerBar
+					onPlaylistMutated={onPlaylistMutated}
+					onToggleMiniPlayer={vi.fn()}
+				/>
 			</PlaybackProvider>
 		</LayoutProvider>,
 	);
@@ -470,6 +473,21 @@ describe("PlayerBar", () => {
 		);
 	});
 
+	it("keeps empty lyrics settled while the playhead advances", async () => {
+		const { engine } = renderPlayerBar();
+		vi.mocked(api.getTrackLyrics)?.mockResolvedValueOnce({ lyrics: "" });
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		vi.mocked(api.getTrackLyrics)?.mockClear();
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+		expect(await screen.findByText("No lyrics yet")).toBeTruthy();
+		await act(async () => engine.seek(10));
+		await act(async () => engine.seek(11));
+		expect(api.getTrackLyrics).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("No lyrics yet")).toBeTruthy();
+	});
+
 	it("shows the next Queue item as Up next and jumps to it", async () => {
 		const nextTrack = { ...track, id: "track-2", title: "Track 2" };
 		const twoItemApi: PlaybackApi = {
@@ -524,13 +542,20 @@ describe("PlayerBar", () => {
 		const view = screen.getByRole("dialog", { name: "Now playing" });
 		expect(within(view).getByRole("heading", { name: "Track 1" })).toBeTruthy();
 		expect(within(view).getByRole("button", { name: "Pause" })).toBeTruthy();
+		expect(within(view).getByTestId("tilting-artwork")).toBeTruthy();
 		expect(
 			document.activeElement && view.contains(document.activeElement),
 		).toBe(true);
 
 		fireEvent.click(within(view).getByRole("button", { name: "Lyrics" }));
 		expect(screen.queryByRole("dialog", { name: "Now playing" })).toBeNull();
-		expect(screen.getByRole("dialog", { name: "Lyrics" })).toBeTruthy();
+		const lyricsView = screen.getByRole("dialog", { name: "Lyrics" });
+		expect(
+			within(lyricsView).getByRole("region", { name: "Current track" }),
+		).toBeTruthy();
+		expect(
+			within(lyricsView).getByRole("region", { name: "Lyrics text" }),
+		).toBeTruthy();
 
 		fireEvent.keyDown(document, { key: "Escape" });
 		expect(screen.queryByRole("dialog", { name: "Lyrics" })).toBeNull();
@@ -611,9 +636,13 @@ describe("PlayerBar", () => {
 		expect(within(details).getByText("Normal")).toBeTruthy();
 	});
 
-	it("opens the keyboard shortcut help from the bar and with the ? key", () => {
+	it("hides shortcut and mini player buttons while keeping keyboard help available", () => {
 		renderPlayerBar();
-		fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+		expect(
+			screen.queryByRole("button", { name: "Keyboard shortcuts" }),
+		).toBeNull();
+		expect(screen.queryByRole("button", { name: "Mini player" })).toBeNull();
+		fireEvent.keyDown(document.body, { key: "?" });
 		expect(
 			screen.getByRole("dialog", { name: "Keyboard shortcuts" }),
 		).toBeTruthy();

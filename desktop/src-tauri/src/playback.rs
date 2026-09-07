@@ -662,16 +662,18 @@ fn start_mpv_worker(
     extra_arguments: Vec<String>,
 ) -> Result<MpvWorker, String> {
     let socket_path = ipc_directory.join("control.sock");
+    let (stream, child_stream) = UnixStream::pair()
+        .map_err(|error| format!("Pinned mpv lifetime connection could not be created: {error}"))?;
     let mut command = Command::new(binary);
     configure_mpv_command(&mut command, &socket_path, extra_arguments);
+    command.stdin(Stdio::from(std::os::fd::OwnedFd::from(child_stream)));
     let mut child = command
         .spawn()
         .map_err(|error| format!("Pinned mpv child could not start: {error}"))?;
+    drop(command);
     wait_for_mpv_socket(&mut child, &socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))
         .map_err(|error| format!("Private mpv IPC permissions could not be set: {error}"))?;
-    let stream = UnixStream::connect(&socket_path)
-        .map_err(|error| format!("Pinned mpv IPC connection failed: {error}"))?;
     stream
         .set_read_timeout(Some(EVENT_POLL_INTERVAL))
         .map_err(|error| format!("Pinned mpv IPC timeout could not be set: {error}"))?;
@@ -693,6 +695,8 @@ fn configure_mpv_command(command: &mut Command, socket_path: &Path, extra_argume
         .arg("--audio-pitch-correction=yes")
         .arg(format!("--volume={}", DEFAULT_VOLUME * 100.0))
         .arg(format!("--input-ipc-server={}", socket_path.display()))
+        // mpv exits on EOF even if the Desktop Client is killed without running Drop.
+        .arg("--input-ipc-client=fd://0")
         .args(extra_arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -6677,6 +6681,40 @@ mod tests {
             .play(Some(source))
             .expect("play controlled stream");
         wait_for_state(controller, |state| state.current_time > 0.05);
+    }
+
+    #[test]
+    #[ignore = "requires pinned mpv"]
+    fn real_pinned_mpv_exits_when_desktop_lifetime_connection_closes() {
+        let directory = super::create_private_ipc_directory().expect("private IPC directory");
+        let socket_path = directory.join("control.sock");
+        let (lifetime_stream, child_stream) =
+            std::os::unix::net::UnixStream::pair().expect("lifetime socket pair");
+        let mut command = Command::new(super::resolve_mpv_binary());
+        super::configure_mpv_command(&mut command, &socket_path, vec!["--ao=null".to_owned()]);
+        command.stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+            child_stream,
+        )));
+        let mut child = command.spawn().expect("spawn pinned mpv");
+        drop(command);
+        super::wait_for_mpv_socket(&mut child, &socket_path).expect("mpv ready");
+        assert!(child.try_wait().expect("running child status").is_none());
+        drop(lifetime_stream);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut has_exited = false;
+        while Instant::now() < deadline {
+            if child.try_wait().expect("child status").is_some() {
+                has_exited = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        super::terminate_mpv(&mut child);
+        fs::remove_dir_all(directory).expect("remove private IPC directory");
+        assert!(
+            has_exited,
+            "mpv survived the Desktop Client lifetime connection"
+        );
     }
 
     #[test]

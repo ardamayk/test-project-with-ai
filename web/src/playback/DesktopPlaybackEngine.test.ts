@@ -193,6 +193,31 @@ describe("DesktopPlaybackEngine", () => {
 		engine.destroy();
 	});
 
+	it("refreshes background playback when the main window regains focus", async () => {
+		const native = createBridge();
+		const engine = new DesktopPlaybackEngine(native.bridge);
+		await vi.waitFor(() =>
+			expect(native.bridge.rendererReady).toHaveBeenCalledOnce(),
+		);
+		native.bridge.rendererReady.mockResolvedValue({
+			...DEFAULT_PLAYBACK_SESSION_STATE,
+			source: trackSource,
+			status: "playing",
+			currentTime: 42,
+		});
+		window.dispatchEvent(new Event("focus"));
+		await vi.waitFor(() =>
+			expect(engine.getState()).toMatchObject({
+				source: trackSource,
+				status: "playing",
+				currentTime: 42,
+			}),
+		);
+		engine.destroy();
+		window.dispatchEvent(new Event("focus"));
+		expect(native.bridge.rendererReady).toHaveBeenCalledTimes(2);
+	});
+
 	it("plays a Track and projects native timing events", async () => {
 		const native = createBridge();
 		const engine = new DesktopPlaybackEngine(native.bridge);

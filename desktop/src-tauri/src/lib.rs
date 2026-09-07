@@ -951,6 +951,7 @@ impl DesktopPlaybackShell for TauriDesktopPlaybackShell<'_> {
             .ok_or_else(|| "Desktop main window is unavailable.".to_owned())?;
         window
             .show()
+            .and_then(|_| window.unminimize())
             .and_then(|_| window.set_focus())
             .map_err(|error| error.to_string())
     }
@@ -1089,6 +1090,11 @@ fn protocol_error_status(code: ConnectionErrorCode) -> u16 {
 
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Err(error) = (TauriDesktopPlaybackShell { app }).show_main_window() {
+                eprintln!("Desktop relaunch could not restore the main window: {error}");
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .on_window_event(handle_main_window_close)

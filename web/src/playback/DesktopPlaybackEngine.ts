@@ -97,11 +97,19 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 	private unlisten: UnlistenFn | null = null;
 	private isDestroyed = false;
 	private commandRevision = 0;
+	private stateRevision = 0;
+	private isRefreshing = false;
+	private readonly handleFocus = () => {
+		void this.refreshSession();
+	};
+	private readonly handleVisibilityChange = () => {
+		if (document.visibilityState === "visible") void this.refreshSession();
+	};
 
 	constructor(
 		private readonly bridge: DesktopPlaybackBridge = tauriPlaybackBridge,
 	) {
-		void this.initialize(this.commandRevision);
+		void this.initialize();
 	}
 
 	getState() {
@@ -222,12 +230,17 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 
 	destroy() {
 		this.isDestroyed = true;
+		window.removeEventListener("focus", this.handleFocus);
+		document.removeEventListener(
+			"visibilitychange",
+			this.handleVisibilityChange,
+		);
 		this.unlisten?.();
 		this.unlisten = null;
 		this.listeners.clear();
 	}
 
-	private async initialize(initializationRevision: number) {
+	private async initialize() {
 		try {
 			const unlisten = await this.bridge.listen((state) => this.update(state));
 			if (this.isDestroyed) {
@@ -235,10 +248,35 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 				return;
 			}
 			this.unlisten = unlisten;
-			const state = await this.bridge.rendererReady();
-			if (this.commandRevision === initializationRevision) this.update(state);
+			window.addEventListener("focus", this.handleFocus);
+			document.addEventListener(
+				"visibilitychange",
+				this.handleVisibilityChange,
+			);
+			await this.refreshSession();
 		} catch (error) {
 			this.updateError(error);
+		}
+	}
+
+	private async refreshSession() {
+		if (this.isDestroyed || this.isRefreshing) return;
+		this.isRefreshing = true;
+		const commandRevision = this.commandRevision;
+		const stateRevision = this.stateRevision;
+		try {
+			const state = await this.bridge.rendererReady();
+			if (
+				this.commandRevision === commandRevision &&
+				this.stateRevision === stateRevision
+			) {
+				this.update(state);
+			}
+		} catch (error) {
+			console.warn("Failed to refresh native playback session", { error });
+			if (this.stateRevision === stateRevision) this.updateError(error);
+		} finally {
+			this.isRefreshing = false;
 		}
 	}
 
@@ -257,6 +295,7 @@ export class DesktopPlaybackEngine implements PlaybackEngine {
 
 	private update(state: PlaybackSessionState) {
 		if (this.isDestroyed) return;
+		this.stateRevision += 1;
 		this.state = state;
 		for (const listener of this.listeners) listener(state);
 	}

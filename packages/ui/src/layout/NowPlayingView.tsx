@@ -4,13 +4,26 @@ import { type CSSProperties, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useFocusTrap } from "../lib/use-focus-trap";
 import { cn } from "../lib/utils";
-import { usePlayback } from "../playback/PlaybackProvider";
-import { AlbumArt } from "./AlbumArt";
-import { PlaybackControls } from "./PlayerBarControls";
+import { CurrentTrackPanel } from "./CurrentTrackPanel";
 import { QueuePanel } from "./QueuePanel";
 
+const ARTWORK_VIEW_STYLE = {
+	"--heading": "#f5f5f5",
+	"--foreground": "#e5e5e5",
+	"--caption": "#a3a3a3",
+	"--muted": "#262626",
+	"--muted-foreground": "#a3a3a3",
+	"--border": "#262626",
+	"--queue-foreground": "#e5e5e5",
+	"--primary": "#f5f5f5",
+	"--primary-foreground": "#171717",
+	"--player-foreground": "#e5e5e5",
+	"--player-control-primary": "#f5f5f5",
+	"--player-control-primary-foreground": "#171717",
+} as CSSProperties;
+
 /**
- * Full-screen "Now Playing" view: a blurred cover backdrop, large art, the
+ * Full-screen "Now Playing" view: pointer-responsive artwork, the
  * transport and the Queue. Sibling of the Lyrics view and opened from the
  * cover in the Player Bar.
  */
@@ -30,20 +43,6 @@ export function NowPlayingView({
 }) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	useFocusTrap(rootRef);
-	const {
-		isPlaying,
-		currentTime,
-		duration,
-		bufferedEnd,
-		shuffleEnabled,
-		repeatMode,
-		togglePlay,
-		toggleShuffle,
-		cycleRepeatMode,
-		navigatePrevious,
-		navigateNext,
-		seek,
-	} = usePlayback();
 
 	useEffect(() => {
 		const closeOnEscape = (event: KeyboardEvent) => {
@@ -55,13 +54,6 @@ export function NowPlayingView({
 
 	if (typeof document === "undefined") return null;
 
-	const effectiveDuration =
-		duration > 0
-			? duration
-			: track.durationMs > 0
-				? track.durationMs / 1000
-				: 0;
-
 	return createPortal(
 		<div
 			ref={rootRef}
@@ -69,21 +61,9 @@ export function NowPlayingView({
 			aria-modal="true"
 			aria-label="Now playing"
 			tabIndex={-1}
-			style={accentStyle}
-			className="lyrics-view-enter fixed inset-0 z-[60] flex flex-col overflow-hidden bg-background text-foreground outline-none"
+			style={{ ...accentStyle, ...ARTWORK_VIEW_STYLE }}
+			className="lyrics-view-enter fixed inset-0 z-[60] flex flex-col overflow-hidden bg-black text-white outline-none"
 		>
-			{coverUrl ? (
-				<img
-					src={coverUrl}
-					alt=""
-					aria-hidden
-					data-testid="now-playing-backdrop"
-					// A tiny blurred copy scaled up: cheap on WebKitGTK and still
-					// reads as the album's palette.
-					className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-35 blur-3xl saturate-150"
-				/>
-			) : null}
-			<div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/40 via-background/70 to-background" />
 			<header className="relative flex shrink-0 items-center justify-between gap-4 px-6 py-3">
 				<p className="text-caption text-xs uppercase tracking-[0.2em]">
 					Now playing
@@ -98,43 +78,12 @@ export function NowPlayingView({
 				</button>
 			</header>
 			<div className="relative flex min-h-0 flex-1">
-				<section
-					aria-label="Current track"
-					className="flex min-w-0 flex-1 flex-col items-center justify-center gap-8 px-8 pb-10"
-				>
-					<AlbumArt
+				<div className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-y-auto pb-4">
+					<CurrentTrackPanel
+						track={track}
 						coverUrl={coverUrl}
-						title={track.title}
-						className="size-[min(52vh,26rem)] rounded-2xl text-4xl shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]"
+						isArtworkFocused
 					/>
-					<div className="w-full max-w-xl text-center">
-						<h1 className="truncate font-semibold text-2xl text-heading">
-							{track.title}
-						</h1>
-						<p className="mt-1 truncate text-base text-caption">
-							{track.artistName}
-							{track.albumTitle ? ` · ${track.albumTitle}` : ""}
-						</p>
-					</div>
-					<div className="w-full max-w-xl">
-						<PlaybackControls
-							isRadioPlaying={false}
-							isPlaying={isPlaying}
-							hasPlayableSource
-							hasCurrentTrack
-							currentTime={currentTime}
-							effectiveDuration={effectiveDuration}
-							bufferedEnd={bufferedEnd}
-							shuffleEnabled={shuffleEnabled}
-							repeatMode={repeatMode}
-							onTogglePlay={togglePlay}
-							onToggleShuffle={toggleShuffle}
-							onCycleRepeatMode={cycleRepeatMode}
-							onPrevious={navigatePrevious}
-							onNext={navigateNext}
-							onSeek={seek}
-						/>
-					</div>
 					{onOpenLyrics ? (
 						<button
 							type="button"
@@ -147,8 +96,8 @@ export function NowPlayingView({
 							Lyrics
 						</button>
 					) : null}
-				</section>
-				<aside className="hidden w-[22rem] shrink-0 border-border border-l bg-queue/80 text-queue-foreground backdrop-blur md:block">
+				</div>
+				<aside className="hidden w-[22rem] shrink-0 border-white/10 border-l bg-black text-queue-foreground backdrop-blur md:block">
 					<QueuePanel embedded />
 				</aside>
 			</div>

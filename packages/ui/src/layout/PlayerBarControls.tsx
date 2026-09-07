@@ -348,10 +348,12 @@ export function VolumeAndQueueControls({
 			{isGapless ? (
 				<span
 					data-testid="gapless-badge"
-					className="hidden shrink-0 rounded-full border border-[var(--sidebar-border)] px-2 py-0.5 text-[10px] text-caption uppercase tracking-wide xl:inline"
+					className="inline-flex size-7 shrink-0 items-center justify-center text-player-foreground"
+					role="img"
+					aria-label="Gapless playback enabled"
 					title="Tracks play back to back without a gap"
 				>
-					Gapless
+					<InfinityIcon className={SIDE_ICON_CLASS} aria-hidden />
 				</span>
 			) : null}
 			<QualityDetailsCard rows={qualityDetailRows}>

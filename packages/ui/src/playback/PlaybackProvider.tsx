@@ -369,6 +369,12 @@ export function PlaybackProvider({
 		[api.getTrackWaveform],
 	);
 
+	const getTrackLyrics = useCallback(
+		(trackId: string) =>
+			apiRef.current.getTrackLyrics?.(trackId) ?? Promise.resolve(null),
+		[],
+	);
+
 	// A Track can stop being playable while it sits in the Queue: ADR 0010 lets
 	// a deletion elsewhere leave the playing source in place, so its next play
 	// fails. Explain the failure in the bar, let the user retry or skip, and
@@ -631,8 +637,7 @@ export function PlaybackProvider({
 			refreshQueue,
 			stopPlayback: () => engine.stop(),
 			getAlbumCoverUrl: (albumId) => apiRef.current.getAlbumCoverUrl(albumId),
-			getTrackLyrics: (trackId) =>
-				apiRef.current.getTrackLyrics?.(trackId) ?? Promise.resolve(null),
+			getTrackLyrics,
 			getTrackWaveform,
 		}),
 		[
@@ -647,6 +652,7 @@ export function PlaybackProvider({
 			sleepTimer,
 			abRepeat,
 			getTrackWaveform,
+			getTrackLyrics,
 			playTrack,
 			playRadioStation,
 			playRadioCatalogPreview,
