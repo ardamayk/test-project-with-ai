@@ -424,9 +424,111 @@ describe("PlayerBar", () => {
 		});
 
 		expect(screen.getByText("LIVE")).toBeTruthy();
-		expect(screen.getByText("--:--")).toBeTruthy();
+		expect(screen.queryByText("--:--")).toBeNull();
+		expect(screen.queryByText("0:00")).toBeNull();
 		expect(screen.queryByLabelText("Seek")).toBeNull();
 		expect(screen.getByLabelText("Quality High Quality")).toBeTruthy();
+	});
+
+	it("favorites the current saved Radio Station from the Player Bar", async () => {
+		const onToggleStationFavorite = vi.fn();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={api} engine={new InMemoryPlaybackEngine()}>
+					<RadioStarter />
+					<PlayerBar
+						isCurrentStationFavorite={false}
+						onToggleStationFavorite={onToggleStationFavorite}
+					/>
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		await act(async () => {
+			screen.getByRole("button", { name: "Start radio" }).click();
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
+		expect(onToggleStationFavorite).toHaveBeenCalledWith(radioStation.id, true);
+	});
+
+	it("announces the new Track to assistive technology", async () => {
+		vi.useFakeTimers();
+		try {
+			renderPlayerBar();
+			await act(async () => {
+				screen.getByRole("button", { name: "Start track" }).click();
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(screen.getByTestId("now-playing-announcer").textContent).toBe(
+				"Now playing: Track 1 by Artist",
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("shows stream details on the quality pill while a Track plays", async () => {
+		renderPlayerBar(
+			undefined,
+			new InMemoryPlaybackEngine({ outputMode: "system" }),
+		);
+		expect(screen.queryByTestId("quality-details")).toBeNull();
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		const details = screen.getByTestId("quality-details");
+		expect(within(details).getByText("Output mode")).toBeTruthy();
+		expect(within(details).getByText("Normal")).toBeTruthy();
+	});
+
+	it("opens the keyboard shortcut help from the bar and with the ? key", () => {
+		renderPlayerBar();
+		fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+		expect(
+			screen.getByRole("dialog", { name: "Keyboard shortcuts" }),
+		).toBeTruthy();
+
+		fireEvent.keyDown(document.body, { key: "Escape" });
+		expect(
+			screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
+		).toBeNull();
+
+		fireEvent.keyDown(document.body, { key: "?" });
+		expect(
+			screen.getByRole("dialog", { name: "Keyboard shortcuts" }),
+		).toBeTruthy();
+	});
+
+	it("seeks and changes volume from the arrow keys", async () => {
+		const { engine } = renderPlayerBar();
+		const seek = vi.spyOn(engine, "seek");
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+
+		fireEvent.keyDown(document.body, { key: "ArrowRight" });
+		expect(seek).toHaveBeenLastCalledWith(5);
+		fireEvent.keyDown(document.body, { key: "ArrowRight", shiftKey: true });
+		expect(seek).toHaveBeenLastCalledWith(35);
+		fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+		expect(seek).toHaveBeenLastCalledWith(30);
+
+		fireEvent.keyDown(document.body, { key: "ArrowDown" });
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0.75",
+		);
+		fireEvent.keyDown(document.body, { key: "m" });
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0",
+		);
+		fireEvent.keyDown(document.body, { key: "m" });
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0.75",
+		);
 	});
 
 	it("renders the actions menu in a portal with anchored coordinates", async () => {

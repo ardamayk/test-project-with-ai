@@ -15,6 +15,7 @@ import { ImportSessionProvider } from "#/components/import-session-provider";
 import { RootErrorComponent } from "#/components/root-error";
 import { ThemeSync } from "#/components/theme-sync";
 import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
+import { useFavoriteRadioStations } from "#/hooks/use-favorite-radio-stations";
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
 import { apiClient } from "#/lib/api";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
@@ -58,8 +59,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function PlayerBarWithSync() {
 	const queryClient = useQueryClient();
-	const { currentTrack } = usePlayback();
+	const { currentTrack, currentRadioStation } = usePlayback();
 	const { isFavorite, toggleFavorite } = useFavoriteTracks();
+	const { isStationFavorite, toggleStationFavorite } =
+		useFavoriteRadioStations();
 	return (
 		<PlayerBar
 			onPlaylistMutated={() => {
@@ -69,6 +72,10 @@ function PlayerBarWithSync() {
 				currentTrack ? isFavorite(currentTrack.id) : false
 			}
 			onToggleFavorite={toggleFavorite}
+			isCurrentStationFavorite={
+				currentRadioStation ? isStationFavorite(currentRadioStation.id) : false
+			}
+			onToggleStationFavorite={toggleStationFavorite}
 		/>
 	);
 }

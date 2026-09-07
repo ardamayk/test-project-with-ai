@@ -20,12 +20,15 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
+import { NowPlayingAnnouncer } from "../playback/NowPlayingAnnouncer";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
+import { createFallbackPlaybackTelemetry } from "../playback/telemetry";
 import {
 	buildTrackDetailRows,
 	formatBitDepth,
 	formatSampleRate,
 } from "../playback/track-details";
+import { useMute } from "../playback/use-mute";
 import { usePlaybackKeyboardShortcuts } from "../playback/use-playback-keyboard-shortcuts";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
@@ -37,6 +40,8 @@ import {
 	QualityIconFor,
 	VolumeAndQueueControls,
 } from "./PlayerBarControls";
+import { buildQualityDetailRows } from "./QualityDetailsCard";
+import { ShortcutHelpOverlay } from "./ShortcutHelpOverlay";
 
 const RECENT_PLAYLISTS_KEY = "navidrome-recent-playlists";
 const RECENT_PLAYLIST_LIMIT = 2;
@@ -99,11 +104,16 @@ export function PlayerBar({
 	onPlaylistMutated,
 	isCurrentTrackFavorite = false,
 	onToggleFavorite,
+	isCurrentStationFavorite = false,
+	onToggleStationFavorite,
 }: {
 	onPlaylistMutated?: () => void;
 	/** Favorite state of the current Track; the host app owns the Favorites playlist. */
 	isCurrentTrackFavorite?: boolean;
 	onToggleFavorite?: (trackId: string) => void;
+	/** Favorite state of the current saved Radio Station; previews are never favorites. */
+	isCurrentStationFavorite?: boolean;
+	onToggleStationFavorite?: (stationId: string, isFavorite: boolean) => void;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -113,6 +123,7 @@ export function PlayerBar({
 	const [playlistSubmenuOpen, setPlaylistSubmenuOpen] = useState(false);
 	const [infoOpen, setInfoOpen] = useState(false);
 	const [lyricsOpen, setLyricsOpen] = useState(false);
+	const [helpOpen, setHelpOpen] = useState(false);
 	const [playlists, setPlaylists] = useState<Playlist[]>([]);
 	const [playlistsLoaded, setPlaylistsLoaded] = useState(false);
 	const [memberPlaylistIds, setMemberPlaylistIds] = useState<Set<string>>(
@@ -147,10 +158,46 @@ export function PlayerBar({
 		selectExclusiveOutput,
 		fallbackToSystemOutput,
 		enableAdaptiveSystemRate,
+		processingState,
+		playbackTelemetry,
+		playbackSource,
 		getAlbumCoverUrl,
 		getTrackLyrics,
 	} = usePlayback();
-	usePlaybackKeyboardShortcuts({ togglePlay, navigatePrevious, navigateNext });
+	const { toggleMute } = useMute(volume, setVolume);
+	const canSeek = Boolean(currentTrack);
+	const seekBy = useCallback(
+		(delta: number) => {
+			if (!canSeek) return;
+			const limit = duration > 0 ? duration : Number.POSITIVE_INFINITY;
+			seek(Math.min(limit, Math.max(0, currentTime + delta)));
+		},
+		[canSeek, currentTime, duration, seek],
+	);
+	const adjustVolume = useCallback(
+		(delta: number) => setVolume(Math.min(1, Math.max(0, volume + delta))),
+		[setVolume, volume],
+	);
+	const toggleLyrics = useCallback(() => {
+		if (!currentTrack) return;
+		setLyricsOpen((open) => !open);
+	}, [currentTrack]);
+	const toggleQueue = useCallback(
+		() => togglePanel(queuePanelSide),
+		[togglePanel, queuePanelSide],
+	);
+	const toggleHelp = useCallback(() => setHelpOpen((open) => !open), []);
+	usePlaybackKeyboardShortcuts({
+		togglePlay,
+		navigatePrevious,
+		navigateNext,
+		seekBy,
+		adjustVolume,
+		toggleMute,
+		toggleLyrics,
+		toggleQueue,
+		toggleHelp,
+	});
 	const {
 		listPlaylists,
 		getPlaylist,
@@ -278,6 +325,54 @@ export function PlayerBar({
 	const hasActiveSource = currentTrack !== null || currentRadioStation !== null;
 	const playbackAlert =
 		playbackError?.message ?? outputDeviceIssue?.message ?? null;
+	const qualityDetailRows = useMemo(
+		() =>
+			hasActiveSource
+				? buildQualityDetailRows({
+						telemetry:
+							playbackTelemetry ??
+							createFallbackPlaybackTelemetry(playbackSource, volume),
+						processing: processingState,
+						outputMode,
+					})
+				: [],
+		[
+			hasActiveSource,
+			playbackTelemetry,
+			playbackSource,
+			volume,
+			processingState,
+			outputMode,
+		],
+	);
+	// Catalog previews are not saved stations, so they cannot be favorited.
+	const favoritableStationId =
+		currentRadioStation && !currentRadioStation.id.startsWith("preview:")
+			? currentRadioStation.id
+			: null;
+	const favoriteTarget = currentTrack
+		? { kind: "track" as const, isFavorite: isCurrentTrackFavorite }
+		: favoritableStationId
+			? { kind: "station" as const, isFavorite: isCurrentStationFavorite }
+			: null;
+	const canToggleFavorite =
+		favoriteTarget?.kind === "track"
+			? Boolean(onToggleFavorite)
+			: favoriteTarget?.kind === "station"
+				? Boolean(onToggleStationFavorite)
+				: false;
+	const handleToggleFavorite = () => {
+		if (currentTrack) {
+			onToggleFavorite?.(currentTrack.id);
+			return;
+		}
+		if (favoritableStationId) {
+			onToggleStationFavorite?.(
+				favoritableStationId,
+				!isCurrentStationFavorite,
+			);
+		}
+	};
 	const sortedPlaylists = useMemo(
 		() =>
 			[...playlists].sort((a, b) => {
@@ -440,29 +535,28 @@ export function PlayerBar({
 							>
 								{nowPlayingTitle}
 							</p>
-							{onToggleFavorite ? (
+							{onToggleFavorite || onToggleStationFavorite ? (
 								<button
 									type="button"
+									data-player-control
 									className={cn(
-										"ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
-										isCurrentTrackFavorite &&
+										"ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40",
+										favoriteTarget?.isFavorite &&
 											"text-[var(--player-control-primary)]",
 									)}
 									aria-label={
-										isCurrentTrackFavorite
+										favoriteTarget?.isFavorite
 											? "Remove from favorites"
 											: "Add to favorites"
 									}
-									aria-pressed={isCurrentTrackFavorite}
-									disabled={!currentTrack}
-									onClick={() => {
-										if (currentTrack) onToggleFavorite(currentTrack.id);
-									}}
+									aria-pressed={favoriteTarget?.isFavorite ?? false}
+									disabled={!canToggleFavorite}
+									onClick={handleToggleFavorite}
 								>
 									<Heart
 										className={cn(
 											"size-3.5",
-											isCurrentTrackFavorite && "fill-current",
+											favoriteTarget?.isFavorite && "fill-current",
 										)}
 									/>
 								</button>
@@ -470,8 +564,9 @@ export function PlayerBar({
 							<button
 								ref={actionsButtonRef}
 								type="button"
+								data-player-control
 								className={cn(
-									"ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
+									"ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40",
 									actionsOpen && "text-[var(--player-control-primary)]",
 								)}
 								aria-label="Track actions"
@@ -571,7 +666,9 @@ export function PlayerBar({
 				<VolumeAndQueueControls
 					qualityLabel={qualityLabel}
 					isLossless={isLosslessFormat(currentTrack?.format)}
+					qualityDetailRows={qualityDetailRows}
 					volume={volume}
+					onToggleMute={toggleMute}
 					signalControl={
 						hasActiveSource && outputMode ? (
 							<PlaybackSignal
@@ -590,11 +687,13 @@ export function PlayerBar({
 							/>
 						) : undefined
 					}
-					onToggleQueue={() => togglePanel(queuePanelSide)}
+					onToggleQueue={toggleQueue}
 					onOpenLyrics={currentTrack ? () => setLyricsOpen(true) : undefined}
+					onOpenHelp={() => setHelpOpen(true)}
 					onVolumeChange={setVolume}
 				/>
 			</div>
+			<NowPlayingAnnouncer />
 			{lyricsOpen && currentTrack ? (
 				<LyricsOverlay
 					track={currentTrack}
@@ -602,6 +701,9 @@ export function PlayerBar({
 					loadLyrics={getTrackLyrics}
 					onClose={() => setLyricsOpen(false)}
 				/>
+			) : null}
+			{helpOpen ? (
+				<ShortcutHelpOverlay onClose={() => setHelpOpen(false)} />
 			) : null}
 			{infoOpen && currentTrack ? (
 				<TrackInfoDialog

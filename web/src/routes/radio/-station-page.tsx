@@ -9,12 +9,8 @@ import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { apiClient } from "#/lib/api";
+import { radioQueryKeys } from "#/lib/radio-query-keys";
 import { parseStationTags } from "#/lib/radio-station-tags";
-
-const radioQueryKeys = {
-	stations: ["radio", "stations"] as const,
-	detail: (stationId: string) => ["radio", "stations", stationId] as const,
-};
 
 // Route components live outside the route file: with automatic code
 // splitting, a component defined inside the route module can be rendered

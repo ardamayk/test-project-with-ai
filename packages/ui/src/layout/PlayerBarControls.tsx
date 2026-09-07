@@ -2,6 +2,7 @@ import {
 	AudioLines,
 	Disc3,
 	Infinity as InfinityIcon,
+	Keyboard,
 	ListMusic,
 	MicVocal,
 	Pause,
@@ -23,6 +24,10 @@ import {
 } from "react";
 import { cn } from "../lib/utils";
 import type { RepeatMode } from "../playback/PlaybackProvider";
+import {
+	type QualityDetailRow,
+	QualityDetailsCard,
+} from "./QualityDetailsCard";
 
 const CONTROL_BUTTON_CLASS =
 	"inline-flex size-6 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40";
@@ -117,6 +122,7 @@ function QueueNavigationButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className={CONTROL_BUTTON_CLASS}
 			onClick={() => {
 				if (!disabled) onPlay();
@@ -141,6 +147,7 @@ function ShuffleButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className={cn(
 				CONTROL_BUTTON_CLASS,
 				isEnabled && ACTIVE_CONTROL_BUTTON_CLASS,
@@ -166,6 +173,7 @@ function PrimaryPlaybackButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className="inline-flex size-11 items-center justify-center rounded-full bg-[var(--player-control-primary)] text-[var(--player-control-primary-foreground)] shadow-[0px_10px_15px_-3px_var(--player-control-shadow),0px_4px_6px_-4px_var(--player-control-shadow)] transition hover:scale-105 hover:opacity-95 disabled:opacity-50 disabled:hover:scale-100"
 			onClick={onClick}
 			disabled={disabled}
@@ -198,6 +206,7 @@ function RepeatButton({
 	return (
 		<button
 			type="button"
+			data-player-control
 			className={cn(
 				CONTROL_BUTTON_CLASS,
 				repeatMode !== "off" && ACTIVE_CONTROL_BUTTON_CLASS,
@@ -268,9 +277,11 @@ function PlaybackProgress({
 					aria-label="Seek"
 				/>
 			)}
-			<span className="w-8 shrink-0 text-player-foreground">
-				{isRadioPlaying ? "--:--" : formatTime(effectiveDuration)}
-			</span>
+			{isRadioPlaying ? null : (
+				<span className="w-8 shrink-0 text-player-foreground">
+					{formatTime(effectiveDuration)}
+				</span>
+			)}
 		</div>
 	);
 }
@@ -278,11 +289,15 @@ function PlaybackProgress({
 type VolumeAndQueueControlsProps = {
 	qualityLabel: string;
 	isLossless: boolean;
+	/** Stream details shown on hover; empty hides the card. */
+	qualityDetailRows?: QualityDetailRow[];
 	volume: number;
 	signalControl?: ReactNode;
 	onToggleQueue: () => void;
 	/** Absent while nothing is playing; the Lyrics button is then disabled. */
 	onOpenLyrics?: () => void;
+	onOpenHelp?: () => void;
+	onToggleMute: () => void;
 	onVolumeChange: (value: number) => void;
 };
 
@@ -294,10 +309,13 @@ export function QualityIconFor({ isLossless }: { isLossless: boolean }) {
 export function VolumeAndQueueControls({
 	qualityLabel,
 	isLossless,
+	qualityDetailRows = [],
 	volume,
 	signalControl,
 	onToggleQueue,
 	onOpenLyrics,
+	onOpenHelp,
+	onToggleMute,
 	onVolumeChange,
 }: VolumeAndQueueControlsProps) {
 	const QualityIcon = isLossless ? Disc3 : AudioLines;
@@ -306,22 +324,29 @@ export function VolumeAndQueueControls({
 			aria-label="Volume and queue"
 			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
-			{signalControl ?? (
-				<span
-					role="note"
-					className="inline-flex h-8 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-3.5 text-player-foreground text-xs"
-					title={qualityLabel}
-					aria-label={`Quality ${qualityLabel}`}
-				>
-					<QualityIcon className="size-4 shrink-0" />
-					<span className="hidden font-medium tabular-nums md:inline">
-						{qualityLabel}
+			<QualityDetailsCard rows={qualityDetailRows}>
+				{signalControl ?? (
+					<span
+						role="note"
+						className="inline-flex h-8 shrink-0 items-center gap-2 rounded-xl border border-[var(--sidebar-border)] bg-[var(--player-pill)] px-3.5 text-player-foreground text-xs"
+						title={qualityLabel}
+						aria-label={`Quality ${qualityLabel}`}
+					>
+						<QualityIcon className="size-4 shrink-0" />
+						<span className="hidden font-medium tabular-nums md:inline">
+							{qualityLabel}
+						</span>
 					</span>
-				</span>
-			)}
-			<VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
+				)}
+			</QualityDetailsCard>
+			<VolumeControl
+				volume={volume}
+				onToggleMute={onToggleMute}
+				onVolumeChange={onVolumeChange}
+			/>
 			<button
 				type="button"
+				data-player-control
 				className={cn(
 					CONTROL_BUTTON_CLASS,
 					SIDE_BUTTON_CLASS,
@@ -335,6 +360,7 @@ export function VolumeAndQueueControls({
 			</button>
 			<button
 				type="button"
+				data-player-control
 				className={cn(
 					CONTROL_BUTTON_CLASS,
 					SIDE_BUTTON_CLASS,
@@ -345,23 +371,38 @@ export function VolumeAndQueueControls({
 			>
 				<ListMusic className={SIDE_ICON_CLASS} />
 			</button>
+			{onOpenHelp ? (
+				<button
+					type="button"
+					data-player-control
+					className={cn(
+						CONTROL_BUTTON_CLASS,
+						SIDE_BUTTON_CLASS,
+						"hidden shrink-0 lg:inline-flex",
+					)}
+					onClick={onOpenHelp}
+					aria-label="Keyboard shortcuts"
+				>
+					<Keyboard className={SIDE_ICON_CLASS} />
+				</button>
+			) : null}
 		</section>
 	);
 }
 
 function VolumeControl({
 	volume,
+	onToggleMute,
 	onVolumeChange,
 }: {
 	volume: number;
+	onToggleMute: () => void;
 	onVolumeChange: (value: number) => void;
 }) {
 	const VolumeIcon = volume <= 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 	// Touch devices have no hover, so a tap opens the popover instead of muting.
 	const [touchOpen, setTouchOpen] = useState(false);
 	const lastPointerWasTouchRef = useRef(false);
-	const lastAudibleVolumeRef = useRef(volume > 0 ? volume : 1);
-	if (volume > 0) lastAudibleVolumeRef.current = volume;
 
 	const rootRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -373,13 +414,11 @@ function VolumeControl({
 		return () => document.removeEventListener("pointerdown", closeOnOutsideTap);
 	}, [touchOpen]);
 
-	const toggleMute = () =>
-		onVolumeChange(volume <= 0 ? lastAudibleVolumeRef.current : 0);
-
 	return (
 		<div ref={rootRef} className="group relative flex shrink-0 items-center">
 			<button
 				type="button"
+				data-player-control
 				className={cn(
 					CONTROL_BUTTON_CLASS,
 					SIDE_BUTTON_CLASS,
@@ -394,7 +433,7 @@ function VolumeControl({
 						setTouchOpen((open) => !open);
 						return;
 					}
-					toggleMute();
+					onToggleMute();
 				}}
 			>
 				<VolumeIcon className={SIDE_ICON_CLASS} />

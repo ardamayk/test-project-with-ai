@@ -1,17 +1,13 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { usePlaybackKeyboardShortcuts } from "./use-playback-keyboard-shortcuts";
+import {
+	describePlaybackShortcuts,
+	type PlaybackKeyboardActions,
+	usePlaybackKeyboardShortcuts,
+} from "./use-playback-keyboard-shortcuts";
 
-function Harness({
-	togglePlay,
-	navigatePrevious,
-	navigateNext,
-}: {
-	togglePlay: () => void;
-	navigatePrevious: () => void;
-	navigateNext: () => void;
-}) {
-	usePlaybackKeyboardShortcuts({ togglePlay, navigatePrevious, navigateNext });
+function Harness(actions: PlaybackKeyboardActions) {
+	usePlaybackKeyboardShortcuts(actions);
 	return (
 		<div>
 			<input aria-label="Search" type="text" />
@@ -26,6 +22,12 @@ function renderHarness() {
 		togglePlay: vi.fn(),
 		navigatePrevious: vi.fn(),
 		navigateNext: vi.fn(),
+		seekBy: vi.fn(),
+		adjustVolume: vi.fn(),
+		toggleMute: vi.fn(),
+		toggleLyrics: vi.fn(),
+		toggleQueue: vi.fn(),
+		toggleHelp: vi.fn(),
 	};
 	const result = render(<Harness {...actions} />);
 	return { ...result, ...actions };
@@ -48,22 +50,28 @@ describe("usePlaybackKeyboardShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
-	it("leaves Space alone inside text inputs and on buttons", () => {
-		const { togglePlay, getByLabelText, getByRole } = renderHarness();
+	it("leaves keys alone inside text inputs and on buttons", () => {
+		const { togglePlay, navigateNext, getByLabelText, getByRole } =
+			renderHarness();
 
 		fireEvent.keyDown(getByLabelText("Search"), { key: " " });
+		fireEvent.keyDown(getByLabelText("Search"), { key: "n" });
 		fireEvent.keyDown(getByRole("button", { name: "Play" }), { key: " " });
 
 		expect(togglePlay).not.toHaveBeenCalled();
+		expect(navigateNext).not.toHaveBeenCalled();
 	});
 
-	it("ignores held-down key repeats and modified Space", () => {
-		const { togglePlay } = renderHarness();
+	it("ignores held-down key repeats and modified keys", () => {
+		const { togglePlay, navigateNext } = renderHarness();
 
 		fireEvent.keyDown(document.body, { key: " ", repeat: true });
 		fireEvent.keyDown(document.body, { key: " ", ctrlKey: true });
+		fireEvent.keyDown(document.body, { key: "n", metaKey: true });
+		fireEvent.keyDown(document.body, { key: "n", repeat: true });
 
 		expect(togglePlay).not.toHaveBeenCalled();
+		expect(navigateNext).not.toHaveBeenCalled();
 	});
 
 	it("maps media keys to playback actions", () => {
@@ -78,6 +86,70 @@ describe("usePlaybackKeyboardShortcuts", () => {
 		expect(navigatePrevious).toHaveBeenCalledTimes(1);
 	});
 
+	it("seeks with the arrow keys and further with Shift", () => {
+		const { seekBy } = renderHarness();
+
+		fireEvent.keyDown(document.body, { key: "ArrowRight" });
+		fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+		fireEvent.keyDown(document.body, { key: "ArrowRight", shiftKey: true });
+		fireEvent.keyDown(document.body, { key: "ArrowLeft", shiftKey: true });
+
+		expect(seekBy.mock.calls.map(([delta]) => delta)).toEqual([5, -5, 30, -30]);
+	});
+
+	it("changes volume with the vertical arrows and mutes with M", () => {
+		const { adjustVolume, toggleMute } = renderHarness();
+
+		fireEvent.keyDown(document.body, { key: "ArrowUp" });
+		fireEvent.keyDown(document.body, { key: "ArrowDown" });
+		fireEvent.keyDown(document.body, { key: "M" });
+
+		expect(adjustVolume.mock.calls.map(([delta]) => delta)).toEqual([
+			0.05, -0.05,
+		]);
+		expect(toggleMute).toHaveBeenCalledTimes(1);
+	});
+
+	it("maps letters to navigation, lyrics, queue and help", () => {
+		const {
+			navigateNext,
+			navigatePrevious,
+			toggleLyrics,
+			toggleQueue,
+			toggleHelp,
+		} = renderHarness();
+
+		fireEvent.keyDown(document.body, { key: "n" });
+		fireEvent.keyDown(document.body, { key: "p" });
+		fireEvent.keyDown(document.body, { key: "l" });
+		fireEvent.keyDown(document.body, { key: "q" });
+		fireEvent.keyDown(document.body, { key: "?", shiftKey: true });
+
+		expect(navigateNext).toHaveBeenCalledTimes(1);
+		expect(navigatePrevious).toHaveBeenCalledTimes(1);
+		expect(toggleLyrics).toHaveBeenCalledTimes(1);
+		expect(toggleQueue).toHaveBeenCalledTimes(1);
+		expect(toggleHelp).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not claim keys whose action is not provided", () => {
+		const togglePlay = vi.fn();
+		render(
+			<Harness
+				togglePlay={togglePlay}
+				navigatePrevious={vi.fn()}
+				navigateNext={vi.fn()}
+			/>,
+		);
+		const event = new KeyboardEvent("keydown", {
+			key: "ArrowRight",
+			bubbles: true,
+			cancelable: true,
+		});
+		document.body.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(false);
+	});
+
 	it("stops listening after unmount", () => {
 		const { togglePlay, unmount } = renderHarness();
 		unmount();
@@ -85,5 +157,21 @@ describe("usePlaybackKeyboardShortcuts", () => {
 		fireEvent.keyDown(document.body, { key: " " });
 
 		expect(togglePlay).not.toHaveBeenCalled();
+	});
+
+	it("describes every binding for the help overlay", () => {
+		const descriptions = describePlaybackShortcuts({
+			seekStepSeconds: 10,
+			seekStepLargeSeconds: 60,
+		});
+		expect(descriptions.map((entry) => entry.keys.join("+"))).toContain(
+			"Space",
+		);
+		expect(
+			descriptions.find((entry) => entry.keys.join("") === "←→")?.description,
+		).toBe("Seek 10 seconds");
+		expect(
+			descriptions.find((entry) => entry.keys.includes("Shift"))?.description,
+		).toBe("Seek 60 seconds");
 	});
 });

@@ -2,6 +2,7 @@ export { toast } from "sonner";
 export * from "./layout";
 export { cn } from "./lib/utils";
 export { formatReplayGainAvailability } from "./playback/format-replay-gain";
+export { NowPlayingAnnouncer } from "./playback/NowPlayingAnnouncer";
 export type {
 	PlaybackEngine,
 	PlaybackError,
@@ -61,7 +62,14 @@ export {
 	getTrackGenreNames,
 	type TrackDetailRow,
 } from "./playback/track-details";
-export { usePlaybackKeyboardShortcuts } from "./playback/use-playback-keyboard-shortcuts";
+export { useMute } from "./playback/use-mute";
+export {
+	describePlaybackShortcuts,
+	type PlaybackKeyboardActions,
+	type PlaybackKeyboardOptions,
+	shouldIgnorePlaybackShortcut,
+	usePlaybackKeyboardShortcuts,
+} from "./playback/use-playback-keyboard-shortcuts";
 export { ThemeProvider } from "./theme/ThemeProvider";
 export * from "./widgets";
 export {

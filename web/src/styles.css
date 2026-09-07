@@ -200,6 +200,13 @@ body::after {
     outline: none;
   }
 
+  /* Every Player Bar control shares one keyboard focus ring. */
+  [data-player-control]:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--player-control-primary) 40%, transparent);
+  }
+
   /* Seek bar: thin filled track; the thumb only appears on hover / focus. */
   .player-seek-slider {
     -webkit-appearance: none;
