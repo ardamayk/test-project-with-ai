@@ -3,6 +3,7 @@ pub mod connection;
 pub mod desktop_import;
 mod exclusive_output;
 pub mod media_proxy;
+mod mpris;
 pub mod output_device;
 mod playback;
 mod playback_app_actions;
@@ -28,6 +29,7 @@ use desktop_import::{
     SUPPORTED_EXTENSIONS, upload_selection,
 };
 use media_proxy::MediaProxy;
+use mpris::MprisBridge;
 use output_device::{
     ActiveOutputError, ActiveOutputResolver, CommandPipeWireActiveOutputResolver, OutputDevice,
 };
@@ -39,7 +41,8 @@ use playback_app_actions::{
 };
 use playback_lifecycle::{PlaybackLifecycle, PlaybackSnapshotStore};
 use playback_tray::{
-    PlaybackTray, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
+    PlaybackPosition, PlaybackTray, PlaybackTrayView, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID,
+    TRAY_QUIT_ID, TRAY_TOGGLE_ID,
 };
 use processing::{
     EqualizerPreset, FileProcessingSettingsStorage, OutputMode, ProcessingController,
@@ -828,6 +831,29 @@ fn state_error() -> ConnectionError {
     )
 }
 
+/// Sets the main window title from the playing source, only when it changes.
+fn apply_window_title(
+    app: &tauri::AppHandle,
+    last_title: &Mutex<String>,
+    state: &PlaybackSessionState,
+    is_playing: bool,
+) {
+    let title = PlaybackTrayView::from_playback(state.source.as_ref(), is_playing).window_title();
+    let Ok(mut last) = last_title.lock() else {
+        return;
+    };
+    if *last == title {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main")
+        && let Err(error) = window.set_title(&title)
+    {
+        eprintln!("Desktop window title update failed: {error}");
+        return;
+    }
+    *last = title;
+}
+
 fn handle_tray_menu_event(app: &tauri::AppHandle, id: &str) {
     let action = match id {
         TRAY_OPEN_ID => DesktopPlaybackAction::OpenMainWindow,
@@ -890,6 +916,16 @@ impl DesktopPlaybackShell for TauriDesktopPlaybackShell<'_> {
             .show()
             .and_then(|_| window.set_focus())
             .map_err(|error| error.to_string())
+    }
+
+    fn set_software_volume(&self, volume: f64) -> Result<(), String> {
+        let state = self
+            .app
+            .try_state::<AppState>()
+            .ok_or_else(|| "Desktop playback state is unavailable.".to_owned())?;
+        update_processing(&state, |processing| processing.set_software_volume(volume))
+            .map(|_| ())
+            .map_err(|error| error.message)
     }
 
     fn hide_main_window(&self) -> Result<(), String> {
@@ -1062,16 +1098,38 @@ pub fn run() -> tauri::Result<()> {
             let playback_tray = PlaybackTray::start(app.handle(), handle_tray_menu_event)?;
             let playback_event_tray = playback_tray.clone();
             let app_handle = app.handle().clone();
+            let window_title = Arc::new(Mutex::new(String::new()));
+            let mpris_app = app.handle().clone();
+            let mpris = MprisBridge::start(
+                Arc::new(move |action| {
+                    // Commands can arrive before AppState is managed; drop those.
+                    let Some(state) = mpris_app.try_state::<AppState>() else {
+                        return;
+                    };
+                    if let Err(error) = dispatch_application_action(&mpris_app, &state, action) {
+                        eprintln!("MPRIS action {action:?} failed: {}", error.message);
+                    }
+                }),
+                media_proxy.base_url().to_owned(),
+            );
             let playback = PlaybackController::start_default_with_lifecycle(
                 playback_lifecycle.clone(),
                 Arc::new(CommandPipeWireObserver::new()),
                 adaptive_system_rate,
                 move |state| {
-                    if let Err(error) =
-                        playback_event_tray.update(state.source.as_ref(), state.status.is_active())
-                    {
+                    let is_playing = state.status.is_active();
+                    if let Err(error) = playback_event_tray.update(
+                        state.source.as_ref(),
+                        is_playing,
+                        PlaybackPosition {
+                            current_seconds: state.current_time,
+                            duration_seconds: state.duration,
+                        },
+                    ) {
                         eprintln!("Desktop playback tray update failed: {error}");
                     }
+                    apply_window_title(&app_handle, &window_title, &state, is_playing);
+                    mpris.update(state.clone());
                     if let Err(error) = app_handle.emit(PLAYBACK_STATE_EVENT, state) {
                         eprintln!("Desktop playback state event failed: {error}");
                     }

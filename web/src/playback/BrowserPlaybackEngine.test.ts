@@ -81,6 +81,63 @@ playbackEngineContract("browser", () => {
 });
 
 describe("BrowserPlaybackEngine", () => {
+	it("drives the Media Session: metadata, playback state, position and actions", async () => {
+		const handlers = new Map<string, MediaSessionActionHandler | null>();
+		const positions: Array<MediaPositionState | undefined> = [];
+		const session = {
+			metadata: null as MediaMetadata | null,
+			playbackState: "none" as MediaSessionPlaybackState,
+			setActionHandler: vi.fn(
+				(action: string, handler: MediaSessionActionHandler | null) => {
+					handlers.set(action, handler);
+				},
+			),
+			setPositionState: vi.fn((state?: MediaPositionState) => {
+				positions.push(state);
+			}),
+		};
+		vi.stubGlobal(
+			"MediaMetadata",
+			class {
+				constructor(public init: MediaMetadataInit) {}
+			},
+		);
+		const engine = new BrowserPlaybackEngine({
+			createMedia: () => media,
+			mediaSession: session,
+		});
+
+		await engine.play({ ...trackSource, artworkUrl: "/cover/album-1" });
+		expect(session.playbackState).toBe("playing");
+		expect(
+			(session.metadata as unknown as { init: MediaMetadataInit }).init,
+		).toMatchObject({
+			title: "Track 1",
+			artist: "Artist",
+			artwork: [{ src: "/cover/album-1" }],
+		});
+		expect(positions.at(-1)).toMatchObject({ duration: 120, position: 0 });
+
+		handlers.get("seekto")?.({ action: "seekto", seekTime: 42 });
+		expect(engine.getState().currentTime).toBe(42);
+		handlers.get("seekforward")?.({ action: "seekforward" });
+		expect(engine.getState().currentTime).toBe(52);
+		handlers.get("pause")?.({ action: "pause" });
+		expect(engine.getState().status).toBe("paused");
+		expect(session.playbackState).toBe("paused");
+
+		const navigations: string[] = [];
+		engine.subscribeNavigation((direction) => navigations.push(direction));
+		handlers.get("nexttrack")?.({ action: "nexttrack" });
+		handlers.get("previoustrack")?.({ action: "previoustrack" });
+		expect(navigations).toEqual(["next", "previous"]);
+
+		engine.destroy();
+		expect(handlers.get("play")).toBeNull();
+		expect(session.metadata).toBeNull();
+		vi.unstubAllGlobals();
+	});
+
 	it("publishes the buffered range end on progress events", async () => {
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
 		await engine.play(trackSource);

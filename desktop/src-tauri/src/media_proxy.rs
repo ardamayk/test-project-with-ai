@@ -331,6 +331,8 @@ fn is_media_path(path: &str) -> bool {
     (path.starts_with("/api/v1/tracks/") && path.ends_with("/stream"))
         || (path.starts_with("/api/v1/radio/stations/") && path.ends_with("/stream"))
         || (path.starts_with("/api/v1/radio/preview/") && path.ends_with("/stream"))
+        // Album covers: MPRIS clients fetch the art URL outside the webview.
+        || (path.starts_with("/api/v1/library/albums/") && path.ends_with("/cover"))
 }
 
 fn create_proxy_token() -> Result<String, ConnectionError> {
@@ -424,12 +426,28 @@ mod tests {
     }
 
     #[test]
-    fn proxy_rejects_bounded_cover_paths() {
-        let uri = "/token/api/v1/library/albums/album-1/cover"
+    fn proxy_serves_album_covers_for_mpris_but_rejects_other_library_paths() {
+        // MPRIS clients fetch mpris:artUrl outside the webview, so covers are
+        // the one non-stream path the proxy answers.
+        let cover = "/token/api/v1/library/albums/album-1/cover"
             .parse()
             .expect("cover URI");
+        assert_eq!(
+            proxy_relative_url(&cover, "token").expect("cover path allowed"),
+            "/api/v1/library/albums/album-1/cover"
+        );
 
-        assert!(proxy_relative_url(&uri, "token").is_err());
+        for rejected in [
+            "/token/api/v1/library/albums/album-1",
+            "/token/api/v1/library/tracks/track-1",
+            "/token/api/v1/library/albums",
+        ] {
+            let uri = rejected.parse().expect("URI");
+            assert!(
+                proxy_relative_url(&uri, "token").is_err(),
+                "{rejected} must stay private"
+            );
+        }
     }
 
     #[test]

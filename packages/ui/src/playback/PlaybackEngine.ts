@@ -18,6 +18,8 @@ export type PlaybackSource =
 			track: Track;
 			playbackUrl: string;
 			queueItemId?: string;
+			/** Cover URL for OS media controls; optional for older hosts. */
+			artworkUrl?: string;
 	  }
 	| {
 			type: "radio-station";

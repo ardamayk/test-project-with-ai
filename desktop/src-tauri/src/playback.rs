@@ -80,7 +80,7 @@ impl PlaybackStatus {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum RepeatMode {
+pub(crate) enum RepeatMode {
     Off,
     Once,
     Loop,
@@ -120,7 +120,7 @@ pub(crate) struct PlaybackSessionState {
     /// Seconds of audio the demuxer has ahead of the playhead, when known.
     #[serde(default)]
     pub(crate) buffered_end: Option<f64>,
-    volume: f64,
+    pub(crate) volume: f64,
     /// mpv `speed`; pitch is preserved by mpv's default pitch correction.
     #[serde(default = "default_playback_rate")]
     pub(crate) playback_rate: f64,
@@ -131,8 +131,8 @@ pub(crate) struct PlaybackSessionState {
     /// mpv is launched with --gapless-audio, so native playback is gapless.
     #[serde(default = "default_is_gapless")]
     pub(crate) is_gapless: bool,
-    shuffle_enabled: bool,
-    repeat_mode: RepeatMode,
+    pub(crate) shuffle_enabled: bool,
+    pub(crate) repeat_mode: RepeatMode,
     error: Option<PlaybackStateError>,
     pub(crate) processing: ProcessingState,
     telemetry: PlaybackTelemetry,

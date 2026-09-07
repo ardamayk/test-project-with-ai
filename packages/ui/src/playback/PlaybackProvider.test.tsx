@@ -367,6 +367,7 @@ describe("PlaybackProvider", () => {
 			track,
 			playbackUrl: "/stream/track-1",
 			queueItemId: "item-1",
+			artworkUrl: "/cover/album-1",
 		});
 		expect(screen.getByTestId("track").textContent).toBe("Track 1");
 		expect(screen.getByTestId("playing").textContent).toBe("true");

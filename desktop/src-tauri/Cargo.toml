@@ -29,6 +29,7 @@ tokio = { version = "=1.53.1", features = ["fs", "io-util", "net", "sync"] }
 tokio-util = { version = "=0.7.19", features = ["io", "rt"] }
 url = "=2.5.8"
 uuid = { version = "=1.25.0", features = ["v4"] }
+mpris-server = { version = "=0.10.0", features = ["tokio"] }
 
 [dev-dependencies]
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "time"] }

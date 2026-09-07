@@ -252,6 +252,7 @@ export function PlaybackProvider({
 					track: item.track,
 					playbackUrl: apiRef.current.getStreamUrl(item.trackId),
 					queueItemId: item.id,
+					artworkUrl: apiRef.current.getAlbumCoverUrl(item.track.albumId),
 				});
 			} catch {
 				// PlaybackEngine exposes the error through observable session state.
@@ -676,6 +677,7 @@ function queuePlaybackSources(
 		track: item.track,
 		playbackUrl: api.getStreamUrl(item.trackId),
 		queueItemId: item.id,
+		artworkUrl: api.getAlbumCoverUrl(item.track.albumId),
 	}));
 }
 

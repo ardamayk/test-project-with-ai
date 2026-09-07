@@ -42,11 +42,36 @@ type BrowserHlsFactory = {
 
 type BrowserHlsFactoryLoader = () => Promise<BrowserHlsFactory>;
 
+/** The subset of navigator.mediaSession the engine drives; injectable for tests. */
+export interface BrowserMediaSession {
+	metadata: MediaMetadata | null;
+	playbackState: MediaSessionPlaybackState;
+	setActionHandler(
+		action: MediaSessionAction,
+		handler: MediaSessionActionHandler | null,
+	): void;
+	setPositionState?(state?: MediaPositionState): void;
+}
+
 type BrowserPlaybackEngineOptions = {
 	createMedia?: () => BrowserPlaybackMedia;
 	hls?: BrowserHlsFactory;
 	loadHls?: BrowserHlsFactoryLoader;
+	/** Pass null to opt out; defaults to navigator.mediaSession when present. */
+	mediaSession?: BrowserMediaSession | null;
 };
+
+const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
+	"play",
+	"pause",
+	"stop",
+	"previoustrack",
+	"nexttrack",
+	"seekto",
+	"seekbackward",
+	"seekforward",
+];
+const MEDIA_SESSION_SEEK_OFFSET_SECONDS = 10;
 
 const LIVE_RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000] as const;
 const LIVE_STALL_TIMEOUT_MS = 10000;
@@ -93,13 +118,19 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	private sourceRevision = 0;
 	private hasStartedLivePlayback = false;
 	private isReconnectAttemptRunning = false;
+	private readonly mediaSession: BrowserMediaSession | null;
 
 	constructor(options: BrowserPlaybackEngineOptions = {}) {
 		this.media = options.createMedia?.() ?? new Audio();
 		this.hlsFactory = options.hls ?? null;
 		this.loadHlsFactory = options.loadHls ?? loadDefaultHlsFactory;
+		this.mediaSession =
+			options.mediaSession === undefined
+				? defaultMediaSession()
+				: options.mediaSession;
 		this.media.volume = this.state.volume;
 		this.addMediaListeners();
+		this.registerMediaSessionHandlers();
 	}
 
 	getState() {
@@ -143,6 +174,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 						: 0,
 				error: null,
 			});
+			this.applyMediaSessionMetadata(source);
 		}
 
 		try {
@@ -240,10 +272,99 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.media.pause();
 		this.destroyHls();
 		this.removeMediaListeners();
+		this.unregisterMediaSessionHandlers();
 		this.media.removeAttribute("src");
 		this.media.load();
 		this.listeners.clear();
 		this.navigationListeners.clear();
+	}
+
+	private registerMediaSessionHandlers() {
+		const session = this.mediaSession;
+		if (!session) return;
+		const handlers: Partial<
+			Record<MediaSessionAction, MediaSessionActionHandler>
+		> = {
+			play: () => void this.play().catch(() => undefined),
+			pause: () => this.pause(),
+			stop: () => this.stop(),
+			previoustrack: () => this.previous(),
+			nexttrack: () => this.next(),
+			seekto: (details) => {
+				if (typeof details.seekTime === "number") this.seek(details.seekTime);
+			},
+			seekbackward: (details) =>
+				this.seek(
+					Math.max(
+						0,
+						this.state.currentTime -
+							(details.seekOffset ?? MEDIA_SESSION_SEEK_OFFSET_SECONDS),
+					),
+				),
+			seekforward: (details) =>
+				this.seek(
+					this.state.currentTime +
+						(details.seekOffset ?? MEDIA_SESSION_SEEK_OFFSET_SECONDS),
+				),
+		};
+		for (const action of MEDIA_SESSION_ACTIONS) {
+			const handler = handlers[action];
+			if (!handler) continue;
+			try {
+				session.setActionHandler(action, handler);
+			} catch {
+				// Browsers throw for actions they do not support; skip them.
+			}
+		}
+	}
+
+	private unregisterMediaSessionHandlers() {
+		const session = this.mediaSession;
+		if (!session) return;
+		for (const action of MEDIA_SESSION_ACTIONS) {
+			try {
+				session.setActionHandler(action, null);
+			} catch {
+				// Unsupported action; nothing was registered.
+			}
+		}
+		session.metadata = null;
+	}
+
+	private applyMediaSessionMetadata(source: PlaybackSource) {
+		const session = this.mediaSession;
+		if (!session) return;
+		session.metadata = createMediaMetadata(mediaMetadataFor(source));
+	}
+
+	private syncMediaSession() {
+		const session = this.mediaSession;
+		if (!session) return;
+		session.playbackState =
+			this.state.status === "playing" || this.state.status === "reconnecting"
+				? "playing"
+				: this.state.source
+					? "paused"
+					: "none";
+		if (!session.setPositionState) return;
+		const duration = this.state.duration;
+		if (!Number.isFinite(duration) || duration <= 0) {
+			try {
+				session.setPositionState();
+			} catch {
+				// Some browsers reject clearing; ignore.
+			}
+			return;
+		}
+		try {
+			session.setPositionState({
+				duration,
+				playbackRate: this.state.playbackRate ?? 1,
+				position: Math.min(duration, Math.max(0, this.state.currentTime)),
+			});
+		} catch {
+			// Position outside the duration during a source swap; ignore.
+		}
 	}
 
 	private publishNavigation(direction: "previous" | "next") {
@@ -476,6 +597,62 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	private update(next: Partial<PlaybackSessionState>) {
 		this.state = { ...this.state, ...next };
 		for (const listener of this.listeners) listener(this.state);
+		if (
+			"status" in next ||
+			"currentTime" in next ||
+			"duration" in next ||
+			"playbackRate" in next ||
+			"source" in next
+		) {
+			this.syncMediaSession();
+		}
+	}
+}
+
+function defaultMediaSession(): BrowserMediaSession | null {
+	if (typeof navigator === "undefined") return null;
+	const session = (navigator as Navigator & { mediaSession?: MediaSession })
+		.mediaSession;
+	return session ?? null;
+}
+
+type MediaMetadataFields = {
+	title: string;
+	artist: string;
+	album: string;
+	artwork: { src: string }[];
+};
+
+export function mediaMetadataFor(source: PlaybackSource): MediaMetadataFields {
+	if (source.type === "track") {
+		return {
+			title: source.track.title,
+			artist: source.track.artistName,
+			album: source.track.albumTitle ?? "",
+			artwork: source.artworkUrl ? [{ src: source.artworkUrl }] : [],
+		};
+	}
+	const radio =
+		source.type === "radio-station" ? source.station : source.result;
+	return {
+		title: radio.name,
+		artist: "Live radio",
+		album: "",
+		artwork: radio.faviconUrl ? [{ src: radio.faviconUrl }] : [],
+	};
+}
+
+function createMediaMetadata(
+	fields: MediaMetadataFields,
+): MediaMetadata | null {
+	const MetadataConstructor = (
+		globalThis as { MediaMetadata?: typeof MediaMetadata }
+	).MediaMetadata;
+	if (!MetadataConstructor) return null;
+	try {
+		return new MetadataConstructor(fields);
+	} catch {
+		return null;
 	}
 }
 
