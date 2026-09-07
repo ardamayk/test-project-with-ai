@@ -561,7 +561,8 @@ export interface paths {
         post?: never;
         delete?: never;
         options?: never;
-        head?: never;
+        /** Check track audio availability without downloading it */
+        head: operations["headTrackStream"];
         patch?: never;
         trace?: never;
     };
@@ -2814,6 +2815,33 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             416: components["responses"]["RangeNotSatisfiable"];
+        };
+    };
+    headTrackStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trackId: components["parameters"]["trackId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track audio is available */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Track or its audio file was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listPlaylists: {

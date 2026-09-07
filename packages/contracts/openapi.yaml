@@ -915,6 +915,17 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
   /api/v1/tracks/{trackId}/stream:
+    head:
+      tags: [playback]
+      operationId: headTrackStream
+      summary: Check track audio availability without downloading it
+      parameters:
+        - $ref: "#/components/parameters/trackId"
+      responses:
+        "200":
+          description: Track audio is available
+        "404":
+          description: Track or its audio file was not found
     get:
       tags: [playback]
       operationId: streamTrack

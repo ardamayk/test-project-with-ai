@@ -27,7 +27,7 @@ func (h *Handlers) GetTrackWaveform(w http.ResponseWriter, r *http.Request) {
 	waveform, err := h.waveforms.Get(r.Context(), trackID)
 	switch {
 	case err == nil:
-		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.Header().Set("Cache-Control", "private, no-cache")
 		respond.JSON(w, http.StatusOK, waveform)
 	case errors.Is(err, ErrWaveformPending):
 		w.Header().Set("Retry-After", "2")

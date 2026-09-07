@@ -166,8 +166,8 @@ func TestWaveformHandlerGeneratesOnceThenServesTheCache(t *testing.T) {
 	if body.TrackID != fixture.trackID || body.PeakCount != 3 || body.Peaks[2] != 255 {
 		t.Fatalf("body = %+v", body)
 	}
-	if first.Header().Get("Cache-Control") == "" {
-		t.Fatal("cached waveform should be cacheable by the client")
+	if first.Header().Get("Cache-Control") != "private, no-cache" {
+		t.Fatal("waveform responses must revalidate to detect Track Replacement")
 	}
 
 	second := fixture.get(t, fixture.trackID)

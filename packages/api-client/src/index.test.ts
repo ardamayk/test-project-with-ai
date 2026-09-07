@@ -80,6 +80,22 @@ describe('Managed Import media contracts', () => {
 });
 
 describe('createApiClient', () => {
+  it('revalidates previously fresh waveform responses after Track Replacement', async () => {
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ trackId: 'track-1', peaks: [128], peakCount: 1 }),
+        ),
+      );
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+    await client.getTrackWaveform('track-1');
+    expect(transport).toHaveBeenCalledWith(
+      'http://music.test/api/v1/library/tracks/track-1/waveform',
+      expect.objectContaining({ cache: 'no-cache' }),
+    );
+  });
+
   it('probes a Track stream with HEAD and reports the status without throwing', async () => {
     const transport = vi
       .fn<typeof fetch>()
@@ -95,7 +111,7 @@ describe('createApiClient', () => {
       status: 404,
     });
     expect(transport).toHaveBeenCalledWith(
-      'http://127.0.0.1:43129/token/api/v1/tracks/track-1/stream',
+      'http://music.test/api/v1/tracks/track-1/stream',
       expect.objectContaining({ method: 'HEAD' }),
     );
     const headers = new Headers(transport.mock.calls[0]?.[1]?.headers);

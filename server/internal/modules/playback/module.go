@@ -32,4 +32,5 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/v1/playback/queue/items/{itemId}", m.handlers.RemoveItem)
 	r.Get("/api/v1/playback/queue/events", m.handlers.StreamQueueEvents)
 	r.Get("/api/v1/tracks/{trackId}/stream", m.handlers.StreamTrack)
+	r.Head("/api/v1/tracks/{trackId}/stream", m.handlers.StreamTrack)
 }

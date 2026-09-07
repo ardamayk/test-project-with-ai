@@ -424,6 +424,7 @@ export function createApiClient(config: ApiClientConfig) {
     getTrackWaveform: (trackId: string) =>
       request<TrackWaveform | TrackWaveformPending>(
         `/api/v1/library/tracks/${trackId}/waveform`,
+        { cache: 'no-cache' },
       ),
     previewAlbumDeletion: (albumId: string) =>
       request<AlbumDeletionPreview>(
@@ -628,7 +629,7 @@ export function createApiClient(config: ApiClientConfig) {
         headers.set('Authorization', `Bearer ${token}`);
       }
       const response = await transport(
-        `${getStreamBaseUrl()}/api/v1/tracks/${trackId}/stream`,
+        `${baseUrl}/api/v1/tracks/${trackId}/stream`,
         { method: 'HEAD', headers },
       );
       return { status: response.status };

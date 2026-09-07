@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 export type TrackWaveformResult =
 	| { trackId: string; peakCount: number; peaks: number[] }
@@ -9,17 +9,33 @@ export type TrackWaveformLoader = (
 ) => Promise<TrackWaveformResult>;
 
 const waveformCache = new Map<string, number[]>();
+const cacheListeners = new Set<() => void>();
+let cacheRevision = 0;
 const MAX_PENDING_POLLS = 30;
 
-/** Test hook: forget every cached waveform. */
+function subscribeCache(listener: () => void) {
+	cacheListeners.add(listener);
+	return () => {
+		cacheListeners.delete(listener);
+	};
+}
+
+function getCacheRevision() {
+	return cacheRevision;
+}
+
+/** Forget cached waveforms after a library change and reload mounted tracks. */
 export function clearTrackWaveformCache() {
 	waveformCache.clear();
+	cacheRevision += 1;
+	for (const listener of cacheListeners) listener();
 }
 
 /**
  * Peaks for the current Track, or null while unknown. The server generates
  * peaks lazily and answers "pending" meanwhile, so the hook polls at the
- * server's suggested interval; results are cached per track for the session.
+ * server's suggested interval. Cached peaks display immediately, then revalidate
+ * on mount or invalidation so replacing a Track's file refreshes its waveform.
  */
 export function useTrackWaveform({
 	trackId,
@@ -31,26 +47,29 @@ export function useTrackWaveform({
 	load: TrackWaveformLoader | null;
 }): number[] | null {
 	const [peaks, setPeaks] = useState<number[] | null>(null);
+	const revision = useSyncExternalStore(
+		subscribeCache,
+		getCacheRevision,
+		getCacheRevision,
+	);
 
 	useEffect(() => {
 		if (!enabled || !trackId || !load) {
 			setPeaks(null);
 			return undefined;
 		}
-		const cached = waveformCache.get(trackId);
-		if (cached) {
-			setPeaks(cached);
-			return undefined;
-		}
-		setPeaks(null);
+		setPeaks(waveformCache.get(trackId) ?? null);
 		let cancelled = false;
 		let timer: number | null = null;
 		let polls = 0;
 		const request = () => {
+			if (cancelled || revision !== cacheRevision) return;
 			load(trackId)
 				.then((result) => {
-					if (cancelled) return;
+					if (cancelled || revision !== cacheRevision) return;
 					if ("status" in result) {
+						waveformCache.delete(trackId);
+						setPeaks(null);
 						polls += 1;
 						if (polls > MAX_PENDING_POLLS) return;
 						timer = window.setTimeout(
@@ -72,7 +91,7 @@ export function useTrackWaveform({
 			cancelled = true;
 			if (timer !== null) window.clearTimeout(timer);
 		};
-	}, [enabled, trackId, load]);
+	}, [enabled, trackId, load, revision]);
 
 	return peaks;
 }
