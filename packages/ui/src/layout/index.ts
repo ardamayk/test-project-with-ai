@@ -2,6 +2,7 @@ export { AlbumArt } from "./AlbumArt";
 export { AppBrand } from "./AppBrand";
 export { AppShell } from "./AppShell";
 export { LayoutProvider, useLayout } from "./LayoutProvider";
+export { LyricsOverlay } from "./LyricsOverlay";
 export { MiniPlayer } from "./MiniPlayer";
 export { PlaybackSignal } from "./PlaybackSignal";
 export { PlayerBar } from "./PlayerBar";

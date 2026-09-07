@@ -1081,6 +1081,16 @@ describe("tracks route", () => {
 
 		// Structured server rejections render as Web does.
 		expect(await screen.findByText("TITLE is required")).toBeTruthy();
+		// The review step scrolls as one region; a nested scroll container with
+		// overscroll-contain would swallow mouse-wheel scrolling.
+		const preview = screen.getByRole("region", { name: "Import Preview" });
+		expect(preview.className).not.toContain("overflow-y-auto");
+		expect(preview.className).not.toContain("overscroll-contain");
+		expect(preview.parentElement?.className).toContain("overflow-y-auto");
+		expect(preview.parentElement?.className).toContain("overscroll-contain");
+		expect(preview.parentElement?.className).toContain(
+			"[scrollbar-width:none]",
+		);
 		expect(
 			screen.getByRole("checkbox", { name: "Select broken.flac" }),
 		).toHaveProperty("disabled", true);

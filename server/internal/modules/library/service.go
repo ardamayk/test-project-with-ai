@@ -36,6 +36,14 @@ func (s *Service) GetTrack(ctx context.Context, trackID string) (Track, error) {
 	return s.store.GetTrack(ctx, trackID)
 }
 
+func (s *Service) GetTrackLyrics(ctx context.Context, trackID string) (TrackLyrics, error) {
+	lyrics, err := s.store.GetTrackLyrics(ctx, trackID)
+	if err != nil {
+		return TrackLyrics{}, err
+	}
+	return TrackLyrics{TrackID: trackID, Lyrics: lyrics}, nil
+}
+
 func (s *Service) GetTrackFilePath(ctx context.Context, trackID string) (string, error) {
 	return s.store.GetTrackFilePath(ctx, trackID)
 }

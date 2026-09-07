@@ -54,6 +54,12 @@ type Album struct {
 	Artwork            *AlbumArtworkMetadata `json:"artwork,omitempty"`
 }
 
+// TrackLyrics is the payload of GET /api/v1/library/tracks/{trackId}/lyrics.
+type TrackLyrics struct {
+	TrackID string `json:"trackId"`
+	Lyrics  string `json:"lyrics"`
+}
+
 type Track struct {
 	ID           string             `json:"id"`
 	Title        string             `json:"title"`
@@ -365,6 +371,21 @@ func (s *Store) GetTrack(ctx context.Context, trackID string) (Track, error) {
 		return Track{}, fmt.Errorf("enrich Track %q: %w", trackID, err)
 	}
 	return tracks[0], nil
+}
+
+// GetTrackLyrics returns the stored lyrics text for a Track; empty when the
+// file carried none. Lyrics stay out of Track listings because they are
+// large and only the Lyrics view needs them.
+func (s *Store) GetTrackLyrics(ctx context.Context, trackID string) (string, error) {
+	var lyrics string
+	err := s.db.QueryRowContext(ctx, `SELECT lyrics FROM tracks WHERE id = ?`, trackID).Scan(&lyrics)
+	if err == sql.ErrNoRows {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get Track lyrics %q: %w", trackID, err)
+	}
+	return lyrics, nil
 }
 
 func (s *Store) GetTrackFilePath(ctx context.Context, trackID string) (string, error) {

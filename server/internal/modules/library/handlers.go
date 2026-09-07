@@ -96,6 +96,20 @@ func (h *Handlers) GetTrack(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, result)
 }
 
+func (h *Handlers) GetTrackLyrics(w http.ResponseWriter, r *http.Request) {
+	trackID := chi.URLParam(r, "trackId")
+	result, err := h.service.GetTrackLyrics(r.Context(), trackID)
+	if errors.Is(err, ErrNotFound) {
+		respond.Error(w, http.StatusNotFound, "not_found", "track not found")
+		return
+	}
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
 func pagination(r *http.Request) (limit, offset int) {
 	limit = 50
 	offset = 0

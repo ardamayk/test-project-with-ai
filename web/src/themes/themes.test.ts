@@ -107,10 +107,21 @@ describe("theme slot contract", () => {
 	it("layers.css maps shell surfaces per dark/light contract", () => {
 		expect(layersCss).toContain("--sidebar: var(--theme-2)");
 		expect(layersCss).toContain("--queue: var(--theme-2)");
-		expect(layersCss).toContain("--player: var(--theme-1)");
+		// The floating player floats over --background, so it sits one step
+		// above cards instead of sharing the background slot.
+		expect(layersCss).toContain(
+			"--player: color-mix(in srgb, var(--theme-2) 85%, var(--theme-3) 15%)",
+		);
 		expect(layersCss).toContain("--sidebar: var(--theme-5)");
 		expect(layersCss).toContain("--queue: var(--theme-5)");
-		expect(layersCss).toContain("--player: var(--theme-6)");
+		expect(layersCss).toContain(
+			"--player: color-mix(in srgb, var(--theme-5) 85%, var(--theme-4) 15%)",
+		);
+	});
+
+	it("layers.css gives the floating player its own border and shadow tokens", () => {
+		expect(layersCss.match(/--player-border:/g)).toHaveLength(2);
+		expect(layersCss.match(/--player-shadow:/g)).toHaveLength(2);
 	});
 
 	it("layers.css exposes shell component semantic tokens", () => {

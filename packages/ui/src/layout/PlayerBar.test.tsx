@@ -79,6 +79,7 @@ const api: PlaybackApi = {
 	removeQueueItem: vi.fn(async () => ({ items: [], revision: "2" })),
 	getStreamUrl: (trackId) => `/stream/${trackId}`,
 	getAlbumCoverUrl: (albumId) => `/cover/${albumId}`,
+	getTrackLyrics: vi.fn(async () => ({ lyrics: "Line one\nLine two" })),
 	getRadioStationStreamUrl: (stationId) => `/radio/${stationId}`,
 	getRadioCatalogPreviewStreamUrl: (stationUuid) =>
 		`/radio/preview/${stationUuid}`,
@@ -189,7 +190,9 @@ describe("PlayerBar", () => {
 			(screen.getByRole("button", { name: "Play" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
-		expect(screen.queryByRole("button", { name: /Output mode:/ })).toBeNull();
+		// Nothing is playing: the quality pill is a plain status, not a menu.
+		expect(screen.queryByRole("button", { name: /^Quality/ })).toBeNull();
+		expect(screen.getByLabelText("Quality Quality")).toBeTruthy();
 	});
 
 	it("shows the current track after playback starts", async () => {
@@ -239,8 +242,89 @@ describe("PlayerBar", () => {
 	it("renders the Figma player bar shell dimensions", () => {
 		renderPlayerBar();
 
-		expect(screen.getByRole("contentinfo").className).toContain("h-[72px]");
+		expect(screen.getByRole("contentinfo").className).toContain("h-[80px]");
 		expect(screen.getByRole("contentinfo").className).toContain("bg-player");
+	});
+
+	it("toggles the current Track's favorite state from the Player Bar", async () => {
+		const onToggleFavorite = vi.fn();
+		render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={api} engine={new InMemoryPlaybackEngine()}>
+					<PlaybackStarter />
+					<PlayerBar
+						isCurrentTrackFavorite={false}
+						onToggleFavorite={onToggleFavorite}
+					/>
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Add to favorites",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
+		expect(onToggleFavorite).toHaveBeenCalledWith(track.id);
+	});
+
+	it("renders a round primary play control and a thin seek bar", async () => {
+		renderPlayerBar();
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		expect(screen.getByRole("button", { name: "Pause" }).className).toContain(
+			"rounded-full",
+		);
+		const seek = screen.getByLabelText("Seek") as HTMLInputElement;
+		expect(seek.className).toContain("player-seek-slider");
+		expect(seek.style.getPropertyValue("--seek-level")).toMatch(/%$/);
+	});
+
+	it("opens the full-screen Lyrics view with the Queue beside it", async () => {
+		renderPlayerBar();
+		expect(
+			(screen.getByRole("button", { name: "Lyrics" }) as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
+
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Lyrics" }));
+
+		const view = screen.getByRole("dialog", { name: "Lyrics" });
+		expect(await within(view).findByText("Line one")).toBeTruthy();
+		expect(within(view).getByText("Line two")).toBeTruthy();
+		expect(api.getTrackLyrics).toHaveBeenCalledWith(track.id);
+		expect(within(view).getByRole("heading", { name: "Queue" })).toBeTruthy();
+		expect(within(view).getAllByText("Track 1").length).toBeGreaterThan(0);
+
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog", { name: "Lyrics" })).toBeNull();
+	});
+
+	it("mutes from the volume icon and restores the previous level on unmute", async () => {
+		renderPlayerBar();
+
+		fireEvent.change(screen.getByLabelText("Volume"), {
+			target: { value: "0.4" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Mute" }));
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0",
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Unmute" }));
+		expect((screen.getByLabelText("Volume") as HTMLInputElement).value).toBe(
+			"0.4",
+		);
 	});
 
 	it("keeps volume slider usable", async () => {
@@ -279,9 +363,7 @@ describe("PlayerBar", () => {
 		renderPlayerBar();
 		await openActionsMenu();
 
-		expect(
-			screen.getByRole("button", { name: "Quality 24-bit · 96 kHz" }),
-		).toBeTruthy();
+		expect(screen.getByLabelText("Quality 24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("24-bit · 96 kHz")).toBeTruthy();
 		expect(screen.getByText("Add to playlist")).toBeTruthy();
 		expect(screen.queryByText("Play next")).toBeNull();
@@ -301,9 +383,7 @@ describe("PlayerBar", () => {
 			renderPlayerBar();
 			await openActionsMenu();
 
-			expect(
-				screen.getByRole("button", { name: "Quality - · 96 kHz" }),
-			).toBeTruthy();
+			expect(screen.getByLabelText("Quality - · 96 kHz")).toBeTruthy();
 		} finally {
 			track.bitDepth = bitDepth;
 		}
@@ -317,9 +397,11 @@ describe("PlayerBar", () => {
 			screen.getByRole("button", { name: "Start track" }).click();
 		});
 
-		fireEvent.click(
-			screen.getByRole("button", { name: "Output mode: Exclusive" }),
-		);
+		const trigger = screen.getByRole("button", {
+			name: "Quality 24-bit · 96 kHz",
+		});
+		expect(trigger.getAttribute("title")).toBe("Output mode: Exclusive");
+		fireEvent.click(trigger);
 		const menu = screen.getByRole("menu", { name: "Output mode" });
 		expect(within(menu).getAllByRole("menuitemradio")).toHaveLength(3);
 		fireEvent.click(
@@ -328,8 +410,10 @@ describe("PlayerBar", () => {
 
 		expect(fallbackToSystemOutput).toHaveBeenCalledOnce();
 		expect(
-			screen.getByRole("button", { name: "Output mode: Normal" }),
-		).toBeTruthy();
+			screen
+				.getByRole("button", { name: "Quality 24-bit · 96 kHz" })
+				.getAttribute("title"),
+		).toBe("Output mode: Normal");
 	});
 
 	it("shows live radio progress instead of track time", async () => {
@@ -342,9 +426,7 @@ describe("PlayerBar", () => {
 		expect(screen.getByText("LIVE")).toBeTruthy();
 		expect(screen.getByText("--:--")).toBeTruthy();
 		expect(screen.queryByLabelText("Seek")).toBeNull();
-		expect(
-			screen.getByRole("button", { name: "Quality High Quality" }),
-		).toBeTruthy();
+		expect(screen.getByLabelText("Quality High Quality")).toBeTruthy();
 	});
 
 	it("renders the actions menu in a portal with anchored coordinates", async () => {
@@ -509,9 +591,13 @@ describe("PlayerBar", () => {
 		).toBeTruthy();
 		expect(within(dialog).getByText("96 kHz")).toBeTruthy();
 		expect(within(dialog).getByText("Track ReplayGain")).toBeTruthy();
-		expect(within(dialog).getByText("Available · Gain -7.25 dB")).toBeTruthy();
-		expect(within(dialog).getByText("Album ReplayGain")).toBeTruthy();
-		expect(within(dialog).getByText("Unavailable")).toBeTruthy();
+		expect(within(dialog).getByText("Gain -7.25 dB")).toBeTruthy();
+		// Same row set as the track list "Details" dialog (shared builder).
+		expect(within(dialog).getByText("Disc")).toBeTruthy();
+		expect(within(dialog).queryByText("Album ReplayGain")).toBeNull();
+		expect(within(dialog).queryByText("Unavailable")).toBeNull();
+		expect(within(dialog).queryByText("Size")).toBeNull();
+		expect(within(dialog).queryByText("Id")).toBeNull();
 	});
 
 	it("shows active shuffle and repeat states", async () => {

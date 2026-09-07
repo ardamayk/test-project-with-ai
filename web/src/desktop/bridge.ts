@@ -53,6 +53,11 @@ export function getDesktopMpvStatus(): Promise<DesktopMpvStatus> {
 	return invoke("get_desktop_mpv_status");
 }
 
+/** Open a web URL in the system browser; Desktop Client only. */
+export function openExternalUrl(url: string): Promise<void> {
+	return invoke("desktop_open_external_url", { url });
+}
+
 export function getServerConnection(): Promise<ServerConnection | null> {
 	return invoke("get_server_connection");
 }

@@ -47,6 +47,8 @@ export type { PlaybackQueueApi } from "./use-synchronized-queue";
 export type PlaybackAssetApi = {
 	getStreamUrl: (trackId: string) => string;
 	getAlbumCoverUrl: (albumId: string) => string;
+	/** Lyrics text stored for a Track; optional for hosts without the endpoint. */
+	getTrackLyrics?: (trackId: string) => Promise<{ lyrics: string }>;
 };
 
 export type PlaylistLibraryApi = {
@@ -123,6 +125,8 @@ type PlaybackContextValue = {
 	refreshQueue: () => Promise<void>;
 	stopPlayback: () => void;
 	getAlbumCoverUrl: (albumId: string) => string;
+	/** Resolves null when the host exposes no lyrics endpoint. */
+	getTrackLyrics: (trackId: string) => Promise<{ lyrics: string } | null>;
 };
 
 const PlaybackContext = createContext<PlaybackContextValue | null>(null);
@@ -342,7 +346,9 @@ export function PlaybackProvider({
 		async (trackId: string, queueTrackIds?: string[]) => {
 			let nextQueue = queueRef.current;
 			if (queueTrackIds) {
-				const data = await replaceQueue(queueTrackIds);
+				const data = await replaceQueue(queueTrackIds, {
+					retryOnConflict: true,
+				});
 				if (!data) return;
 				nextQueue = data.items;
 			}
@@ -492,6 +498,8 @@ export function PlaybackProvider({
 			refreshQueue,
 			stopPlayback: () => engine.stop(),
 			getAlbumCoverUrl: (albumId) => apiRef.current.getAlbumCoverUrl(albumId),
+			getTrackLyrics: (trackId) =>
+				apiRef.current.getTrackLyrics?.(trackId) ?? Promise.resolve(null),
 		}),
 		[
 			queue,

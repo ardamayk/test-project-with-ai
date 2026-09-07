@@ -4,6 +4,7 @@ import {
 	Check,
 	ChevronRight,
 	Download,
+	Heart,
 	Info,
 	MoreVertical,
 	Plus,
@@ -19,13 +20,22 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
-import { formatReplayGainAvailability } from "../playback/format-replay-gain";
 import { usePlayback, usePlaylistLibrary } from "../playback/PlaybackProvider";
+import {
+	buildTrackDetailRows,
+	formatBitDepth,
+	formatSampleRate,
+} from "../playback/track-details";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { AlbumArt } from "./AlbumArt";
 import { useLayout } from "./LayoutProvider";
+import { LyricsOverlay } from "./LyricsOverlay";
 import { PlaybackSignal } from "./PlaybackSignal";
-import { PlaybackControls, VolumeAndQueueControls } from "./PlayerBarControls";
+import {
+	PlaybackControls,
+	QualityIconFor,
+	VolumeAndQueueControls,
+} from "./PlayerBarControls";
 
 const RECENT_PLAYLISTS_KEY = "navidrome-recent-playlists";
 const RECENT_PLAYLIST_LIMIT = 2;
@@ -54,24 +64,6 @@ function touchRecentPlaylist(playlistId: string) {
 	);
 }
 
-function formatSampleRate(hz?: number): string | null {
-	if (!hz || hz <= 0) return null;
-	if (hz % 1000 === 0) return `${hz / 1000} kHz`;
-	return `${(hz / 1000).toFixed(1)} kHz`;
-}
-
-function formatBitDepth(bits?: number): string | null {
-	if (!bits || bits <= 0) return null;
-	return `${bits}-bit`;
-}
-
-function formatBitrate(kbps?: number, format?: string): string | null {
-	if (!kbps || kbps <= 0) return null;
-	const provenance =
-		format?.toLowerCase() === "wav" ? "Native" : "Calculated by app";
-	return `${kbps} kbps (${provenance})`;
-}
-
 function formatQualityLabel(
 	track: { bitDepth?: number; sampleRateHz?: number } | null,
 ): string {
@@ -91,20 +83,6 @@ function formatRadioQualityLabel(station: RadioStation | null): string {
 	return parts.length > 0 ? parts.join(" · ") : "High Quality";
 }
 
-function formatDuration(ms?: number): string | null {
-	if (!ms || ms <= 0) return null;
-	const total = Math.floor(ms / 1000);
-	const minutes = Math.floor(total / 60);
-	const seconds = total % 60;
-	return `${minutes}m ${seconds}s`;
-}
-
-function formatBytes(bytes?: number): string | null {
-	if (!bytes || bytes <= 0) return null;
-	const mib = bytes / 1024 / 1024;
-	return `${mib.toFixed(2)} MiB`;
-}
-
 function isLosslessFormat(format?: string): boolean {
 	return ["flac", "alac", "wav", "aiff", "dsd"].includes(
 		format?.toLowerCase() ?? "",
@@ -118,8 +96,13 @@ type MenuPosition = {
 
 export function PlayerBar({
 	onPlaylistMutated,
+	isCurrentTrackFavorite = false,
+	onToggleFavorite,
 }: {
 	onPlaylistMutated?: () => void;
+	/** Favorite state of the current Track; the host app owns the Favorites playlist. */
+	isCurrentTrackFavorite?: boolean;
+	onToggleFavorite?: (trackId: string) => void;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -128,6 +111,7 @@ export function PlayerBar({
 	const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
 	const [playlistSubmenuOpen, setPlaylistSubmenuOpen] = useState(false);
 	const [infoOpen, setInfoOpen] = useState(false);
+	const [lyricsOpen, setLyricsOpen] = useState(false);
 	const [playlists, setPlaylists] = useState<Playlist[]>([]);
 	const [playlistsLoaded, setPlaylistsLoaded] = useState(false);
 	const [memberPlaylistIds, setMemberPlaylistIds] = useState<Set<string>>(
@@ -163,6 +147,7 @@ export function PlayerBar({
 		fallbackToSystemOutput,
 		enableAdaptiveSystemRate,
 		getAlbumCoverUrl,
+		getTrackLyrics,
 	} = usePlayback();
 	const {
 		listPlaylists,
@@ -426,7 +411,7 @@ export function PlayerBar({
 	};
 
 	return (
-		<footer className="relative h-[72px] border-[var(--shell-subtle-border)] border-t bg-player px-6 pt-px text-player-foreground shadow-[0px_-10px_40px_0px_rgba(0,0,0,0.3)] backdrop-blur-[12px]">
+		<footer className="relative h-[80px] rounded-2xl border border-[var(--player-border)] bg-player px-5 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]">
 			{playbackAlert ? (
 				<p
 					role="alert"
@@ -443,7 +428,7 @@ export function PlayerBar({
 					<AlbumArt
 						coverUrl={artworkUrl}
 						title={nowPlayingTitle}
-						className="size-12 shrink-0 rounded-[2px] border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
+						className="size-14 shrink-0 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
 					/>
 					<div className="min-w-0 overflow-hidden">
 						<div className="flex max-w-full min-w-0 items-center">
@@ -453,11 +438,38 @@ export function PlayerBar({
 							>
 								{nowPlayingTitle}
 							</p>
+							{onToggleFavorite ? (
+								<button
+									type="button"
+									className={cn(
+										"ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
+										isCurrentTrackFavorite &&
+											"text-[var(--player-control-primary)]",
+									)}
+									aria-label={
+										isCurrentTrackFavorite
+											? "Remove from favorites"
+											: "Add to favorites"
+									}
+									aria-pressed={isCurrentTrackFavorite}
+									disabled={!currentTrack}
+									onClick={() => {
+										if (currentTrack) onToggleFavorite(currentTrack.id);
+									}}
+								>
+									<Heart
+										className={cn(
+											"size-3.5",
+											isCurrentTrackFavorite && "fill-current",
+										)}
+									/>
+								</button>
+							) : null}
 							<button
 								ref={actionsButtonRef}
 								type="button"
 								className={cn(
-									"ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
+									"ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--player-control-primary)]/40 disabled:opacity-40",
 									actionsOpen && "text-[var(--player-control-primary)]",
 								)}
 								aria-label="Track actions"
@@ -475,7 +487,7 @@ export function PlayerBar({
 							</button>
 						</div>
 						<p
-							className="truncate text-player-foreground text-[11px]"
+							className="truncate text-player-foreground text-xs"
 							title={nowPlayingSubtitle}
 							role={isReconnecting ? "status" : undefined}
 							aria-live={isReconnecting ? "polite" : undefined}
@@ -561,6 +573,12 @@ export function PlayerBar({
 					signalControl={
 						hasActiveSource && outputMode ? (
 							<PlaybackSignal
+								qualityLabel={qualityLabel}
+								qualityIcon={
+									<QualityIconFor
+										isLossless={isLosslessFormat(currentTrack?.format)}
+									/>
+								}
 								outputMode={outputMode}
 								outputControls={{
 									selectNormalOutput: fallbackToSystemOutput,
@@ -571,9 +589,18 @@ export function PlayerBar({
 						) : undefined
 					}
 					onToggleQueue={() => togglePanel(queuePanelSide)}
+					onOpenLyrics={currentTrack ? () => setLyricsOpen(true) : undefined}
 					onVolumeChange={setVolume}
 				/>
 			</div>
+			{lyricsOpen && currentTrack ? (
+				<LyricsOverlay
+					track={currentTrack}
+					coverUrl={artworkUrl}
+					loadLyrics={getTrackLyrics}
+					onClose={() => setLyricsOpen(false)}
+				/>
+			) : null}
 			{infoOpen && currentTrack ? (
 				<TrackInfoDialog
 					track={currentTrack}
@@ -769,34 +796,7 @@ function TrackInfoDialog({
 	track: Track;
 	onClose: () => void;
 }) {
-	const rows = [
-		["Title", track.title],
-		["Artist", track.artistName],
-		["Album", track.albumTitle],
-		["Track", track.trackNo?.toString()],
-		["Duration", formatDuration(track.durationMs)],
-		["Codec", track.format],
-		["Bitrate", formatBitrate(track.bitrateKbps, track.format)],
-		["Sample rate", formatSampleRate(track.sampleRateHz)],
-		["Bit depth", formatBitDepth(track.bitDepth)],
-		[
-			"Track ReplayGain",
-			formatReplayGainAvailability(
-				track.replayGain?.trackGainDb,
-				track.replayGain?.trackPeak,
-			),
-		],
-		[
-			"Album ReplayGain",
-			formatReplayGainAvailability(
-				track.replayGain?.albumGainDb,
-				track.replayGain?.albumPeak,
-			),
-		],
-		["Genre", track.genre],
-		["Size", formatBytes(track.sizeBytes)],
-		["Id", track.id],
-	].filter((row): row is [string, string] => Boolean(row[1]));
+	const rows = buildTrackDetailRows(track);
 
 	return (
 		<Portal>

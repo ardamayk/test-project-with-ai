@@ -53,6 +53,7 @@ export type Album = Omit<
   genreItems: Genre[];
   releaseIdentifiers: ReleaseIdentifier[];
 };
+export type TrackLyrics = components['schemas']['TrackLyrics'];
 export type Track = Omit<WireTrack, 'artists' | 'discNo' | 'genres'> & {
   artists: ArtistCredit[];
   discNo: number;
@@ -412,6 +413,8 @@ export function createApiClient(config: ApiClientConfig) {
       request<WireTrack>(`/api/v1/library/tracks/${trackId}`).then(
         normalizeTrack,
       ),
+    getTrackLyrics: (trackId: string) =>
+      request<TrackLyrics>(`/api/v1/library/tracks/${trackId}/lyrics`),
     previewAlbumDeletion: (albumId: string) =>
       request<AlbumDeletionPreview>(
         `/api/v1/library/albums/${albumId}/deletion`,

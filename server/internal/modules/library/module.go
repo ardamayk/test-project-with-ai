@@ -34,6 +34,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v1/library/albums/{albumId}", m.handlers.GetAlbum)
 	r.Get("/api/v1/library/tracks", m.handlers.ListTracks)
 	r.Get("/api/v1/library/tracks/{trackId}", m.handlers.GetTrack)
+	r.Get("/api/v1/library/tracks/{trackId}/lyrics", m.handlers.GetTrackLyrics)
 }
 
 func (m *Module) TrackAccess() TrackAccess {

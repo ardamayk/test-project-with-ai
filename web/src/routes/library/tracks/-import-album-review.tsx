@@ -3,7 +3,15 @@ import type {
 	ManagedImportAlbumPreview,
 } from "@repo/api-client";
 import { useState } from "react";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "#/components/ui/select";
 import { apiClient } from "#/lib/api";
+import { ImportCoverPicker } from "./-import-cover-picker";
 import { defaultAlbumDecision, importPositionKey } from "./-import-review";
 import type { ImportFileEntry } from "./-managed-import-workflow";
 
@@ -18,8 +26,16 @@ type Props = {
 };
 
 export function ImportAlbumReview(props: Props) {
+	if (props.albums.length === 0) return null;
 	return (
-		<div className="grid gap-3 px-4 py-3 sm:px-6">
+		<div className="grid gap-4 px-4 py-4 sm:px-6">
+			<div className="space-y-1">
+				<h3 className="font-medium text-heading">Review albums and covers</h3>
+				<p className="text-sm text-caption">
+					Your file tags determine the album destination. Review the cover
+					before importing. Nothing is added to your library until you confirm.
+				</p>
+			</div>
 			{props.albums.map((album) => (
 				<AlbumReview key={album.key} {...props} album={album} />
 			))}
@@ -69,129 +85,34 @@ function AlbumReview({
 	return (
 		<fieldset
 			disabled={isDisabled}
-			className="grid gap-3 rounded-md border border-border p-3"
+			className="grid gap-4 rounded-xl border border-border bg-card/40 p-4 disabled:opacity-60"
 		>
-			<legend className="px-1 font-medium">
+			<legend className="px-1 font-medium text-heading">
 				{album.title} — {album.albumArtists.join(", ")}
 			</legend>
-			<label className="grid gap-1 text-sm">
-				Album destination
-				<select
-					aria-label={`Album destination for ${album.title}`}
-					className="rounded border border-border bg-background p-2"
-					value={
-						decision.createSeparate ? "separate" : (decision.albumId ?? "")
-					}
-					onChange={(event) =>
-						props.onChange({
-							...decision,
-							createSeparate: event.target.value === "separate",
-							albumId:
-								event.target.value === "separate"
-									? undefined
-									: event.target.value,
-							artworkMode:
-								event.target.value === "separate" || !event.target.value
-									? "auto"
-									: "none",
-							artworkId: undefined,
-						})
-					}
-				>
-					<option value="">
-						{album.existingAlbums.length
-							? "Choose an existing Album"
-							: "Create new Album"}
-					</option>
-					{album.existingAlbums.map((match) => (
-						<option key={match.id} value={match.id}>
-							Add to existing Album{match.year ? ` (${match.year})` : ""} —{" "}
-							{match.tracks.length} tracks
-						</option>
-					))}
-					{album.existingAlbums.length > 0 ? (
-						<option value="separate">Create separate Album</option>
-					) : null}
-				</select>
-			</label>
+			<AlbumDestination
+				album={album}
+				decision={decision}
+				isDisabled={isDisabled}
+				onChange={props.onChange}
+			/>
 			{existing?.hasArtwork ? (
 				<p className="text-caption text-sm">
 					Existing Album cover will be preserved.
 				</p>
 			) : (
 				<>
-					<label className="grid gap-1 text-sm">
-						Album cover
-						<select
-							aria-label={`Album cover for ${album.title}`}
-							className="rounded border border-border bg-background p-2"
-							value={
-								decision.artworkMode === "selected"
-									? decision.artworkId
-									: decision.artworkMode
-							}
-							onChange={(event) =>
-								props.onChange({
-									...decision,
-									artworkMode:
-										event.target.value === "auto" ||
-										event.target.value === "none"
-											? event.target.value
-											: "selected",
-									artworkId:
-										event.target.value === "auto" ||
-										event.target.value === "none"
-											? undefined
-											: event.target.value,
-								})
-							}
-						>
-							<option value="auto">
-								{album.artworks.length > 1
-									? "Choose one of the different covers"
-									: "Use embedded cover when available"}
-							</option>
-							<option value="none">Continue without artwork</option>
-							{album.artworks.map((artwork, index) => (
-								<option key={artwork.id} value={artwork.id}>
-									{artwork.jobId
-										? `Embedded cover ${index + 1}`
-										: "Uploaded cover"}
-								</option>
-							))}
-						</select>
-					</label>
-					<div className="flex flex-wrap gap-2">
-						{album.artworks.map((artwork, index) => (
-							<button
-								key={artwork.id}
-								type="button"
-								aria-label={`Select cover ${index + 1} for ${album.title}`}
-								onClick={() =>
-									props.onChange({
-										...decision,
-										artworkMode: "selected",
-										artworkId: artwork.id,
-									})
-								}
-								className="rounded border border-border p-1"
-							>
-								<img
-									className="size-20 rounded object-cover"
-									alt={`Cover ${index + 1}`}
-									src={apiClient.getManagedImportArtworkUrl(
-										props.batchId,
-										artwork.id,
-									)}
-								/>
-							</button>
-						))}
-					</div>
+					<ImportCoverPicker
+						batchId={props.batchId}
+						album={album}
+						decision={decision}
+						onChange={props.onChange}
+					/>
 					<label className="text-sm">
-						Upload JPG or PNG (maximum 20 MiB)
+						Upload another cover · JPG or PNG, maximum 20 MiB
 						<input
 							aria-label={`Upload cover for ${album.title}`}
-							className="mt-1 block w-full text-sm"
+							className="mt-2 block w-full min-w-0 rounded-lg border border-input bg-secondary/30 p-2 text-foreground text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:font-medium file:text-secondary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							type="file"
 							accept=".jpg,.jpeg,.png,image/jpeg,image/png"
 							onChange={(event) => {
@@ -215,6 +136,71 @@ function AlbumReview({
 				</p>
 			) : null}
 		</fieldset>
+	);
+}
+
+function AlbumDestination({
+	album,
+	decision,
+	isDisabled,
+	onChange,
+}: {
+	album: ManagedImportAlbumPreview;
+	decision: ManagedImportAlbumDecision;
+	isDisabled: boolean;
+	onChange: Props["onChange"];
+}) {
+	return (
+		<div className="grid gap-2 text-sm">
+			<p className="font-medium text-heading">Album destination</p>
+			{album.existingAlbums.length === 0 ? (
+				<div className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5">
+					<p className="font-medium text-foreground">Create new album</p>
+					<p className="mt-1 text-caption">
+						No library album matches this title and album artist. A new album
+						will be created when you confirm.
+					</p>
+				</div>
+			) : (
+				<>
+					<Select
+						disabled={isDisabled}
+						value={
+							decision.createSeparate ? "separate" : (decision.albumId ?? "")
+						}
+						onValueChange={(value) =>
+							onChange({
+								...decision,
+								createSeparate: value === "separate",
+								albumId: value === "separate" ? undefined : value,
+								artworkMode: value === "separate" ? "auto" : "none",
+								artworkId: undefined,
+							})
+						}
+					>
+						<SelectTrigger
+							aria-label={`Album destination for ${album.title}`}
+							className="w-full bg-secondary/40 text-foreground"
+						>
+							<SelectValue placeholder="Choose an existing album" />
+						</SelectTrigger>
+						<SelectContent position="popper">
+							{album.existingAlbums.map((match) => (
+								<SelectItem key={match.id} value={match.id}>
+									Add to existing album{match.year ? ` (${match.year})` : ""} —{" "}
+									{match.tracks.length} tracks
+								</SelectItem>
+							))}
+							<SelectItem value="separate">Create separate album</SelectItem>
+						</SelectContent>
+					</Select>
+					<p className="text-caption">
+						Matches share this album title and album artist. Create a separate
+						album to keep another edition.
+					</p>
+				</>
+			)}
+		</div>
 	);
 }
 

@@ -8,6 +8,7 @@ mod playback;
 mod playback_app_actions;
 mod playback_lifecycle;
 mod playback_navigation;
+mod playback_restore;
 #[cfg(test)]
 mod playback_test_support;
 mod playback_tray;
@@ -292,6 +293,28 @@ fn desktop_playback_renderer_ready(
 #[tauri::command]
 fn get_desktop_mpv_status() -> playback::MpvStatus {
     playback::probe_mpv_status()
+}
+
+/// External links (Spotify, Last.fm, ...) leave the Desktop Client and open in
+/// the system browser. Only web URLs are accepted so the renderer cannot hand
+/// arbitrary schemes to the operating system.
+#[tauri::command]
+fn desktop_open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let url = validate_external_url(&url)?;
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+fn validate_external_url(raw: &str) -> Result<url::Url, String> {
+    let parsed =
+        url::Url::parse(raw).map_err(|_| "External link is not a valid URL.".to_owned())?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(parsed),
+        scheme => Err(format!("External link scheme '{scheme}' is not allowed.")),
+    }
 }
 
 #[tauri::command]
@@ -810,14 +833,23 @@ fn cover_http_request(
 ) -> Result<HttpRequest, ConnectionError> {
     let path = request.uri().path();
     let segments = path.split('/').collect::<Vec<_>>();
-    let is_cover_path = matches!(
-        segments.as_slice(),
-        ["", "api", "v1", "library", "albums", album_id, "cover"] if !album_id.is_empty()
-    );
+    let is_cover_path = match segments.as_slice() {
+        ["", "api", "v1", "library", "albums", album_id, "cover"] => !album_id.is_empty(),
+        [
+            "",
+            "api",
+            "v1",
+            "import-batches",
+            batch_id,
+            "artwork",
+            artwork_id,
+        ] => !batch_id.is_empty() && !artwork_id.is_empty(),
+        _ => false,
+    };
     if !is_cover_path || !matches!(request.method().as_str(), "GET" | "HEAD") {
         return Err(ConnectionError::new(
             ConnectionErrorCode::InvalidRequest,
-            "Desktop cover protocol only serves album cover GET and HEAD requests.",
+            "Desktop cover protocol only serves album cover and import artwork GET and HEAD requests.",
         ));
     }
     let headers = request
@@ -897,6 +929,7 @@ fn protocol_error_status(code: ConnectionErrorCode) -> u16 {
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .on_window_event(handle_main_window_close)
         .register_asynchronous_uri_scheme_protocol(COVER_PROTOCOL, |context, request, responder| {
             let state = context.app_handle().state::<AppState>();
@@ -918,11 +951,16 @@ pub fn run() -> tauri::Result<()> {
             let store = ConnectionStore::new(config_directory.join(CONNECTION_FILE_NAME));
             let playback_snapshot_store =
                 PlaybackSnapshotStore::new(config_directory.join(PLAYBACK_SNAPSHOT_FILE_NAME));
-            let saved_playback = playback_snapshot_store
-                .load()
-                .map_err(std::io::Error::other)?;
-            let origin = Arc::new(RwLock::new(store.load()?));
+            let saved_origin = store.load()?;
             let bridge = Arc::new(HttpBridge::new()?);
+            let saved_playback =
+                tauri::async_runtime::block_on(playback_restore::load_saved_playback(
+                    &playback_snapshot_store,
+                    &bridge,
+                    saved_origin.as_ref(),
+                ))
+                .map_err(std::io::Error::other)?;
+            let origin = Arc::new(RwLock::new(saved_origin));
             let media_proxy = MediaProxy::start(bridge.clone(), origin.clone())?;
             let saved_playback = saved_playback
                 .map(|snapshot| snapshot.rebind_media_proxy(media_proxy.base_url()))
@@ -1028,6 +1066,7 @@ pub fn run() -> tauri::Result<()> {
             desktop_reconnect_queue_events,
             get_desktop_playback_state,
             get_desktop_mpv_status,
+            desktop_open_external_url,
             desktop_playback_renderer_ready,
             desktop_playback_quit,
             desktop_playback_play,
@@ -1056,7 +1095,16 @@ pub fn run() -> tauri::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cover_http_request, validate_playback_source};
+    use super::{cover_http_request, validate_external_url, validate_playback_source};
+
+    #[test]
+    fn external_links_accept_only_web_urls() {
+        assert!(validate_external_url("https://open.spotify.com/search/x").is_ok());
+        assert!(validate_external_url("http://example.com").is_ok());
+        assert!(validate_external_url("file:///etc/passwd").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("not a url").is_err());
+    }
     use serde_json::json;
 
     #[test]
@@ -1072,6 +1120,44 @@ mod tests {
             forwarded.url,
             "/api/v1/library/albums/album-1/cover?size=large"
         );
+    }
+
+    #[test]
+    fn cover_protocol_allows_import_artwork_get_and_head() {
+        for method in ["GET", "HEAD"] {
+            let request = tauri::http::Request::builder()
+                .method(method)
+                .uri("earthly-media://localhost/api/v1/import-batches/batch-1/artwork/cover-1")
+                .body(Vec::new())
+                .expect("import artwork request");
+            let forwarded = cover_http_request(&request).expect("allowed import artwork");
+            assert_eq!(
+                forwarded.url,
+                "/api/v1/import-batches/batch-1/artwork/cover-1"
+            );
+            assert_eq!(forwarded.method, method);
+        }
+    }
+
+    #[test]
+    fn cover_protocol_rejects_import_mutations_and_unrelated_paths() {
+        for (method, path) in [
+            ("PUT", "/api/v1/import-batches/batch-1/artwork/cover-1"),
+            ("GET", "/api/v1/import-batches/batch-1"),
+            ("GET", "/api/v1/import-batches//artwork/cover-1"),
+            ("GET", "/api/v1/import-batches/batch-1/artwork/"),
+            (
+                "GET",
+                "/api/v1/import-batches/batch-1/artwork/cover-1/extra",
+            ),
+        ] {
+            let request = tauri::http::Request::builder()
+                .method(method)
+                .uri(format!("earthly-media://localhost{path}"))
+                .body(Vec::new())
+                .expect("invalid import artwork request");
+            assert!(cover_http_request(&request).is_err(), "{method} {path}");
+        }
     }
 
     #[test]
