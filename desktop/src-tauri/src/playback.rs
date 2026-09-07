@@ -1794,7 +1794,7 @@ impl PlaybackController {
         sources: Vec<Value>,
         current_index: Option<usize>,
     ) -> Result<PlaybackSessionState, PlaybackCommandError> {
-        let is_shuffle_enabled = self.state()?.shuffle_enabled;
+        let state = self.state()?;
         let mut queue = self
             .queue
             .lock()
@@ -1802,7 +1802,17 @@ impl PlaybackController {
         queue
             .sync(sources, current_index)
             .map_err(PlaybackCommandError::new)?;
-        if is_shuffle_enabled {
+        if let Some(source) = state
+            .source
+            .as_ref()
+            .filter(|source| source["type"] == "track")
+        {
+            // A reattached renderer may not know the native session's current Queue position.
+            queue
+                .align_to_source(source)
+                .map_err(PlaybackCommandError::new)?;
+        }
+        if state.shuffle_enabled {
             queue.shuffle().map_err(PlaybackCommandError::new)?;
         }
         drop(queue);
@@ -6209,6 +6219,41 @@ mod tests {
         assert_eq!(
             loaded_url.lock().expect("loaded URL").as_deref(),
             Some("http://127.0.0.1/token/api/v1/tracks/track-2/stream")
+        );
+    }
+
+    #[test]
+    fn native_next_uses_active_source_after_renderer_queue_sync() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let controller = PlaybackController::start(
+            Box::new(FakeMpvProcess {
+                loaded_url: Arc::new(Mutex::new(None)),
+                is_shutdown: Arc::new(AtomicBool::new(false)),
+                load_error: None,
+            }),
+            event_receiver,
+            |_| {},
+        );
+        let sources = queue_sources();
+        controller
+            .play(Some(sources[0].clone()))
+            .expect("restore active Track");
+        controller
+            .sync_queue_context(sources.clone(), None)
+            .expect("renderer attaches Queue");
+        assert_eq!(
+            controller.next().expect("next Track after reopen").source,
+            Some(sources[1].clone())
+        );
+        controller
+            .sync_queue_context(sources.clone(), Some(0))
+            .expect("renderer sends stale index");
+        assert_eq!(
+            controller
+                .next()
+                .expect("next Track after stale sync")
+                .source,
+            Some(sources[2].clone())
         );
     }
 
