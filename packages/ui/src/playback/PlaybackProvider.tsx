@@ -172,12 +172,15 @@ export function PlaybackProvider({
 	api,
 	engine,
 	autoSkipOnErrorSeconds = 5,
+	shouldCoordinateQueue = true,
 }: {
 	children: ReactNode;
 	api: PlaybackApi;
 	engine: PlaybackEngine;
 	/** Countdown before a failed Track is skipped; 0 waits for the user. */
 	autoSkipOnErrorSeconds?: number;
+	/** Only the main desktop window coordinates the native queue. */
+	shouldCoordinateQueue?: boolean;
 }) {
 	const apiRef = useRef(api);
 	const {
@@ -281,7 +284,7 @@ export function PlaybackProvider({
 	}, [engine, playQueueItemInternal]);
 
 	useEffect(() => {
-		if (!engine.syncQueueContext) return;
+		if (!shouldCoordinateQueue || !engine.syncQueueContext) return;
 		const currentIndex = queue.findIndex(
 			(item) => item.id === currentQueueItemIdRef.current,
 		);
@@ -293,7 +296,7 @@ export function PlaybackProvider({
 			.catch((error) => {
 				console.warn("Failed to sync native playback Queue context", { error });
 			});
-	}, [engine, queue]);
+	}, [engine, queue, shouldCoordinateQueue]);
 
 	const playTrackInternal = useCallback(
 		async (trackId: string, queueOverride?: QueueItem[]) => {
@@ -319,6 +322,7 @@ export function PlaybackProvider({
 	}, [queue, session.source]);
 
 	useEffect(() => {
+		if (!shouldCoordinateQueue) return;
 		if (session.repeatMode === "off") {
 			repeatCancellationRequestedModeRef.current = null;
 			return;
@@ -331,7 +335,13 @@ export function PlaybackProvider({
 			return;
 		repeatCancellationRequestedModeRef.current = session.repeatMode;
 		engine.cycleRepeatMode();
-	}, [engine, queue.length, session.repeatMode, session.source]);
+	}, [
+		engine,
+		queue.length,
+		session.repeatMode,
+		session.source,
+		shouldCoordinateQueue,
+	]);
 
 	const advanceToNextQueueItem = useCallback(() => {
 		const index = queueRef.current.findIndex(
@@ -352,6 +362,7 @@ export function PlaybackProvider({
 		if (session.status !== "ended" || session.source?.type !== "track") return;
 		if (session.stopAfterCurrent) {
 			// Sleep timer "after this track": stay on the ended Track and disarm.
+			engine.stop();
 			engine.setStopAfterCurrent?.(false);
 			return;
 		}
@@ -407,7 +418,9 @@ export function PlaybackProvider({
 		let cancelled = false;
 		setErrorCause(null);
 		setCountdownSeconds(
-			autoSkipOnErrorSeconds > 0 ? autoSkipOnErrorSeconds : null,
+			shouldCoordinateQueue && autoSkipOnErrorSeconds > 0
+				? autoSkipOnErrorSeconds
+				: null,
 		);
 		const probe = apiRef.current.headTrackStream;
 		if (!probe) {
@@ -425,7 +438,7 @@ export function PlaybackProvider({
 		return () => {
 			cancelled = true;
 		};
-	}, [autoSkipOnErrorSeconds, failedTrackId]);
+	}, [autoSkipOnErrorSeconds, failedTrackId, shouldCoordinateQueue]);
 
 	useEffect(() => {
 		if (countdownSeconds === null || !failedTrackId) return undefined;
@@ -550,22 +563,21 @@ export function PlaybackProvider({
 
 	const playNext = useCallback(
 		async (trackId: string) => {
-			const trackIds = queueRef.current
-				.map((item) => item.track.id)
-				.filter((id) => id !== trackId);
-			const currentIndex = currentTrack
-				? queueRef.current.findIndex(
-						(item) => item.track.id === currentTrack.id,
-					)
-				: -1;
-			trackIds.splice(
-				currentIndex >= 0 ? currentIndex + 1 : trackIds.length,
-				0,
-				trackId,
+			const data = await appendQueueItem(trackId);
+			const itemIds = data.items.map((item) => item.id);
+			const appendedItemId = itemIds.pop();
+			if (!appendedItemId) return;
+			const currentIndex = itemIds.findIndex(
+				(itemId) => itemId === currentQueueItemIdRef.current,
 			);
-			await replaceQueue(trackIds);
+			itemIds.splice(
+				currentIndex >= 0 ? currentIndex + 1 : itemIds.length,
+				0,
+				appendedItemId,
+			);
+			await reorderQueue(itemIds);
 		},
-		[currentTrack, replaceQueue],
+		[appendQueueItem, reorderQueue],
 	);
 
 	const clearQueue = useCallback(async () => {

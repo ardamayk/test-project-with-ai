@@ -132,10 +132,49 @@ describe("BrowserPlaybackEngine", () => {
 		handlers.get("previoustrack")?.({ action: "previoustrack" });
 		expect(navigations).toEqual(["next", "previous"]);
 
+		handlers.get("stop")?.({ action: "stop" });
+		expect(engine.getState().source).toBeNull();
+		expect(session.metadata).toBeNull();
+		expect(session.playbackState).toBe("none");
+		expect(positions.at(-1)).toBeUndefined();
+
 		engine.destroy();
 		expect(handlers.get("play")).toBeNull();
 		expect(session.metadata).toBeNull();
 		vi.unstubAllGlobals();
+	});
+
+	it.each([
+		"off",
+		"once",
+		"loop",
+	] as const)("consumes stop-after-current without queue advancement or repetition in %s repeat mode", async (repeatMode) => {
+		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
+		await engine.play(trackSource);
+		while (engine.getState().repeatMode !== repeatMode) {
+			engine.cycleRepeatMode();
+		}
+		engine.setStopAfterCurrent(true);
+		const listener = vi.fn();
+		engine.subscribe(listener);
+		media.currentTime = 120;
+		media.dispatchEvent(new Event("timeupdate"));
+		listener.mockClear();
+		media.paused = true;
+
+		media.dispatchEvent(new Event("ended"));
+
+		expect(listener).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({
+				status: "paused",
+				stopAfterCurrent: false,
+				source: trackSource,
+				currentTime: 120,
+				repeatMode,
+			}),
+		);
+		expect(media.play).toHaveBeenCalledOnce();
+		engine.destroy();
 	});
 
 	it("publishes the buffered range end on progress events", async () => {

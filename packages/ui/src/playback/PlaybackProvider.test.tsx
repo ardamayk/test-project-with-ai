@@ -159,6 +159,9 @@ function Harness() {
 			>
 				Wait
 			</button>
+			<button type="button" onClick={() => void playback.playNext(track.id)}>
+				Play next
+			</button>
 			<button type="button" onClick={() => void playback.playTrack(track.id)}>
 				Track
 			</button>
@@ -455,6 +458,75 @@ describe("PlaybackProvider", () => {
 		});
 		expect(screen.getByTestId("volume").textContent).toBe("0.3");
 		expect(screen.getByTestId("repeat").textContent).toBe("once");
+	});
+
+	it("inserts a duplicate after the playing entry without replacing item identities", async () => {
+		const api = createApi();
+		const appended = [
+			...queueItems,
+			{ ...queueItems[0], id: "new-item", position: 2 },
+		];
+		api.appendQueueItem = vi.fn(async () => ({
+			items: appended,
+			revision: "2",
+		}));
+		api.reorderQueue = vi.fn(async (ids: string[]) => ({
+			items: ids.map((id, position) => {
+				const item = appended.find((item) => item.id === id);
+				if (!item) throw new Error(`Unknown queue item: ${id}`);
+				return { ...item, position };
+			}),
+			revision: "3",
+		}));
+		const { engine } = renderPlayback(api);
+		await act(async () =>
+			screen.getByRole("button", { name: /^Track$/ }).click(),
+		);
+		await act(async () =>
+			screen.getByRole("button", { name: /^Play next$/ }).click(),
+		);
+		expect(api.replaceQueue).not.toHaveBeenCalled();
+		expect(api.reorderQueue).toHaveBeenCalledWith(
+			["item-1", "new-item", "item-2"],
+			"2",
+		);
+		expect(engine.getState().source).toMatchObject({ queueItemId: "item-1" });
+		await act(async () => engine.finish());
+		expect(engine.getState().source).toMatchObject({ queueItemId: "new-item" });
+	});
+
+	it("does not coordinate queue, repeat, or error skipping from an observer window", async () => {
+		const engine = new InMemoryPlaybackEngine();
+		await engine.play({
+			type: "track",
+			track,
+			playbackUrl: "/stream/track-1",
+			queueItemId: "item-1",
+		});
+		engine.cycleRepeatMode();
+		const cycleRepeatMode = vi.spyOn(engine, "cycleRepeatMode");
+		const next = vi.spyOn(engine, "next");
+		const syncQueueContext = vi.fn(async () => {});
+		Object.assign(engine, { syncQueueContext });
+		render(
+			<PlaybackProvider
+				api={createApi()}
+				engine={engine}
+				shouldCoordinateQueue={false}
+			>
+				<Harness />
+			</PlaybackProvider>,
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("queue").textContent).toBe("track-1,track-2"),
+		);
+		expect(syncQueueContext).not.toHaveBeenCalled();
+		expect(cycleRepeatMode).not.toHaveBeenCalled();
+		await act(async () =>
+			engine.fail({ code: "playback-failed", message: "Playback failed" }),
+		);
+		expect(screen.getByTestId("error-countdown").textContent).toBe("");
+		expect(next).not.toHaveBeenCalled();
 	});
 
 	it("advances Queue after engine reports Track ended", async () => {

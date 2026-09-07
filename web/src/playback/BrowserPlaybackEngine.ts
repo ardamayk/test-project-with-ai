@@ -340,6 +340,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	private syncMediaSession() {
 		const session = this.mediaSession;
 		if (!session) return;
+		if (!this.state.source) session.metadata = null;
 		session.playbackState =
 			this.state.status === "playing" || this.state.status === "reconnecting"
 				? "playing"
@@ -411,6 +412,11 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 	private readonly handleEnded = () => {
 		if (isLiveSource(this.state.source) && this.hasStartedLivePlayback) {
 			this.scheduleLiveReconnect();
+			return;
+		}
+		if (this.state.stopAfterCurrent) {
+			// Consume the timer without publishing an end that advances the queue.
+			this.update({ status: "paused", stopAfterCurrent: false });
 			return;
 		}
 		if (this.state.repeatMode === "once" || this.state.repeatMode === "loop") {

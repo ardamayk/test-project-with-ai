@@ -141,6 +141,7 @@ function ConnectedRootLayout() {
 				<PlaybackProvider
 					api={playbackApi}
 					engine={playbackEngine}
+					shouldCoordinateQueue={!isMiniPlayer}
 					autoSkipOnErrorSeconds={
 						// Older servers answer without a playback section.
 						initial.playback?.autoSkipOnErrorSeconds ??
