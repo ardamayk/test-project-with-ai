@@ -77,10 +77,12 @@ fn renderer_capability_grants_only_core_event_permissions() {
             );
         }
     }
+    // The mini player is a second app-bundled window under the same CSP; it
+    // gets the same minimal renderer permissions and nothing more.
     assert_eq!(
         capabilities["windows"],
-        serde_json::json!(["main"]),
-        "capability must target only the main window"
+        serde_json::json!(["main", "mini"]),
+        "capability must target only the app's own windows"
     );
     assert!(
         capabilities.get("remote").is_none(),

@@ -18,6 +18,7 @@ pub(crate) enum DesktopPlaybackAction {
     SeekTo(f64),
     /// Software volume in 0..=1, from the MPRIS Volume property.
     SetVolume(f64),
+    ToggleMiniPlayer,
     Quit,
 }
 
@@ -28,6 +29,9 @@ pub(crate) trait DesktopPlaybackShell {
     /// playback controller alone cannot persist it.
     fn set_software_volume(&self, _volume: f64) -> Result<(), String> {
         Err("Volume control is unavailable from this shell.".to_owned())
+    }
+    fn toggle_mini_window(&self) -> Result<(), String> {
+        Err("The mini player is unavailable from this shell.".to_owned())
     }
     fn exit(&self);
 }
@@ -53,6 +57,9 @@ pub(crate) fn dispatch_desktop_playback_action(
         DesktopPlaybackAction::SeekTo(seconds) => playback.seek(seconds.max(0.0)).map(|_| ()),
         DesktopPlaybackAction::SetVolume(volume) => shell
             .set_software_volume(volume.clamp(0.0, 1.0))
+            .map_err(PlaybackCommandError::new),
+        DesktopPlaybackAction::ToggleMiniPlayer => shell
+            .toggle_mini_window()
             .map_err(PlaybackCommandError::new),
         DesktopPlaybackAction::Quit => quit(playback, lifecycle, snapshot_store, shell),
     }

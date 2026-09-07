@@ -3,6 +3,7 @@ pub mod connection;
 pub mod desktop_import;
 mod exclusive_output;
 pub mod media_proxy;
+pub mod mini_window;
 mod mpris;
 pub mod output_device;
 mod playback;
@@ -29,6 +30,7 @@ use desktop_import::{
     SUPPORTED_EXTENSIONS, upload_selection,
 };
 use media_proxy::MediaProxy;
+use mini_window::MiniWindowStore;
 use mpris::MprisBridge;
 use output_device::{
     ActiveOutputError, ActiveOutputResolver, CommandPipeWireActiveOutputResolver, OutputDevice,
@@ -41,8 +43,8 @@ use playback_app_actions::{
 };
 use playback_lifecycle::{PlaybackLifecycle, PlaybackSnapshotStore};
 use playback_tray::{
-    PlaybackPosition, PlaybackTray, PlaybackTrayView, TRAY_NEXT_ID, TRAY_OPEN_ID, TRAY_PREVIOUS_ID,
-    TRAY_QUIT_ID, TRAY_TOGGLE_ID,
+    PlaybackPosition, PlaybackTray, PlaybackTrayView, TRAY_MINI_ID, TRAY_NEXT_ID, TRAY_OPEN_ID,
+    TRAY_PREVIOUS_ID, TRAY_QUIT_ID, TRAY_TOGGLE_ID,
 };
 use processing::{
     EqualizerPreset, FileProcessingSettingsStorage, OutputMode, ProcessingController,
@@ -61,6 +63,7 @@ const CONNECTION_FILE_NAME: &str = "server-connection.json";
 const PLAYBACK_SNAPSHOT_FILE_NAME: &str = "playback-session.json";
 const PROCESSING_SETTINGS_FILE_NAME: &str = "processing-settings.json";
 const ADAPTIVE_CLEANUP_MARKER_FILE_NAME: &str = "adaptive-system-rate.cleanup-required";
+const MINI_WINDOW_FILE_NAME: &str = "mini-window.json";
 const PLAYBACK_STATE_EVENT: &str = "desktop-playback-state";
 const CONNECTION_CHANGED_EVENT: &str = "server-connection-changed";
 const QUEUE_EVENTS_ERROR_EVENT: &str = "desktop-queue-events-error";
@@ -90,6 +93,7 @@ struct AppState {
     media_proxy: MediaProxy,
     queue_events: QueueEventService,
     import_selections: ImportSelectionStore,
+    mini_window_store: MiniWindowStore,
 }
 
 #[derive(Clone, Serialize)]
@@ -398,6 +402,38 @@ fn desktop_playback_seek(
     seconds: f64,
 ) -> Result<PlaybackSessionState, PlaybackCommandError> {
     state.playback.seek(seconds)
+}
+
+#[tauri::command]
+fn desktop_open_mini_player(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    mini_window::open(&app, &state.mini_window_store).map_err(PlaybackCommandError::new)
+}
+
+#[tauri::command]
+fn desktop_close_mini_player(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    mini_window::close(&app, &state.mini_window_store).map_err(PlaybackCommandError::new)
+}
+
+#[tauri::command]
+fn desktop_toggle_mini_player(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    mini_window::toggle(&app, &state.mini_window_store).map_err(PlaybackCommandError::new)
+}
+
+#[tauri::command]
+fn desktop_show_main_window(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), PlaybackCommandError> {
+    dispatch_application_action(&app, &state, DesktopPlaybackAction::OpenMainWindow)
 }
 
 #[tauri::command]
@@ -860,6 +896,7 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, id: &str) {
         TRAY_TOGGLE_ID => DesktopPlaybackAction::TogglePlay,
         TRAY_PREVIOUS_ID => DesktopPlaybackAction::Previous,
         TRAY_NEXT_ID => DesktopPlaybackAction::Next,
+        TRAY_MINI_ID => DesktopPlaybackAction::ToggleMiniPlayer,
         TRAY_QUIT_ID => DesktopPlaybackAction::Quit,
         _ => return,
     };
@@ -926,6 +963,14 @@ impl DesktopPlaybackShell for TauriDesktopPlaybackShell<'_> {
         update_processing(&state, |processing| processing.set_software_volume(volume))
             .map(|_| ())
             .map_err(|error| error.message)
+    }
+
+    fn toggle_mini_window(&self) -> Result<(), String> {
+        let state = self
+            .app
+            .try_state::<AppState>()
+            .ok_or_else(|| "Desktop playback state is unavailable.".to_owned())?;
+        mini_window::toggle(self.app, &state.mini_window_store)
     }
 
     fn hide_main_window(&self) -> Result<(), String> {
@@ -1187,6 +1232,9 @@ pub fn run() -> tauri::Result<()> {
                 media_proxy,
                 queue_events,
                 import_selections: ImportSelectionStore::default(),
+                mini_window_store: MiniWindowStore::new(
+                    config_directory.join(MINI_WINDOW_FILE_NAME),
+                ),
             });
             Ok(())
         })
@@ -1216,6 +1264,10 @@ pub fn run() -> tauri::Result<()> {
             desktop_playback_next,
             desktop_playback_seek,
             desktop_playback_set_volume,
+            desktop_open_mini_player,
+            desktop_close_mini_player,
+            desktop_toggle_mini_player,
+            desktop_show_main_window,
             desktop_playback_set_playback_rate,
             desktop_playback_set_stop_after_current,
             desktop_playback_set_transition_fade,

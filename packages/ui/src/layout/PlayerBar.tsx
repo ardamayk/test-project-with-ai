@@ -121,6 +121,7 @@ export function PlayerBar({
 	onToggleFavorite,
 	isCurrentStationFavorite = false,
 	onToggleStationFavorite,
+	onToggleMiniPlayer,
 }: {
 	onPlaylistMutated?: () => void;
 	/** Favorite state of the current Track; the host app owns the Favorites playlist. */
@@ -129,6 +130,8 @@ export function PlayerBar({
 	/** Favorite state of the current saved Radio Station; previews are never favorites. */
 	isCurrentStationFavorite?: boolean;
 	onToggleStationFavorite?: (stationId: string, isFavorite: boolean) => void;
+	/** Desktop only: opens or closes the always-on-top mini player window. */
+	onToggleMiniPlayer?: () => void;
 } = {}) {
 	const navigate = useNavigate();
 	const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -239,6 +242,7 @@ export function PlayerBar({
 			toggleLyrics,
 			toggleQueue,
 			toggleHelp,
+			toggleMiniPlayer: onToggleMiniPlayer,
 		},
 		{
 			seekStepSeconds: playbackPreferences.seekStepSeconds,
@@ -870,6 +874,7 @@ export function PlayerBar({
 					onToggleQueue={toggleQueue}
 					onOpenLyrics={currentTrack ? () => setLyricsOpen(true) : undefined}
 					onOpenHelp={() => setHelpOpen(true)}
+					onToggleMiniPlayer={onToggleMiniPlayer}
 					onVolumeChange={setVolume}
 				/>
 			</div>

@@ -7,7 +7,7 @@ export {
 	usePlaybackPreferences,
 } from "./LayoutProvider";
 export { LyricsOverlay } from "./LyricsOverlay";
-export { MiniPlayer } from "./MiniPlayer";
+export { MiniPlayerWindow } from "./MiniPlayerWindow";
 export { NowPlayingView } from "./NowPlayingView";
 export { PlaybackErrorBanner } from "./PlaybackErrorBanner";
 export { PlaybackSignal } from "./PlaybackSignal";
@@ -16,6 +16,7 @@ export { QueuePanel } from "./QueuePanel";
 export { SeekBar } from "./SeekBar";
 export { ShortcutHelpOverlay } from "./ShortcutHelpOverlay";
 export { SidebarNav } from "./SidebarNav";
+export { SidebarNowPlayingButton } from "./SidebarNowPlayingButton";
 export { Panel, Slot } from "./Slot";
 export { Toaster } from "./Toaster";
 export { UpNextPeek } from "./UpNextPeek";

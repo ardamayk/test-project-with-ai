@@ -9,6 +9,7 @@ use tauri::{AppHandle, Wry};
 /// D-Bus tray hosts are only told this often.
 const TOOLTIP_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
+pub(crate) const TRAY_MINI_ID: &str = "playback-mini";
 pub(crate) const TRAY_NEXT_ID: &str = "playback-next";
 pub(crate) const TRAY_OPEN_ID: &str = "playback-open";
 pub(crate) const TRAY_PREVIOUS_ID: &str = "playback-previous";
@@ -68,11 +69,14 @@ impl PlaybackTray {
         let toggle = menu_item(app, TRAY_TOGGLE_ID, view.toggle_label, false)?;
         let next = menu_item(app, TRAY_NEXT_ID, view.next_label, false)?;
         let open = menu_item(app, TRAY_OPEN_ID, view.open_label, true)?;
+        let mini = menu_item(app, TRAY_MINI_ID, view.mini_label, true)?;
         let quit = menu_item(app, TRAY_QUIT_ID, view.quit_label, true)?;
         let separator = PredefinedMenuItem::separator(app)?;
         let menu = Menu::with_items(
             app,
-            &[&source, &previous, &toggle, &next, &separator, &open, &quit],
+            &[
+                &source, &previous, &toggle, &next, &separator, &open, &mini, &quit,
+            ],
         )?;
         let mut builder = TrayIconBuilder::with_id("earthly-audio-playback").menu(&menu);
         if let Some(icon) = app.default_window_icon() {
@@ -151,6 +155,7 @@ pub(crate) struct PlaybackTrayView {
     pub(crate) toggle_label: &'static str,
     pub(crate) next_label: &'static str,
     pub(crate) open_label: &'static str,
+    pub(crate) mini_label: &'static str,
     pub(crate) quit_label: &'static str,
 }
 
@@ -168,6 +173,7 @@ impl PlaybackTrayView {
             toggle_label: if is_playing { "Pause" } else { "Play" },
             next_label: "Next",
             open_label: "Open Earthly Audio",
+            mini_label: "Mini player",
             quit_label: "Quit Earthly Audio",
         }
     }

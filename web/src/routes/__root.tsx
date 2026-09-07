@@ -11,14 +11,21 @@ import {
 } from "@repo/ui";
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
+import {
+	createRootRouteWithContext,
+	Outlet,
+	useRouterState,
+} from "@tanstack/react-router";
 import { ImportSessionProvider } from "#/components/import-session-provider";
 import { RootErrorComponent } from "#/components/root-error";
 import { ThemeSync } from "#/components/theme-sync";
+import { isDesktopClient } from "#/desktop/bridge";
 import { DesktopConnectionGate } from "#/desktop/DesktopConnectionGate";
+import { toggleMiniPlayer } from "#/desktop/mini-player-bridge";
 import { useFavoriteRadioStations } from "#/hooks/use-favorite-radio-stations";
 import { useFavoriteTracks } from "#/hooks/use-favorite-tracks";
 import { apiClient } from "#/lib/api";
+import { isMiniPlayerRoute } from "#/lib/mini-player-route";
 import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
 import { getSharedPlaybackEngine } from "#/playback/shared-playback-engine";
 
@@ -78,6 +85,9 @@ function PlayerBarWithSync() {
 				currentRadioStation ? isStationFavorite(currentRadioStation.id) : false
 			}
 			onToggleStationFavorite={toggleStationFavorite}
+			onToggleMiniPlayer={
+				isDesktopClient() ? () => void toggleMiniPlayer() : undefined
+			}
 		/>
 	);
 }
@@ -93,6 +103,9 @@ function RootLayout() {
 function ConnectedRootLayout() {
 	const queryClient = useQueryClient();
 	const playbackEngine = getSharedPlaybackEngine();
+	const isMiniPlayer = useRouterState({
+		select: (state) => isMiniPlayerRoute(state.location.pathname),
+	});
 	const preferences = useQuery({
 		queryKey: ["preferences"],
 		queryFn: () => apiClient.getPreferences(),
@@ -129,11 +142,16 @@ function ConnectedRootLayout() {
 						defaultPlayback.autoSkipOnErrorSeconds
 					}
 				>
-					<ImportSessionProvider>
-						<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
-							<Outlet />
-						</AppShell>
-					</ImportSessionProvider>
+					{isMiniPlayer ? (
+						// The mini player window renders only the compact player.
+						<Outlet />
+					) : (
+						<ImportSessionProvider>
+							<AppShell sidebar={<SidebarNav />} bottom={<PlayerBarWithSync />}>
+								<Outlet />
+							</AppShell>
+						</ImportSessionProvider>
+					)}
 				</PlaybackProvider>
 			</div>
 		</LayoutProvider>

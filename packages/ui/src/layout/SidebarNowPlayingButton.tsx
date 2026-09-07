@@ -1,7 +1,7 @@
 import { cn } from "../lib/utils";
 import { usePlayback } from "../playback/PlaybackProvider";
 
-export function MiniPlayer() {
+export function SidebarNowPlayingButton() {
 	const { currentTrack, isPlaying, togglePlay } = usePlayback();
 
 	return (
