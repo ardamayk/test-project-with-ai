@@ -142,12 +142,11 @@ async function findTrack(
 	return track as TrackSummary;
 }
 
-async function gotoTracks(page: Page, search = RUN_ID): Promise<void> {
+async function gotoTracks(page: Page): Promise<void> {
 	await page.goto("/library/tracks");
 	await expect(page.getByRole("heading", { name: "Tracks" })).toBeVisible({
 		timeout: 15_000,
 	});
-	await page.getByPlaceholder("Search tracks…").fill(search);
 }
 
 function trackRow(page: Page, title: string): Locator {
@@ -203,7 +202,7 @@ test("Tracks plus action imports a mixed valid and invalid batch through preview
 }) => {
 	const stagingBefore = new Set(stagingFiles());
 	await gotoTracks(page);
-	await expect(page.getByText("No tracks match this search.")).toBeVisible();
+	await expect(trackRow(page, ALPHA)).toHaveCount(0);
 
 	// Slow the first upload down so the live region and progress bar are
 	// observable, then let the real request through.
@@ -436,7 +435,6 @@ test("committed Tracks appear in library views and stream bit-for-bit", async ({
 	}
 
 	await page.goto("/library/albums");
-	await page.getByPlaceholder("Search albums...").fill(RUN_ID);
 	await expect(
 		page.getByRole("link").filter({ hasText: ALBUM }).first(),
 	).toBeVisible({ timeout: 15_000 });
@@ -578,7 +576,6 @@ test("Album deletion previews and permanently deletes every remaining Track", as
 	}
 
 	await page.goto("/library/albums");
-	await page.getByPlaceholder("Search albums...").fill(RUN_ID);
 	const albumCard = page.getByRole("link").filter({ hasText: ALBUM }).first();
 	await expect(albumCard).toBeVisible({ timeout: 15_000 });
 	await albumCard.click({ button: "right" });
