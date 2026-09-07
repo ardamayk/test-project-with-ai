@@ -90,6 +90,7 @@ type PlaybackContextValue = {
 	isReconnecting: boolean;
 	currentTime: number;
 	duration: number;
+	bufferedEnd: number | null;
 	volume: number;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
@@ -461,6 +462,7 @@ export function PlaybackProvider({
 			isReconnecting: session.status === "reconnecting",
 			currentTime: session.currentTime,
 			duration: session.duration,
+			bufferedEnd: session.bufferedEnd ?? null,
 			volume: session.volume,
 			shuffleEnabled: session.shuffleEnabled,
 			repeatMode: session.repeatMode,

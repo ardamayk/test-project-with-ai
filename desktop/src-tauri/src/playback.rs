@@ -104,6 +104,9 @@ pub(crate) struct PlaybackSessionState {
     pub(crate) status: PlaybackStatus,
     pub(crate) current_time: f64,
     pub(crate) duration: f64,
+    /// Seconds of audio the demuxer has ahead of the playhead, when known.
+    #[serde(default)]
+    pub(crate) buffered_end: Option<f64>,
     volume: f64,
     shuffle_enabled: bool,
     repeat_mode: RepeatMode,
@@ -147,6 +150,7 @@ impl Default for PlaybackSessionState {
             status: PlaybackStatus::Idle,
             current_time: 0.0,
             duration: 0.0,
+            buffered_end: None,
             volume: DEFAULT_VOLUME,
             shuffle_enabled: false,
             repeat_mode: RepeatMode::Off,
@@ -182,6 +186,8 @@ pub(crate) enum MpvEvent {
     LoadBoundary(u64),
     Time(f64),
     Duration(f64),
+    /// `demuxer-cache-time`: absolute position the demuxer has read up to.
+    BufferedEnd(f64),
     Paused(bool),
     Decoder(ObservedMpvProperties),
     Ended,
@@ -283,7 +289,8 @@ impl RealMpvProcess {
         self.command(json!(["observe_property", 1, "time-pos"]))?;
         self.command(json!(["observe_property", 2, "duration"]))?;
         self.command(json!(["observe_property", 3, "pause"]))?;
-        self.command(json!(["observe_property", 4, "audio-params"]))
+        self.command(json!(["observe_property", 4, "audio-params"]))?;
+        self.command(json!(["observe_property", 5, "demuxer-cache-time"]))
             .map(|_| ())
     }
 
@@ -880,6 +887,10 @@ fn property_event(message: &Value) -> Option<MpvEvent> {
             .get("data")
             .and_then(Value::as_f64)
             .map(MpvEvent::Duration),
+        Some("demuxer-cache-time") => message
+            .get("data")
+            .and_then(Value::as_f64)
+            .map(MpvEvent::BufferedEnd),
         Some("pause") => message
             .get("data")
             .and_then(Value::as_bool)
@@ -1332,6 +1343,7 @@ impl PlaybackController {
                 effective_replay_gain_mode(state.processing.replay_gain_mode, None);
             state.status = PlaybackStatus::Idle;
             state.current_time = 0.0;
+            state.buffered_end = None;
             state.duration = 0.0;
             state.error = None;
             state.telemetry = telemetry_for_output_mode(
@@ -2874,6 +2886,9 @@ fn reduce_mpv_event(
         MpvEvent::Duration(value) if value.is_finite() && value > 0.0 => {
             update_shared_state(state, |state| state.duration = value)
         }
+        MpvEvent::BufferedEnd(value) if value.is_finite() && value >= 0.0 => {
+            update_shared_state(state, |state| state.buffered_end = Some(value))
+        }
         MpvEvent::Paused(is_paused) => update_paused_state(state, is_paused),
         MpvEvent::Decoder(decoder) => {
             update_decoder_telemetry(process, state, decoder, path_observer)
@@ -2883,7 +2898,8 @@ fn reduce_mpv_event(
         MpvEvent::LoadBoundary(_)
         | MpvEvent::ExitedUnexpectedly(_)
         | MpvEvent::Time(_)
-        | MpvEvent::Duration(_) => {
+        | MpvEvent::Duration(_)
+        | MpvEvent::BufferedEnd(_) => {
             return Ok(None);
         }
     };
@@ -3198,6 +3214,7 @@ fn repeat_current_source(
     }
     update_shared_state(state, |state| {
         state.current_time = 0.0;
+        state.buffered_end = None;
         state.status = PlaybackStatus::Playing;
         state.repeat_mode = RepeatMode::Off;
     })
@@ -3359,6 +3376,7 @@ fn set_playing_source(
     state.source = Some(source);
     state.status = PlaybackStatus::Playing;
     state.current_time = 0.0;
+    state.buffered_end = None;
     state.error = None;
 }
 

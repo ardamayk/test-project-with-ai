@@ -134,6 +134,7 @@ export function PlayerBar({
 	const [newPlaylistName, setNewPlaylistName] = useState("");
 	const { preferences, togglePanel } = useLayout();
 	const queuePanelSide = getQueuePanel(preferences.layout.sidebarPosition);
+	const playbackPreferences = preferences.playback;
 	const {
 		outputMode,
 		outputDeviceIssue,
@@ -144,6 +145,7 @@ export function PlayerBar({
 		isReconnecting,
 		currentTime,
 		duration,
+		bufferedEnd,
 		volume,
 		shuffleEnabled,
 		repeatMode,
@@ -187,17 +189,23 @@ export function PlayerBar({
 		[togglePanel, queuePanelSide],
 	);
 	const toggleHelp = useCallback(() => setHelpOpen((open) => !open), []);
-	usePlaybackKeyboardShortcuts({
-		togglePlay,
-		navigatePrevious,
-		navigateNext,
-		seekBy,
-		adjustVolume,
-		toggleMute,
-		toggleLyrics,
-		toggleQueue,
-		toggleHelp,
-	});
+	usePlaybackKeyboardShortcuts(
+		{
+			togglePlay,
+			navigatePrevious,
+			navigateNext,
+			seekBy,
+			adjustVolume,
+			toggleMute,
+			toggleLyrics,
+			toggleQueue,
+			toggleHelp,
+		},
+		{
+			seekStepSeconds: playbackPreferences.seekStepSeconds,
+			seekStepLargeSeconds: playbackPreferences.seekStepLargeSeconds,
+		},
+	);
 	const {
 		listPlaylists,
 		getPlaylist,
@@ -653,6 +661,8 @@ export function PlayerBar({
 					hasCurrentTrack={Boolean(currentTrack)}
 					currentTime={currentTime}
 					effectiveDuration={effectiveDuration}
+					bufferedEnd={bufferedEnd}
+					showHoverTimestamp={playbackPreferences.hoverTimestamp}
 					shuffleEnabled={shuffleEnabled}
 					repeatMode={repeatMode}
 					onTogglePlay={togglePlay}
@@ -703,7 +713,13 @@ export function PlayerBar({
 				/>
 			) : null}
 			{helpOpen ? (
-				<ShortcutHelpOverlay onClose={() => setHelpOpen(false)} />
+				<ShortcutHelpOverlay
+					options={{
+						seekStepSeconds: playbackPreferences.seekStepSeconds,
+						seekStepLargeSeconds: playbackPreferences.seekStepLargeSeconds,
+					}}
+					onClose={() => setHelpOpen(false)}
+				/>
 			) : null}
 			{infoOpen && currentTrack ? (
 				<TrackInfoDialog

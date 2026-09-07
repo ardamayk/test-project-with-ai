@@ -28,6 +28,7 @@ import {
 	type QualityDetailRow,
 	QualityDetailsCard,
 } from "./QualityDetailsCard";
+import { SeekBar } from "./SeekBar";
 
 const CONTROL_BUTTON_CLASS =
 	"inline-flex size-6 items-center justify-center rounded text-player-foreground hover:text-[var(--player-control-primary)] disabled:opacity-40";
@@ -36,6 +37,7 @@ const CONTROL_ICON_CLASS = "size-[18px]";
 const SIDE_ICON_CLASS = "size-5";
 const SIDE_BUTTON_CLASS = "size-7";
 const ACTIVE_CONTROL_BUTTON_CLASS = "text-[var(--player-control-primary)]";
+const VOLUME_WHEEL_STEP = 0.05;
 
 type PlaybackControlsProps = {
 	isRadioPlaying: boolean;
@@ -44,6 +46,8 @@ type PlaybackControlsProps = {
 	hasCurrentTrack: boolean;
 	currentTime: number;
 	effectiveDuration: number;
+	bufferedEnd?: number | null;
+	showHoverTimestamp?: boolean;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;
 	onTogglePlay: () => void;
@@ -240,41 +244,33 @@ function PlaybackProgress({
 	hasCurrentTrack,
 	currentTime,
 	effectiveDuration,
+	bufferedEnd = null,
+	showHoverTimestamp = true,
 	onSeek,
 }: {
 	isRadioPlaying: boolean;
 	hasCurrentTrack: boolean;
 	currentTime: number;
 	effectiveDuration: number;
+	bufferedEnd?: number | null;
+	showHoverTimestamp?: boolean;
 	onSeek: (seconds: number) => void;
 }) {
-	const progress = effectiveDuration > 0 ? currentTime / effectiveDuration : 0;
 	return (
-		<div className="mt-2 flex w-full min-w-0 items-center gap-2 text-[11px] tabular-nums">
+		<div className="mt-1 flex w-full min-w-0 items-center gap-2 text-[11px] tabular-nums">
 			<span className="w-8 shrink-0 text-right text-player-foreground">
 				{isRadioPlaying ? "LIVE" : formatTime(currentTime)}
 			</span>
 			{isRadioPlaying ? (
 				<div className="h-1 min-w-0 flex-1 rounded-full bg-[var(--player-live-progress)]/45" />
 			) : (
-				<input
-					type="range"
-					min={0}
-					max={1}
-					step={0.001}
-					value={progress}
-					onChange={(event) =>
-						effectiveDuration > 0 &&
-						onSeek(Number(event.target.value) * effectiveDuration)
-					}
-					className="player-seek-slider min-w-0 flex-1 disabled:opacity-100"
-					style={
-						{
-							"--seek-level": `${(progress * 100).toFixed(2)}%`,
-						} as CSSProperties
-					}
+				<SeekBar
+					currentTime={currentTime}
+					duration={effectiveDuration}
+					bufferedEnd={bufferedEnd}
 					disabled={!hasCurrentTrack}
-					aria-label="Seek"
+					showHoverTimestamp={showHoverTimestamp}
+					onSeek={onSeek}
 				/>
 			)}
 			{isRadioPlaying ? null : (
@@ -405,6 +401,23 @@ function VolumeControl({
 	const lastPointerWasTouchRef = useRef(false);
 
 	const rootRef = useRef<HTMLDivElement>(null);
+	// React registers wheel listeners as passive, so a native listener is the
+	// only way to stop the page behind the bar from scrolling too.
+	const volumeRef = useRef(volume);
+	volumeRef.current = volume;
+	useEffect(() => {
+		const root = rootRef.current;
+		if (!root) return undefined;
+		const adjustFromWheel = (event: WheelEvent) => {
+			if (event.deltaY === 0) return;
+			event.preventDefault();
+			const next =
+				volumeRef.current + (event.deltaY < 0 ? 1 : -1) * VOLUME_WHEEL_STEP;
+			onVolumeChange(Math.min(1, Math.max(0, Number(next.toFixed(2)))));
+		};
+		root.addEventListener("wheel", adjustFromWheel, { passive: false });
+		return () => root.removeEventListener("wheel", adjustFromWheel);
+	}, [onVolumeChange]);
 	useEffect(() => {
 		if (!touchOpen) return undefined;
 		const closeOnOutsideTap = (event: PointerEvent) => {

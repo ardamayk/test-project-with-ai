@@ -11,6 +11,7 @@ export { MiniPlayer } from "./MiniPlayer";
 export { PlaybackSignal } from "./PlaybackSignal";
 export { PlayerBar } from "./PlayerBar";
 export { QueuePanel } from "./QueuePanel";
+export { SeekBar } from "./SeekBar";
 export { ShortcutHelpOverlay } from "./ShortcutHelpOverlay";
 export { SidebarNav } from "./SidebarNav";
 export { Panel, Slot } from "./Slot";

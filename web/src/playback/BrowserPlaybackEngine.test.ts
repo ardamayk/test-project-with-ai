@@ -1,4 +1,4 @@
-import { playbackEngineContract } from "@repo/ui/playback/testing";
+import { playbackEngineContract, trackSource } from "@repo/ui/playback/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	BrowserPlaybackEngine,
@@ -6,6 +6,7 @@ import {
 } from "./BrowserPlaybackEngine";
 
 class MemoryMedia extends EventTarget implements BrowserPlaybackMedia {
+	buffered?: BrowserPlaybackMedia["buffered"];
 	currentTime = 0;
 	duration = 0;
 	paused = true;
@@ -80,6 +81,28 @@ playbackEngineContract("browser", () => {
 });
 
 describe("BrowserPlaybackEngine", () => {
+	it("publishes the buffered range end on progress events", async () => {
+		const engine = new BrowserPlaybackEngine({ createMedia: () => media });
+		await engine.play(trackSource);
+		expect(engine.getState().bufferedEnd).toBeNull();
+
+		media.buffered = {
+			length: 2,
+			start: (index: number) => [0, 80][index] ?? 0,
+			end: (index: number) => [30, 100][index] ?? 0,
+		};
+		media.currentTime = 10;
+		media.dispatchEvent(new Event("timeupdate"));
+		media.dispatchEvent(new Event("progress"));
+		expect(engine.getState().bufferedEnd).toBe(30);
+
+		media.currentTime = 50;
+		media.dispatchEvent(new Event("timeupdate"));
+		media.dispatchEvent(new Event("progress"));
+		expect(engine.getState().bufferedEnd).toBe(100);
+		engine.destroy();
+	});
+
 	it("reconnects a started Radio Station after its stream ends", async () => {
 		vi.useFakeTimers();
 		const engine = new BrowserPlaybackEngine({ createMedia: () => media });

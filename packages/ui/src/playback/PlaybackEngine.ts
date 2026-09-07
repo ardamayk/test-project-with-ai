@@ -62,6 +62,8 @@ export type PlaybackSessionState = {
 	status: PlaybackStatus;
 	currentTime: number;
 	duration: number;
+	/** End of the buffered range in seconds; null or absent when unknown. */
+	bufferedEnd?: number | null;
 	volume: number;
 	shuffleEnabled: boolean;
 	repeatMode: RepeatMode;

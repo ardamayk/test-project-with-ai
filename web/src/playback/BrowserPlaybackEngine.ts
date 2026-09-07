@@ -13,6 +13,12 @@ export interface BrowserPlaybackMedia extends EventTarget {
 	paused: boolean;
 	src: string;
 	volume: number;
+	/** Optional: TimeRanges-like buffered ranges, read on `progress` events. */
+	buffered?: {
+		length: number;
+		start(i: number): number;
+		end(i: number): number;
+	};
 	canPlayType(type: string): string;
 	play(): Promise<void>;
 	pause(): void;
@@ -124,6 +130,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 				source,
 				status: "paused",
 				currentTime: 0,
+				bufferedEnd: null,
 				duration:
 					source.type === "track" && source.track.durationMs > 0
 						? source.track.durationMs / 1000
@@ -232,6 +239,11 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.update({ currentTime: this.media.currentTime });
 	};
 
+	private readonly handleProgress = () => {
+		const bufferedEnd = bufferedEndFor(this.media, this.state.currentTime);
+		if (bufferedEnd !== this.state.bufferedEnd) this.update({ bufferedEnd });
+	};
+
 	private readonly handleDurationChange = () => {
 		if (Number.isFinite(this.media.duration) && this.media.duration > 0) {
 			this.update({ duration: this.media.duration });
@@ -313,6 +325,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.media.addEventListener("error", this.handleMediaError);
 		this.media.addEventListener("stalled", this.handleStalled);
 		this.media.addEventListener("waiting", this.handleStalled);
+		this.media.addEventListener("progress", this.handleProgress);
 	}
 
 	private removeMediaListeners() {
@@ -326,6 +339,7 @@ export class BrowserPlaybackEngine implements PlaybackEngine {
 		this.media.removeEventListener("error", this.handleMediaError);
 		this.media.removeEventListener("stalled", this.handleStalled);
 		this.media.removeEventListener("waiting", this.handleStalled);
+		this.media.removeEventListener("progress", this.handleProgress);
 	}
 
 	private async setMediaSource(source: PlaybackSource) {
@@ -481,4 +495,24 @@ function sanitizeReconnectErrorMessage(error: unknown) {
 	const maxMessageLength = 240;
 	const message = error.message.replace(urlPattern, "[redacted-url]").trim();
 	return (message || error.name).slice(0, maxMessageLength);
+}
+
+/**
+ * End of the buffered range that contains the playhead, or the furthest
+ * range end when none does; null when the media exposes no ranges.
+ */
+export function bufferedEndFor(
+	media: Pick<BrowserPlaybackMedia, "buffered">,
+	currentTime: number,
+): number | null {
+	const ranges = media.buffered;
+	if (!ranges || ranges.length === 0) return null;
+	let furthest = 0;
+	for (let index = 0; index < ranges.length; index += 1) {
+		const start = ranges.start(index);
+		const end = ranges.end(index);
+		if (start <= currentTime && currentTime <= end) return end;
+		furthest = Math.max(furthest, end);
+	}
+	return furthest;
 }
