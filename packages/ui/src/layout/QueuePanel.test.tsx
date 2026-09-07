@@ -85,6 +85,57 @@ function createApi(
 describe("QueuePanel", () => {
 	afterEach(cleanup);
 
+	it.each([
+		{ rowTop: 280, rowBottom: 340, expectedScroll: 40 },
+		{ rowTop: 50, rowBottom: 110, expectedScroll: -50 },
+		{ rowTop: 150, rowBottom: 210, expectedScroll: 0 },
+	])("scrolls only the queue viewport for row at $rowTop", async ({
+		rowTop,
+		rowBottom,
+		expectedScroll,
+	}) => {
+		const engine = new InMemoryPlaybackEngine();
+		const view = render(
+			<LayoutProvider initialPreferences={defaultPreferences}>
+				<PlaybackProvider api={createApi()} engine={engine}>
+					<QueuePanel embedded />
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		await screen.findByText("Track 1");
+		const viewport = view.container.querySelector(
+			".overflow-y-auto",
+		) as HTMLElement;
+		const scrollBy = vi.fn();
+		Object.defineProperty(viewport, "scrollBy", { value: scrollBy });
+		const bounds = vi
+			.spyOn(Element.prototype, "getBoundingClientRect")
+			.mockImplementation(function (this: Element) {
+				return {
+					top: this.tagName === "LI" ? rowTop : 100,
+					bottom: this.tagName === "LI" ? rowBottom : 300,
+				} as DOMRect;
+			});
+		try {
+			await act(async () =>
+				engine.play({
+					type: "track",
+					track,
+					playbackUrl: "/stream/track-1",
+					queueItemId: "item-1",
+				}),
+			);
+			if (expectedScroll === 0) expect(scrollBy).not.toHaveBeenCalled();
+			else
+				expect(scrollBy).toHaveBeenCalledWith({
+					top: expectedScroll,
+					behavior: "smooth",
+				});
+		} finally {
+			bounds.mockRestore();
+		}
+	});
+
 	it("plays a track when left-clicking the queue row", async () => {
 		const engine = new InMemoryPlaybackEngine();
 		render(
