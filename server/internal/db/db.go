@@ -33,6 +33,18 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
+	// Readers must not block writer commits. In rollback-journal mode a busy
+	// COMMIT can leave a pooled connection holding a transaction and its locks.
+	var journalMode string
+	if err := sqlDB.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("enable database WAL: %w", err)
+	}
+	if journalMode != "wal" {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("enable database WAL: unexpected journal mode %q", journalMode)
+	}
+
 	if err := goose.SetDialect("sqlite"); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("set migration dialect: %w", err)
