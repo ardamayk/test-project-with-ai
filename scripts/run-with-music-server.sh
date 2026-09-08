@@ -57,7 +57,7 @@ startMusicServer() {
 			setsid bash -c 'cd server && exec go run ./cmd/server' &
 			;;
 		built)
-			setsid bash -c 'cd server && exec ../bin/server' &
+			setsid bash -c 'cd server && exec "${EARTHLY_SERVER_BINARY:-../bin/server}"' &
 			;;
 		*)
 			echo "Unknown Music Server mode: $serverMode" >&2

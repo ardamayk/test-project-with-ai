@@ -59,6 +59,18 @@ mise run build
 
 Mise is the canonical command interface. Use `mise run web:build`, `mise run server:build`, or `mise run desktop:build` for one artifact.
 
+Local Mise commands automatically use external, worktree-specific build and test output directories. Reusable caches remain shared; GitHub CI and clean-room verification retain their own storage policies. Existing outputs are not moved automatically.
+
+```bash
+mise run cache:status              # inspect paths and sizes
+mise run cache:setup               # optional pinned sccache installation
+mise run cache:migrate             # preview existing output migration
+mise run cache:migrate -- --apply  # apply the reviewed migration
+mise run cache:prune               # preview obsolete outputs
+```
+
+See [local storage and CI isolation](docs/development/local-storage.md) for layout, overrides, test artifacts, safe cleanup, and rollback.
+
 ## Linux Desktop Client
 
 Run the Music Server and Tauri Desktop Client together in development mode:

@@ -12,8 +12,8 @@
     "lint": "pnpm --dir ../.. exec biome lint packages/api-client",
     "check": "pnpm --dir ../.. exec biome check packages/api-client",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:unit": "vitest run",
+    "test": "pnpm test:unit",
+    "test:unit": "bash ../../scripts/run-with-storage.sh test vitest run",
     "generate": "echo 'Generated via @repo/contracts'"
   },
   "devDependencies": {

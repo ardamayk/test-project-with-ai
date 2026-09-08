@@ -50,6 +50,9 @@ jobs:
       - name: Test clean-room verification policy
         run: mise run clean-room:test
 
+      - name: Test local storage isolation
+        run: mise run storage:test
+
       - name: Classify pull-request changes
         id: classify
         run: |
