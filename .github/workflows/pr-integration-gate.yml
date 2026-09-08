@@ -515,28 +515,8 @@ jobs:
         with:
           cache_save: false
 
-      - name: Install Tauri Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            ffmpeg \
-            libayatana-appindicator3-dev \
-            libass-dev \
-            libavcodec-dev \
-            libavfilter-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libplacebo-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libswresample-dev \
-            libswscale-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            meson \
-            ninja-build \
-            pkg-config
+      - name: Start Tauri Linux dependency installation
+        run: bash scripts/prepare-native-ci-dependencies.sh start
 
       # The cache key carries the pinned version, the verified source digest,
       # the build flags, the operating system, the architecture, and the
@@ -587,6 +567,10 @@ jobs:
           path: ${{ runner.temp }}/earthly-audio-mpv
           key: mpv-${{ env.MPV_CACHE_SCHEMA }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
 
+      - name: Wait for Tauri Linux dependencies
+        id: native_dependencies
+        run: bash scripts/prepare-native-ci-dependencies.sh wait
+
       - name: Build pinned mpv from verified source
         id: mpv_build
         if: steps.mpv_cache.outputs.cache-hit != 'true'
@@ -630,7 +614,7 @@ jobs:
 
       - name: Desktop Managed Import parity against a real Music Server
         id: import_parity
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.native_dependencies.outcome == 'success' }}
         run: |
           mise run desktop:test:import-parity 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-import-parity.log"
 
@@ -638,7 +622,7 @@ jobs:
       # pull-request runs to stop immediately.
       - name: Real pinned mpv integration
         id: test
-        if: ${{ !cancelled() && (steps.mpv_cache.outputs.cache-hit == 'true' || steps.mpv_build.outcome == 'success') }}
+        if: ${{ !cancelled() && steps.native_dependencies.outcome == 'success' && (steps.mpv_cache.outputs.cache-hit == 'true' || steps.mpv_build.outcome == 'success') }}
         env:
           EARTHLY_AUDIO_MPV_PATH: ${{ runner.temp }}/earthly-audio-mpv/mpv
         run: |
@@ -693,7 +677,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: integration-gate-real-mpv-logs
-          path: ${{ runner.temp }}/integration-gate-logs/
+          path: |
+            ${{ runner.temp }}/integration-gate-logs/
+            ${{ runner.temp }}/native-ci-dependencies/install.log
           if-no-files-found: ignore
           retention-days: 14
 

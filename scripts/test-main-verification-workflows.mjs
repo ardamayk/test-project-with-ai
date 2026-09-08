@@ -289,3 +289,5 @@ test("an import parity failure advertises retained native diagnostics", () => {
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+await import("./test-native-ci-dependencies.mjs");
