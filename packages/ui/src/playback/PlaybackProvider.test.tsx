@@ -174,6 +174,33 @@ function Harness() {
 			>
 				Play from album
 			</button>
+			<button
+				type="button"
+				onClick={() =>
+					void playback.playTrack(track2.id, [track2.id], {
+						kind: "playlist",
+						playlistId: "p1",
+						name: "Favorites",
+					})
+				}
+			>
+				Play playlist
+			</button>
+			<button
+				type="button"
+				onClick={() =>
+					void playback.queueTracks([track.id, track2.id], {
+						kind: "playlist",
+						playlistId: "p1",
+						name: "Favorites",
+					})
+				}
+			>
+				Queue playlist
+			</button>
+			<button type="button" onClick={() => void playback.addToQueue(track.id)}>
+				Add to queue
+			</button>
 			<button type="button" onClick={() => void playback.playQueueIndex(0)}>
 				First Queue item
 			</button>
@@ -754,6 +781,43 @@ describe("PlaybackProvider", () => {
 		});
 	});
 
+	it("preserves an explicit collection source when replacing and appending tracks", async () => {
+		const api = createApi();
+		renderPlayback(api);
+		await act(async () => {});
+		const source = { kind: "playlist", playlistId: "p1", name: "Favorites" };
+		await act(async () =>
+			screen.getByRole("button", { name: "Play playlist" }).click(),
+		);
+		expect(api.replaceQueue).toHaveBeenCalledWith(["track-2"], "1", source);
+		await act(async () =>
+			screen.getByRole("button", { name: "Queue playlist" }).click(),
+		);
+		expect(api.appendQueueItem).toHaveBeenCalledWith(
+			track.id,
+			expect.any(String),
+			source,
+		);
+		expect(api.appendQueueItem).toHaveBeenCalledWith(
+			track2.id,
+			expect.any(String),
+			source,
+		);
+	});
+
+	it.each([
+		"Add to queue",
+		"Play next",
+	])("marks individual %s as user sourced", async (action) => {
+		const api = createApi();
+		renderPlayback(api);
+		await act(async () => {});
+		await act(async () => screen.getByRole("button", { name: action }).click());
+		expect(api.appendQueueItem).toHaveBeenCalledWith(track.id, "1", {
+			kind: "user",
+		});
+	});
+
 	it("refetches and retries unambiguous append intent once", async () => {
 		const api = createApi();
 		vi.mocked(api.getQueue)
@@ -769,8 +833,12 @@ describe("PlaybackProvider", () => {
 			screen.getByRole("button", { name: "Append" }).click(),
 		);
 
-		expect(api.appendQueueItem).toHaveBeenNthCalledWith(1, "track-2", "1");
-		expect(api.appendQueueItem).toHaveBeenNthCalledWith(2, "track-2", "2");
+		expect(api.appendQueueItem).toHaveBeenNthCalledWith(1, "track-2", "1", {
+			kind: "user",
+		});
+		expect(api.appendQueueItem).toHaveBeenNthCalledWith(2, "track-2", "2", {
+			kind: "user",
+		});
 		expect(api.getQueue).toHaveBeenCalledTimes(2);
 	});
 

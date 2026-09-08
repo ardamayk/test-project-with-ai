@@ -42,8 +42,9 @@ func (h *Handlers) ReplaceQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		TrackIDs []string `json:"trackIds"`
-		Revision string   `json:"revision"`
+		TrackIDs []string        `json:"trackIds"`
+		Source   json.RawMessage `json:"source"`
+		Revision string          `json:"revision"`
 	}
 	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -55,7 +56,13 @@ func (h *Handlers) ReplaceQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queue, err := h.store.ReplaceQueue(r.Context(), userID, body.TrackIDs, body.Revision)
+	source, err := parseQueueItemSource(body.Source)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+
+	queue, err := h.store.ReplaceQueue(r.Context(), userID, body.TrackIDs, body.Revision, source)
 	if errors.Is(err, ErrRevisionConflict) {
 		h.queueConflict(w, r, userID)
 		return
@@ -78,8 +85,9 @@ func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		TrackID  string `json:"trackId"`
-		Revision string `json:"revision"`
+		TrackID  string          `json:"trackId"`
+		Source   json.RawMessage `json:"source"`
+		Revision string          `json:"revision"`
 	}
 	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -94,7 +102,13 @@ func (h *Handlers) AppendItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queue, err := h.store.AppendItem(r.Context(), userID, body.TrackID, body.Revision)
+	source, err := parseQueueItemSource(body.Source)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+
+	queue, err := h.store.AppendItem(r.Context(), userID, body.TrackID, body.Revision, source)
 	if errors.Is(err, ErrRevisionConflict) {
 		h.queueConflict(w, r, userID)
 		return

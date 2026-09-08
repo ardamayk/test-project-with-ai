@@ -289,15 +289,31 @@ describe("playlist routes", () => {
 		).toContain("w-full");
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));
-		expect(mocks.playTrack).toHaveBeenCalledWith("t1", [
+		expect(mocks.playTrack).toHaveBeenCalledWith(
 			"t1",
-			"t2",
-			"t3",
-			"t4",
-		]);
+			["t1", "t2", "t3", "t4"],
+			{ kind: "playlist", playlistId: "p1", name: "Favorites" },
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
+		expect(mocks.playTrack).toHaveBeenLastCalledWith(
+			expect.any(String),
+			expect.arrayContaining(["t1", "t2", "t3", "t4"]),
+			{ kind: "playlist", playlistId: "p1", name: "Favorites" },
+		);
+		fireEvent.doubleClick(screen.getByText("Blue Monday"));
+		expect(mocks.playTrack).toHaveBeenLastCalledWith(
+			"t1",
+			["t1", "t2", "t3", "t4"],
+			{ kind: "playlist", playlistId: "p1", name: "Favorites" },
+		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-		expect(mocks.queueTracks).toHaveBeenCalledWith(["t1", "t2", "t3", "t4"]);
+		expect(mocks.queueTracks).toHaveBeenCalledWith(["t1", "t2", "t3", "t4"], {
+			kind: "playlist",
+			playlistId: "p1",
+			name: "Favorites",
+		});
 
 		await waitFor(() => {
 			expect(
@@ -356,9 +372,17 @@ describe("playlist routes", () => {
 		expect(screen.getByText("Temptation")).toBeTruthy();
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));
-		expect(mocks.playTrack).toHaveBeenCalledWith("t4", ["t4"]);
+		expect(mocks.playTrack).toHaveBeenCalledWith("t4", ["t4"], {
+			kind: "playlist",
+			playlistId: "p1",
+			name: "Favorites",
+		});
 
 		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-		expect(mocks.queueTracks).toHaveBeenCalledWith(["t4"]);
+		expect(mocks.queueTracks).toHaveBeenCalledWith(["t4"], {
+			kind: "playlist",
+			playlistId: "p1",
+			name: "Favorites",
+		});
 	});
 });

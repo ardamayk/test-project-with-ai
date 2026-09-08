@@ -1639,7 +1639,44 @@ export interface components {
             /** Format: date-time */
             deletedFiles: number;
         };
+        /** @description Origin captured when a track enters the queue. Omitted sources default to user. */
+        QueueItemSource: components["schemas"]["QueueAlbumSource"] | components["schemas"]["QueuePlaylistSource"] | components["schemas"]["QueueUserSource"] | components["schemas"]["QueueSuggestionSource"];
+        QueueAlbumSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "album";
+            albumId: string;
+            albumTitle: string;
+            artistName: string;
+        };
+        QueuePlaylistSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "playlist";
+            playlistId: string;
+            name: string;
+        };
+        QueueUserSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "user";
+        };
+        QueueSuggestionSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "suggestion";
+            basedOn: string[];
+        };
         QueueItem: {
+            source?: components["schemas"]["QueueItemSource"];
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -1661,10 +1698,12 @@ export interface components {
             invalidates: "queue"[];
         };
         QueueReplace: {
+            source?: components["schemas"]["QueueItemSource"];
             trackIds: string[];
             revision: string;
         };
         QueueItemAppend: {
+            source?: components["schemas"]["QueueItemSource"];
             /** Format: uuid */
             trackId: string;
             revision: string;

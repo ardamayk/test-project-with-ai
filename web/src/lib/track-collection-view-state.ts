@@ -1,10 +1,14 @@
-import type { Track } from "@repo/api-client";
+import type { QueueItemSource, Track } from "@repo/api-client";
 import { useMemo, useState } from "react";
 import { filterTracksByText } from "#/lib/filter-tracks";
 
 type TrackCollectionPlayback = {
-	playTrack: (trackId: string, queueTrackIds?: string[]) => Promise<void>;
-	queueTracks: (trackIds: string[]) => Promise<void>;
+	playTrack: (
+		trackId: string,
+		queueTrackIds?: string[],
+		source?: QueueItemSource,
+	) => Promise<void>;
+	queueTracks: (trackIds: string[], source?: QueueItemSource) => Promise<void>;
 };
 
 export function formatTrackCollectionDuration(ms: number): string {
@@ -28,6 +32,7 @@ export function shuffleTrackCollection(tracks: Track[]): Track[] {
 export function useTrackCollectionViewState(
 	tracks: Track[],
 	playback: TrackCollectionPlayback,
+	source?: QueueItemSource,
 ) {
 	const [search, setSearch] = useState("");
 	const visibleTracks = useMemo(
@@ -46,7 +51,11 @@ export function useTrackCollectionViewState(
 	const handlePlay = () => {
 		const first = visibleTracks[0];
 		if (!first) return;
-		void playback.playTrack(first.id, visibleTrackIds);
+		void playback.playTrack(
+			first.id,
+			visibleTrackIds,
+			...(source ? [source] : []),
+		);
 	};
 
 	const handleShuffle = () => {
@@ -56,11 +65,12 @@ export function useTrackCollectionViewState(
 		void playback.playTrack(
 			first.id,
 			shuffled.map((track) => track.id),
+			...(source ? [source] : []),
 		);
 	};
 
 	const handleQueue = () => {
-		void playback.queueTracks(visibleTrackIds);
+		void playback.queueTracks(visibleTrackIds, ...(source ? [source] : []));
 	};
 
 	return {

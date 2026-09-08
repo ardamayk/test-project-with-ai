@@ -53,6 +53,7 @@ import {
 	VolumeAndQueueControls,
 } from "./PlayerBarControls";
 import { buildQualityDetailRows } from "./QualityDetailsCard";
+import { findCurrentQueueIndex } from "./queue-groups";
 import { ShortcutHelpOverlay } from "./ShortcutHelpOverlay";
 import { UpNextPeek } from "./UpNextPeek";
 
@@ -159,6 +160,7 @@ export function PlayerBar({
 	const queuePanelSide = getQueuePanel(preferences.layout.sidebarPosition);
 	const playbackPreferences = preferences.playback;
 	const {
+		queue,
 		outputMode,
 		outputDeviceIssue,
 		currentTrack,
@@ -199,6 +201,12 @@ export function PlayerBar({
 		getTrackLyrics,
 		getTrackWaveform,
 	} = usePlayback();
+	const currentQueueIndex = findCurrentQueueIndex(
+		queue,
+		playbackSource?.type === "track" ? playbackSource.queueItemId : undefined,
+		currentTrack?.id,
+	);
+	const upcomingCount = queue.length - currentQueueIndex - 1;
 	const waveform = useTrackWaveform({
 		trackId: currentTrack ? currentTrack.id : null,
 		enabled: canShowWaveform && playbackPreferences.showWaveform,
@@ -612,7 +620,7 @@ export function PlayerBar({
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">
 				<section
 					aria-label="Now playing"
-					className="@container/now-playing flex min-w-[200px] flex-[1_0_0] items-center gap-4 justify-self-start"
+					className="@container/now-playing flex min-w-[200px] flex-[1.4_0_0] items-center gap-3 justify-self-start"
 				>
 					{currentTrack ? (
 						<button
@@ -884,6 +892,9 @@ export function PlayerBar({
 							/>
 						) : undefined
 					}
+					isQueueOpen={!preferences.layout.collapsed[queuePanelSide]}
+					upcomingCount={upcomingCount}
+					hasQueueItems={queue.length > 0}
 					onToggleQueue={toggleQueue}
 					onOpenLyrics={currentTrack ? () => setLyricsOpen(true) : undefined}
 					onVolumeChange={setVolume}

@@ -517,3 +517,42 @@ button,
   border-top: 1px solid var(--line);
   background: color-mix(in oklab, var(--header-bg) 84%, transparent 16%);
 }
+
+@keyframes queue-equalizer-first {
+  from {
+    height: 4px;
+  }
+  to {
+    height: 14px;
+  }
+}
+
+@keyframes queue-equalizer-second {
+  from {
+    height: 12px;
+  }
+  to {
+    height: 5px;
+  }
+}
+
+@keyframes queue-equalizer-third {
+  from {
+    height: 7px;
+  }
+  to {
+    height: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .queue-equalizer[data-playing="true"] > :nth-child(1) {
+    animation: queue-equalizer-first 0.9s ease-in-out infinite alternate;
+  }
+  .queue-equalizer[data-playing="true"] > :nth-child(2) {
+    animation: queue-equalizer-second 0.8s ease-in-out infinite alternate;
+  }
+  .queue-equalizer[data-playing="true"] > :nth-child(3) {
+    animation: queue-equalizer-third 1s ease-in-out infinite alternate;
+  }
+}

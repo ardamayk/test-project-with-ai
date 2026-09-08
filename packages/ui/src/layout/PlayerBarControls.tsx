@@ -39,6 +39,7 @@ const SIDE_ICON_CLASS = "size-5";
 const SIDE_BUTTON_CLASS = "size-7";
 const ACTIVE_CONTROL_BUTTON_CLASS = "text-[var(--player-control-primary)]";
 const VOLUME_WHEEL_STEP = 0.05;
+const MAX_QUEUE_BADGE_COUNT = 9;
 
 type PlaybackControlsProps = {
 	isRadioPlaying: boolean;
@@ -310,6 +311,9 @@ type VolumeAndQueueControlsProps = {
 	isGapless?: boolean;
 	volume: number;
 	signalControl?: ReactNode;
+	isQueueOpen?: boolean;
+	upcomingCount?: number;
+	hasQueueItems?: boolean;
 	onToggleQueue: () => void;
 	/** Absent while nothing is playing; the Lyrics button is then disabled. */
 	onOpenLyrics?: () => void;
@@ -332,6 +336,9 @@ export function VolumeAndQueueControls({
 	isGapless = false,
 	volume,
 	signalControl,
+	isQueueOpen = false,
+	upcomingCount = 0,
+	hasQueueItems = upcomingCount > 0,
 	onToggleQueue,
 	onOpenLyrics,
 	onOpenHelp,
@@ -396,12 +403,21 @@ export function VolumeAndQueueControls({
 				className={cn(
 					CONTROL_BUTTON_CLASS,
 					SIDE_BUTTON_CLASS,
-					"hidden shrink-0 sm:inline-flex",
+					"relative hidden shrink-0 sm:inline-flex",
+					isQueueOpen && ACTIVE_CONTROL_BUTTON_CLASS,
 				)}
 				onClick={onToggleQueue}
 				aria-label="Toggle queue panel"
+				aria-expanded={isQueueOpen}
 			>
 				<ListMusic className={SIDE_ICON_CLASS} />
+				{!isQueueOpen && hasQueueItems ? (
+					<span className="-top-1 -right-1.5 absolute flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--player-control-primary)] px-1 font-semibold text-[10px] text-[var(--player-control-primary-foreground)]">
+						{upcomingCount > MAX_QUEUE_BADGE_COUNT
+							? `${MAX_QUEUE_BADGE_COUNT}+`
+							: upcomingCount}
+					</span>
+				) : null}
 			</button>
 			{onToggleMiniPlayer ? (
 				<button

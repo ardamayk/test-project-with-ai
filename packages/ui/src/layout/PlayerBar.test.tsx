@@ -232,7 +232,7 @@ describe("PlayerBar", () => {
 
 		const nowPlaying = screen.getByLabelText("Now playing");
 		expect(nowPlaying.className).toContain("min-w-[200px]");
-		expect(nowPlaying.className).toContain("flex-[1_0_0]");
+		expect(nowPlaying.className).toContain("flex-[1.4_0_0]");
 	});
 
 	it("keeps playback controls centered in the full player bar", async () => {
@@ -641,6 +641,57 @@ describe("PlayerBar", () => {
 		expect(engine.getState().source).toMatchObject({
 			track: { id: "track-2" },
 		});
+	});
+
+	it.each([
+		{ length: 3, currentIndex: 1, badge: "1" },
+		{ length: 2, currentIndex: 1, badge: "0" },
+		{ length: 12, currentIndex: 0, badge: "9+" },
+	])("shows upcoming badge $badge for a duplicate queue track", async ({
+		length,
+		currentIndex,
+		badge,
+	}) => {
+		const items = Array.from({ length }, (_, index) => ({
+			id: `item-${index}`,
+			trackId: track.id,
+			position: index,
+			track,
+		}));
+		const engine = new InMemoryPlaybackEngine();
+		render(
+			<LayoutProvider
+				initialPreferences={{
+					...defaultPreferences,
+					layout: {
+						...defaultPreferences.layout,
+						collapsed: { left: false, right: true },
+					},
+				}}
+			>
+				<PlaybackProvider
+					api={{ ...api, getQueue: async () => ({ items, revision: "1" }) }}
+					engine={engine}
+				>
+					<PlayerBar />
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		await act(async () => {
+			await engine.play({
+				type: "track",
+				track,
+				queueItemId: items[currentIndex].id,
+				playbackUrl: "/stream/track-1",
+			});
+		});
+		const toggle = screen.getByRole("button", { name: "Toggle queue panel" });
+		expect(toggle.textContent).toBe(badge);
+		expect(toggle.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(toggle);
+		expect(toggle.textContent).toBe("");
+		expect(toggle.getAttribute("aria-expanded")).toBe("true");
+		expect(toggle.className).toContain("text-[var(--player-control-primary)]");
 	});
 
 	it("opens the Now Playing view from the cover and closes it with Escape", async () => {

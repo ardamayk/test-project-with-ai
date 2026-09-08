@@ -11,10 +11,11 @@ import (
 )
 
 type QueueItem struct {
-	ID       string        `json:"id"`
-	TrackID  string        `json:"trackId"`
-	Position int           `json:"position"`
-	Track    library.Track `json:"track"`
+	ID       string          `json:"id"`
+	TrackID  string          `json:"trackId"`
+	Position int             `json:"position"`
+	Track    library.Track   `json:"track"`
+	Source   QueueItemSource `json:"source"`
 }
 
 type Queue struct {
@@ -51,7 +52,7 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT pq.id, pq.track_id, pq.position
+		SELECT pq.id, pq.track_id, pq.position, pq.source
 		FROM playback_queue pq
 		WHERE pq.user_id = ?
 		ORDER BY pq.position`, userID)
@@ -63,8 +64,13 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	items := []QueueItem{}
 	for rows.Next() {
 		var item QueueItem
-		if err := rows.Scan(&item.ID, &item.TrackID, &item.Position); err != nil {
+		var sourceJSON string
+		if err := rows.Scan(&item.ID, &item.TrackID, &item.Position, &sourceJSON); err != nil {
 			return Queue{}, err
+		}
+		item.Source, err = parseQueueItemSource([]byte(sourceJSON))
+		if err != nil {
+			return Queue{}, fmt.Errorf("decode queue item %q source: %w", item.ID, err)
 		}
 		items = append(items, item)
 	}
@@ -93,7 +99,11 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	return Queue{Items: resolvedItems, Revision: revision, EventSequence: eventSequence}, nil
 }
 
-func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []string, expectedRevision string) (Queue, error) {
+func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []string, expectedRevision string, sources ...QueueItemSource) (Queue, error) {
+	sourceJSON, err := encodeQueueItemSource(sources)
+	if err != nil {
+		return Queue{}, err
+	}
 	for _, trackID := range trackIDs {
 		if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
 			return Queue{}, library.ErrNotFound
@@ -115,8 +125,8 @@ func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []stri
 	for i, trackID := range trackIDs {
 		itemID := uuid.NewString()
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO playback_queue (id, user_id, position, track_id) VALUES (?, ?, ?, ?)`,
-			itemID, userID, i, trackID,
+			`INSERT INTO playback_queue (id, user_id, position, track_id, source) VALUES (?, ?, ?, ?, ?)`,
+			itemID, userID, i, trackID, sourceJSON,
 		); err != nil {
 			return Queue{}, err
 		}
@@ -128,7 +138,11 @@ func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []stri
 	return s.GetQueue(ctx, userID)
 }
 
-func (s *Store) AppendItem(ctx context.Context, userID, trackID, expectedRevision string) (Queue, error) {
+func (s *Store) AppendItem(ctx context.Context, userID, trackID, expectedRevision string, sources ...QueueItemSource) (Queue, error) {
+	sourceJSON, err := encodeQueueItemSource(sources)
+	if err != nil {
+		return Queue{}, err
+	}
 	if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
 		return Queue{}, library.ErrNotFound
 	}
@@ -156,8 +170,8 @@ func (s *Store) AppendItem(ctx context.Context, userID, trackID, expectedRevisio
 
 	itemID := uuid.NewString()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO playback_queue (id, user_id, position, track_id) VALUES (?, ?, ?, ?)`,
-		itemID, userID, pos, trackID,
+		`INSERT INTO playback_queue (id, user_id, position, track_id, source) VALUES (?, ?, ?, ?, ?)`,
+		itemID, userID, pos, trackID, sourceJSON,
 	); err != nil {
 		return Queue{}, err
 	}

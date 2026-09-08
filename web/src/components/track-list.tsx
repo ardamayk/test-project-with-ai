@@ -1,4 +1,4 @@
-import type { Track } from "@repo/api-client";
+import type { QueueItemSource, Track } from "@repo/api-client";
 import { buildTrackDetailRows, usePlayback } from "@repo/ui";
 import {
 	Clock,
@@ -41,6 +41,7 @@ function formatDuration(ms: number): string {
 export function TrackList({
 	tracks,
 	contextTracks,
+	source,
 	albumId,
 	playMode = "single",
 	showFavorite = false,
@@ -54,6 +55,7 @@ export function TrackList({
 }: {
 	tracks: Track[];
 	contextTracks?: Track[];
+	source?: QueueItemSource;
 	albumId?: string;
 	playMode?: "single" | "double";
 	showFavorite?: boolean;
@@ -96,7 +98,7 @@ export function TrackList({
 		const queueTrackIds = context
 			.slice(startIndex < 0 ? 0 : startIndex)
 			.map((t) => t.id);
-		void playTrack(track.id, queueTrackIds);
+		void playTrack(track.id, queueTrackIds, ...(source ? [source] : []));
 	};
 
 	const rowPadding = compact ? "px-3 py-1.5" : "px-3 py-2.5";

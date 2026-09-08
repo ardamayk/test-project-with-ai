@@ -1,3 +1,4 @@
+import type { QueueItemSource } from "@repo/api-client";
 import { usePlayback } from "@repo/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
@@ -34,6 +35,12 @@ export function AlbumDetailContent({ albumId }: { albumId: string }) {
 	}
 
 	const data = album.data;
+	const source: QueueItemSource = {
+		kind: "album",
+		albumId: data.id,
+		albumTitle: data.title,
+		artistName: getAlbumArtistName(data),
+	};
 
 	const handlePlayAlbum = () => {
 		const first = data.tracks[0];
@@ -41,11 +48,15 @@ export function AlbumDetailContent({ albumId }: { albumId: string }) {
 		void playTrack(
 			first.id,
 			data.tracks.map((track) => track.id),
+			source,
 		);
 	};
 
 	const handleQueueAlbum = () => {
-		void queueTracks(data.tracks.map((track) => track.id));
+		void queueTracks(
+			data.tracks.map((track) => track.id),
+			source,
+		);
 	};
 
 	return (
@@ -60,6 +71,7 @@ export function AlbumDetailContent({ albumId }: { albumId: string }) {
 				<TrackList
 					tracks={data.tracks}
 					albumId={data.id}
+					source={source}
 					showFavorite
 					showMeta
 					compact

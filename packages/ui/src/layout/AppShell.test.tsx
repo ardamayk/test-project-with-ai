@@ -97,7 +97,7 @@ function renderShell(
 describe("AppShell", () => {
 	afterEach(cleanup);
 
-	it("renders the top nav, main content, queue and widgets", () => {
+	it("renders the top nav, main content and full-height queue", () => {
 		renderShell(
 			<AppShell>
 				<div>Main content</div>
@@ -107,7 +107,7 @@ describe("AppShell", () => {
 		expect(screen.getByRole("link", { name: "Albums" })).toBeTruthy();
 		expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
 		expect(screen.getByText("Queue")).toBeTruthy();
-		expect(screen.getByText("Discover (coming soon)")).toBeTruthy();
+		expect(screen.queryByText("Discover (coming soon)")).toBeNull();
 	});
 
 	it("has no side columns: the nav is a top bar and the queue a drawer", () => {
@@ -200,17 +200,15 @@ describe("AppShell", () => {
 		expect(drawer.dataset.state).toBe("closed");
 	});
 
-	it("keeps widget content from changing the drawer width", () => {
-		const { container } = renderShell(
-			<AppShell>
-				<div>Main content</div>
-			</AppShell>,
-		);
-		const widgetDock = container.querySelector("[data-widget-dock]");
-		expect(widgetDock).toBeTruthy();
-		const className = (widgetDock as HTMLElement | null)?.className ?? "";
-		expect(className).toContain("[contain:inline-size]");
-		expect(className).toContain("min-w-0");
+	it("keeps the independent drawer width without a widget dock", () => {
+		const { container } = renderShell(<AppShell bottom={<div>Player</div>} />);
+		const drawer = container.querySelector(
+			"[data-queue-drawer]",
+		) as HTMLElement;
+		expect(container.querySelector("[data-widget-dock]")).toBeNull();
+		expect(drawer.style.width).toBe("18rem");
+		expect(drawer.style.bottom).toContain("1.5rem");
+		expect(drawer.className).toContain("rounded-2xl");
 	});
 
 	it("renders the library sections, Search and Settings in the top nav", () => {
