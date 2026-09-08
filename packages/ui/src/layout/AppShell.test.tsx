@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -95,9 +101,13 @@ function renderShell(
 }
 
 describe("AppShell", () => {
-	afterEach(cleanup);
+	afterEach(() => {
+		cleanup();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
 
-	it("renders the top nav, main content, queue and widgets", () => {
+	it("renders the top nav, main content and full-height queue", () => {
 		renderShell(
 			<AppShell>
 				<div>Main content</div>
@@ -107,7 +117,7 @@ describe("AppShell", () => {
 		expect(screen.getByRole("link", { name: "Albums" })).toBeTruthy();
 		expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
 		expect(screen.getByText("Queue")).toBeTruthy();
-		expect(screen.getByText("Discover (coming soon)")).toBeTruthy();
+		expect(screen.queryByText("Discover (coming soon)")).toBeNull();
 	});
 
 	it("has no side columns: the nav is a top bar and the queue a drawer", () => {
@@ -200,17 +210,82 @@ describe("AppShell", () => {
 		expect(drawer.dataset.state).toBe("closed");
 	});
 
-	it("keeps widget content from changing the drawer width", () => {
-		const { container } = renderShell(
-			<AppShell>
-				<div>Main content</div>
-			</AppShell>,
+	it("keeps the independent drawer width without a widget dock", () => {
+		const { container } = renderShell(<AppShell bottom={<div>Player</div>} />);
+		const drawer = container.querySelector(
+			"[data-queue-drawer]",
+		) as HTMLElement;
+		expect(container.querySelector("[data-widget-dock]")).toBeNull();
+		expect(drawer.style.width).toBe("var(--queue-drawer-width, 18rem)");
+		expect(drawer.style.bottom).toContain("1.5rem");
+		expect(drawer.className).toContain("rounded-2xl");
+	});
+
+	it("updates inherited drawer width on shell and window resize without changing the bottom gap", () => {
+		let shellWidth = 2150;
+		let resizeShell: (() => void) | undefined;
+		const disconnect = vi.fn();
+		vi.stubGlobal(
+			"ResizeObserver",
+			class {
+				constructor(private callback: () => void) {}
+				observe(target: Element) {
+					if (target.hasAttribute("data-app-shell"))
+						resizeShell = this.callback;
+				}
+				unobserve() {}
+				disconnect = disconnect;
+			},
 		);
-		const widgetDock = container.querySelector("[data-widget-dock]");
-		expect(widgetDock).toBeTruthy();
-		const className = (widgetDock as HTMLElement | null)?.className ?? "";
-		expect(className).toContain("[contain:inline-size]");
-		expect(className).toContain("min-w-0");
+		const getBounds = HTMLElement.prototype.getBoundingClientRect;
+		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+			function (this: HTMLElement) {
+				const bounds = getBounds.call(this);
+				return this.hasAttribute("data-app-shell")
+					? new DOMRect(0, 0, shellWidth, bounds.height)
+					: bounds;
+			},
+		);
+		const readStyle = window.getComputedStyle;
+		vi.spyOn(window, "getComputedStyle").mockImplementation(
+			(element, pseudoElement) => {
+				const style = readStyle(element, pseudoElement);
+				if (element.tagName === "HEADER") {
+					Object.defineProperty(style, "paddingRight", { value: "24px" });
+				}
+				if (element === document.documentElement) {
+					Object.defineProperty(style, "fontSize", { value: "16px" });
+				}
+				return style;
+			},
+		);
+		const { container, unmount } = renderShell(
+			<AppShell bottom={<div>Player</div>} />,
+		);
+		const shell = container.querySelector<HTMLElement>("[data-app-shell]");
+		const drawer = container.querySelector<HTMLElement>("[data-queue-drawer]");
+		const main = container.querySelector("main");
+		expect(shell?.style.getPropertyValue("--queue-drawer-width")).toBe("518px");
+		expect(drawer?.style.getPropertyValue("--queue-drawer-width")).toBe("");
+		expect(main?.style.getPropertyValue("--queue-drawer-width")).toBe("");
+		expect(drawer?.style.width).toBe("var(--queue-drawer-width, 18rem)");
+		expect(main?.style.getPropertyValue("--queue-drawer-clearance")).toBe(
+			"calc(var(--queue-drawer-width, 18rem) + 1.5rem)",
+		);
+		const bottom = drawer?.style.bottom;
+		expect(bottom).toBe("calc(16px + 80px + 1.5rem)");
+		if (!resizeShell)
+			throw new Error("The shell was not observed for resizing");
+		shellWidth = 1919;
+		act(resizeShell);
+		expect(shell?.style.getPropertyValue("--queue-drawer-width")).toBe("549px");
+		expect(drawer?.style.bottom).toBe(bottom);
+		shellWidth = 1000;
+		fireEvent(window, new Event("resize"));
+		expect(shell?.style.getPropertyValue("--queue-drawer-width")).toBe("288px");
+		expect(drawer?.style.bottom).toBe(bottom);
+		unmount();
+		expect(disconnect).toHaveBeenCalled();
 	});
 
 	it("renders the library sections, Search and Settings in the top nav", () => {

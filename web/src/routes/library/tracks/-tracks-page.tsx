@@ -5,7 +5,7 @@ import {
 	COLLECTION_PAGE_CONTAINER_CLASS,
 	CollectionPageContainer,
 } from "#/components/collection-grid-layout";
-import { useManagedImport } from "#/components/import-session-provider";
+import { useManagedImport } from "#/components/import-session-context";
 import { PageHeader, PageShell } from "#/components/page-layout";
 import { TrackList } from "#/components/track-list";
 import { Button } from "#/components/ui/button";

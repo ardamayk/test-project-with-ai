@@ -1639,7 +1639,44 @@ export interface components {
             /** Format: date-time */
             deletedFiles: number;
         };
+        /** @description Origin captured when a track enters the queue. Omitted sources default to user. Source JSON is limited to 16384 bytes. */
+        QueueItemSource: components["schemas"]["QueueAlbumSource"] | components["schemas"]["QueuePlaylistSource"] | components["schemas"]["QueueUserSource"] | components["schemas"]["QueueSuggestionSource"];
+        QueueAlbumSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "album";
+            albumId: string;
+            albumTitle: string;
+            artistName: string;
+        };
+        QueuePlaylistSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "playlist";
+            playlistId: string;
+            name: string;
+        };
+        QueueUserSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "user";
+        };
+        QueueSuggestionSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "suggestion";
+            basedOn: string[];
+        };
         QueueItem: {
+            source?: components["schemas"]["QueueItemSource"];
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -1660,15 +1697,20 @@ export interface components {
             /** @description Shared resources clients must refetch */
             invalidates: "queue"[];
         };
+        /** @description Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items. */
         QueueReplace: {
+            source?: components["schemas"]["QueueItemSource"];
             trackIds: string[];
             revision: string;
         };
+        /** @description Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items. */
         QueueItemAppend: {
+            source?: components["schemas"]["QueueItemSource"];
             /** Format: uuid */
             trackId: string;
             revision: string;
         };
+        /** @description Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items. */
         QueueReorder: {
             itemIds: string[];
             revision: string;

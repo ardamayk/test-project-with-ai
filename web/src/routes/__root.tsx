@@ -7,6 +7,7 @@ import {
 	type PlaybackApi,
 	PlaybackProvider,
 	PlayerBar,
+	QueueRowMenuProvider,
 	usePlayback,
 } from "@repo/ui";
 import type { QueryClient } from "@tanstack/react-query";
@@ -14,11 +15,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	createRootRouteWithContext,
 	Outlet,
+	useNavigate,
 	useRouterState,
 } from "@tanstack/react-router";
 import { useState } from "react";
 import { ImportSessionProvider } from "#/components/import-session-provider";
 import { LibrarySearchDialog } from "#/components/library-search-dialog";
+import { QueueTrackMenu } from "#/components/queue-track-menu";
 import { RootErrorComponent } from "#/components/root-error";
 import { ThemeSync } from "#/components/theme-sync";
 import { isDesktopClient } from "#/desktop/bridge";
@@ -34,12 +37,12 @@ import { getSharedPlaybackEngine } from "#/playback/shared-playback-engine";
 
 const playbackApi: PlaybackApi = {
 	getQueue: () => apiClient.getPlaybackQueue(),
-	replaceQueue: (trackIds, revision) =>
-		apiClient.replacePlaybackQueue(trackIds, revision),
+	replaceQueue: (trackIds, revision, source) =>
+		apiClient.replacePlaybackQueue(trackIds, revision, source),
 	reorderQueue: (itemIds, revision) =>
 		apiClient.reorderPlaybackQueue(itemIds, revision),
-	appendQueueItem: (trackId, revision) =>
-		apiClient.appendPlaybackQueueItem(trackId, revision),
+	appendQueueItem: (trackId, revision, source) =>
+		apiClient.appendPlaybackQueueItem(trackId, revision, source),
 	removeQueueItem: (itemId, revision) =>
 		apiClient.removePlaybackQueueItem(itemId, revision),
 	subscribeQueueEvents: (onEvent, onError) =>
@@ -47,6 +50,7 @@ const playbackApi: PlaybackApi = {
 	getStreamUrl: (trackId) => apiClient.getTrackStreamUrl(trackId),
 	headTrackStream: (trackId) => apiClient.headTrackStream(trackId),
 	getAlbumCoverUrl: (albumId) => apiClient.getAlbumCoverUrl(albumId),
+	getTrack: (trackId) => apiClient.getTrack(trackId),
 	getTrackLyrics: (trackId) => apiClient.getTrackLyrics(trackId),
 	getTrackWaveform: (trackId) => apiClient.getTrackWaveform(trackId),
 	getRadioStationStreamUrl: (stationId) =>
@@ -107,6 +111,7 @@ function RootLayout() {
 }
 
 function ConnectedRootLayout() {
+	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [searchOpen, setSearchOpen] = useState(false);
 	const playbackEngine = getSharedPlaybackEngine();
@@ -155,16 +160,28 @@ function ConnectedRootLayout() {
 						<Outlet />
 					) : (
 						<ImportSessionProvider>
-							<AppShell
-								bottom={<PlayerBarWithSync />}
-								onSearch={() => setSearchOpen(true)}
+							<QueueRowMenuProvider
+								menu={QueueTrackMenu}
+								onNavigate={(href) => {
+									void navigate({ to: href }).catch((error) =>
+										console.warn("Failed to navigate from queue", {
+											href,
+											error,
+										}),
+									);
+								}}
 							>
-								<Outlet />
-								<LibrarySearchDialog
-									open={searchOpen}
-									onOpenChange={setSearchOpen}
-								/>
-							</AppShell>
+								<AppShell
+									bottom={<PlayerBarWithSync />}
+									onSearch={() => setSearchOpen(true)}
+								>
+									<Outlet />
+									<LibrarySearchDialog
+										open={searchOpen}
+										onOpenChange={setSearchOpen}
+									/>
+								</AppShell>
+							</QueueRowMenuProvider>
 						</ImportSessionProvider>
 					)}
 				</PlaybackProvider>

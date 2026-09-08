@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AlbumDetailContent } from "./-album-page";
 
@@ -96,6 +96,31 @@ describe("album detail route", () => {
 		expect(screen.getByText("2014-10-27")).toBeTruthy();
 		expect(screen.queryByText("Legacy Album Artist")).toBeNull();
 		expect(screen.queryByRole("link", { name: /Back to library/ })).toBeNull();
+	});
+
+	it("passes album provenance to album actions and track playback", async () => {
+		renderWithQuery(<AlbumDetailContent albumId="album-1" />);
+		await screen.findByRole("heading", { name: "1989" });
+		const source = {
+			kind: "album",
+			albumId: "album-1",
+			albumTitle: "1989",
+			artistName: "Taylor Swift, Guest Artist",
+		};
+		fireEvent.click(screen.getByRole("button", { name: "Play" }));
+		expect(mocks.playTrack).toHaveBeenLastCalledWith(
+			"track-1",
+			["track-1"],
+			source,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Queue album" }));
+		expect(mocks.queueTracks).toHaveBeenLastCalledWith(["track-1"], source);
+		fireEvent.click(screen.getByText("Style"));
+		expect(mocks.playTrack).toHaveBeenLastCalledWith(
+			"track-1",
+			["track-1"],
+			source,
+		);
 	});
 
 	it("aligns its content with the Albums list page width", async () => {

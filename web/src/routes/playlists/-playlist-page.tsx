@@ -1,3 +1,4 @@
+import type { QueueItemSource } from "@repo/api-client";
 import { usePlayback } from "@repo/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -44,10 +45,21 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 			}
 		},
 	});
-	const collection = useTrackCollectionViewState(playlist.data?.tracks ?? [], {
-		playTrack,
-		queueTracks,
-	});
+	const source: QueueItemSource | undefined = playlist.data
+		? {
+				kind: "playlist",
+				playlistId: playlist.data.id,
+				name: playlist.data.name,
+			}
+		: undefined;
+	const collection = useTrackCollectionViewState(
+		playlist.data?.tracks ?? [],
+		{
+			playTrack,
+			queueTracks,
+		},
+		source,
+	);
 
 	if (playlist.isLoading) {
 		return <div className="p-6 text-foreground text-sm">Loading playlist…</div>;
@@ -106,6 +118,7 @@ export function PlaylistDetailContent({ playlistId }: { playlistId: string }) {
 					<TrackList
 						tracks={collection.visibleTracks}
 						contextTracks={collection.visibleTracks}
+						source={source}
 						playMode="double"
 						numbering="list"
 						showFavorite

@@ -1,4 +1,4 @@
-import type { Track } from "@repo/api-client";
+import type { QueueItemSource, Track } from "@repo/api-client";
 import {
 	cleanup,
 	fireEvent,
@@ -12,6 +12,9 @@ import { TrackList } from "./track-list";
 
 const toggleFavorite = vi.fn();
 const playTrack = vi.fn();
+const addToQueue = vi.fn();
+const playNext = vi.fn();
+const toastError = vi.hoisted(() => vi.fn());
 const deleteTrack = vi.fn();
 const previewTrackDeletion = vi.fn();
 let favorite = false;
@@ -21,8 +24,11 @@ vi.mock("@repo/ui", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@repo/ui")>();
 	return {
 		...actual,
+		toast: { ...actual.toast, error: toastError },
 		usePlayback: () => ({
 			playTrack,
+			addToQueue,
+			playNext,
 			currentTrack: null,
 			getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
 		}),
@@ -107,6 +113,7 @@ const sampleTrack: Track = {
 describe("TrackList", () => {
 	afterEach(() => {
 		cleanup();
+		vi.restoreAllMocks();
 	});
 
 	beforeEach(() => {
@@ -117,6 +124,9 @@ describe("TrackList", () => {
 		confirmReplacement.mockReset();
 		cancelReplacement.mockReset();
 		playTrack.mockClear();
+		addToQueue.mockReset().mockResolvedValue(undefined);
+		playNext.mockReset().mockResolvedValue(undefined);
+		toastError.mockClear();
 		toggleFavorite.mockClear();
 		deleteTrack.mockClear();
 		previewTrackDeletion.mockReset();
@@ -152,6 +162,64 @@ describe("TrackList", () => {
 		expect(row.textContent).not.toContain("Taylor Swift");
 		expect(screen.queryByText("Pop · FLAC · 24-bit · 96 kHz")).toBeNull();
 		expect(screen.queryByText(/FLAC/)).toBeNull();
+	});
+
+	it.each<QueueItemSource | undefined>([
+		{
+			kind: "album",
+			albumId: "a1",
+			albumTitle: "1989",
+			artistName: "Taylor Swift",
+		},
+		{ kind: "playlist", playlistId: "p1", name: "Favorites" },
+		undefined,
+	])("uses individual queue actions without propagating collection provenance %j", async (source) => {
+		render(<TrackList tracks={[sampleTrack]} source={source} />);
+		const row = screen.getByRole("row", { name: /Welcome to New York/ });
+		fireEvent.contextMenu(row);
+		fireEvent.click(
+			await screen.findByRole("menuitem", { name: "Add to queue" }),
+		);
+		await waitFor(() =>
+			expect(addToQueue).toHaveBeenCalledExactlyOnceWith(sampleTrack.id),
+		);
+		fireEvent.contextMenu(row);
+		fireEvent.click(await screen.findByRole("menuitem", { name: "Play next" }));
+		await waitFor(() =>
+			expect(playNext).toHaveBeenCalledExactlyOnceWith(sampleTrack.id),
+		);
+		expect(playTrack).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{
+			label: "Add to queue",
+			action: addToQueue,
+			message: "Failed to add track to queue",
+		},
+		{
+			label: "Play next",
+			action: playNext,
+			message: "Failed to play track next",
+		},
+	])("reports a failed $label action with track context", async ({
+		label,
+		action,
+		message,
+	}) => {
+		const error = new Error("Network unavailable");
+		action.mockRejectedValueOnce(error);
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+		render(<TrackList tracks={[sampleTrack]} />);
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(await screen.findByRole("menuitem", { name: label }));
+		await waitFor(() => expect(toastError).toHaveBeenCalledWith(message));
+		expect(warning).toHaveBeenCalledWith(message, {
+			trackId: sampleTrack.id,
+			error,
+		});
 	});
 
 	it("renders non-album tracks with the artist line", () => {

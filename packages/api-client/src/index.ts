@@ -80,6 +80,7 @@ export type TrackDeletionPreview = Schemas['TrackDeletionPreview'];
 export type TrackReplacementPreview = Schemas['TrackReplacementPreview'];
 export type TrackReplacementFieldDiff = Schemas['TrackReplacementFieldDiff'];
 export type TrackReplacementResult = Schemas['TrackReplacementResult'];
+export type QueueItemSource = Schemas['QueueItemSource'];
 export type QueueItem = Omit<WireQueueItem, 'track'> & { track: Track };
 export type Queue = Omit<WireQueue, 'items'> & { items: QueueItem[] };
 export type ErrorResponse = Schemas['ErrorResponse'];
@@ -222,6 +223,7 @@ function normalizeQueue(queue: WireQueue): Queue {
     items: queue.items.map((item) => ({
       ...item,
       track: normalizeTrack(item.track),
+      source: item.source ?? { kind: 'user' },
     })),
   };
 }
@@ -536,20 +538,28 @@ export function createApiClient(config: ApiClientConfig) {
     getPlaybackQueue: () =>
       request<WireQueue>('/api/v1/playback/queue').then(normalizeQueue),
     subscribePlaybackQueueEvents,
-    replacePlaybackQueue: (trackIds: string[], revision: string) =>
+    replacePlaybackQueue: (
+      trackIds: string[],
+      revision: string,
+      source?: QueueItemSource,
+    ) =>
       request<WireQueue>('/api/v1/playback/queue', {
         method: 'PUT',
-        body: JSON.stringify({ trackIds, revision }),
+        body: JSON.stringify({ trackIds, revision, source }),
       }).then(normalizeQueue),
     reorderPlaybackQueue: (itemIds: string[], revision: string) =>
       request<WireQueue>('/api/v1/playback/queue', {
         method: 'PATCH',
         body: JSON.stringify({ itemIds, revision }),
       }).then(normalizeQueue),
-    appendPlaybackQueueItem: (trackId: string, revision: string) =>
+    appendPlaybackQueueItem: (
+      trackId: string,
+      revision: string,
+      source?: QueueItemSource,
+    ) =>
       request<WireQueue>('/api/v1/playback/queue/items', {
         method: 'POST',
-        body: JSON.stringify({ trackId, revision }),
+        body: JSON.stringify({ trackId, revision, source }),
       }).then(normalizeQueue),
     removePlaybackQueueItem: (itemId: string, revision: string) =>
       request<WireQueue>(`/api/v1/playback/queue/items/${itemId}`, {

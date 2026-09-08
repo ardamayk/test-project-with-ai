@@ -3,6 +3,7 @@ import type {
 	PlaylistDetail,
 	PlaylistList,
 	QueueItem,
+	QueueItemSource,
 	RadioNowPlaying,
 	RadioSearchResult,
 	RadioStation,
@@ -56,6 +57,7 @@ export type PlaybackAssetApi = {
 	 */
 	headTrackStream?: (trackId: string) => Promise<{ status: number }>;
 	getAlbumCoverUrl: (albumId: string) => string;
+	getTrack?: (trackId: string) => Promise<Track>;
 	/** Lyrics text stored for a Track; optional for hosts without the endpoint. */
 	getTrackLyrics?: (trackId: string) => Promise<{ lyrics: string }>;
 	/** Waveform peaks, or a pending marker while the server generates them. */
@@ -116,10 +118,14 @@ type PlaybackContextValue = {
 	processingState: ProcessingState | null;
 	playbackTelemetry: PlaybackTelemetry | null;
 	queueConflict: string | null;
-	playTrack: (trackId: string, queueTrackIds?: string[]) => Promise<void>;
+	playTrack: (
+		trackId: string,
+		queueTrackIds?: string[],
+		source?: QueueItemSource,
+	) => Promise<void>;
 	playRadioStation: (station: RadioStation) => Promise<void>;
 	playRadioCatalogPreview: (result: RadioSearchResult) => Promise<void>;
-	queueTracks: (trackIds: string[]) => Promise<void>;
+	queueTracks: (trackIds: string[], source?: QueueItemSource) => Promise<void>;
 	playQueueIndex: (index: number) => Promise<void>;
 	playNext: (trackId: string) => Promise<void>;
 	navigatePrevious: () => void;
@@ -148,6 +154,7 @@ type PlaybackContextValue = {
 	refreshQueue: () => Promise<void>;
 	stopPlayback: () => void;
 	getAlbumCoverUrl: (albumId: string) => string;
+	getTrack: (trackId: string) => Promise<Track | null>;
 	/** Resolves null when the host exposes no lyrics endpoint. */
 	getTrackLyrics: (trackId: string) => Promise<{ lyrics: string } | null>;
 	/** Null when the host exposes no waveform endpoint. */
@@ -380,6 +387,12 @@ export function PlaybackProvider({
 		[api.getTrackWaveform],
 	);
 
+	const getTrack = useCallback(
+		(trackId: string) =>
+			apiRef.current.getTrack?.(trackId) ?? Promise.resolve(null),
+		[],
+	);
+
 	const getTrackLyrics = useCallback(
 		(trackId: string) =>
 			apiRef.current.getTrackLyrics?.(trackId) ?? Promise.resolve(null),
@@ -483,17 +496,22 @@ export function PlaybackProvider({
 	);
 
 	const playTrack = useCallback(
-		async (trackId: string, queueTrackIds?: string[]) => {
+		async (
+			trackId: string,
+			queueTrackIds?: string[],
+			source?: QueueItemSource,
+		) => {
 			let nextQueue = queueRef.current;
 			if (queueTrackIds) {
 				const data = await replaceQueue(queueTrackIds, {
 					retryOnConflict: true,
+					source,
 				});
 				if (!data) return;
 				nextQueue = data.items;
 			}
 			if (!nextQueue.some((item) => item.track.id === trackId)) {
-				const data = await appendQueueItem(trackId);
+				const data = await appendQueueItem(trackId, source);
 				nextQueue = data.items;
 			}
 			await playTrackInternal(trackId, nextQueue);
@@ -545,9 +563,9 @@ export function PlaybackProvider({
 	);
 
 	const queueTracks = useCallback(
-		async (trackIds: string[]) => {
+		async (trackIds: string[], source: QueueItemSource = { kind: "user" }) => {
 			for (const trackId of trackIds) {
-				await appendQueueItem(trackId);
+				await appendQueueItem(trackId, source);
 			}
 		},
 		[appendQueueItem],
@@ -563,7 +581,7 @@ export function PlaybackProvider({
 
 	const playNext = useCallback(
 		async (trackId: string) => {
-			const data = await appendQueueItem(trackId);
+			const data = await appendQueueItem(trackId, { kind: "user" });
 			const itemIds = data.items.map((item) => item.id);
 			const appendedItemId = itemIds.pop();
 			if (!appendedItemId) return;
@@ -649,6 +667,7 @@ export function PlaybackProvider({
 			refreshQueue,
 			stopPlayback: () => engine.stop(),
 			getAlbumCoverUrl: (albumId) => apiRef.current.getAlbumCoverUrl(albumId),
+			getTrack,
 			getTrackLyrics,
 			getTrackWaveform,
 		}),
@@ -664,6 +683,7 @@ export function PlaybackProvider({
 			sleepTimer,
 			abRepeat,
 			getTrackWaveform,
+			getTrack,
 			getTrackLyrics,
 			playTrack,
 			playRadioStation,

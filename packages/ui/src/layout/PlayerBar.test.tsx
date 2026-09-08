@@ -629,6 +629,15 @@ describe("PlayerBar", () => {
 			screen.getByRole("button", { name: "Start track" }).click();
 		});
 
+		expect(screen.queryByTestId("up-next")).toBeNull();
+		const toggleQueue = screen.getByRole("button", {
+			name: "Toggle queue panel",
+		});
+		fireEvent.click(toggleQueue);
+		expect(screen.getByTestId("up-next")).toBeTruthy();
+		fireEvent.click(toggleQueue);
+		expect(screen.queryByTestId("up-next")).toBeNull();
+		fireEvent.click(toggleQueue);
 		const upNext = screen.getByTestId("up-next");
 		expect(upNext.textContent).toContain("Track 2");
 		await act(async () => {
@@ -641,6 +650,57 @@ describe("PlayerBar", () => {
 		expect(engine.getState().source).toMatchObject({
 			track: { id: "track-2" },
 		});
+	});
+
+	it.each([
+		{ length: 3, currentIndex: 1, badge: "1" },
+		{ length: 2, currentIndex: 1, badge: "0" },
+		{ length: 12, currentIndex: 0, badge: "9+" },
+	])("shows upcoming badge $badge for a duplicate queue track", async ({
+		length,
+		currentIndex,
+		badge,
+	}) => {
+		const items = Array.from({ length }, (_, index) => ({
+			id: `item-${index}`,
+			trackId: track.id,
+			position: index,
+			track,
+		}));
+		const engine = new InMemoryPlaybackEngine();
+		render(
+			<LayoutProvider
+				initialPreferences={{
+					...defaultPreferences,
+					layout: {
+						...defaultPreferences.layout,
+						collapsed: { left: false, right: true },
+					},
+				}}
+			>
+				<PlaybackProvider
+					api={{ ...api, getQueue: async () => ({ items, revision: "1" }) }}
+					engine={engine}
+				>
+					<PlayerBar />
+				</PlaybackProvider>
+			</LayoutProvider>,
+		);
+		await act(async () => {
+			await engine.play({
+				type: "track",
+				track,
+				queueItemId: items[currentIndex].id,
+				playbackUrl: "/stream/track-1",
+			});
+		});
+		const toggle = screen.getByRole("button", { name: "Toggle queue panel" });
+		expect(toggle.textContent).toBe(badge);
+		expect(toggle.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(toggle);
+		expect(toggle.textContent).toBe("");
+		expect(toggle.getAttribute("aria-expanded")).toBe("true");
+		expect(toggle.className).toContain("text-[var(--player-control-primary)]");
 	});
 
 	it("opens the Now Playing view from the cover and closes it with Escape", async () => {

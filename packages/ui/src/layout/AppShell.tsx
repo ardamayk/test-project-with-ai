@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useRef } from "react";
 import { getQueuePanel } from "../widgets/layout-utils";
 import { useLayout } from "./LayoutProvider";
 import { QueueDrawer } from "./QueueDrawer";
@@ -8,6 +8,7 @@ import {
 } from "./shell-metrics";
 import { Toaster } from "./Toaster";
 import { TopNav } from "./TopNav";
+import { useQueueDrawerWidth } from "./use-queue-drawer-width";
 import { WidgetDndProvider } from "./WidgetDock";
 
 export { PLAYER_BAR_HEIGHT_PX, PLAYER_BAR_INSET_PX } from "./shell-metrics";
@@ -32,6 +33,8 @@ export function AppShell({
 	/** Opens the host's library search; shown as "Search" in the Top Nav. */
 	onSearch?: () => void;
 }) {
+	const shellRef = useRef<HTMLDivElement>(null);
+	const queueDrawerWidth = useQueueDrawerWidth(shellRef);
 	const { preferences } = useLayout();
 	const queuePanel = getQueuePanel(preferences.layout.sidebarPosition);
 	const queueOpen = !preferences.layout.collapsed[queuePanel];
@@ -39,6 +42,15 @@ export function AppShell({
 	return (
 		<WidgetDndProvider>
 			<div
+				ref={shellRef}
+				style={
+					{
+						"--queue-drawer-width":
+							queueDrawerWidth === undefined
+								? undefined
+								: `${queueDrawerWidth}px`,
+					} as CSSProperties
+				}
 				data-app-shell
 				className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background text-foreground"
 			>
@@ -67,7 +79,7 @@ export function AppShell({
 					{bottom ? (
 						<div
 							data-player-dock
-							className={`pointer-events-none absolute inset-x-0 bottom-4 z-30 ${SHELL_INSET_CLASS}`}
+							className={`pointer-events-none absolute inset-x-0 bottom-4 z-50 ${SHELL_INSET_CLASS}`}
 						>
 							<div data-player-dock-column className="w-full">
 								<div className="pointer-events-auto">{bottom}</div>

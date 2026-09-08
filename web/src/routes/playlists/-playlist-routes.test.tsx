@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 	removePlaylistTrack: vi.fn(),
 	playTrack: vi.fn(),
 	queueTracks: vi.fn(),
+	toastError: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async () => {
@@ -51,12 +52,19 @@ vi.mock("#/lib/api", () => ({
 		listPlaylists: mocks.listPlaylists,
 		getPlaylist: mocks.getPlaylist,
 		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
+		getAlbum: vi.fn(async (albumId: string) => ({
+			id: albumId,
+			title: `Album ${albumId}`,
+			artistName: "New Order",
+			artistId: "artist-1",
+		})),
 		addPlaylistTrack: mocks.addPlaylistTrack,
 		removePlaylistTrack: mocks.removePlaylistTrack,
 	},
 }));
 
 vi.mock("@repo/ui", () => ({
+	toast: { error: mocks.toastError },
 	AlbumArt: ({
 		coverUrl,
 		className,
@@ -125,6 +133,29 @@ function renderWithQuery(ui: React.ReactElement) {
 }
 
 describe("playlist routes", () => {
+	it("reports a failed bulk queue and stops before adding later album runs", async () => {
+		const error = new Error("Queue unavailable");
+		mocks.queueTracks.mockRejectedValueOnce(error);
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			renderWithQuery(<PlaylistDetailContent playlistId="p1" />);
+			await screen.findByRole("heading", { name: "Favorites" });
+			fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+			await waitFor(() =>
+				expect(mocks.toastError).toHaveBeenCalledWith(
+					"Failed to queue collection tracks",
+				),
+			);
+			expect(warning).toHaveBeenCalledWith(
+				"Failed to queue collection tracks",
+				{ trackIds: ["t1", "t2", "t3", "t4"], error },
+			);
+			expect(mocks.queueTracks).toHaveBeenCalledTimes(1);
+		} finally {
+			warning.mockRestore();
+		}
+	});
+
 	beforeEach(() => {
 		mocks.listPlaylists.mockClear();
 		mocks.getPlaylist.mockClear();
@@ -153,7 +184,8 @@ describe("playlist routes", () => {
 			tracks: [tracks[0]],
 		});
 		mocks.playTrack.mockClear();
-		mocks.queueTracks.mockClear();
+		mocks.queueTracks.mockReset().mockResolvedValue(undefined);
+		mocks.toastError.mockClear();
 		mocks.removePlaylistTrack.mockClear();
 		mocks.addPlaylistTrack.mockClear();
 	});
@@ -289,15 +321,35 @@ describe("playlist routes", () => {
 		).toContain("w-full");
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));
-		expect(mocks.playTrack).toHaveBeenCalledWith("t1", [
+		expect(mocks.playTrack).toHaveBeenCalledWith(
 			"t1",
-			"t2",
-			"t3",
-			"t4",
-		]);
+			["t1", "t2", "t3", "t4"],
+			{ kind: "playlist", playlistId: "p1", name: "Favorites" },
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
+		expect(mocks.playTrack).toHaveBeenLastCalledWith(
+			expect.any(String),
+			expect.arrayContaining(["t1", "t2", "t3", "t4"]),
+			{ kind: "playlist", playlistId: "p1", name: "Favorites" },
+		);
+		fireEvent.doubleClick(screen.getByText("Blue Monday"));
+		expect(mocks.playTrack).toHaveBeenLastCalledWith(
+			"t1",
+			["t1", "t2", "t3", "t4"],
+			{ kind: "playlist", playlistId: "p1", name: "Favorites" },
+		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-		expect(mocks.queueTracks).toHaveBeenCalledWith(["t1", "t2", "t3", "t4"]);
+		await waitFor(() => expect(mocks.queueTracks).toHaveBeenCalledTimes(4));
+		tracks.forEach((track, index) => {
+			expect(mocks.queueTracks).toHaveBeenNthCalledWith(index + 1, [track.id], {
+				kind: "album",
+				albumId: track.albumId,
+				albumTitle: `Album ${track.albumId}`,
+				artistName: "New Order",
+			});
+		});
 
 		await waitFor(() => {
 			expect(
@@ -356,9 +408,20 @@ describe("playlist routes", () => {
 		expect(screen.getByText("Temptation")).toBeTruthy();
 
 		fireEvent.click(screen.getByRole("button", { name: "Play" }));
-		expect(mocks.playTrack).toHaveBeenCalledWith("t4", ["t4"]);
+		expect(mocks.playTrack).toHaveBeenCalledWith("t4", ["t4"], {
+			kind: "playlist",
+			playlistId: "p1",
+			name: "Favorites",
+		});
 
 		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-		expect(mocks.queueTracks).toHaveBeenCalledWith(["t4"]);
+		await waitFor(() =>
+			expect(mocks.queueTracks).toHaveBeenCalledExactlyOnceWith(["t4"], {
+				kind: "album",
+				albumId: "a4",
+				albumTitle: "Album a4",
+				artistName: "New Order",
+			}),
+		);
 	});
 });

@@ -3192,10 +3192,91 @@ components:
           type: integer
           minimum: 0
           format: date-time
+    QueueItemSource:
+      description: Origin captured when a track enters the queue. Omitted sources default to user. Source JSON is limited to 16384 bytes.
+      oneOf:
+        - $ref: "#/components/schemas/QueueAlbumSource"
+        - $ref: "#/components/schemas/QueuePlaylistSource"
+        - $ref: "#/components/schemas/QueueUserSource"
+        - $ref: "#/components/schemas/QueueSuggestionSource"
+      discriminator:
+        propertyName: kind
+        mapping:
+          album: "#/components/schemas/QueueAlbumSource"
+          playlist: "#/components/schemas/QueuePlaylistSource"
+          user: "#/components/schemas/QueueUserSource"
+          suggestion: "#/components/schemas/QueueSuggestionSource"
+    QueueAlbumSource:
+      type: object
+      additionalProperties: false
+      required: [kind, albumId, albumTitle, artistName]
+      properties:
+        kind:
+          type: string
+          enum: [album]
+        albumId:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          pattern: "\\S"
+        albumTitle:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          pattern: "\\S"
+        artistName:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          pattern: "\\S"
+    QueuePlaylistSource:
+      type: object
+      additionalProperties: false
+      required: [kind, playlistId, name]
+      properties:
+        kind:
+          type: string
+          enum: [playlist]
+        playlistId:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          pattern: "\\S"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          pattern: "\\S"
+    QueueUserSource:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [user]
+    QueueSuggestionSource:
+      type: object
+      additionalProperties: false
+      required: [kind, basedOn]
+      properties:
+        kind:
+          type: string
+          enum: [suggestion]
+        basedOn:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1024
+            pattern: "\\S"
     QueueItem:
       type: object
       required: [id, trackId, position, track]
       properties:
+        source:
+          $ref: "#/components/schemas/QueueItemSource"
         id:
           type: string
           format: uuid
@@ -3235,26 +3316,34 @@ components:
             type: string
             enum: [queue]
     QueueReplace:
+      description: Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items.
       type: object
       required: [trackIds, revision]
       properties:
+        source:
+          $ref: "#/components/schemas/QueueItemSource"
         trackIds:
           type: array
+          maxItems: 1000
           items:
             type: string
             format: uuid
         revision:
           type: string
     QueueItemAppend:
+      description: Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items.
       type: object
       required: [trackId, revision]
       properties:
+        source:
+          $ref: "#/components/schemas/QueueItemSource"
         trackId:
           type: string
           format: uuid
         revision:
           type: string
     QueueReorder:
+      description: Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items.
       type: object
       required: [itemIds, revision]
       properties:

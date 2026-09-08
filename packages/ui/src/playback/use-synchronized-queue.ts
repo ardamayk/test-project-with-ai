@@ -1,12 +1,25 @@
-import type { Queue, QueueEvent, QueueItem } from "@repo/api-client";
+import type {
+	Queue,
+	QueueEvent,
+	QueueItem,
+	QueueItemSource,
+} from "@repo/api-client";
 import { ApiError } from "@repo/api-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type PlaybackQueueApi = {
 	getQueue: () => Promise<Queue>;
-	replaceQueue: (trackIds: string[], revision: string) => Promise<Queue>;
+	replaceQueue: (
+		trackIds: string[],
+		revision: string,
+		source?: QueueItemSource,
+	) => Promise<Queue>;
 	reorderQueue: (itemIds: string[], revision: string) => Promise<Queue>;
-	appendQueueItem: (trackId: string, revision: string) => Promise<Queue>;
+	appendQueueItem: (
+		trackId: string,
+		revision: string,
+		source?: QueueItemSource,
+	) => Promise<Queue>;
 	removeQueueItem: (itemId: string, revision: string) => Promise<Queue>;
 	subscribeQueueEvents?: (
 		onEvent: (event: QueueEvent) => void,
@@ -109,17 +122,25 @@ export function useSynchronizedQueue(api: PlaybackQueueApi) {
 	);
 
 	const appendQueueItem = useCallback(
-		async (trackId: string): Promise<Queue> => {
+		async (trackId: string, source?: QueueItemSource): Promise<Queue> => {
 			try {
 				const data = await runQueueRequest(() =>
-					apiRef.current.appendQueueItem(trackId, queueRevisionRef.current),
+					apiRef.current.appendQueueItem(
+						trackId,
+						queueRevisionRef.current,
+						...(source ? [source] : []),
+					),
 				);
 				setQueueConflict(null);
 				return data;
 			} catch (error) {
 				if (!isQueueConflict(error)) throw error;
 				return retryWithFreshRevision((revision) =>
-					apiRef.current.appendQueueItem(trackId, revision),
+					apiRef.current.appendQueueItem(
+						trackId,
+						revision,
+						...(source ? [source] : []),
+					),
 				);
 			}
 		},
@@ -135,11 +156,15 @@ export function useSynchronizedQueue(api: PlaybackQueueApi) {
 	const replaceQueue = useCallback(
 		async (
 			trackIds: string[],
-			options: { retryOnConflict?: boolean } = {},
+			options: { retryOnConflict?: boolean; source?: QueueItemSource } = {},
 		): Promise<Queue | undefined> => {
 			try {
 				const data = await runQueueRequest(() =>
-					apiRef.current.replaceQueue(trackIds, queueRevisionRef.current),
+					apiRef.current.replaceQueue(
+						trackIds,
+						queueRevisionRef.current,
+						...(options.source ? [options.source] : []),
+					),
 				);
 				setQueueConflict(null);
 				return data;
@@ -147,7 +172,11 @@ export function useSynchronizedQueue(api: PlaybackQueueApi) {
 				if (!isQueueConflict(error)) throw error;
 				if (options.retryOnConflict) {
 					return retryWithFreshRevision((revision) =>
-						apiRef.current.replaceQueue(trackIds, revision),
+						apiRef.current.replaceQueue(
+							trackIds,
+							revision,
+							...(options.source ? [options.source] : []),
+						),
 					);
 				}
 				await runQueueRequest(() => apiRef.current.getQueue());

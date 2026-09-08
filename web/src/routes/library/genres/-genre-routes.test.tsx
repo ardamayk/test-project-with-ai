@@ -51,6 +51,12 @@ vi.mock("#/lib/api", () => ({
 		addPlaylistTrack: mocks.addPlaylistTrack,
 		removePlaylistTrack: mocks.removePlaylistTrack,
 		getAlbumCoverUrl: (albumId: string) => `/cover/${albumId}`,
+		getAlbum: vi.fn(async (albumId: string) => ({
+			id: albumId,
+			title: `Album ${albumId}`,
+			artistName: "New Order",
+			artistId: "artist-1",
+		})),
 	},
 }));
 
@@ -227,7 +233,15 @@ describe("genre routes", () => {
 		]);
 
 		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-		expect(mocks.queueTracks).toHaveBeenCalledWith(["t1", "t2", "t3", "t4"]);
+		await waitFor(() => expect(mocks.queueTracks).toHaveBeenCalledTimes(4));
+		tracks.forEach((track, index) => {
+			expect(mocks.queueTracks).toHaveBeenNthCalledWith(index + 1, [track.id], {
+				kind: "album",
+				albumId: track.albumId,
+				albumTitle: `Album ${track.albumId}`,
+				artistName: "New Order",
+			});
+		});
 
 		expect(screen.getByText("Blue Monday")).toBeTruthy();
 		expect(screen.getByText("Bizarre Love Triangle")).toBeTruthy();
@@ -294,6 +308,13 @@ describe("genre routes", () => {
 		expect(mocks.playTrack).toHaveBeenCalledWith("t2", ["t2"]);
 
 		fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-		expect(mocks.queueTracks).toHaveBeenCalledWith(["t2"]);
+		await waitFor(() =>
+			expect(mocks.queueTracks).toHaveBeenCalledExactlyOnceWith(["t2"], {
+				kind: "album",
+				albumId: "a2",
+				albumTitle: "Album a2",
+				artistName: "New Order",
+			}),
+		);
 	});
 });

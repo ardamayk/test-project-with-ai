@@ -1,17 +1,9 @@
 import { clearTrackWaveformCache } from "@repo/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, type ReactNode, useContext, useState } from "react";
+import { type ReactNode, useState } from "react";
+import { ImportSessionContext } from "#/components/import-session-context";
 import { useReturnFocus } from "#/hooks/use-return-focus";
 import { ImportMusicDialog } from "#/routes/library/tracks/-import-music-dialog";
-
-const ImportSessionContext = createContext<{ open: () => void } | null>(null);
-
-export function useManagedImport() {
-	const session = useContext(ImportSessionContext);
-	if (!session)
-		throw new Error("ImportSessionProvider is required for Managed Import");
-	return session;
-}
 
 export function ImportSessionProvider({ children }: { children: ReactNode }) {
 	const session = useImportSession();

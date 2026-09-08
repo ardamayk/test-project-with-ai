@@ -68,7 +68,10 @@
       }
     },
     {
-      "includes": ["packages/ui/src/layout/QueuePanel.tsx"],
+      "includes": [
+        "packages/ui/src/layout/QueuePanel.tsx",
+        "packages/ui/src/layout/QueueTrackRow.tsx"
+      ],
       "linter": {
         "rules": {
           "a11y": {
