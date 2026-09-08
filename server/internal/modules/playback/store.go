@@ -10,6 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
+const MAX_QUEUE_ITEMS = 1000
+
+var ErrQueueLimitExceeded = fmt.Errorf("queue exceeds maximum of %d items", MAX_QUEUE_ITEMS)
+
 type QueueItem struct {
 	ID       string          `json:"id"`
 	TrackID  string          `json:"trackId"`
@@ -100,6 +104,9 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 }
 
 func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []string, expectedRevision string, sources ...QueueItemSource) (Queue, error) {
+	if len(trackIDs) > MAX_QUEUE_ITEMS {
+		return Queue{}, ErrQueueLimitExceeded
+	}
 	sourceJSON, err := encodeQueueItemSource(sources)
 	if err != nil {
 		return Queue{}, err
@@ -156,11 +163,16 @@ func (s *Store) AppendItem(ctx context.Context, userID, trackID, expectedRevisio
 		return Queue{}, revisionErr
 	}
 
+	var itemCount int
 	var maxPos sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT MAX(position) FROM playback_queue WHERE user_id = ?`, userID,
-	).Scan(&maxPos); err != nil {
+		`SELECT COUNT(*), MAX(position) FROM playback_queue WHERE user_id = ?`, userID,
+	).Scan(&itemCount, &maxPos); err != nil {
 		return Queue{}, err
+	}
+
+	if itemCount >= MAX_QUEUE_ITEMS {
+		return Queue{}, ErrQueueLimitExceeded
 	}
 
 	pos := 0

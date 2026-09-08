@@ -5,6 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
+)
+
+const (
+	MAX_QUEUE_SOURCE_BYTES         = 16 * 1024
+	MAX_QUEUE_SOURCE_STRING_LENGTH = 1024
+	MAX_QUEUE_SOURCE_BASED_ON      = 20
 )
 
 var ErrInvalidQueueSource = errors.New("invalid queue source")
@@ -34,6 +41,9 @@ func (source QueueItemSource) MarshalJSON() ([]byte, error) {
 func parseQueueItemSource(data json.RawMessage) (QueueItemSource, error) {
 	if len(data) == 0 {
 		return QueueItemSource{Kind: "user"}, nil
+	}
+	if len(data) > MAX_QUEUE_SOURCE_BYTES {
+		return QueueItemSource{}, fmt.Errorf("%w: source exceeds %d bytes", ErrInvalidQueueSource, MAX_QUEUE_SOURCE_BYTES)
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
@@ -80,9 +90,12 @@ func validateQueueSourceField(field string, value json.RawMessage) error {
 		if err := json.Unmarshal(value, &trackIDs); err != nil || trackIDs == nil {
 			return fmt.Errorf("%w: basedOn must be an array of track IDs", ErrInvalidQueueSource)
 		}
+		if len(trackIDs) > MAX_QUEUE_SOURCE_BASED_ON {
+			return fmt.Errorf("%w: basedOn exceeds %d track IDs", ErrInvalidQueueSource, MAX_QUEUE_SOURCE_BASED_ON)
+		}
 		for _, trackID := range trackIDs {
-			if strings.TrimSpace(trackID) == "" {
-				return fmt.Errorf("%w: basedOn track IDs must not be blank", ErrInvalidQueueSource)
+			if strings.TrimSpace(trackID) == "" || utf8.RuneCountInString(trackID) > MAX_QUEUE_SOURCE_STRING_LENGTH {
+				return fmt.Errorf("%w: basedOn track IDs must be nonblank and at most %d characters", ErrInvalidQueueSource, MAX_QUEUE_SOURCE_STRING_LENGTH)
 			}
 		}
 		return nil
@@ -90,6 +103,9 @@ func validateQueueSourceField(field string, value json.RawMessage) error {
 	var text string
 	if err := json.Unmarshal(value, &text); err != nil || strings.TrimSpace(text) == "" {
 		return fmt.Errorf("%w: %s must be a nonblank string", ErrInvalidQueueSource, field)
+	}
+	if utf8.RuneCountInString(text) > MAX_QUEUE_SOURCE_STRING_LENGTH {
+		return fmt.Errorf("%w: %s exceeds %d characters", ErrInvalidQueueSource, field, MAX_QUEUE_SOURCE_STRING_LENGTH)
 	}
 	return nil
 }

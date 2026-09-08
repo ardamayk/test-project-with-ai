@@ -3193,7 +3193,7 @@ components:
           minimum: 0
           format: date-time
     QueueItemSource:
-      description: Origin captured when a track enters the queue. Omitted sources default to user.
+      description: Origin captured when a track enters the queue. Omitted sources default to user. Source JSON is limited to 16384 bytes.
       oneOf:
         - $ref: "#/components/schemas/QueueAlbumSource"
         - $ref: "#/components/schemas/QueuePlaylistSource"
@@ -3217,14 +3217,17 @@ components:
         albumId:
           type: string
           minLength: 1
+          maxLength: 1024
           pattern: "\\S"
         albumTitle:
           type: string
           minLength: 1
+          maxLength: 1024
           pattern: "\\S"
         artistName:
           type: string
           minLength: 1
+          maxLength: 1024
           pattern: "\\S"
     QueuePlaylistSource:
       type: object
@@ -3237,10 +3240,12 @@ components:
         playlistId:
           type: string
           minLength: 1
+          maxLength: 1024
           pattern: "\\S"
         name:
           type: string
           minLength: 1
+          maxLength: 1024
           pattern: "\\S"
     QueueUserSource:
       type: object
@@ -3260,9 +3265,11 @@ components:
           enum: [suggestion]
         basedOn:
           type: array
+          maxItems: 20
           items:
             type: string
             minLength: 1
+            maxLength: 1024
             pattern: "\\S"
     QueueItem:
       type: object
@@ -3309,6 +3316,7 @@ components:
             type: string
             enum: [queue]
     QueueReplace:
+      description: Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items.
       type: object
       required: [trackIds, revision]
       properties:
@@ -3316,12 +3324,14 @@ components:
           $ref: "#/components/schemas/QueueItemSource"
         trackIds:
           type: array
+          maxItems: 1000
           items:
             type: string
             format: uuid
         revision:
           type: string
     QueueItemAppend:
+      description: Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items.
       type: object
       required: [trackId, revision]
       properties:
@@ -3333,6 +3343,7 @@ components:
         revision:
           type: string
     QueueReorder:
+      description: Queue mutation bodies are limited to 1048576 bytes; invalid or oversized requests return 400. Queues may contain at most 1000 items.
       type: object
       required: [itemIds, revision]
       properties:

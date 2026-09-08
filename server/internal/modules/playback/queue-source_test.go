@@ -88,6 +88,11 @@ func assertQueueSource(t *testing.T, got, want QueueItemSource) {
 
 func TestHandlersRejectInvalidSourcesWithoutMutationOrEvent(t *testing.T) {
 	invalidSources := []string{
+		fmt.Sprintf(`{"kind":"playlist","playlistId":"p","name":%q}`, strings.Repeat("x", MAX_QUEUE_SOURCE_STRING_LENGTH+1)),
+		`{"kind":"suggestion","basedOn":[` + strings.Repeat(`"seed",`, MAX_QUEUE_SOURCE_BASED_ON) + `"seed"]}`,
+		fmt.Sprintf(`{"kind":"suggestion","basedOn":[%q]}`, strings.Repeat("x", MAX_QUEUE_SOURCE_STRING_LENGTH+1)),
+		`{"kind":` + strings.Repeat(" ", MAX_QUEUE_SOURCE_BYTES) + `"user"}`,
+
 		`null`, `[]`, `"user"`, `{}`, `{"kind":"other"}`,
 		`{"kind":"album","albumId":"a","albumTitle":"Album"}`,
 		`{"kind":"album","albumId":"a","albumTitle":"Album","artistName":" "}`,
