@@ -85,7 +85,7 @@ jobs:
     timeout-minutes: 30
     needs: [classify]
     # Classifier output maps one-to-one onto this job.
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.web_e2e == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.web_e2e == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
@@ -223,7 +223,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: [classify]
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.hls == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.hls == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
@@ -353,7 +353,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: [classify]
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.desktop_unit == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.desktop_unit == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
@@ -484,15 +484,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: [classify]
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.real_mpv == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.real_mpv == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
+      import_parity_outcome: ${{ steps.import_parity.outcome }}
       build_outcome: ${{ steps.mpv_build.outcome }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
       cache_pnpm_key: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
       cache_cargo_hit: ${{ steps.cargo_cache.outputs.cache-hit }}
       cache_cargo_key: ${{ steps.cargo_cache.outputs.cache-matched-key }}
+      cache_go_hit: ${{ steps.go_cache.outputs.cache-hit }}
+      cache_go_key: ${{ steps.go_cache.outputs.cache-matched-key }}
       cache_mpv_hit: ${{ steps.mpv_cache.outputs.cache-hit }}
       cache_mpv_key: ${{ steps.mpv_cache.outputs.cache-matched-key }}
     steps:
@@ -613,22 +616,33 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      # Stages the verified binary as the sidecar and runs the Desktop
-      # Client tests against real pinned mpv.
-      - name: Real pinned mpv integration
-        id: test
-        env:
-          EARTHLY_AUDIO_MPV_PATH: ${{ runner.temp }}/earthly-audio-mpv/mpv
-        run: |
-          mise run desktop:test:mpv 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-mpv.log"
-
       # Real Managed Imports for every supported format through the native
-      # transport against a Music Server built from this checkout (issue #55).
+      # transport. Restore the trusted Music Server build cache before this
+      # test builds Go fixtures, and run it before compiling the mpv tests.
+      - name: Restore Go module and build caches
+        id: go_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('server/go.sum') }}
+
       - name: Desktop Managed Import parity against a real Music Server
         id: import_parity
         if: ${{ !cancelled() }}
         run: |
           mise run desktop:test:import-parity 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-import-parity.log"
+
+      # Keep mpv coverage after a parity failure, while allowing superseded
+      # pull-request runs to stop immediately.
+      - name: Real pinned mpv integration
+        id: test
+        if: ${{ !cancelled() && (steps.mpv_cache.outputs.cache-hit == 'true' || steps.mpv_build.outcome == 'success') }}
+        env:
+          EARTHLY_AUDIO_MPV_PATH: ${{ runner.temp }}/earthly-audio-mpv/mpv
+        run: |
+          mise run desktop:test:mpv 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-mpv.log"
 
       - name: Publish job summary
         id: summary
@@ -637,6 +651,8 @@ jobs:
           START: ${{ steps.timer.outputs.start }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
           IMPORT_PARITY_OUTCOME: ${{ steps.import_parity.outcome }}
+          GO_CACHE_HIT: ${{ steps.go_cache.outputs.cache-hit }}
+          GO_CACHE_KEY: ${{ steps.go_cache.outputs.cache-matched-key }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
           PNPM_CACHE_KEY: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
           CARGO_CACHE_HIT: ${{ steps.cargo_cache.outputs.cache-hit }}
@@ -664,6 +680,7 @@ jobs:
             echo "| pnpm store | $(cache_status "$PNPM_CACHE_HIT" "$PNPM_CACHE_KEY") |"
             echo "| Cargo | $(cache_status "$CARGO_CACHE_HIT" "$CARGO_CACHE_KEY") |"
             echo "| Verified pinned mpv | $(cache_status "$MPV_CACHE_HIT" "$MPV_CACHE_KEY") |"
+            echo "| Go modules and build | $(cache_status "$GO_CACHE_HIT" "$GO_CACHE_KEY") |"
             echo
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -748,6 +765,7 @@ jobs:
           HLS_TEST_OUTCOME: ${{ needs.hls.outputs.test_outcome }}
           DESKTOP_UNIT_TEST_OUTCOME: ${{ needs.desktop-unit.outputs.test_outcome }}
           REAL_MPV_TEST_OUTCOME: ${{ needs.real-mpv.outputs.test_outcome }}
+          IMPORT_PARITY_OUTCOME: ${{ needs.real-mpv.outputs.import_parity_outcome }}
           REAL_MPV_BUILD_OUTCOME: ${{ needs.real-mpv.outputs.build_outcome }}
           REAL_MPV_PNPM_HIT: ${{ needs.real-mpv.outputs.cache_pnpm_hit }}
           REAL_MPV_PNPM_KEY: ${{ needs.real-mpv.outputs.cache_pnpm_key }}
@@ -846,7 +864,7 @@ jobs:
             if [[ "$DESKTOP_UNIT_TEST_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-desktop-unit-logs\` (native log, 14 days)"$'\n'
             fi
-            if [[ "$REAL_MPV_TEST_OUTCOME" == "failure" || "$REAL_MPV_BUILD_OUTCOME" == "failure" ]]; then
+            if [[ "$REAL_MPV_TEST_OUTCOME" == "failure" || "$REAL_MPV_BUILD_OUTCOME" == "failure" || "$IMPORT_PARITY_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-real-mpv-logs\` (native logs, 14 days)"$'\n'
             fi
             {

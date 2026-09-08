@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 const mainWorkflow = readFileSync(
@@ -237,5 +240,52 @@ test("nightly follows trusted cache, summary, and artifact policy", () => {
 	assert.match(nightlyWorkflow, /Run and artifact links:/);
 	for (const action of nightlyWorkflow.matchAll(/uses: [^@\n]+@([^\s]+)/g)) {
 		assert.match(action[1], /^[a-f0-9]{40}$/);
+	}
+});
+
+test("selected integration jobs stop when their PR revision is cancelled", () => {
+	for (const jobName of ["web-e2e", "hls", "desktop-unit", "real-mpv"]) {
+		const job = getJob(integrationWorkflow, jobName);
+		assert.match(
+			job,
+			/if: \$\{\{ !cancelled\(\) && needs\.classify\.result == 'success'/,
+		);
+	}
+});
+
+test("an import parity failure advertises retained native diagnostics", () => {
+	const gate = getJob(integrationWorkflow, "integration-gate");
+	const summary = gate
+		.split("- name: Publish gate summary")[1]
+		.split("- name: Enforce gate result")[0];
+	const environment = Object.fromEntries(
+		[...summary.matchAll(/^ {10}([A-Z][A-Z0-9_]+):/gm)].map((match) => [
+			match[1],
+			"",
+		]),
+	);
+	const script = summary
+		.split("run: |\n")[1]
+		.split("\n")
+		.map((line) => line.slice(10))
+		.join("\n");
+	const directory = mkdtempSync(path.join(tmpdir(), "import-parity-summary-"));
+	const summaryPath = path.join(directory, "summary.md");
+	try {
+		execFileSync("bash", ["-euo", "pipefail", "-c", script], {
+			env: {
+				...process.env,
+				...environment,
+				RESULT: "failure",
+				IMPORT_PARITY_OUTCOME: "failure",
+				GITHUB_STEP_SUMMARY: summaryPath,
+			},
+		});
+		assert.match(
+			readFileSync(summaryPath, "utf8"),
+			/integration-gate-real-mpv-logs/,
+		);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
 	}
 });

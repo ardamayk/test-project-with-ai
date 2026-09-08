@@ -516,7 +516,7 @@ jobs:
           retention-days: 7
 
   fast-gate:
-    name: Fast Gate
+    name: PR / Fast Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [classify, workspace, music-server, desktop, generated-drift]
