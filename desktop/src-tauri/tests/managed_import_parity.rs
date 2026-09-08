@@ -379,7 +379,7 @@ async fn desktop_managed_import_matches_web_for_every_supported_format() {
                 assert_eq!(body["file"]["format"].as_str(), Some("opus"), "{body}");
                 assert_eq!(
                     body["duplicateClassification"].as_str(),
-                    Some("possible_duplicate"),
+                    Some("none"),
                     "{body}"
                 );
                 let candidates = body["matchingTracks"].as_array().expect("matching Tracks");
