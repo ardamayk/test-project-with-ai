@@ -4,8 +4,14 @@ set -euo pipefail
 STATE_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/native-ci-dependencies"
 MAX_WAIT_SECONDS=600
 
+recordInstallationStatus() {
+  local installExitCode="$?"
+  printf '%s\n' "$installExitCode" > "$STATE_DIRECTORY/status.tmp"
+  mv "$STATE_DIRECTORY/status.tmp" "$STATE_DIRECTORY/status"
+}
+
 installDependencies() {
-  trap 'printf "%s\n" "$?" > "$STATE_DIRECTORY/status"' EXIT
+  trap recordInstallationStatus EXIT
   sudo apt-get update
   sudo apt-get install -y --no-install-recommends \
     build-essential ffmpeg libayatana-appindicator3-dev \
@@ -29,7 +35,7 @@ waitForInstallation() {
       cat "$STATE_DIRECTORY/install.log"
       return "$(cat "$STATE_DIRECTORY/status")"
     fi
-    if ! kill -0 "$processId" 2>/dev/null; then
+    if ! kill -0 "$processId" 2>/dev/null && [[ ! -f "$STATE_DIRECTORY/status" ]]; then
       cat "$STATE_DIRECTORY/install.log"
       echo "Native dependency installation exited without a status." >&2
       return 1
