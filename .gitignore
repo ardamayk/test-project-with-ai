@@ -4,6 +4,8 @@ dist
 .turbo
 bin/
 *.db
+*.db-shm
+*.db-wal
 .env
 .env.local
 graphify-out/
@@ -12,7 +14,11 @@ coverage/
 playwright-report/
 test-results/
 .playwright-cli/
+.claude/worktrees/
 .superpowers/**/state/
 server/music/
 desktop/src-tauri/binaries/
 server/data/
+
+mise.local.toml
+.mise.local.toml

@@ -84,7 +84,7 @@ run = ":"
 
 [tasks.test]
 description = "Run workspace, Music Server, Desktop Client, workflow policy, and Git hook tests"
-depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test", "classifier:test", "main-workflows:test", "clean-room:test"]
+depends = ["workspace:test", "server:test", "desktop:test", "git-hooks:test", "classifier:test", "main-workflows:test", "clean-room:test", "storage:test"]
 run = ":"
 
 [tasks."git-hooks:test"]
@@ -316,3 +316,27 @@ exec act pull_request \
   --eventpath "$event_file" \
   "$@"
 """
+
+[tasks."storage:test"]
+description = "Test local storage isolation and safe cache management"
+run = "node --test scripts/test-storage-*.mjs"
+
+[tasks."cache:setup"]
+description = "Install pinned local compiler cache"
+run = "node scripts/storage.mjs setup"
+
+[tasks."cache:status"]
+description = "Show resolved local storage and cache sizes"
+run = "node scripts/storage.mjs status"
+
+[tasks."cache:migrate"]
+description = "Preview old output migration; pass --apply to move"
+run = "node scripts/storage.mjs migrate"
+
+[tasks."cache:prune"]
+description = "Preview orphaned and expired outputs; pass --apply to remove"
+run = "node scripts/storage.mjs prune"
+
+[tasks."cache:clean"]
+description = "Preview current worktree output cleanup; pass --apply to remove"
+run = "node scripts/storage.mjs clean"
