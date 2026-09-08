@@ -49,11 +49,11 @@ export function QueueTrackRow({
 				}
 			}}
 			className={cn(
-				"group relative flex cursor-pointer items-center gap-2.5 rounded-r-md py-2 pr-3 pl-3 outline-offset-[-2px] hover:bg-[rgb(from_var(--player-pill)_r_g_b_/_0.6)] focus-visible:outline-2 focus-visible:outline-[var(--player-control-primary)]",
+				"group relative flex cursor-pointer items-center gap-2.5 rounded-r-md py-2 pr-3 pl-6 outline-offset-[-2px] hover:bg-[rgb(from_var(--player-pill)_r_g_b_/_0.6)] focus-visible:outline-2 focus-visible:outline-[var(--player-control-primary)]",
 				state === "played" &&
 					"opacity-50 hover:opacity-100 focus-within:opacity-100",
 				isCurrent &&
-					"my-[3px] mr-1.5 ml-1 rounded-md bg-[rgb(from_var(--player-pill)_r_g_b_/_0.7)] py-2 pr-3 pl-2 shadow-[0_0_0_1px_var(--player-control-primary),0_6px_18px_-6px_var(--player-control-shadow)]",
+					"my-[3px] mr-1.5 ml-2 rounded-md bg-[rgb(from_var(--player-pill)_r_g_b_/_0.7)] py-2 pr-3 pl-4 shadow-[0_0_0_1px_var(--player-control-primary),0_6px_18px_-6px_var(--player-control-shadow)]",
 			)}
 		>
 			{isCurrent ? (

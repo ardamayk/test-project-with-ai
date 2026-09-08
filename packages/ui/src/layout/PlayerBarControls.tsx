@@ -350,7 +350,7 @@ export function VolumeAndQueueControls({
 	return (
 		<section
 			aria-label="Volume and queue"
-			className="flex min-w-[150px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
+			className="flex min-w-[200px] flex-[1_0_0] items-center justify-end gap-4 justify-self-end"
 		>
 			{isGapless ? (
 				<span

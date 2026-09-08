@@ -620,7 +620,7 @@ export function PlayerBar({
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">
 				<section
 					aria-label="Now playing"
-					className="@container/now-playing flex min-w-[200px] flex-[1.4_0_0] items-center gap-3 justify-self-start"
+					className="@container/now-playing flex min-w-[200px] flex-[1_0_0] items-center gap-3 justify-self-start"
 				>
 					{currentTrack ? (
 						<button

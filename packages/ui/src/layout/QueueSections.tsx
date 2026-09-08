@@ -143,7 +143,7 @@ function QueueGroupHeader({
 	);
 	return (
 		<div
-			className="flex items-center gap-2 border-[var(--queue-group-color)] border-l-2 bg-[var(--player-pill)] py-2 pr-3 pl-3"
+			className="flex items-center gap-2 border-[var(--queue-group-color)] border-l-2 bg-[var(--player-pill)] py-2 pr-3 pl-6"
 			title={details.meta}
 		>
 			{details.href ? (

@@ -232,7 +232,7 @@ describe("PlayerBar", () => {
 
 		const nowPlaying = screen.getByLabelText("Now playing");
 		expect(nowPlaying.className).toContain("min-w-[200px]");
-		expect(nowPlaying.className).toContain("flex-[1.4_0_0]");
+		expect(nowPlaying.className).toContain("flex-[1_0_0]");
 	});
 
 	it("keeps playback controls centered in the full player bar", async () => {

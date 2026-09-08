@@ -79,7 +79,7 @@ export function AppShell({
 					{bottom ? (
 						<div
 							data-player-dock
-							className={`pointer-events-none absolute inset-x-0 bottom-4 z-30 ${SHELL_INSET_CLASS}`}
+							className={`pointer-events-none absolute inset-x-0 bottom-4 z-50 ${SHELL_INSET_CLASS}`}
 						>
 							<div data-player-dock-column className="w-full">
 								<div className="pointer-events-auto">{bottom}</div>
