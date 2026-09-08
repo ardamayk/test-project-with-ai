@@ -6,11 +6,15 @@ kind="${1:?Storage command kind is required}"
 shift
 if [[ "$EARTHLY_STORAGE_RESOLVED_MODE" != local ]]; then exec "$@"; fi
 
-if [[ "${EARTHLY_LOCKED_WORKTREE:-}" != "$EARTHLY_WORKTREE_ROOT" ]]; then
+# Only the direct child of this flock invocation may consume its hand-off.
+# Every later wrapper takes its own shared lock, including background descendants.
+if [[ "${EARTHLY_STORAGE_LOCK_PARENT:-}" != "$PPID" ]]; then
   lockPath="$(node "$SCRIPT_DIRECTORY/storage.mjs" lock-path)"
   export EARTHLY_LOCKED_WORKTREE="$EARTHLY_WORKTREE_ROOT"
+  export EARTHLY_STORAGE_LOCK_PARENT="$$"
   exec flock --close --shared "$lockPath" bash "$SCRIPT_DIRECTORY/run-with-storage.sh" "$kind" "$@"
 fi
+unset EARTHLY_STORAGE_LOCK_PARENT
 node "$SCRIPT_DIRECTORY/storage.mjs" prepare
 case "$kind" in
   web-build|docs-build|server-build)

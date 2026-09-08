@@ -303,3 +303,101 @@ test("unchanged Go tests reuse results despite separate invocation runs", (conte
 	const result = checked("mise", args, state.options);
 	assert.match(result, /\(cached\)/);
 });
+
+test("direct Playwright configuration initializes ownership before fallback runs", (context) => {
+	const state = fixture(context);
+	const directory = join(state.checkout, "web/testing");
+	mkdirSync(directory, { recursive: true });
+	cpSync(
+		new URL("../web/testing/storage.ts", import.meta.url),
+		join(directory, "storage.ts"),
+	);
+	const runDirectory = checked(
+		"mise",
+		[
+			"exec",
+			"--",
+			"node",
+			"--input-type=module",
+			"-e",
+			'import { getTestRunDirectory } from "./web/testing/storage.ts"; console.log(getTestRunDirectory());',
+		],
+		state.options,
+	);
+	const env = resolve(state);
+	assert.equal(existsSync(join(env.EARTHLY_CLONE_ROOT, "owner.json")), true);
+	assert.equal(existsSync(join(env.EARTHLY_WORKTREE_ROOT, "owner.json")), true);
+	assert.equal(existsSync(join(runDirectory, "run.json")), true);
+	checked("mise", ["exec", "--", "cargo", "build"], state.options);
+	checked(
+		"mise",
+		["exec", "--", "node", "scripts/storage.mjs", "clean", "--apply"],
+		state.options,
+	);
+	assert.equal(existsSync(runDirectory), false);
+});
+
+test("surviving descendants reacquire storage locks before running tools", async (context) => {
+	const state = fixture(context);
+	const snapshot = join(state.root, "snapshot");
+	const begin = join(state.root, "begin");
+	const finish = join(state.root, "finish");
+	const done = join(state.root, "done");
+	writeFileSync(
+		join(state.root, "bin/cargo"),
+		'#!/usr/bin/env bash\nnode -e \'require("node:fs").writeFileSync(process.env.SNAPSHOT, "ready")\'\nwhile [[ ! -f "$FINISH" ]]; do sleep 0.02; done\n',
+		{ mode: 0o755 },
+	);
+	checked(
+		"mise",
+		[
+			"exec",
+			"--",
+			"bash",
+			"scripts/run-with-storage.sh",
+			"build",
+			"bash",
+			"-c",
+			'(while [[ ! -f "$BEGIN" ]]; do sleep 0.02; done; cargo build; touch "$DONE") </dev/null >"$LOG" 2>&1 &',
+		],
+		{
+			...state.options,
+			env: {
+				...state.env,
+				SNAPSHOT: snapshot,
+				BEGIN: begin,
+				FINISH: finish,
+				DONE: done,
+				LOG: join(state.root, "background.log"),
+			},
+		},
+	);
+	try {
+		checked(
+			"mise",
+			["exec", "--", "node", "scripts/storage.mjs", "clean", "--apply"],
+			state.options,
+		);
+		writeFileSync(begin, "start");
+		await waitFile(snapshot);
+		const result = spawnSync(
+			"mise",
+			["exec", "--", "node", "scripts/storage.mjs", "clean", "--apply"],
+			state.options,
+		);
+		assert.notEqual(
+			result.status,
+			0,
+			"The descendant must hold a fresh shared lock",
+		);
+	} finally {
+		writeFileSync(begin, "start");
+		writeFileSync(finish, "finish");
+		await waitFile(done);
+	}
+	checked(
+		"mise",
+		["exec", "--", "node", "scripts/storage.mjs", "clean", "--apply"],
+		state.options,
+	);
+});

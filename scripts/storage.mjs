@@ -441,6 +441,7 @@ function main() {
 			console.log(prepareClone(context));
 			break;
 		case "prepare":
+			prepareClone(context);
 			prepareWorktree(context);
 			break;
 		case "run":
