@@ -6,6 +6,7 @@ import {
 	readFileSync,
 	readlinkSync,
 	renameSync,
+	rmdirSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -244,7 +245,11 @@ function migrate(context, apply) {
 		);
 		if (tracked)
 			throw new Error(`Refusing to migrate tracked files: ${source}`);
-		if (existsSync(destination)) {
+		const hasEmptyDestination =
+			existsSync(destination) &&
+			lstatSync(destination).isDirectory() &&
+			readdirSync(destination).length === 0;
+		if (existsSync(destination) && !hasEmptyDestination) {
 			console.log(`Skip occupied destination: ${destination}`);
 			continue;
 		}
@@ -254,6 +259,7 @@ function migrate(context, apply) {
 		if (apply) {
 			prepareWorktree(context);
 			mkdirSync(path.dirname(destination), { recursive: true });
+			if (hasEmptyDestination) rmdirSync(destination);
 			renameSync(source, destination);
 		}
 		if (source === path.join(context.checkout, "desktop/src-tauri/target"))

@@ -351,3 +351,30 @@ test("refresh rejects unowned migrated targets without moving their metadata", (
 		false,
 	);
 });
+
+test("migration previews and replaces only an empty destination directory", (context) => {
+	const state = fixture(context);
+	successful(state.invoke(["lock-path"]));
+	successful(state.invoke(["prepare"]));
+	const source = join(state.checkout, "desktop/src-tauri/target/object");
+	put(source);
+	mkdirSync(state.resolved.CARGO_TARGET_DIR, { recursive: true });
+	const preview = state.invoke(["migrate"]);
+	successful(preview);
+	assert.match(preview.stdout, /Would move:/);
+	assert.deepEqual(readdirSync(state.resolved.CARGO_TARGET_DIR), []);
+	assert.equal(readFileSync(source, "utf8"), "sentinel");
+	successful(state.invoke(["migrate", "--apply"]));
+	assert.equal(existsSync(source), false);
+	assert.equal(
+		readFileSync(join(state.resolved.CARGO_TARGET_DIR, "object"), "utf8"),
+		"sentinel",
+	);
+	put(source, "replacement");
+	successful(state.invoke(["migrate", "--apply"]));
+	assert.equal(readFileSync(source, "utf8"), "replacement");
+	assert.equal(
+		readFileSync(join(state.resolved.CARGO_TARGET_DIR, "object"), "utf8"),
+		"sentinel",
+	);
+});
