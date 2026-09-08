@@ -1,4 +1,12 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+import { getTestArtifacts, getTestRunDirectory } from "./testing/storage";
+
+const runDirectory = getTestRunDirectory();
+const managedStorage = runDirectory
+	? path.join(runDirectory, "web/data/managed")
+	: "./data/e2e-managed";
+if (runDirectory) process.env.MANAGED_IMPORT_TEST_STORAGE_PATH = managedStorage;
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -8,8 +16,9 @@ export default defineConfig({
 	// CI diagnostics for the Integration Gate: one retry, and on failure an
 	// HTML report plus traces, screenshots, and retry data (issue #79).
 	retries: process.env.CI ? 1 : 0,
-	workers: process.env.CI ? 1 : undefined,
-	reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+	// Import journeys inspect the same server staging directory.
+	workers: process.env.CI || runDirectory ? 1 : undefined,
+	...getTestArtifacts("web"),
 	use: {
 		baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
 		trace: "on-first-retry",
@@ -21,22 +30,22 @@ export default defineConfig({
 			command: "go run ./cmd/server",
 			timeout: 120_000,
 			url: "http://localhost:8090/api/v1/health",
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: runDirectory ? false : !process.env.CI,
 			cwd: "../server",
-			// Managed Storage is isolated under server/data so the Managed Import
-			// journey (e2e/managed-import.spec.ts) can inspect staging; keep this
-			// path in sync with that spec.
+			// Pass the same isolated path to the server and staging assertions.
 			env: {
 				SERVER_ADDR: "127.0.0.1:8090",
-				DATABASE_PATH: "./data/e2e.db",
-				MANAGED_STORAGE_PATH: "./data/e2e-managed",
+				DATABASE_PATH: runDirectory
+					? path.join(runDirectory, "web/data/e2e.db")
+					: "./data/e2e.db",
+				MANAGED_STORAGE_PATH: managedStorage,
 			},
 		},
 		{
 			command: "pnpm dev",
 			timeout: 120_000,
 			url: "http://localhost:3000",
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: runDirectory ? false : !process.env.CI,
 		},
 	],
 });

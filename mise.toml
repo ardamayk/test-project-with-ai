@@ -32,14 +32,7 @@ run = ":"
 [tasks."server:build"]
 description = "Build the Music Server binary with embedded Web Client assets"
 depends = ["web:build", "docs:build"]
-run = """
-#!/usr/bin/env bash
-set -euo pipefail
-chmod +x scripts/sync-static.sh
-./scripts/sync-static.sh
-cd server
-go build -o ../bin/server ./cmd/server
-"""
+run = "bash scripts/run-with-storage.sh server-build node scripts/build-server.mjs"
 
 [tasks."desktop:build"]
 description = "Build the release Desktop Client with pinned mpv"
@@ -51,8 +44,8 @@ description = "Run the built Music Server and release Desktop Client"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
-[[ -x bin/server ]] || { echo "Missing bin/server; run 'mise run build' first." >&2; exit 1; }
-[[ -x desktop/src-tauri/target/release/earthly-audio-desktop ]] || { echo "Missing Desktop Client; run 'mise run build' first." >&2; exit 1; }
+[[ -x "${EARTHLY_SERVER_BINARY:-bin/server}" ]] || { echo "Missing bin/server; run 'mise run build' first." >&2; exit 1; }
+[[ -x "${CARGO_TARGET_DIR:-desktop/src-tauri/target}/release/earthly-audio-desktop" ]] || { echo "Missing Desktop Client; run 'mise run build' first." >&2; exit 1; }
 ./scripts/run-with-music-server.sh built pnpm --dir desktop start
 """
 
@@ -112,7 +105,7 @@ run = "node --test scripts/test-clean-room-verification.mjs"
 
 [tasks."workspace:build"]
 description = "Build workspace production artifacts"
-run = "bash scripts/run-workspace-task.sh build web"
+run = "bash scripts/run-with-storage.sh build bash scripts/run-workspace-task.sh build web"
 
 [tasks."workspace:format"]
 description = "Format the Web Client, shared UI, and API client"
@@ -136,7 +129,7 @@ run = "bash scripts/run-workspace-task.sh typecheck web @repo/ui @repo/api-clien
 
 [tasks."workspace:test"]
 description = "Run Web Client, shared UI, and API client unit tests"
-run = "bash scripts/run-workspace-task.sh test:unit web @repo/ui @repo/api-client"
+run = "bash scripts/run-with-storage.sh test bash scripts/run-workspace-task.sh test:unit web @repo/ui @repo/api-client"
 
 [tasks."web:build"]
 description = "Build the Web Client"
@@ -145,7 +138,7 @@ run = ":"
 
 [tasks."docs:build"]
 description = "Build the product documentation embedded by the Music Server"
-run = "pnpm turbo run build --filter=@repo/docs"
+run = "bash scripts/run-with-storage.sh build bash scripts/run-workspace-task.sh build @repo/docs"
 
 [tasks."web:format"]
 description = "Format the Web Client"
@@ -161,7 +154,7 @@ run = "bash scripts/run-workspace-task.sh typecheck web"
 
 [tasks."web:test"]
 description = "Run Web Client unit tests"
-run = "bash scripts/run-workspace-task.sh test:unit web"
+run = "bash scripts/run-with-storage.sh test bash scripts/run-workspace-task.sh test:unit web"
 
 [tasks."ui:format"]
 description = "Format the shared UI"
@@ -177,7 +170,7 @@ run = "bash scripts/run-workspace-task.sh typecheck @repo/ui"
 
 [tasks."ui:test"]
 description = "Run shared UI unit tests"
-run = "bash scripts/run-workspace-task.sh test:unit @repo/ui"
+run = "bash scripts/run-with-storage.sh test bash scripts/run-workspace-task.sh test:unit @repo/ui"
 
 [tasks."api-client:format"]
 description = "Format the API client"
@@ -193,7 +186,7 @@ run = "bash scripts/run-workspace-task.sh typecheck @repo/api-client"
 
 [tasks."api-client:test"]
 description = "Run API client unit tests"
-run = "bash scripts/run-workspace-task.sh test:unit @repo/api-client"
+run = "bash scripts/run-with-storage.sh test bash scripts/run-workspace-task.sh test:unit @repo/api-client"
 
 [tasks."server:format"]
 description = "Format the Music Server"
@@ -214,7 +207,7 @@ fi
 
 [tasks."server:lint"]
 description = "Lint the Music Server"
-run = "cd server && golangci-lint run"
+run = "bash scripts/run-with-storage.sh check bash -c 'cd server && golangci-lint run'"
 
 [tasks."server:check"]
 description = "Check Music Server formatting and lint"
@@ -223,7 +216,7 @@ run = ":"
 
 [tasks."server:test"]
 description = "Run Music Server unit tests"
-run = "cd server && go test ./..."
+run = "bash scripts/run-with-storage.sh test bash -c 'cd server && go test ./...'"
 
 [tasks."desktop:format"]
 description = "Format the Desktop Client"
@@ -252,7 +245,7 @@ run = "pnpm turbo run test:e2e --filter=web"
 
 [tasks."server:test:hls"]
 description = "Run Music Server HLS browser integration tests"
-run = "cd server && RUN_HLS_BROWSER_INTEGRATION=1 go test ./internal/modules/radio -run TestBrowserHLSProxyIntegration -count=1 -v"
+run = "bash scripts/run-with-storage.sh browser bash -c 'cd server && RUN_HLS_BROWSER_INTEGRATION=1 go test ./internal/modules/radio -run TestBrowserHLSProxyIntegration -count=1 -v'"
 
 [tasks."desktop:test:mpv"]
 description = "Run Desktop Client tests against pinned mpv"

@@ -28,5 +28,14 @@
       "cache": false,
       "outputs": ["src/generated/**", "../../server/internal/api/gen/**"]
     }
-  }
+  },
+  "globalPassThroughEnv": [
+    "EARTHLY_*",
+    "TMPDIR",
+    "CARGO_TARGET_DIR",
+    "RUSTC_WRAPPER",
+    "CARGO_INCREMENTAL",
+    "SCCACHE_*",
+    "MANAGED_IMPORT_TEST_STORAGE_PATH"
+  ]
 }

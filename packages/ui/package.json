@@ -15,8 +15,8 @@
     "lint": "pnpm --dir ../.. exec biome lint packages/ui",
     "check": "pnpm --dir ../.. exec biome check packages/ui",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:unit": "vitest run"
+    "test": "pnpm test:unit",
+    "test:unit": "bash ../../scripts/run-with-storage.sh test vitest run"
   },
   "peerDependencies": {
     "@tanstack/react-router": "^1.0.0",

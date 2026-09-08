@@ -19,10 +19,14 @@ const proxyRoutes = {
 };
 
 const config = defineConfig({
+	cacheDir: process.env.EARTHLY_VITE_CACHE
+		? `${process.env.EARTHLY_VITE_CACHE}/web`
+		: undefined,
 	resolve: { tsconfigPaths: true },
 	build: {
 		chunkSizeWarningLimit: LAZY_HLS_CHUNK_SIZE_WARNING_LIMIT_KB,
-		outDir: "dist",
+		outDir: process.env.EARTHLY_WEB_DIST ?? "dist",
+		emptyOutDir: true,
 	},
 	server: {
 		port: 3000,

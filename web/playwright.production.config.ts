@@ -1,4 +1,8 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+import { getTestArtifacts, getTestRunDirectory } from "./testing/storage";
+
+const runDirectory = getTestRunDirectory();
 
 const PRODUCTION_API_PORT = 18090;
 const PRODUCTION_API_ORIGIN = `http://127.0.0.1:${PRODUCTION_API_PORT}`;
@@ -14,7 +18,7 @@ export default defineConfig({
 	// CI diagnostics for the Integration Gate: one retry, and on failure an
 	// HTML report plus traces, screenshots, and retry data (issue #79).
 	retries: process.env.CI ? 1 : 0,
-	reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+	...getTestArtifacts("production"),
 	use: {
 		baseURL: "http://127.0.0.1:4173",
 		trace: "on-first-retry",
@@ -29,7 +33,17 @@ export default defineConfig({
 			cwd: "../server",
 			env: {
 				SERVER_ADDR: `127.0.0.1:${PRODUCTION_API_PORT}`,
-				DATABASE_PATH: "./data/e2e-production.db",
+				DATABASE_PATH: runDirectory
+					? path.join(runDirectory, "production/data/e2e.db")
+					: "./data/e2e-production.db",
+				...(runDirectory
+					? {
+							MANAGED_STORAGE_PATH: path.join(
+								runDirectory,
+								"production/data/managed",
+							),
+						}
+					: {}),
 			},
 			reuseExistingServer: false,
 		},

@@ -25,12 +25,16 @@ for argument in "$@"; do
     continue
   fi
   case "$argument" in
-    web|@repo/ui|@repo/api-client) package_filters+=("--filter=$argument") ;;
+    web|@repo/ui|@repo/api-client|@repo/docs) package_filters+=("--filter=$argument") ;;
     *)
       echo "unsupported workspace package: $argument" >&2
       exit 2
       ;;
   esac
 done
+
+if [[ "$task_name" == build && "${EARTHLY_STORAGE_RESOLVED_MODE:-}" == local ]]; then
+  turbo_options+=(--cache=)
+fi
 
 pnpm turbo run "$task_name" "${package_filters[@]}" "${turbo_options[@]}"
