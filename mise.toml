@@ -1,3 +1,10 @@
+[settings]
+# Keep storage wrappers ahead of user PATH additions for raw mise exec commands.
+activate_aggressive = true
+
+[env]
+_.source = { path = "scripts/storage-env.sh", tools = true }
+
 [tools]
 go = "1.26.6"
 node = "24"
