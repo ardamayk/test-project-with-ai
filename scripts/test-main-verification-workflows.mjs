@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -291,3 +291,18 @@ test("an import parity failure advertises retained native diagnostics", () => {
 });
 
 await import("./test-native-ci-dependencies.mjs");
+
+test("required PR gates replace legacy CI and run after retargeting", () => {
+	assert.equal(
+		existsSync(new URL("../.github/workflows/ci.yml", import.meta.url)),
+		false,
+	);
+	assert.match(getJob(fastWorkflow, "fast-gate"), /name: PR \/ Fast Gate/);
+	assert.match(
+		getJob(integrationWorkflow, "integration-gate"),
+		/name: PR \/ Integration Gate/,
+	);
+	for (const workflow of [fastWorkflow, integrationWorkflow]) {
+		assert.match(workflow, /types: \[opened, synchronize, reopened, edited\]/);
+	}
+});

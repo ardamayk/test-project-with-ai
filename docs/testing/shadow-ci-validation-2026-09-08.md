@@ -76,3 +76,7 @@ Both temporary test changes were reverted in `8eca198`. They exist only in histo
 The specific native failure now appears before three minutes, the isolated warm local gate is below 60 seconds, both renamed/stable gate names are observed, and cancellation and intentional failure propagation have hosted evidence. No ruleset changes or merge were performed.
 
 **Do not claim a new representative p95 or unconditional GO from these controlled probes.** The original 20-revision sample remains historical evidence; the optimized configuration has one controlled failed revision with two injected failure paths. The first probe also includes supersession queue delay (native 5:03, Fast 3:06) and is retained rather than silently excluded. Track subsequent representative revisions to establish the new distribution. Clean-head CI results are published in the issue update and PR checks separately from the intentional-failure observations.
+
+## Owner-authorized cutover
+
+After reviewing the evidence, the repository owner explicitly requested removal of duplicate legacy CI and enforcement of the new gates on 2026-09-08. This supersedes the earlier wait-for-more-samples recommendation: the missing representative post-change p95 evidence is accepted as a follow-up risk, not asserted to be satisfied. PR #138 removes the legacy workflow and the ruleset requires `PR / Fast Gate` and `PR / Integration Gate`; main/nightly verification remains in place.

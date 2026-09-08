@@ -1,14 +1,11 @@
-# Shadow pull-request Fast Gate (issue #78).
-#
-# Non-required early checks that run next to the existing required `lint-test`
-# and `e2e` checks. Every check command is a public Mise task from mise.toml.
-# Pull requests restore caches but never publish them; trusted cache entries
-# are written only by main or scheduled workflows.
+# Required pull-request Fast Gate. Checks run through public Mise tasks.
+# Pull requests restore caches; only trusted main/scheduled workflows publish them.
 
 name: PR
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 # Cancel superseded pull-request revisions. This workflow never runs for push
 # or schedule events, so main and scheduled runs are unaffected.
@@ -631,7 +628,7 @@ jobs:
             drift_decision="skipped — no contract, global, or unknown-path changes"
           fi
           {
-            echo "# PR / Fast Gate (shadow)"
+            echo "# PR / Fast Gate"
             echo
             echo "Result: **$RESULT**"
             echo
