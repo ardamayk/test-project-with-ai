@@ -842,7 +842,10 @@ export function PlayerBar({
 							</Portal>
 						) : null}
 					</div>
-					{playbackPreferences.showUpNext ? <UpNextPeek /> : null}
+					{playbackPreferences.showUpNext &&
+					preferences.layout.collapsed[queuePanelSide] ? (
+						<UpNextPeek />
+					) : null}
 				</section>
 
 				<PlaybackControls

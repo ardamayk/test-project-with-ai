@@ -1,6 +1,9 @@
 import type { QueueItemSource, Track } from "@repo/api-client";
+import { toast } from "@repo/ui";
 import { useMemo, useState } from "react";
+import { apiClient } from "#/lib/api";
 import { filterTracksByText } from "#/lib/filter-tracks";
+import { queueTracksByAlbum } from "#/lib/queue-tracks-by-album";
 
 type TrackCollectionPlayback = {
 	playTrack: (
@@ -70,7 +73,15 @@ export function useTrackCollectionViewState(
 	};
 
 	const handleQueue = () => {
-		void playback.queueTracks(visibleTrackIds, ...(source ? [source] : []));
+		void queueTracksByAlbum(visibleTracks, playback.queueTracks, (albumId) =>
+			apiClient.getAlbum(albumId),
+		).catch((error) => {
+			console.warn("Failed to queue collection tracks", {
+				trackIds: visibleTrackIds,
+				error,
+			});
+			toast.error("Failed to queue collection tracks");
+		});
 	};
 
 	return {

@@ -129,21 +129,21 @@ function QueueGroupHeader({
 				<AlbumArt
 					coverUrl={coverUrl}
 					title={details.title}
-					className="size-[22px] shrink-0 rounded text-[10px]"
+					className="size-7 shrink-0 rounded text-[10px]"
 				/>
 			) : (
-				<span className="flex size-[22px] shrink-0 items-center justify-center text-[var(--queue-group-color)]">
+				<span className="flex size-7 shrink-0 items-center justify-center text-[var(--queue-group-color)]">
 					<Icon className="size-3.5" />
 				</span>
 			)}
-			<span className="min-w-0 flex-1 truncate font-semibold text-heading text-xs leading-4">
+			<span className="min-w-0 flex-1 truncate font-semibold text-heading text-sm leading-5">
 				{details.title}
 			</span>
 		</>
 	);
 	return (
 		<div
-			className="flex items-center gap-2 border-[var(--queue-group-color)] border-l-2 bg-[var(--player-pill)] py-1.5 pr-2 pl-2.5"
+			className="flex items-center gap-2 border-[var(--queue-group-color)] border-l-2 bg-[var(--player-pill)] py-2 pr-3 pl-3"
 			title={details.meta}
 		>
 			{details.href ? (
@@ -176,7 +176,7 @@ function QueueGroupHeader({
 					{label}
 				</div>
 			)}
-			<span className="text-[11px] text-caption tabular-nums">
+			<span className="text-xs text-caption tabular-nums">
 				{group.items.length}
 			</span>
 			{group.source.kind === "suggestion" && (

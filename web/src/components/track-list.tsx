@@ -1,11 +1,13 @@
 import type { QueueItemSource, Track } from "@repo/api-client";
-import { buildTrackDetailRows, usePlayback } from "@repo/ui";
+import { buildTrackDetailRows, toast, usePlayback } from "@repo/ui";
 import {
 	Clock,
 	Heart,
 	Info,
 	ListMinus,
+	ListPlus,
 	Replace,
+	SkipForward,
 	Trash2,
 	X,
 } from "lucide-react";
@@ -68,7 +70,8 @@ export function TrackList({
 	onReplaceTrackSuccess?: (track: Track) => void;
 	removeLabel?: string;
 }) {
-	const { playTrack, currentTrack, getAlbumCoverUrl } = usePlayback();
+	const { playTrack, addToQueue, playNext, currentTrack, getAlbumCoverUrl } =
+		usePlayback();
 	const { isFavorite, toggleFavorite } = useFavoriteTracks();
 	const trackDeletion = useTrackDeletionFlow(onDeleteTrackSuccess);
 	const hasDeletionCapability = useServerCapability(
@@ -99,6 +102,19 @@ export function TrackList({
 			.slice(startIndex < 0 ? 0 : startIndex)
 			.map((t) => t.id);
 		void playTrack(track.id, queueTrackIds, ...(source ? [source] : []));
+	};
+
+	const handleQueueAction = async (
+		trackId: string,
+		action: (trackId: string) => Promise<void>,
+		message: string,
+	) => {
+		try {
+			await action(trackId);
+		} catch (error) {
+			console.warn(message, { trackId, error });
+			toast.error(message);
+		}
 	};
 
 	const rowPadding = compact ? "px-3 py-1.5" : "px-3 py-2.5";
@@ -233,6 +249,30 @@ export function TrackList({
 									</tr>
 								</ContextMenuTrigger>
 								<ContextMenuContent>
+									<ContextMenuItem
+										onSelect={() =>
+											void handleQueueAction(
+												track.id,
+												playNext,
+												"Failed to play track next",
+											)
+										}
+									>
+										<SkipForward className="size-4" />
+										Play next
+									</ContextMenuItem>
+									<ContextMenuItem
+										onSelect={() =>
+											void handleQueueAction(
+												track.id,
+												addToQueue,
+												"Failed to add track to queue",
+											)
+										}
+									>
+										<ListPlus className="size-4" />
+										Add to queue
+									</ContextMenuItem>
 									<ContextMenuItem
 										onSelect={() => {
 											captureRowFocus(track.id);

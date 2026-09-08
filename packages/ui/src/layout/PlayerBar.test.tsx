@@ -629,6 +629,15 @@ describe("PlayerBar", () => {
 			screen.getByRole("button", { name: "Start track" }).click();
 		});
 
+		expect(screen.queryByTestId("up-next")).toBeNull();
+		const toggleQueue = screen.getByRole("button", {
+			name: "Toggle queue panel",
+		});
+		fireEvent.click(toggleQueue);
+		expect(screen.getByTestId("up-next")).toBeTruthy();
+		fireEvent.click(toggleQueue);
+		expect(screen.queryByTestId("up-next")).toBeNull();
+		fireEvent.click(toggleQueue);
 		const upNext = screen.getByTestId("up-next");
 		expect(upNext.textContent).toContain("Track 2");
 		await act(async () => {
