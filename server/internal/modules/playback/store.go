@@ -65,7 +65,7 @@ func (s *Store) GetQueue(ctx context.Context, userID string) (Queue, error) {
 	for rows.Next() {
 		var item QueueItem
 		var sourceJSON string
-		if err := rows.Scan(&item.ID, &item.TrackID, &item.Position, &sourceJSON); err != nil {
+		if err = rows.Scan(&item.ID, &item.TrackID, &item.Position, &sourceJSON); err != nil {
 			return Queue{}, err
 		}
 		item.Source, err = parseQueueItemSource([]byte(sourceJSON))
@@ -105,7 +105,7 @@ func (s *Store) ReplaceQueue(ctx context.Context, userID string, trackIDs []stri
 		return Queue{}, err
 	}
 	for _, trackID := range trackIDs {
-		if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
+		if _, err = s.tracks.GetTrack(ctx, trackID); err != nil {
 			return Queue{}, library.ErrNotFound
 		}
 	}
@@ -143,7 +143,7 @@ func (s *Store) AppendItem(ctx context.Context, userID, trackID, expectedRevisio
 	if err != nil {
 		return Queue{}, err
 	}
-	if _, err := s.tracks.GetTrack(ctx, trackID); err != nil {
+	if _, err = s.tracks.GetTrack(ctx, trackID); err != nil {
 		return Queue{}, library.ErrNotFound
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
