@@ -1,22 +1,12 @@
-# Shadow pull-request Integration Gate (issue #79), completing the shadow
-# gate design next to PR / Fast Gate. The conservative change classifier
-# starts the agreed Web E2E, HLS, Desktop unit, and real pinned-mpv jobs
-# without semantic narrowing, and one aggregator reports the gate result,
-# including an explicit success when integration is unnecessary.
-#
-# Fast Gate and Integration Gate run in parallel: this workflow triggers on
-# its own pull_request event and never waits for Fast Gate success.
-#
-# Every check command is a public Mise task from mise.toml. Pull requests
-# restore caches but never publish them; the separate Main workflow owns
-# trusted cache publication. `mise run ci:act:smoke` offers a
-# thin, optional way to debug selected jobs locally (see
-# docs/testing/act-smoke.md); it is neither authoritative nor required.
+# Required pull-request Integration Gate. The conservative classifier selects
+# browser, HLS, Desktop unit, and pinned-mpv coverage independently of Fast Gate.
+# Pull requests restore caches; only trusted main/scheduled workflows publish them.
 
 name: PR
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 # Cancel superseded pull-request revisions. Main verification uses its own
 # workflow and concurrency policy.
@@ -34,11 +24,9 @@ defaults:
 env:
   MPV_CACHE_SCHEMA: v2
   # Official signed v0.41.0 tag, commit 41f6a645068483470267271e1d09966ca3b9f413.
-  # Must stay identical to the digest used by the required `lint-test` job in
-  # ci.yml; the verified pinned-mpv cache key incorporates it.
+  # The verified pinned-mpv cache key incorporates this source digest.
   MPV_SOURCE_SHA256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
-  # Must stay identical to the meson configuration in ci.yml. The verified
-  # pinned-mpv cache key incorporates a digest of these flags.
+  # The verified pinned-mpv cache key incorporates a digest of these flags.
   MPV_BUILD_FLAGS: "--buildtype=release --auto-features=disabled -Dbuild-date=false -Dgl=disabled -Dlibmpv=false"
 
 jobs:
@@ -85,7 +73,7 @@ jobs:
     timeout-minutes: 30
     needs: [classify]
     # Classifier output maps one-to-one onto this job.
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.web_e2e == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.web_e2e == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
@@ -223,7 +211,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: [classify]
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.hls == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.hls == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
@@ -353,7 +341,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: [classify]
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.desktop_unit == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.desktop_unit == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
@@ -484,15 +472,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: [classify]
-    if: always() && needs.classify.result == 'success' && needs.classify.outputs.real_mpv == 'true'
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.real_mpv == 'true' }}
     outputs:
       duration: ${{ steps.summary.outputs.duration }}
       test_outcome: ${{ steps.test.outcome }}
+      import_parity_outcome: ${{ steps.import_parity.outcome }}
       build_outcome: ${{ steps.mpv_build.outcome }}
       cache_pnpm_hit: ${{ steps.pnpm_cache.outputs.cache-hit }}
       cache_pnpm_key: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
       cache_cargo_hit: ${{ steps.cargo_cache.outputs.cache-hit }}
       cache_cargo_key: ${{ steps.cargo_cache.outputs.cache-matched-key }}
+      cache_go_hit: ${{ steps.go_cache.outputs.cache-hit }}
+      cache_go_key: ${{ steps.go_cache.outputs.cache-matched-key }}
       cache_mpv_hit: ${{ steps.mpv_cache.outputs.cache-hit }}
       cache_mpv_key: ${{ steps.mpv_cache.outputs.cache-matched-key }}
     steps:
@@ -512,28 +503,8 @@ jobs:
         with:
           cache_save: false
 
-      - name: Install Tauri Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            ffmpeg \
-            libayatana-appindicator3-dev \
-            libass-dev \
-            libavcodec-dev \
-            libavfilter-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libplacebo-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libswresample-dev \
-            libswscale-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            meson \
-            ninja-build \
-            pkg-config
+      - name: Start Tauri Linux dependency installation
+        run: bash scripts/prepare-native-ci-dependencies.sh start
 
       # The cache key carries the pinned version, the verified source digest,
       # the build flags, the operating system, the architecture, and the
@@ -584,6 +555,10 @@ jobs:
           path: ${{ runner.temp }}/earthly-audio-mpv
           key: mpv-${{ env.MPV_CACHE_SCHEMA }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.mpv_meta.outputs.image_fingerprint }}-${{ steps.mpv_meta.outputs.version }}-${{ env.MPV_SOURCE_SHA256 }}-${{ steps.mpv_meta.outputs.flags_digest }}
 
+      - name: Wait for Tauri Linux dependencies
+        id: native_dependencies
+        run: bash scripts/prepare-native-ci-dependencies.sh wait
+
       - name: Build pinned mpv from verified source
         id: mpv_build
         if: steps.mpv_cache.outputs.cache-hit != 'true'
@@ -613,22 +588,33 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      # Stages the verified binary as the sidecar and runs the Desktop
-      # Client tests against real pinned mpv.
+      # Real Managed Imports for every supported format through the native
+      # transport. Restore the trusted Music Server build cache before this
+      # test builds Go fixtures, and run it before compiling the mpv tests.
+      - name: Restore Go module and build caches
+        id: go_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}-${{ hashFiles('server/go.sum') }}
+
+      - name: Desktop Managed Import parity against a real Music Server
+        id: import_parity
+        if: ${{ !cancelled() && steps.native_dependencies.outcome == 'success' }}
+        run: |
+          mise run desktop:test:import-parity 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-import-parity.log"
+
+      # Keep mpv coverage after a parity failure, while allowing superseded
+      # pull-request runs to stop immediately.
       - name: Real pinned mpv integration
         id: test
+        if: ${{ !cancelled() && steps.native_dependencies.outcome == 'success' && (steps.mpv_cache.outputs.cache-hit == 'true' || steps.mpv_build.outcome == 'success') }}
         env:
           EARTHLY_AUDIO_MPV_PATH: ${{ runner.temp }}/earthly-audio-mpv/mpv
         run: |
           mise run desktop:test:mpv 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-mpv.log"
-
-      # Real Managed Imports for every supported format through the native
-      # transport against a Music Server built from this checkout (issue #55).
-      - name: Desktop Managed Import parity against a real Music Server
-        id: import_parity
-        if: ${{ !cancelled() }}
-        run: |
-          mise run desktop:test:import-parity 2>&1 | tee "$RUNNER_TEMP/integration-gate-logs/desktop-import-parity.log"
 
       - name: Publish job summary
         id: summary
@@ -637,6 +623,8 @@ jobs:
           START: ${{ steps.timer.outputs.start }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
           IMPORT_PARITY_OUTCOME: ${{ steps.import_parity.outcome }}
+          GO_CACHE_HIT: ${{ steps.go_cache.outputs.cache-hit }}
+          GO_CACHE_KEY: ${{ steps.go_cache.outputs.cache-matched-key }}
           PNPM_CACHE_HIT: ${{ steps.pnpm_cache.outputs.cache-hit }}
           PNPM_CACHE_KEY: ${{ steps.pnpm_cache.outputs.cache-matched-key }}
           CARGO_CACHE_HIT: ${{ steps.cargo_cache.outputs.cache-hit }}
@@ -664,6 +652,7 @@ jobs:
             echo "| pnpm store | $(cache_status "$PNPM_CACHE_HIT" "$PNPM_CACHE_KEY") |"
             echo "| Cargo | $(cache_status "$CARGO_CACHE_HIT" "$CARGO_CACHE_KEY") |"
             echo "| Verified pinned mpv | $(cache_status "$MPV_CACHE_HIT" "$MPV_CACHE_KEY") |"
+            echo "| Go modules and build | $(cache_status "$GO_CACHE_HIT" "$GO_CACHE_KEY") |"
             echo
             echo "Duration: ${duration}s"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -676,7 +665,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: integration-gate-real-mpv-logs
-          path: ${{ runner.temp }}/integration-gate-logs/
+          path: |
+            ${{ runner.temp }}/integration-gate-logs/
+            ${{ runner.temp }}/native-ci-dependencies/install.log
           if-no-files-found: ignore
           retention-days: 14
 
@@ -748,6 +739,7 @@ jobs:
           HLS_TEST_OUTCOME: ${{ needs.hls.outputs.test_outcome }}
           DESKTOP_UNIT_TEST_OUTCOME: ${{ needs.desktop-unit.outputs.test_outcome }}
           REAL_MPV_TEST_OUTCOME: ${{ needs.real-mpv.outputs.test_outcome }}
+          IMPORT_PARITY_OUTCOME: ${{ needs.real-mpv.outputs.import_parity_outcome }}
           REAL_MPV_BUILD_OUTCOME: ${{ needs.real-mpv.outputs.build_outcome }}
           REAL_MPV_PNPM_HIT: ${{ needs.real-mpv.outputs.cache_pnpm_hit }}
           REAL_MPV_PNPM_KEY: ${{ needs.real-mpv.outputs.cache_pnpm_key }}
@@ -797,11 +789,11 @@ jobs:
             "cargo|$REAL_MPV_CARGO_HIT|$REAL_MPV_CARGO_KEY" \
             "mpv (verified)|$REAL_MPV_CACHE_HIT|$REAL_MPV_CACHE_KEY")"
           {
-            echo "# PR / Integration Gate (shadow)"
+            echo "# PR / Integration Gate"
             echo
             echo "Result: **$RESULT**"
             echo
-            echo "Run kind: pull-request shadow run"
+            echo "Run kind: pull-request run"
             echo
             echo "| Job | Result | Duration | Caches |"
             echo "| --- | ------ | -------- | ------ |"
@@ -846,7 +838,7 @@ jobs:
             if [[ "$DESKTOP_UNIT_TEST_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-desktop-unit-logs\` (native log, 14 days)"$'\n'
             fi
-            if [[ "$REAL_MPV_TEST_OUTCOME" == "failure" || "$REAL_MPV_BUILD_OUTCOME" == "failure" ]]; then
+            if [[ "$REAL_MPV_TEST_OUTCOME" == "failure" || "$REAL_MPV_BUILD_OUTCOME" == "failure" || "$IMPORT_PARITY_OUTCOME" == "failure" ]]; then
               log_artifacts+="- \`integration-gate-real-mpv-logs\` (native logs, 14 days)"$'\n'
             fi
             {
