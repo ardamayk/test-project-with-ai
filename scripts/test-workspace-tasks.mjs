@@ -44,7 +44,8 @@ function runMiseTaskDryRun(task) {
 		`mise run --dry-run ${task} failed:\n${result.stderr}${result.stdout}`,
 	);
 
-	return `${result.stderr}${result.stdout}`;
+	const definition = readMiseTasks().find((entry) => entry.name === task);
+	return `${result.stderr}${result.stdout}\n${definition?.run?.join("\n") ?? ""}`;
 }
 
 function readMiseTasks() {
@@ -311,9 +312,15 @@ test("Desktop Client workspace scripts expose native Rust tools", async () => {
 
 	assert.match(packageJson.default.scripts.format, /^cargo fmt /);
 	assert.match(packageJson.default.scripts["format:check"], /^cargo fmt /);
-	assert.match(packageJson.default.scripts.lint, /^cargo clippy /);
+	assert.match(
+		packageJson.default.scripts.lint,
+		/run-with-storage\.sh desktop cargo clippy /,
+	);
 	assert.match(packageJson.default.scripts.lint, /-- -D warnings$/);
-	assert.match(packageJson.default.scripts["test:unit"], /^cargo test /);
+	assert.match(
+		packageJson.default.scripts["test:unit"],
+		/run-with-storage\.sh test cargo test /,
+	);
 });
 
 test("Turbo verification tasks have no implicit build or generation edges", () => {

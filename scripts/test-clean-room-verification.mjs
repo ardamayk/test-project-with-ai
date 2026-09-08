@@ -32,8 +32,21 @@ printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \\
   "$CARGO_TARGET_DIR" "$TURBO_CACHE_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \\
   "$XDG_CACHE_HOME" "$MISE_CACHE_DIR" "$MISE_DATA_DIR" "$MISE_STATE_DIR" \\
   "$BUILDX_CONFIG" >> "$CLEAN_ROOM_COMMAND_LOG"
+if [[ "$EARTHLY_STORAGE_MODE" != "clean-room" || "$EARTHLY_STORAGE_RESOLVED_MODE" != "clean-room" ]]; then
+  exit 25
+fi
+for variable in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_INCREMENTAL EARTHLY_WEB_DIST EARTHLY_RUN_DIR EARTHLY_STORAGE_RUN_PID EARTHLY_TMP_ALIAS; do
+  if [[ -v "$variable" ]]; then
+    echo "Unexpected inherited local setting: $variable" >&2
+    exit 26
+  fi
+done
 if [[ "$TURBO_CACHE" != "local:w" ]]; then
   exit 24
+fi
+if [[ "${commandName} $*" == *"\${CLEAN_ROOM_INTERRUPT_COMMAND:-never-match}"* ]]; then
+  kill -TERM "$PPID"
+  exit 0
 fi
 if [[ "${commandName} $*" == *"\${CLEAN_ROOM_FAIL_COMMAND:-never-match}"* ]]; then
   exit 23
@@ -67,7 +80,11 @@ function createFixture() {
 	};
 }
 
-function runCleanRoom({ failCommand } = {}) {
+function runCleanRoom({
+	failCommand,
+	interruptCommand,
+	hasManagedTemp = false,
+} = {}) {
 	const fixture = createFixture();
 	const result = spawnSync("bash", [runnerPath.pathname], {
 		cwd: repositoryRoot,
@@ -76,8 +93,21 @@ function runCleanRoom({ failCommand } = {}) {
 			...process.env,
 			PATH: `${fixture.binDirectory}${delimiter}${process.env.PATH}`,
 			TMPDIR: fixture.tempParent,
+			EARTHLY_STORAGE_MODE: "local",
+			RUSTC_WRAPPER: "/developer/sccache",
+			RUSTC_WORKSPACE_WRAPPER: "/developer/rust-wrapper",
+			CARGO_INCREMENTAL: "1",
+			EARTHLY_WEB_DIST: fixture.developerCache,
+			EARTHLY_DEFAULT_EARTHLY_WEB_DIST: fixture.developerCache,
+			EARTHLY_DEFAULT_CARGO_TARGET_DIR: fixture.developerCache,
+			EARTHLY_RUN_DIR: fixture.developerCache,
+			EARTHLY_STORAGE_RUN_PID: "12345",
+			EARTHLY_TMP_ALIAS: hasManagedTemp
+				? fixture.tempParent
+				: "/other-managed-temp",
 			CLEAN_ROOM_COMMAND_LOG: fixture.commandLog,
-			CLEAN_ROOM_FAIL_COMMAND: failCommand ?? "",
+			CLEAN_ROOM_FAIL_COMMAND: failCommand ?? "never-match",
+			CLEAN_ROOM_INTERRUPT_COMMAND: interruptCommand ?? "never-match",
 			GOCACHE: fixture.developerCache,
 			GOMODCACHE: fixture.developerCache,
 			CARGO_HOME: fixture.developerCache,
@@ -241,4 +271,33 @@ test("container build consumes committed clients without regeneration", () => {
 	assert.match(dockerfile, /^FROM node:24\.13\.1-alpine AS frontend-builder/m);
 	assert.match(dockerfile, /^FROM golang:1\.26\.6-alpine AS builder/m);
 	assert.match(dockerfile, /turbo run build --filter=web --filter=@repo\/docs/);
+});
+
+test("clean-room detaches from inherited managed temporary directory", () => {
+	const fixture = runCleanRoom({ hasManagedTemp: true });
+	try {
+		assert.equal(fixture.result.status, 0, fixture.result.stderr);
+		assertIsolatedPaths(fixture.commandLog, "/tmp");
+		assert.equal(existsSync(fixture.tempParent), true);
+	} finally {
+		rmSync(fixture.testDirectory, { force: true, recursive: true });
+	}
+});
+
+test("clean-room cleans isolated state and builder after interruption", () => {
+	const fixture = runCleanRoom({ interruptCommand: "docker buildx build" });
+	try {
+		assert.equal(fixture.result.status, 143, fixture.result.stderr);
+		const rows = assertIsolatedPaths(fixture.commandLog, fixture.tempParent);
+		assert.match(
+			rows.at(-1),
+			/^docker\tbuildx rm --force navidrome-clean-room-/,
+		);
+		assert.equal(
+			readFileSync(join(fixture.developerCache, "sentinel"), "utf8"),
+			"preserve",
+		);
+	} finally {
+		rmSync(fixture.testDirectory, { force: true, recursive: true });
+	}
 });

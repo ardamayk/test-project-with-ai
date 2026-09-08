@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export EARTHLY_STORAGE_MODE=clean-room
+source "$(dirname -- "${BASH_SOURCE[0]}")/storage-env.sh"
+unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_INCREMENTAL
+unset EARTHLY_WEB_DIST EARTHLY_DOCS_DIST EARTHLY_SERVER_BINARY EARTHLY_MPV_DIRECTORY
+unset EARTHLY_VITE_CACHE EARTHLY_GO_TEST_TMP EARTHLY_RUN_ROOT EARTHLY_CACHE_ROOT GOTMPDIR
+if [[ -n "${EARTHLY_TMP_ALIAS:-}" && "${TMPDIR:-}" == "${EARTHLY_TMP_ALIAS}" ]]; then
+  export TMPDIR=/tmp
+fi
+unset EARTHLY_RUN_DIR EARTHLY_STORAGE_RUN_PID EARTHLY_TMP_ALIAS
+# Remove local PATH wrappers before nested Mise resolves the isolated toolchain.
+IFS=: read -r -a inheritedPaths <<< "$PATH"
+cleanRoomPath=""
+for directory in "${inheritedPaths[@]}"; do
+  [[ "$directory" == */scripts/storage-bin ]] && continue
+  cleanRoomPath+="${cleanRoomPath:+:}$directory"
+done
+export PATH="$cleanRoomPath"
+unset EARTHLY_REAL_CARGO EARTHLY_REAL_GO EARTHLY_REAL_PNPM
+unset EARTHLY_LOCKED_WORKTREE EARTHLY_BROWSER_LOCKED
+
 TEMPORARY_PARENT="${TMPDIR:-/tmp}"
 CLEAN_ROOM_ROOT="$(mktemp -d "${TEMPORARY_PARENT%/}/clean-room.XXXXXX")"
 CONTAINER_BUILDER_NAME="navidrome-clean-room-${PPID}-$$"
