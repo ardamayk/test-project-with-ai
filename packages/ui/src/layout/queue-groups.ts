@@ -11,7 +11,10 @@ export function findCurrentQueueIndex(
 	queueItemId?: string,
 	trackId?: string,
 ): number {
-	if (queueItemId) return queue.findIndex((item) => item.id === queueItemId);
+	if (queueItemId) {
+		const index = queue.findIndex((item) => item.id === queueItemId);
+		if (index !== -1) return index;
+	}
 	return trackId ? queue.findIndex((item) => item.track.id === trackId) : -1;
 }
 
