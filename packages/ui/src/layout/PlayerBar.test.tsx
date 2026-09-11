@@ -652,6 +652,53 @@ describe("PlayerBar", () => {
 		});
 	});
 
+	it("keeps Space controlling playback after pointer queue toggles", async () => {
+		const { engine } = renderPlayerBar();
+		await act(async () => {});
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		const queueButton = screen.getByRole("button", {
+			name: "Toggle queue panel",
+		});
+		for (const expectedStatus of ["paused", "playing"]) {
+			queueButton.focus();
+			fireEvent.click(queueButton, { detail: 1 });
+			const isExpanded = queueButton.getAttribute("aria-expanded");
+			const event = new KeyboardEvent("keydown", {
+				key: " ",
+				bubbles: true,
+				cancelable: true,
+			});
+			await act(async () => {
+				document.activeElement?.dispatchEvent(event);
+			});
+			expect(event.defaultPrevented).toBe(true);
+			expect(engine.getState().status).toBe(expectedStatus);
+			expect(queueButton.getAttribute("aria-expanded")).toBe(isExpanded);
+		}
+	});
+
+	it("preserves queue button focus and native Space for keyboard activation", async () => {
+		renderPlayerBar();
+		await act(async () => {});
+		const queueButton = screen.getByRole("button", {
+			name: "Toggle queue panel",
+		});
+		queueButton.focus();
+		const isExpanded = queueButton.getAttribute("aria-expanded");
+		fireEvent.click(queueButton, { detail: 0 });
+		expect(document.activeElement).toBe(queueButton);
+		expect(queueButton.getAttribute("aria-expanded")).not.toBe(isExpanded);
+		const event = new KeyboardEvent("keydown", {
+			key: " ",
+			bubbles: true,
+			cancelable: true,
+		});
+		queueButton.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(false);
+	});
+
 	it.each([
 		{ length: 3, currentIndex: 1, badge: "1" },
 		{ length: 2, currentIndex: 1, badge: "0" },

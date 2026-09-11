@@ -406,7 +406,11 @@ export function VolumeAndQueueControls({
 					"relative hidden shrink-0 sm:inline-flex",
 					isQueueOpen && ACTIVE_CONTROL_BUTTON_CLASS,
 				)}
-				onClick={onToggleQueue}
+				onClick={(event) => {
+					// Release pointer focus so Space returns to playback shortcuts.
+					if (event.detail > 0) event.currentTarget.blur();
+					onToggleQueue();
+				}}
 				aria-label="Toggle queue panel"
 				aria-expanded={isQueueOpen}
 			>
