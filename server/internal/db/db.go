@@ -7,11 +7,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ardam/navidrome-replacement/server/internal/searchdata"
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
 
 func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir string) (*sql.DB, error) {
+	if err := searchdata.CheckRegistration(); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(databasePath), 0o755); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
@@ -52,6 +56,10 @@ func OpenAndMigrate(ctx context.Context, databasePath string, migrationsDir stri
 	if err := goose.Up(sqlDB, migrationsDir); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+	if err := searchdata.NewStore(sqlDB).EnsureCurrent(ctx); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("prepare Library Search data: %w", err)
 	}
 	return sqlDB, nil
 }
