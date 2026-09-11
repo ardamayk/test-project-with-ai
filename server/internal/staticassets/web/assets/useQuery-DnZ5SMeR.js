@@ -1,1 +1,0 @@
-import{ct as e,lt as t}from"./api-CzmDXUsV.js";function n(n,r){return e(n,t,r)}export{n as t};
