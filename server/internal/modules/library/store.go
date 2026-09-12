@@ -65,6 +65,7 @@ type Track struct {
 	Title        string             `json:"title"`
 	ArtistName   string             `json:"artistName"`
 	Artists      []ArtistCredit     `json:"artists"`
+	AlbumArtists []ArtistCredit     `json:"albumArtists"`
 	AlbumID      string             `json:"albumId"`
 	AlbumTitle   string             `json:"albumTitle,omitempty"`
 	DiscNo       int                `json:"discNo"`
@@ -133,16 +134,19 @@ type storeDatabase interface {
 }
 
 func (s *Store) ListArtists(ctx context.Context, limit, offset int, q string) (ArtistList, error) {
-	filter := ""
+	filter := " AND credits.artist_id IS NOT NULL"
+	orderBy := "a.name_sort"
 	queryArgs := []any{}
 	if q != "" {
-		filter = " AND a.name LIKE ?"
+		filter += " AND a.name LIKE ?"
 		queryArgs = append(queryArgs, "%"+q+"%")
+		// LIKE is case-insensitive for ASCII, so exact-name precedence must be too.
+		orderBy = "(a.name = ? COLLATE NOCASE) DESC, a.name_sort, a.id"
 	}
 
 	var total int
 	countQuery := activeArtistAlbumsCTE + `SELECT COUNT(DISTINCT a.id) FROM artists a
-		INNER JOIN active_artist_albums credits ON credits.artist_id = a.id
+		LEFT JOIN active_artist_albums credits ON credits.artist_id = a.id
 		WHERE 1=1` + filter
 	if err := s.db.QueryRowContext(ctx, countQuery, queryArgs...).Scan(&total); err != nil {
 		return ArtistList{}, fmt.Errorf("count Artists for query %q: %w", q, err)
@@ -150,11 +154,14 @@ func (s *Store) ListArtists(ctx context.Context, limit, offset int, q string) (A
 
 	query := activeArtistAlbumsCTE + `SELECT a.id, a.name, COUNT(credits.album_id) AS album_count
 		FROM artists a
-		INNER JOIN active_artist_albums credits ON credits.artist_id = a.id
+		LEFT JOIN active_artist_albums credits ON credits.artist_id = a.id
 		WHERE 1=1` + filter + `
 		GROUP BY a.id, a.name
-		ORDER BY a.name_sort
+		ORDER BY ` + orderBy + `
 		LIMIT ? OFFSET ?`
+	if q != "" {
+		queryArgs = append(queryArgs, q)
+	}
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
@@ -304,9 +311,17 @@ func (s *Store) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, erro
 	return album, nil
 }
 
-func (s *Store) ListTracks(ctx context.Context, limit, offset int, q string) (TrackList, error) {
+func (s *Store) ListTracks(ctx context.Context, limit, offset int, artistID, q string) (TrackList, error) {
 	where := "WHERE 1 = 1"
 	args := []any{}
+	if artistID != "" {
+		where += ` AND (EXISTS (
+			SELECT 1 FROM track_artists credit WHERE credit.track_id = t.id AND credit.artist_id = ?
+		) OR EXISTS (
+			SELECT 1 FROM album_artists credit WHERE credit.album_id = t.album_id AND credit.artist_id = ?
+		))`
+		args = append(args, artistID, artistID)
+	}
 	if q != "" {
 		where += ` AND (t.title LIKE ? OR al.title LIKE ? OR EXISTS (
 			SELECT 1 FROM track_artists search_credit

@@ -174,8 +174,18 @@ describe("useTrackReplacementFlow", () => {
 	it("keeps a committed replacement completed when cache refresh fails", async () => {
 		refreshQueue.mockRejectedValue(new Error("offline"));
 		const onReplaced = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		queryClient.setQueryData(["library", "search", "old credit"], {
+			tracks: [],
+		});
 		const { result } = renderHook(() => useTrackReplacementFlow(onReplaced), {
-			wrapper,
+			wrapper: ({ children }) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			),
 		});
 
 		act(() => result.current.open(track));
@@ -186,6 +196,10 @@ describe("useTrackReplacementFlow", () => {
 
 		expect(result.current.step).toBe("completed");
 		expect(result.current.error).toBeNull();
+		expect(
+			queryClient.getQueryState(["library", "search", "old credit"])
+				?.isInvalidated,
+		).toBe(true);
 		expect(onReplaced).toHaveBeenCalledWith(track);
 	});
 

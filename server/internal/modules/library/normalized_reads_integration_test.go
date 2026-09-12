@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -56,6 +57,72 @@ func TestHandlersListTracksSearchesNormalizedCreditsAndGenres(t *testing.T) {
 		if tracks.Total != 1 || len(tracks.Items) != 1 || tracks.Items[0].ID != trackID {
 			t.Fatalf("search %q tracks = %#v, want normalized Track %q", query, tracks, trackID)
 		}
+	}
+}
+
+func TestHandlersListTracksFiltersExactArtistCreditsBeforePagination(t *testing.T) {
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
+	seedExpandedReadFixture(t, database, albumID, trackID)
+	executeFixtureStatement(t, database, `INSERT INTO tracks (id, album_id, title, title_sort, artist_name, duration_ms, format, file_path)
+		VALUES ('other-track', ?, 'Another Song', 'another song', 'Other', 1000, 'flac', '/music/other.flac')`, albumID)
+	executeFixtureStatement(t, database, `INSERT INTO tracks (id, album_id, title, title_sort, artist_name, duration_ms, format, file_path, is_pending_commit)
+		VALUES ('pending-track', ?, 'Pending', 'pending', 'Other', 1000, 'flac', '/music/pending.flac', 1)`, albumID)
+	executeFixtureStatement(t, database, `INSERT INTO track_artists (track_id, artist_id, position) VALUES (?, 'album-guest', 2)`, trackID)
+	for _, tc := range []struct {
+		query string
+		total int
+		count int
+	}{
+		{"artistId=guest-artist", 1, 1},
+		{"artistId=album-guest", 2, 2},
+		{"artistId=guest-artist&q=Electronic", 1, 1},
+		{"artistId=album-guest&limit=1&offset=1", 2, 1},
+		{"artistId=unknown", 0, 0},
+		{"artistId=Guest%2C+Artist", 0, 0},
+		{"artistId=guest-artist&q=unmatched", 0, 0},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handlers.ListTracks(response, httptest.NewRequest(http.MethodGet, "/?"+tc.query, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", response.Code, response.Body)
+			}
+			var result TrackList
+			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Total != tc.total || len(result.Items) != tc.count {
+				t.Fatalf("Tracks = %#v; want total %d, items %d", result, tc.total, tc.count)
+			}
+		})
+	}
+}
+
+func TestHandlersListTracksReturnsIndependentAlbumArtists(t *testing.T) {
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
+	seedExpandedReadFixture(t, database, albumID, trackID)
+	response := httptest.NewRecorder()
+	handlers.ListTracks(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body)
+	}
+	var result struct {
+		Items []struct {
+			Artists      []ArtistCredit `json:"artists"`
+			AlbumArtists []ArtistCredit `json:"albumArtists"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || len(result.Items[0].AlbumArtists) != 2 {
+		t.Fatalf("missing Album Artists: %#v", result)
+	}
+	track := result.Items[0]
+	if track.Artists[0].ID != "guest-artist" || track.AlbumArtists[0].Name != "Artist" || track.AlbumArtists[1].ID != "album-guest" {
+		t.Fatalf("credits mixed or reordered: %#v", track)
 	}
 }
 
@@ -142,6 +209,101 @@ func TestHandlersListArtistsCountsDistinctArtistsAndPreservesAlbumGenreSummary(t
 		if album.ID == firstAlbumID && (len(album.Genres) != 1 || album.Genres[0] != "Album Genre Summary") {
 			t.Fatalf("Album Genre summary = %#v", album.Genres)
 		}
+	}
+}
+
+func TestHandlersListArtistsExactNamePrecedesMoreThanOnePageOfPrefixMatches(t *testing.T) {
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
+	seedExpandedReadFixture(t, database, albumID, trackID)
+	executeFixtureStatement(t, database, `UPDATE artists SET name = 'Radiohead', name_sort = 'zzzz' WHERE id = 'album-guest'`)
+	for i := 0; i < 101; i++ {
+		id := fmt.Sprintf("prefix-%03d", i)
+		name := fmt.Sprintf("Radiohead %03d", i)
+		executeFixtureStatement(t, database, `INSERT INTO artists (id, name, name_sort) VALUES (?, ?, ?)`, id, name, name)
+		executeFixtureStatement(t, database, `INSERT INTO album_artists (album_id, artist_id, position) VALUES (?, ?, ?)`, albumID, id, i+2)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/library/artists?q=Radiohead&limit=100", nil)
+	response := httptest.NewRecorder()
+	handlers.ListArtists(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var artists ArtistList
+	if err := json.NewDecoder(response.Body).Decode(&artists); err != nil {
+		t.Fatal(err)
+	}
+	if artists.Total != 102 || len(artists.Items) != 100 {
+		t.Fatalf("Artist total = %d, items = %d; want 102, 100", artists.Total, len(artists.Items))
+	}
+	if first := artists.Items[0]; first.ID != "album-guest" || first.Name != "Radiohead" || first.AlbumCount != 1 {
+		t.Fatalf("first Artist = %#v, want exact Radiohead with one Album", first)
+	}
+
+	// Exact-name precedence ignores ASCII case, matching the case-insensitive filter.
+	caseRequest := httptest.NewRequest(http.MethodGet, "/api/v1/library/artists?q=radiohead&limit=100", nil)
+	caseResponse := httptest.NewRecorder()
+	handlers.ListArtists(caseResponse, caseRequest)
+	if caseResponse.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", caseResponse.Code, caseResponse.Body.String())
+	}
+	var caseArtists ArtistList
+	if err := json.NewDecoder(caseResponse.Body).Decode(&caseArtists); err != nil {
+		t.Fatal(err)
+	}
+	if first := caseArtists.Items[0]; first.ID != "album-guest" || first.Name != "Radiohead" {
+		t.Fatalf("first Artist = %#v, want exact Radiohead to lead for q=radiohead", first)
+	}
+}
+
+func TestHandlersListArtistsRequiresActiveAlbumCreditEvenForExactName(t *testing.T) {
+	handlers, database := setupHandlerFixture(t)
+	albumID, trackID := seedTrack(t, database)
+	seedExpandedReadFixture(t, database, albumID, trackID)
+	const name = "İpek, Şığ & 100%_Live"
+	executeFixtureStatement(t, database, `UPDATE artists SET name = ?, name_sort = 'ipek sig live' WHERE id = 'guest-artist'`, name)
+	// An empty Album credit must neither activate the Artist nor count as an Album.
+	executeFixtureStatement(t, database, `INSERT INTO albums (id, artist_id, title, title_sort) VALUES ('empty-album', 'guest-artist', 'Empty', 'empty')`)
+	executeFixtureStatement(t, database, `INSERT INTO album_artists (album_id, artist_id, position) VALUES ('empty-album', 'guest-artist', 0)`)
+
+	for _, tc := range []struct {
+		label      string
+		query      string
+		update     string
+		wantTotal  int
+		wantAlbums int
+	}{
+		{label: "original Unicode and punctuation", query: name},
+		{label: "partial name retains Album Artist browse", query: "İpek"},
+		{label: "pending Track hidden", query: name, update: `UPDATE tracks SET is_pending_commit = 1 WHERE id = ?`},
+		{label: "missing Track hidden", query: name, update: `UPDATE tracks SET is_pending_commit = 0, missing_at = CURRENT_TIMESTAMP WHERE id = ?`},
+		{label: "restored Track still needs Album credit", query: name, update: `UPDATE tracks SET missing_at = NULL WHERE id = ?`},
+		{label: "Album and Track credit counts once", query: name, update: `INSERT INTO album_artists (album_id, artist_id, position) SELECT album_id, 'guest-artist', 2 FROM tracks WHERE id = ?`, wantTotal: 1, wantAlbums: 1},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			if tc.update != "" {
+				executeFixtureStatement(t, database, tc.update, trackID)
+			}
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/library/artists?q="+url.QueryEscape(tc.query), nil)
+			response := httptest.NewRecorder()
+			handlers.ListArtists(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var artists ArtistList
+			if err := json.NewDecoder(response.Body).Decode(&artists); err != nil {
+				t.Fatal(err)
+			}
+			if artists.Total != tc.wantTotal || len(artists.Items) != tc.wantTotal {
+				t.Fatalf("Artists = %#v, want %d", artists, tc.wantTotal)
+			}
+			if tc.wantTotal == 1 {
+				if artist := artists.Items[0]; artist.ID != "guest-artist" || artist.Name != name || artist.AlbumCount != tc.wantAlbums {
+					t.Fatalf("Artist = %#v, want original guest with %d Albums", artist, tc.wantAlbums)
+				}
+			}
+		})
 	}
 }
 

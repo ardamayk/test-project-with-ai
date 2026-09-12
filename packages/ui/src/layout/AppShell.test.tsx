@@ -167,7 +167,7 @@ describe("AppShell", () => {
 		expect(drawer.className).not.toContain("invisible");
 		expect(drawer.style.right).toBe("var(--shell-inset, 2rem)");
 		// Parks above the Player Bar rather than touching it.
-		expect(drawer.style.bottom).toContain("80px");
+		expect(drawer.style.bottom).toContain("86px");
 		const main = container.querySelector("main") as HTMLElement;
 		expect(main.hasAttribute("data-queue-open")).toBe(true);
 		expect(main.style.paddingRight).toBe("");
@@ -273,7 +273,7 @@ describe("AppShell", () => {
 			"calc(var(--queue-drawer-width, 18rem) + 1.5rem)",
 		);
 		const bottom = drawer?.style.bottom;
-		expect(bottom).toBe("calc(16px + 80px + 1.5rem)");
+		expect(bottom).toBe("calc(16px + 86px + 1.5rem)");
 		if (!resizeShell)
 			throw new Error("The shell was not observed for resizing");
 		shellWidth = 1919;

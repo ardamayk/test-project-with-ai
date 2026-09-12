@@ -323,7 +323,7 @@ func collectID3Frame(values *id3Values, frame id3Frame, version byte) error {
 		return nil
 	}
 	if frame.name == id3UserTextFrameName(version) {
-		if err := collectID3UserText(values.replayGain, frame.payload); err != nil {
+		if err := collectID3UserText(values, frame.payload); err != nil {
 			return invalidID3Error(err)
 		}
 	}
@@ -412,7 +412,7 @@ func id3PictureFrameName(version byte) string {
 	return "APIC"
 }
 
-func collectID3UserText(replayGain map[string]string, payload []byte) error {
+func collectID3UserText(values *id3Values, payload []byte) error {
 	description, remainder, err := splitID3EncodedField(payload)
 	if err != nil {
 		return err
@@ -422,11 +422,22 @@ func collectID3UserText(replayGain map[string]string, payload []byte) error {
 		return err
 	}
 	key := strings.ToUpper(strings.TrimSpace(description))
+	if key == "ARTISTS" || key == "ALBUMARTISTS" {
+		// Custom credits use NUL-separated values even before ID3v2.4.
+		// One final NUL terminates the text; interior empty credits stay invalid.
+		credits := strings.Split(strings.TrimSuffix(value, "\x00"), "\x00")
+		for _, credit := range credits {
+			if payload[0] == ID3_TEXT_ENCODING_UTF16 {
+				credit = strings.TrimPrefix(credit, "\ufeff")
+			}
+			values.tags[key] = append(values.tags[key], credit)
+		}
+	}
 	if strings.HasPrefix(key, "REPLAYGAIN_") {
-		if _, exists := replayGain[key]; exists {
+		if _, exists := values.replayGain[key]; exists {
 			return fmt.Errorf("duplicate %s tag", key)
 		}
-		replayGain[key] = value
+		values.replayGain[key] = value
 	}
 	return nil
 }

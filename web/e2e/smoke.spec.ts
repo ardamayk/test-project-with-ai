@@ -41,6 +41,19 @@ test("artists page loads from the top nav", async ({ page }) => {
 test("library search opens from the top nav and groups results", async ({
 	page,
 }) => {
+	await page.route("**/api/v1/library/search?*", (route) =>
+		route.fulfill({
+			json: {
+				tracks: [],
+				albums: [],
+				artists: [
+					{ type: "artist", id: "artist-a", name: "A", match: "direct" },
+				],
+				genres: [],
+				playlists: [],
+			},
+		}),
+	);
 	await page.goto("/library/albums");
 	await page.getByRole("button", { name: "Search" }).click();
 	const dialog = page.getByTestId("library-search-dialog");
@@ -107,6 +120,111 @@ test("queue overlays narrow pages and reserves space on desktop", async ({
 			),
 		)
 		.toBeGreaterThan(300);
+});
+
+test("library search follows the full album grid and animates result height", async ({
+	page,
+}) => {
+	await page.route("**/api/v1/library/search?*", (route) =>
+		route.fulfill({
+			json: {
+				tracks: Array.from({ length: 5 }, (_, i) => ({
+					type: "track",
+					id: `track-${i}`,
+					name: `Track ${i}`,
+					match: "direct",
+				})),
+				albums: Array.from({ length: 5 }, (_, i) => ({
+					type: "album",
+					id: `album-${i}`,
+					name: `Album ${i}`,
+					match: "direct",
+				})),
+				artists: [],
+				genres: [],
+				playlists: [],
+			},
+		}),
+	);
+	await page.goto("/library/albums");
+	await page.setViewportSize({ width: 2800, height: 700 });
+	const drawer = page.locator("[data-queue-drawer]");
+	const card = page.getByTestId("library-search-dialog");
+	for (const open of [true, false]) {
+		if (((await drawer.getAttribute("data-state")) === "open") !== open)
+			await page.getByRole("button", { name: "Toggle queue panel" }).click();
+		await page.getByRole("button", { name: "Search", exact: true }).click();
+		await expect(card).toHaveCSS("animation-name", "library-search-enter");
+		// Eight 250px cards, 12px gaps, 272px shell inset: third/sixth centers.
+		await expect(card).toHaveCSS("width", "786px");
+		await expect
+			.poll(async () => Math.round((await card.boundingBox())?.x ?? 0))
+			.toBe(921);
+		if (open) {
+			await expect
+				.poll(async () => {
+					const box = await card.boundingBox();
+					const queue = await drawer.boundingBox();
+					return box && queue ? queue.x - box.x - box.width : 0;
+				})
+				.toBeGreaterThan(24);
+		}
+		await expect(card).toHaveCSS("max-height", "595px");
+		const input = page.getByRole("combobox");
+		await card.evaluate((element) =>
+			Promise.all(
+				element.getAnimations().map((animation) => animation.finished),
+			),
+		);
+		const initialHeight = (await card.boundingBox())?.height ?? 0;
+		await input.fill("ta");
+		await expect(card.getByRole("option")).toHaveCount(10);
+		// Pause the real CSS transition midway: layout must be between both sizes.
+		const halfway = await card.evaluate(async (element) => {
+			for (let frame = 0; frame < 30; frame++) {
+				const transition = element
+					.getAnimations()
+					.find(
+						(animation) =>
+							animation instanceof CSSTransition &&
+							animation.transitionProperty === "height",
+					);
+				if (transition) {
+					transition.pause();
+					transition.currentTime =
+						Number(transition.effect?.getTiming().duration) / 2;
+					const height = element.getBoundingClientRect().height;
+					transition.finish();
+					return height;
+				}
+				await new Promise(requestAnimationFrame);
+			}
+			return 0;
+		});
+		await expect
+			.poll(async () => (await card.boundingBox())?.height ?? 0)
+			.toBe(595);
+		expect(halfway).toBeGreaterThan(initialHeight);
+		expect(halfway).toBeLessThan(595);
+		await input.press("ArrowUp");
+		await expect
+			.poll(() =>
+				card.getByRole("listbox").evaluate((element) => element.scrollTop),
+			)
+			.toBeGreaterThan(0);
+		await input.fill("");
+		await expect
+			.poll(async () => (await card.boundingBox())?.height ?? 0)
+			.toBe(initialHeight);
+		await input.press("Escape");
+	}
+	await page.setViewportSize({ width: 375, height: 812 });
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	await page.getByRole("button", { name: "Search", exact: true }).click();
+	await expect(card).toHaveCSS("width", "343px");
+	await expect(card).toHaveCSS("animation-name", "none");
+	await expect(card).toHaveCSS("transition-duration", "0s");
+	await expect.poll(async () => (await card.boundingBox())?.x).toBe(16);
 });
 
 test("library search restores its opener after closing and reopening", async ({

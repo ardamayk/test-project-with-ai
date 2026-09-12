@@ -34,6 +34,8 @@ import {
 	buildTrackDetailRows,
 	formatBitDepth,
 	formatSampleRate,
+	getTrackArtistCredits,
+	goToArtistCreditsSearch,
 } from "../playback/track-details";
 import { useCoverAccent } from "../playback/use-cover-accent";
 import { useMute } from "../playback/use-mute";
@@ -531,13 +533,10 @@ export function PlayerBar({
 		});
 	};
 
-	const handleGoToArtist = () => {
-		if (!currentTrack) return;
+	const artists = getTrackArtistCredits(currentTrack ?? { artists: [] });
+	const handleGoToArtist = (artistId: string) => {
 		closeActionsMenu();
-		void navigate({
-			to: "/library/artists",
-			search: { q: currentTrack.artistName },
-		});
+		void goToArtistCreditsSearch(navigate, artistId);
 	};
 
 	const handlePlayNext = () => {
@@ -605,7 +604,7 @@ export function PlayerBar({
 		<footer
 			data-testid="player-bar"
 			style={accentStyle}
-			className="relative h-[80px] rounded-2xl border border-[var(--player-border)] bg-player px-5 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]"
+			className="relative h-[86px] rounded-2xl border border-[var(--player-border)] bg-player px-5 text-player-foreground shadow-[0_-10px_32px_-6px_var(--player-shadow),0_14px_40px_-8px_var(--player-shadow)]"
 		>
 			{playbackError ? (
 				<PlaybackErrorBanner error={playbackError} recovery={errorRecovery} />
@@ -620,7 +619,7 @@ export function PlayerBar({
 			<div className="flex h-full w-full min-w-0 items-center justify-between gap-6">
 				<section
 					aria-label="Now playing"
-					className="@container/now-playing flex min-w-[200px] flex-[1_0_0] items-center gap-3 justify-self-start"
+					className="@container/now-playing flex min-w-[200px] flex-[1_0_0] items-center gap-3 justify-self-start sm:gap-3.5"
 				>
 					{currentTrack ? (
 						<button
@@ -634,7 +633,7 @@ export function PlayerBar({
 								key={artworkUrl ?? "none"}
 								coverUrl={artworkUrl}
 								title={nowPlayingTitle}
-								className="player-cover-enter size-14 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
+								className="player-cover-enter size-14 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm sm:size-16"
 							/>
 						</button>
 					) : (
@@ -642,14 +641,14 @@ export function PlayerBar({
 							key={artworkUrl ?? "none"}
 							coverUrl={artworkUrl}
 							title={nowPlayingTitle}
-							className="player-cover-enter size-14 shrink-0 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm"
+							className="player-cover-enter size-14 shrink-0 rounded-md border border-[var(--shell-subtle-border)] bg-[var(--player-artwork)] text-sm sm:size-16"
 						/>
 					)}
 					<div className="min-w-0 flex-1 overflow-hidden">
 						<div className="flex max-w-full min-w-0 items-center">
 							<p
 								key={nowPlayingTitle}
-								className="player-title-enter min-w-0 truncate font-medium text-[var(--player-title)] text-sm"
+								className="player-title-enter min-w-0 truncate font-medium text-[var(--player-title)] text-sm sm:text-[15px] sm:leading-6"
 								title={nowPlayingTitle}
 							>
 								{nowPlayingTitle}
@@ -703,7 +702,7 @@ export function PlayerBar({
 							</button>
 						</div>
 						<p
-							className="truncate text-player-foreground text-xs"
+							className="truncate text-player-foreground text-xs sm:text-[13px] sm:leading-5"
 							title={nowPlayingSubtitle}
 							role={isReconnecting ? "status" : undefined}
 							aria-live={isReconnecting ? "polite" : undefined}
@@ -712,7 +711,7 @@ export function PlayerBar({
 						</p>
 						{nowPlayingCaption ? (
 							<p
-								className="hidden truncate text-caption text-xs sm:block"
+								className="hidden truncate text-caption text-xs sm:block sm:leading-5"
 								title={nowPlayingCaption}
 							>
 								{nowPlayingCaption}
@@ -756,9 +755,24 @@ export function PlayerBar({
 										Add to queue
 									</MenuButton>
 									<MenuButton onClick={handleGoToAlbum}>Go to album</MenuButton>
-									<MenuButton onClick={handleGoToArtist}>
-										Go to artist
-									</MenuButton>
+									{artists.length > 1 ? (
+										<MenuSection icon={null} label="Go to artist" value="">
+											{artists.map((artist) => (
+												<MenuChoice
+													key={artist.id}
+													label={artist.name}
+													onClick={() => handleGoToArtist(artist.id)}
+												/>
+											))}
+										</MenuSection>
+									) : (
+										<MenuButton
+											disabled={!artists.length}
+											onClick={() => handleGoToArtist(artists[0].id)}
+										>
+											Go to artist
+										</MenuButton>
+									)}
 									<MenuSection
 										icon={<Gauge className="size-3.5" />}
 										label="Speed"

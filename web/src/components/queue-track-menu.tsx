@@ -1,4 +1,6 @@
 import {
+	getTrackArtistCredits,
+	goToArtistCreditsSearch,
 	type QueueRowMenuProps,
 	toast,
 	usePlayback,
@@ -132,6 +134,11 @@ function QueueMenuActions({
 			}
 		})();
 	};
+	const artists = getTrackArtistCredits(item.track);
+	const goToArtist = (artistId: string) =>
+		runAction("Failed to open artist", () =>
+			Promise.resolve(goToArtistCreditsSearch(navigate, artistId)),
+		);
 	const Menu = mode === "context" ? ContextMenuPrimitive : DropdownMenu;
 	const Item = mode === "context" ? ContextMenuItem : DropdownMenu.Item;
 	return (
@@ -206,19 +213,38 @@ function QueueMenuActions({
 			>
 				Go to album
 			</Item>
-			<Item
-				className={MENU_ITEM_CLASS}
-				onSelect={() =>
-					runAction("Failed to open artist search", () =>
-						navigate({
-							to: "/library/artists",
-							search: { q: item.track.artistName },
-						}),
-					)
-				}
-			>
-				Go to artist
-			</Item>
+			{artists.length > 1 ? (
+				<Menu.Sub>
+					<Menu.SubTrigger className={MENU_ITEM_CLASS}>
+						Go to artist <ChevronRight className="ml-auto size-4" aria-hidden />
+					</Menu.SubTrigger>
+					<Menu.Portal>
+						<Menu.SubContent
+							className={MENU_CONTENT_CLASS}
+							onClick={(event) => event.stopPropagation()}
+							onKeyDown={(event) => event.stopPropagation()}
+						>
+							{artists.map((artist) => (
+								<Item
+									key={artist.id}
+									className={MENU_ITEM_CLASS}
+									onSelect={() => goToArtist(artist.id)}
+								>
+									{artist.name}
+								</Item>
+							))}
+						</Menu.SubContent>
+					</Menu.Portal>
+				</Menu.Sub>
+			) : (
+				<Item
+					className={MENU_ITEM_CLASS}
+					disabled={!artists.length}
+					onSelect={() => goToArtist(artists[0].id)}
+				>
+					Go to artist
+				</Item>
+			)}
 			<Item
 				className={`${MENU_ITEM_CLASS} text-destructive`}
 				onSelect={() =>

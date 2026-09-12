@@ -13,9 +13,9 @@ import { WidgetDndProvider } from "./WidgetDock";
 
 export { PLAYER_BAR_HEIGHT_PX, PLAYER_BAR_INSET_PX } from "./shell-metrics";
 
-// Floating player bar: 80px bar + 16px bottom inset + 8px breathing room, so
+// Floating player bar: 86px bar + 16px bottom inset + 8px breathing room, so
 // scrolled content never ends hidden under the bar.
-const PLAYER_DOCK_CONTENT_PADDING = "pb-[104px]";
+const PLAYER_DOCK_CONTENT_PADDING = "pb-[110px]";
 
 /**
  * App Shell: Top Nav across the top, the page below it, the Player Bar
@@ -34,7 +34,7 @@ export function AppShell({
 	onSearch?: () => void;
 }) {
 	const shellRef = useRef<HTMLDivElement>(null);
-	const queueDrawerWidth = useQueueDrawerWidth(shellRef);
+	const metrics = useQueueDrawerWidth(shellRef);
 	const { preferences } = useLayout();
 	const queuePanel = getQueuePanel(preferences.layout.sidebarPosition);
 	const queueOpen = !preferences.layout.collapsed[queuePanel];
@@ -45,10 +45,9 @@ export function AppShell({
 				ref={shellRef}
 				style={
 					{
-						"--queue-drawer-width":
-							queueDrawerWidth === undefined
-								? undefined
-								: `${queueDrawerWidth}px`,
+						"--queue-drawer-width": metrics && `${metrics.queueWidth}px`,
+						"--library-search-width": metrics && `${metrics.searchWidth}px`,
+						"--library-search-center": metrics && `${metrics.searchCenter}px`,
 					} as CSSProperties
 				}
 				data-app-shell

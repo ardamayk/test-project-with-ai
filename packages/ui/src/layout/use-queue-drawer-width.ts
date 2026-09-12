@@ -32,11 +32,38 @@ export function calculateQueueDrawerWidth(
 	return availableWidth - collectionWidth - margin;
 }
 
-/** Fill the space after the collection's last column, keeping one shared margin. */
+export function calculateLibrarySearchBounds(
+	shellWidth: number,
+	inset: number,
+	rootFontSize: number,
+) {
+	const gap = COLLECTION_GRID_GAP_REM * rootFontSize;
+	const pitch = COLLECTION_CARD_WIDTH_PX + gap;
+	const columns = Math.floor(
+		(Math.max(0, shellWidth - 2 * inset) + gap) / pitch,
+	);
+	if (columns < 6) {
+		// ponytail: fewer than six columns cannot span both third cards; use viewport gutters.
+		return {
+			width: Math.max(0, Math.min(52 * rootFontSize, shellWidth - 32)),
+			center: shellWidth / 2,
+		};
+	}
+	return {
+		width: (columns - 5) * pitch,
+		center: inset + (columns * pitch - gap) / 2,
+	};
+}
+
+/** Measure Queue and Search from the full shell, independently of Queue visibility. */
 export function useQueueDrawerWidth(
 	shellRef: RefObject<HTMLDivElement | null>,
 ) {
-	const [width, setWidth] = useState<number>();
+	const [metrics, setMetrics] = useState<{
+		queueWidth: number;
+		searchWidth: number;
+		searchCenter: number;
+	}>();
 	useLayoutEffect(() => {
 		const shell = shellRef.current;
 		const navigation = shell?.querySelector("header");
@@ -50,7 +77,16 @@ export function useQueueDrawerWidth(
 				Number.parseFloat(
 					getComputedStyle(document.documentElement).fontSize,
 				) || 16;
-			setWidth(calculateQueueDrawerWidth(shellWidth, inset, rootFontSize));
+			const search = calculateLibrarySearchBounds(
+				shellWidth,
+				inset,
+				rootFontSize,
+			);
+			setMetrics({
+				queueWidth: calculateQueueDrawerWidth(shellWidth, inset, rootFontSize),
+				searchWidth: search.width,
+				searchCenter: shell.getBoundingClientRect().left + search.center,
+			});
 		};
 		measure();
 		const observer = new ResizeObserver(measure);
@@ -61,5 +97,5 @@ export function useQueueDrawerWidth(
 			window.removeEventListener("resize", measure);
 		};
 	}, [shellRef]);
-	return width;
+	return metrics;
 }

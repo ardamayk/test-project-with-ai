@@ -3,6 +3,7 @@ package library_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,6 +58,67 @@ func TestMediaInspectorSupportsStrictID3Variants(t *testing.T) {
 				t.Fatalf("ID3v2.%d structured metadata = %+v", version, inspection.Metadata)
 			}
 		})
+	}
+}
+
+func TestMediaInspectorPrefersID3PluralCredits(t *testing.T) {
+	for _, version := range []byte{2, 3, 4} {
+		t.Run(string(rune('0'+version)), func(t *testing.T) {
+			frameName := "TXXX"
+			if version == 2 {
+				frameName = "TXX"
+			}
+			fixture := testutil.StrictMP3FixtureWithExtraFrames(version,
+				testutil.ID3TextFrame(version, frameName, "artists\x00Earth, Wind & Fire\x00AC/DC; Live"),
+				testutil.ID3TextFrame(version, frameName, "ALBUMARTISTS\x00Album / One"),
+				testutil.ID3TextFrame(version, frameName, "ALBUMARTISTS\x00Album & Two"),
+			)
+			inspection := inspectMP3Fixture(t, fixture)
+			if !reflect.DeepEqual(inspection.Metadata.Artists, []string{"Earth, Wind & Fire", "AC/DC; Live"}) ||
+				!reflect.DeepEqual(inspection.Metadata.AlbumArtists, []string{"Album / One", "Album & Two"}) {
+				t.Fatalf("plural credits = %+v", inspection.Metadata)
+			}
+			if gain := inspection.Metadata.ReplayGain.TrackGainDB; gain == nil || *gain != -7.25 {
+				t.Fatalf("ReplayGain = %+v", inspection.Metadata.ReplayGain)
+			}
+		})
+	}
+}
+
+func TestMediaInspectorReadsID3v23UTF16CustomMultivalues(t *testing.T) {
+	// Each UTF-16 string carries a BOM; Picard-style TXXX values end in NUL.
+	encoded := func(text string) []byte {
+		data := []byte{0xff, 0xfe}
+		for _, value := range text {
+			data = binary.LittleEndian.AppendUint16(data, uint16(value))
+		}
+		return data
+	}
+	payload := []byte{1}
+	for _, value := range []string{"ARTISTS", "Björk", "AC/DC; Live"} {
+		payload = append(payload, encoded(value)...)
+		payload = append(payload, 0, 0)
+	}
+	frame := append([]byte("TXXX"), 0, 0, 0, byte(len(payload)), 0, 0)
+	frame = append(frame, payload...)
+	inspection := inspectMP3Fixture(t, testutil.StrictMP3FixtureWithExtraFrames(3, frame))
+	if !reflect.DeepEqual(inspection.Metadata.Artists, []string{"Björk", "AC/DC; Live"}) {
+		t.Fatalf("UTF-16 custom artists = %q", inspection.Metadata.Artists)
+	}
+}
+
+func TestMediaInspectorRejectsEmptyID3CustomMultivalue(t *testing.T) {
+	for _, version := range []byte{2, 3, 4} {
+		for _, key := range []string{"ARTISTS", "ALBUMARTISTS"} {
+			frameName := "TXXX"
+			if version == 2 {
+				frameName = "TXX"
+			}
+			fixture := testutil.StrictMP3FixtureWithExtraFrames(version,
+				testutil.ID3TextFrame(version, frameName, key+"\x00First\x00\x00Last"))
+			_, err := inspectMP3FixtureError(t, fixture)
+			assertInspectionError(t, err, library.INSPECTION_ERROR_INVALID_METADATA, key)
+		}
 	}
 }
 

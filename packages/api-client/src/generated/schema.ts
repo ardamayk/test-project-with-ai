@@ -180,6 +180,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library Search across Tracks, Albums, Artists, Genres, and Playlists
+         * @description Evaluates one coherent Library Search on the Music Server: every query word must match and at least one word must contribute to the result's own title/name. Related metadata may complete mixed queries but never adds unrelated Albums or Artists. Bounded typo correction applies only when no strong direct result exists. Groups hold at most five records each unless all=true returns every ranked result. Ranking and Best Match selection are unchanged; the Best Match also appears first in its group.
+         */
+        get: operations["searchLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/tracks/{trackId}/lyrics": {
         parameters: {
             query?: never;
@@ -1326,6 +1346,8 @@ export interface components {
             artistName: string;
             /** @description Ordered normalized Track Artist credits. */
             artists?: components["schemas"]["ArtistCredit"][];
+            /** @description Ordered Album Artist credits, independent from Track Artists. */
+            albumArtists?: components["schemas"]["ArtistCredit"][];
             /** Format: uuid */
             albumId: string;
             albumTitle?: string;
@@ -1366,7 +1388,7 @@ export interface components {
             contentSha256?: string;
             /** @description Strict position-and-title identity within the Album. */
             identityKey?: string;
-            /** @description Increments on every Track Replacement. */
+            /** @description Increments on Track Replacement or Track credit repair. */
             revision?: number;
             /** Format: date-time */
             createdAt?: string;
@@ -1386,6 +1408,37 @@ export interface components {
         TrackList: {
             items: components["schemas"]["Track"][];
             total: number;
+        };
+        /** @enum {string} */
+        LibrarySearchResultType: "track" | "album" | "artist" | "genre" | "playlist";
+        /**
+         * @description `direct` records match without typo correction, with their own title/name contributing, and are the only Best Match candidates. `corrected` records match through bounded typo correction. `related` is retained for API v1 compatibility but is no longer emitted.
+         * @enum {string}
+         */
+        LibrarySearchMatch: "direct" | "related" | "corrected";
+        LibrarySearchAlbumReference: {
+            id: string;
+            name: string;
+        };
+        LibrarySearchResult: {
+            type: components["schemas"]["LibrarySearchResultType"];
+            id: string;
+            /** @description The original display title or name */
+            name: string;
+            match: components["schemas"]["LibrarySearchMatch"];
+            /** @description Track credits for a Track, Album Artist credits for an Album, in credit order */
+            artists?: components["schemas"]["ArtistCredit"][];
+            album?: components["schemas"]["LibrarySearchAlbumReference"];
+        };
+        LibrarySearchResponse: {
+            /** @description Unique ranked matches across all groups before the cap, counting the Best Match only once; optional for older servers */
+            total?: number;
+            bestMatch?: components["schemas"]["LibrarySearchResult"];
+            tracks: components["schemas"]["LibrarySearchResult"][];
+            albums: components["schemas"]["LibrarySearchResult"][];
+            artists: components["schemas"]["LibrarySearchResult"][];
+            genres: components["schemas"]["LibrarySearchResult"][];
+            playlists: components["schemas"]["LibrarySearchResult"][];
         };
         Playlist: {
             /** Format: uuid */
@@ -1894,7 +1947,7 @@ export interface operations {
             query?: {
                 limit?: components["parameters"]["limit"];
                 offset?: components["parameters"]["offset"];
-                /** @description Search by name */
+                /** @description Substring filter over active Album Artists only. Exact names sort first. Album counts include active Album Artist credits only. */
                 q?: string;
             };
             header?: never;
@@ -2049,6 +2102,8 @@ export interface operations {
             query?: {
                 limit?: components["parameters"]["limit"];
                 offset?: components["parameters"]["offset"];
+                /** @description Exact Track or Album Artist credit filter, combined with q before counting and pagination. */
+                artistId?: string;
                 /** @description Search by title or artist */
                 q?: string;
             };
@@ -2123,6 +2178,32 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    searchLibrary: {
+        parameters: {
+            query: {
+                /** @description The query text; empty and punctuation-only input is rejected */
+                q: string;
+                /** @description Return all ranked results instead of five per group; must be true or false */
+                all?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked Library Search groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySearchResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
         };
     };
     getTrackLyrics: {

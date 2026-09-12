@@ -1,8 +1,20 @@
-import type { Artist, Playlist, Track } from "@repo/api-client";
-import { usePlayback } from "@repo/ui";
+import type { LibrarySearchResult } from "@repo/api-client";
+import { AlbumArt, toast, usePlayback } from "@repo/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Disc3, ListMusic, Music2, Search, Tags, Users } from "lucide-react";
+import {
+	ArrowDown,
+	ArrowUp,
+	CornerDownLeft,
+	Disc3,
+	ListMusic,
+	ListPlus,
+	LoaderCircle,
+	Music2,
+	Search,
+	Tags,
+	Users,
+} from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import {
 	useCallback,
@@ -15,13 +27,8 @@ import {
 import { useDebouncedValue } from "#/hooks/use-debounced-value";
 import { useReturnFocus } from "#/hooks/use-return-focus";
 import { apiClient } from "#/lib/api";
-import {
-	collectGenres,
-	fetchGenreTracks,
-	GENRE_SOURCE_QUERY_KEY,
-} from "#/lib/collect-genres";
-import { getAlbumArtistName, getTrackArtistName } from "#/lib/library-display";
-import { playlistQueryKeys } from "#/lib/playlist-query-cache";
+import { getTrackArtistName } from "#/lib/library-display";
+import { libraryQueryKeys } from "#/lib/library-query-keys";
 import { cn } from "#/lib/utils";
 
 const RESULTS_PER_GROUP = 5;
@@ -32,6 +39,8 @@ type SearchResult = {
 	key: string;
 	title: string;
 	subtitle?: string;
+	albumId?: string;
+	trackId?: string;
 	action: () => void;
 };
 
@@ -40,14 +49,6 @@ type SearchGroup = {
 	icon: typeof Music2;
 	results: SearchResult[];
 };
-
-function includesQuery(haystack: string, query: string): boolean {
-	return haystack.toLocaleLowerCase().includes(query.toLocaleLowerCase());
-}
-
-function pluralize(count: number, noun: string): string {
-	return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
 
 /**
  * Searches every library surface at once: Tracks, Albums, Artists, Genres and
@@ -61,18 +62,55 @@ export function LibrarySearchDialog({
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
+	const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(
+		null,
+	);
+	useEffect(() => {
+		setPortalContainer(
+			document.querySelector<HTMLElement>("[data-app-shell] main"),
+		);
+	}, []);
 	const [query, setQuery] = useState("");
-	const [activeIndex, setActiveIndex] = useState(0);
+	const [activeKey, setActiveKey] = useState<string | null>(null);
+	const [showAll, setShowAll] = useState(false);
+	const [pendingTracks, setPendingTracks] = useState<Set<string>>(new Set());
+	const pendingTrackIds = useRef(new Set<string>());
+	const footerRef = useRef<HTMLDivElement>(null);
 	const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
-	const hasQuery = query.trim().length > 0;
+	const hasQuery = /[\p{L}\p{N}]/u.test(query);
 	const isDebouncing = query.trim() !== debouncedQuery;
 	const canShowResults = open && hasQuery && !isDebouncing;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listboxRef = useRef<HTMLDivElement>(null);
 	const returnFocus = useReturnFocus();
 	const navigate = useNavigate();
-	const { playTrack } = usePlayback();
+	const { playTrack, addToQueue } = usePlayback();
 	const listboxId = useId();
+	const measureResults = useCallback((content: HTMLDivElement | null) => {
+		if (!content) return;
+		const card = content.closest<HTMLElement>(".library-search-card");
+		const header = inputRef.current?.parentElement;
+		if (!card || !header) return;
+		const measure = () => {
+			const style = getComputedStyle(card);
+			const border =
+				Number.parseFloat(style.borderTopWidth) +
+				Number.parseFloat(style.borderBottomWidth);
+			card.style.height = `${Math.min(content.offsetHeight + header.offsetHeight + (footerRef.current?.offsetHeight ?? 0) + border, Number.parseFloat(style.maxHeight))}px`;
+		};
+		measure();
+		// ponytail: measure natural content for WebKit; use CSS auto-size transitions once supported there.
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(measure);
+		observer.observe(content);
+		observer.observe(header);
+		if (footerRef.current) observer.observe(footerRef.current);
+		window.addEventListener("resize", measure);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", measure);
+		};
+	}, []);
 
 	useLibrarySearchShortcut(open, onOpenChange);
 
@@ -81,177 +119,144 @@ export function LibrarySearchDialog({
 	useEffect(() => {
 		if (!open) {
 			setQuery("");
-			setActiveIndex(0);
+			setActiveKey(null);
+			setShowAll(false);
 		}
 	}, [open]);
 
-	const tracks = useQuery({
-		queryKey: ["library", "search", "tracks", debouncedQuery],
+	const search = useQuery({
+		queryKey: [...libraryQueryKeys.search(debouncedQuery), { all: showAll }],
 		queryFn: () =>
-			apiClient.listTracks({ limit: RESULTS_PER_GROUP, q: debouncedQuery }),
+			showAll
+				? apiClient.searchLibrary(debouncedQuery, true)
+				: apiClient.searchLibrary(debouncedQuery),
 		enabled: canShowResults,
-	});
-	const albums = useQuery({
-		queryKey: ["library", "search", "albums", debouncedQuery],
-		queryFn: () =>
-			apiClient.listAlbums({ limit: RESULTS_PER_GROUP, q: debouncedQuery }),
-		enabled: canShowResults,
-	});
-	const artists = useQuery({
-		queryKey: ["library", "search", "artists", debouncedQuery],
-		queryFn: () =>
-			apiClient.listArtists({ limit: RESULTS_PER_GROUP, q: debouncedQuery }),
-		enabled: canShowResults,
-	});
-	// Genres and playlists have no server-side search: filter the cached
-	// lists the Genres and Playlists pages already load.
-	const genreSource = useQuery({
-		queryKey: GENRE_SOURCE_QUERY_KEY,
-		queryFn: () => fetchGenreTracks(apiClient.listTracks),
-		staleTime: 60_000,
-		enabled: canShowResults,
-	});
-	const playlists = useQuery({
-		queryKey: playlistQueryKeys.list,
-		queryFn: () => apiClient.listPlaylists(),
-		enabled: canShowResults,
+		retry: false,
 	});
 
 	const close = useCallback(() => onOpenChange(false), [onOpenChange]);
 
 	const groups = useMemo<SearchGroup[]>(() => {
-		if (!canShowResults) return [];
-		const trackResults = (tracks.data?.items ?? []).map(
-			(track: Track): SearchResult => ({
-				key: `track:${track.id}`,
-				title: track.title,
-				subtitle: getTrackArtistName(track),
-				action: () => {
-					void playTrack(track.id);
-					close();
-				},
-			}),
-		);
-		const openAlbum = (albumId: string) => () => {
-			void navigate({ to: "/library/$albumId", params: { albumId } });
-			close();
-		};
-		// Albums match by title on the server; the albums that hold matching
-		// tracks belong here too (searching "Nemo" should surface "Decades").
-		const albumResults: SearchResult[] = [];
-		const seenAlbums = new Set<string>();
-		for (const album of albums.data?.items ?? []) {
-			seenAlbums.add(album.id);
-			albumResults.push({
-				key: `album:${album.id}`,
-				title: album.title,
-				subtitle: getAlbumArtistName(album),
-				action: openAlbum(album.id),
-			});
-		}
-		for (const track of tracks.data?.items ?? []) {
-			if (!track.albumId || seenAlbums.has(track.albumId)) continue;
-			seenAlbums.add(track.albumId);
-			albumResults.push({
-				key: `album:${track.albumId}`,
-				title: track.albumTitle ?? "Unknown album",
-				subtitle: getTrackArtistName(track),
-				action: openAlbum(track.albumId),
-			});
-		}
-		albumResults.splice(RESULTS_PER_GROUP);
-		const artistResults = (artists.data?.items ?? []).map(
-			(artist: Artist): SearchResult => ({
-				key: `artist:${artist.id}`,
-				title: artist.name,
-				subtitle:
-					artist.albumCount != null
-						? pluralize(artist.albumCount, "album")
-						: undefined,
-				action: () => {
-					void navigate({
-						to: "/library/artists",
-						search: { q: artist.name },
-					});
-					close();
-				},
-			}),
-		);
-		const genreResults = collectGenres(genreSource.data?.items ?? [])
-			.filter((genre) => includesQuery(genre.name, debouncedQuery))
-			.slice(0, RESULTS_PER_GROUP)
-			.map(
-				(genre): SearchResult => ({
-					key: `genre:${genre.name.toLowerCase()}`,
-					title: genre.name,
-					subtitle: pluralize(genre.trackCount, "track"),
-					action: () => {
+		if (!canShowResults || !search.data) return [];
+		const toResult = (
+			result: LibrarySearchResult,
+			group: string,
+		): SearchResult => ({
+			key: `${group}:${result.type}:${result.id}`,
+			title: result.name,
+			albumId: result.type === "album" ? result.id : result.album?.id,
+			trackId: result.type === "track" ? result.id : undefined,
+			subtitle: [
+				getTrackArtistName({ artists: result.artists ?? [], artistName: "" }),
+				result.album?.name,
+			]
+				.filter(Boolean)
+				.join(" · "),
+			action: () => {
+				switch (result.type) {
+					case "track":
+						void playTrack(result.id);
+						break;
+					case "album":
+						void navigate({
+							to: "/library/$albumId",
+							params: { albumId: result.id },
+						});
+						break;
+					case "artist":
+						void navigate({
+							to: "/library/tracks",
+							search: { artistId: result.id },
+						});
+						break;
+					case "genre":
 						void navigate({
 							to: "/library/genres/$genre",
-							params: { genre: genre.name },
+							params: { genre: result.name },
 						});
-						close();
-					},
-				}),
-			);
-		const playlistResults = (playlists.data?.items ?? [])
-			.filter((playlist: Playlist) =>
-				includesQuery(playlist.name, debouncedQuery),
-			)
-			.slice(0, RESULTS_PER_GROUP)
-			.map(
-				(playlist: Playlist): SearchResult => ({
-					key: `playlist:${playlist.id}`,
-					title: playlist.name,
-					subtitle: pluralize(playlist.trackCount, "track"),
-					action: () => {
+						break;
+					case "playlist":
 						void navigate({
 							to: "/playlists/$playlistId",
-							params: { playlistId: playlist.id },
+							params: { playlistId: result.id },
 						});
-						close();
-					},
-				}),
-			);
+						break;
+				}
+				close();
+			},
+		});
+		const data = search.data;
+		const best = data.bestMatch;
+		const categories = [
+			{ label: "Track", icon: Music2, results: data.tracks },
+			{ label: "Album", icon: Disc3, results: data.albums },
+			{ label: "Artist", icon: Users, results: data.artists },
+			{ label: "Genre", icon: Tags, results: data.genres },
+			{ label: "Playlist", icon: ListMusic, results: data.playlists },
+		];
 		return [
-			{ label: "Track", icon: Music2, results: trackResults },
-			{ label: "Album", icon: Disc3, results: albumResults },
-			{ label: "Artist", icon: Users, results: artistResults },
-			{ label: "Genre", icon: Tags, results: genreResults },
-			{ label: "Playlist", icon: ListMusic, results: playlistResults },
+			...(best
+				? [
+						{
+							label: "Best Match",
+							icon: Search,
+							results: [toResult(best, "best")],
+						},
+					]
+				: []),
+			...categories.map((group) => ({
+				...group,
+				results: group.results
+					.slice(0, showAll ? undefined : RESULTS_PER_GROUP)
+					.map((result) => toResult(result, group.label.toLowerCase())),
+			})),
 		].filter((group) => group.results.length > 0);
-	}, [
-		canShowResults,
-		debouncedQuery,
-		tracks.data,
-		albums.data,
-		artists.data,
-		genreSource.data,
-		playlists.data,
-		navigate,
-		playTrack,
-		close,
-	]);
+	}, [canShowResults, search.data, navigate, playTrack, close, showAll]);
 
 	const flatResults = useMemo(
 		() => groups.flatMap((group) => group.results),
 		[groups],
 	);
-	const activeResult = flatResults[activeIndex] ?? flatResults[0];
-	const searchQueries = [tracks, albums, artists, genreSource, playlists];
-	const failedQueries = canShowResults
-		? searchQueries.filter((result) => result.isError)
-		: [];
-	const isSearching =
-		hasQuery &&
-		(isDebouncing || searchQueries.some((result) => result.isFetching));
+	const activeResult =
+		flatResults.find((result) => result.key === activeKey) ?? flatResults[0];
+	const failed = canShowResults && search.isError;
+	const isSearching = hasQuery && (isDebouncing || search.isFetching);
 	const showEmpty =
-		canShowResults &&
-		!isSearching &&
-		failedQueries.length === 0 &&
-		flatResults.length === 0;
+		canShowResults && !isSearching && !failed && flatResults.length === 0;
 
-	useEffect(() => {
+	const resultCount =
+		canShowResults && search.data
+			? (search.data.total ??
+				new Set(
+					[
+						...search.data.tracks,
+						...search.data.albums,
+						...search.data.artists,
+						...search.data.genres,
+						...search.data.playlists,
+						...(search.data.bestMatch ? [search.data.bestMatch] : []),
+					].map((result) => `${result.type}:${result.id}`),
+				).size)
+			: undefined;
+
+	const queueResult = async (result: SearchResult) => {
+		const trackId = result.trackId;
+		if (!trackId || pendingTrackIds.current.has(trackId)) return;
+		pendingTrackIds.current.add(trackId);
+		setPendingTracks(new Set(pendingTrackIds.current));
+		try {
+			await addToQueue(trackId);
+			toast.success(`Added “${result.title}” to queue`);
+		} catch (error) {
+			console.warn("Failed to add track to queue", { trackId, error });
+			toast.error("Failed to add track to queue");
+		} finally {
+			pendingTrackIds.current.delete(trackId);
+			setPendingTracks(new Set(pendingTrackIds.current));
+		}
+	};
+
+	const scrollActiveResult = useCallback(() => {
 		const listbox = listboxRef.current;
 		if (!listbox || !activeResult) return;
 		const option = document.getElementById(
@@ -266,30 +271,47 @@ export function LibrarySearchDialog({
 			listbox.scrollTop += row.bottom - viewport.bottom;
 		}
 	}, [activeResult, listboxId]);
+	useEffect(scrollActiveResult, [scrollActiveResult]);
 
 	const onInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-		if (flatResults.length === 0) return;
+		if (event.nativeEvent.isComposing || flatResults.length === 0) return;
 		if (event.key === "ArrowDown") {
 			event.preventDefault();
-			setActiveIndex((index) => (index + 1) % flatResults.length);
+			setActiveKey(
+				flatResults[
+					(flatResults.indexOf(activeResult) + 1) % flatResults.length
+				].key,
+			);
 		} else if (event.key === "ArrowUp") {
 			event.preventDefault();
-			setActiveIndex(
-				(index) => (index - 1 + flatResults.length) % flatResults.length,
+			setActiveKey(
+				flatResults[
+					(flatResults.indexOf(activeResult) - 1 + flatResults.length) %
+						flatResults.length
+				].key,
 			);
 		} else if (event.key === "Enter") {
 			event.preventDefault();
-			activeResult?.action();
+			if (event.repeat) return;
+			if (event.shiftKey) void queueResult(activeResult);
+			else activeResult.action();
 		}
 	};
 
 	return (
 		<DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-			<DialogPrimitive.Portal>
+			<DialogPrimitive.Portal container={portalContainer}>
 				{/* Transparent: the page stays as it is behind the search card. */}
 				<DialogPrimitive.Overlay className="fixed inset-0 z-50" />
 				<DialogPrimitive.Content
 					data-testid="library-search-dialog"
+					onTransitionEnd={(event) => {
+						if (
+							event.target === event.currentTarget &&
+							event.propertyName === "height"
+						)
+							scrollActiveResult();
+					}}
 					onOpenAutoFocus={(event) => {
 						returnFocus.capture();
 						event.preventDefault();
@@ -297,12 +319,12 @@ export function LibrarySearchDialog({
 					}}
 					onCloseAutoFocus={returnFocus.restore}
 					aria-describedby={undefined}
-					className="fixed top-1/2 left-1/2 z-50 flex max-h-[70vh] w-[min(40rem,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-[0_24px_80px_-20px_var(--player-shadow)] outline-none"
+					className="library-search-card fixed top-1/2 z-50 flex max-h-[min(85dvh,56rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-[0_24px_80px_-20px_var(--player-shadow)] outline-none"
 				>
 					<DialogPrimitive.Title className="sr-only">
 						Search your library
 					</DialogPrimitive.Title>
-					<div className="flex items-center gap-3 border-border border-b px-4">
+					<div className="flex shrink-0 items-center gap-3 border-border border-b px-4 sm:gap-4 sm:px-6">
 						<Search className="size-5 shrink-0 text-caption" />
 						<input
 							ref={inputRef}
@@ -314,110 +336,233 @@ export function LibrarySearchDialog({
 								activeResult ? optionId(listboxId, activeResult.key) : undefined
 							}
 							aria-autocomplete="list"
+							aria-label="Search your library"
+							maxLength={200}
 							placeholder="Search tracks, albums, artists, genres, playlists"
 							value={query}
 							onChange={(event) => {
 								setQuery(event.target.value);
-								setActiveIndex(0);
+								setActiveKey(null);
+								setShowAll(false);
 							}}
 							onKeyDown={onInputKeyDown}
-							className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
+							className="h-16 min-w-0 flex-1 bg-transparent text-lg outline-none placeholder:text-muted-foreground sm:h-20 sm:text-xl"
 						/>
-						<kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] text-caption sm:block">
+						{resultCount !== undefined ? (
+							<output className="shrink-0 rounded-xl border border-foreground/10 px-3 py-2 text-caption text-xs sm:text-sm">
+								{resultCount} {resultCount === 1 ? "result" : "results"}
+							</output>
+						) : null}
+						<DialogPrimitive.Close
+							aria-label="Close search"
+							className="shrink-0 rounded-lg border border-foreground/10 px-2.5 py-2 text-caption text-xs outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-[var(--shell-active-foreground)]"
+						>
 							Esc
-						</kbd>
+						</DialogPrimitive.Close>
 					</div>
 					<div
 						id={listboxId}
+						aria-busy={isSearching}
 						ref={listboxRef}
 						role="listbox"
 						aria-label="Search results"
-						className="min-h-0 flex-1 overflow-y-auto p-2"
+						className="min-h-0 flex-1 overflow-y-auto"
 					>
-						{!hasQuery ? (
-							<p className="px-3 py-6 text-center text-caption text-sm">
-								Type to search your library.
-							</p>
-						) : null}
-						{failedQueries.length > 0 ? (
-							<div role="alert" className="px-3 py-3 text-sm">
-								<p>
-									{flatResults.length > 0
-										? "Some search results could not be loaded."
-										: "Search results could not be loaded."}
+						<div ref={measureResults} className="flow-root p-3 sm:p-4">
+							{!hasQuery ? (
+								<p className="px-3 py-6 text-center text-caption text-sm">
+									Type to search your library.
 								</p>
-								<button
-									type="button"
-									className="mt-2 underline"
-									disabled={isSearching}
-									onClick={() => {
-										for (const result of failedQueries) void result.refetch();
-									}}
-								>
-									Retry
-								</button>
-							</div>
-						) : null}
-						{showEmpty ? (
-							<p className="px-3 py-6 text-center text-caption text-sm">
-								Nothing in your library matches “{debouncedQuery}”.
-							</p>
-						) : null}
-						{isSearching && flatResults.length === 0 ? (
-							<p className="px-3 py-6 text-center text-caption text-sm">
-								Searching…
-							</p>
-						) : null}
-						{groups.length > 0 ? (
-							<section aria-label="From Your Library">
-								<p className="px-3 pt-2 pb-1 font-semibold text-[0.6875rem] text-caption uppercase tracking-wide">
-									From Your Library
+							) : null}
+							{failed ? (
+								<div role="alert" className="px-3 py-3 text-sm">
+									<p>
+										{flatResults.length > 0
+											? "Search results could not be refreshed."
+											: "Search results could not be loaded."}
+									</p>
+									<button
+										type="button"
+										className="mt-2 underline"
+										disabled={isSearching}
+										onClick={() => {
+											void search.refetch();
+										}}
+									>
+										Retry
+									</button>
+								</div>
+							) : null}
+							{showEmpty ? (
+								<p className="px-3 py-6 text-center text-caption text-sm">
+									Nothing in your library matches “{debouncedQuery}”.
 								</p>
-								{groups.map((group) => (
-									<div key={group.label} className="pb-1">
-										<p className="flex items-center gap-1.5 px-3 py-1 font-medium text-caption text-xs">
-											<group.icon className="size-3.5" />
-											{group.label}
-										</p>
-										<ul className="flex flex-col">
-											{group.results.map((result) => {
-												const isActive = activeResult?.key === result.key;
-												return (
-													<li key={result.key}>
-														<button
-															type="button"
-															id={optionId(listboxId, result.key)}
-															role="option"
-															aria-selected={isActive}
-															tabIndex={-1}
+							) : null}
+							{isSearching && flatResults.length === 0 ? (
+								<p className="px-3 py-6 text-center text-caption text-sm">
+									Searching…
+								</p>
+							) : null}
+							{groups.length > 0 ? (
+								<section aria-label="From Your Library">
+									<p className="sr-only">From Your Library</p>
+									{groups.map((group) => (
+										// biome-ignore lint/a11y/useSemanticElements: listbox option groups are not form fieldsets.
+										<div
+											key={group.label}
+											role="group"
+											aria-label={group.label}
+											className="pb-3 last:pb-0"
+										>
+											<p className="flex items-center gap-2 px-3 py-2 font-medium text-caption text-xs uppercase tracking-wider">
+												<group.icon className="size-3.5" />
+												{group.label}
+											</p>
+											<ul className="flex flex-col">
+												{group.results.map((result) => {
+													const isActive = activeResult?.key === result.key;
+													return (
+														<li
+															key={result.key}
 															className={cn(
-																"flex w-full cursor-pointer items-baseline gap-3 rounded-lg py-2 pr-3 pl-8 text-left text-sm",
+																"flex items-center rounded-xl border pr-2 transition-colors motion-reduce:transition-none",
 																isActive
-																	? "bg-[var(--shell-active)] text-[var(--shell-active-foreground)]"
-																	: "hover:bg-muted/50",
+																	? "border-[var(--shell-active-foreground)] bg-[var(--shell-active)]"
+																	: "border-transparent hover:bg-muted/50",
 															)}
-															onMouseEnter={() =>
-																setActiveIndex(flatResults.indexOf(result))
-															}
-															onMouseDown={(event) => event.preventDefault()}
-															onClick={result.action}
 														>
-															<span className="min-w-0 flex-1 truncate">
-																{result.title}
-															</span>
-															{result.subtitle ? (
-																<span className="shrink-0 truncate text-caption text-xs">
-																	{result.subtitle}
+															<button
+																type="button"
+																id={optionId(listboxId, result.key)}
+																role="option"
+																aria-selected={isActive}
+																tabIndex={-1}
+																className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl p-3 text-left outline-none sm:gap-4"
+																onMouseEnter={() => setActiveKey(result.key)}
+																onMouseDown={(event) => event.preventDefault()}
+																onClick={result.action}
+															>
+																{result.albumId ? (
+																	<AlbumArt
+																		coverUrl={apiClient.getAlbumCoverUrl(
+																			result.albumId,
+																		)}
+																		title={result.title}
+																		className="size-11 shrink-0 rounded-md sm:size-12"
+																	/>
+																) : (
+																	<span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-muted/50 text-caption sm:size-12">
+																		<group.icon className="size-5" />
+																	</span>
+																)}
+																<span className="min-w-0 flex-1">
+																	<span
+																		className={cn(
+																			"block truncate text-base",
+																			isActive &&
+																				"text-[var(--shell-active-foreground)]",
+																		)}
+																	>
+																		{result.title}
+																	</span>
+																	{result.subtitle ? (
+																		<span className="mt-0.5 block truncate text-caption text-sm">
+																			{result.subtitle}
+																		</span>
+																	) : null}
 																</span>
+																<span
+																	aria-hidden
+																	className="flex shrink-0 items-center gap-2 text-caption text-xs"
+																>
+																	{!result.trackId ? (
+																		<span className="hidden sm:inline">
+																			Open
+																		</span>
+																	) : null}
+																	<CornerDownLeft
+																		className={cn(
+																			"size-4 text-[var(--shell-active-foreground)]",
+																			!isActive && "invisible",
+																		)}
+																	/>
+																</span>
+															</button>
+															{result.trackId ? (
+																<button
+																	type="button"
+																	aria-label={`Add ${result.title} to queue`}
+																	title="Add to queue (Shift+Enter)"
+																	aria-disabled={pendingTracks.has(
+																		result.trackId,
+																	)}
+																	onFocus={() => setActiveKey(result.key)}
+																	onClick={() => {
+																		void queueResult(result);
+																	}}
+																	className="flex size-11 shrink-0 items-center justify-center rounded-lg text-caption outline-none hover:bg-foreground/10 hover:text-[var(--shell-active-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--shell-active-foreground)] aria-disabled:opacity-50"
+																>
+																	{pendingTracks.has(result.trackId) ? (
+																		<LoaderCircle className="size-5 motion-safe:animate-spin" />
+																	) : (
+																		<ListPlus className="size-5" />
+																	)}
+																</button>
 															) : null}
-														</button>
-													</li>
-												);
-											})}
-										</ul>
-									</div>
-								))}
-							</section>
+														</li>
+													);
+												})}
+											</ul>
+										</div>
+									))}
+								</section>
+							) : null}
+						</div>
+					</div>
+					<div
+						ref={footerRef}
+						className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 border-foreground/10 border-t px-4 py-3 text-caption text-xs sm:px-6"
+					>
+						<div className="flex flex-wrap items-center gap-3">
+							<span className="inline-flex items-center gap-1.5">
+								<kbd className="rounded border border-foreground/10 p-1">
+									<ArrowUp className="size-3" />
+								</kbd>
+								<kbd className="rounded border border-foreground/10 p-1">
+									<ArrowDown className="size-3" />
+								</kbd>{" "}
+								Navigate
+							</span>
+							<span className="inline-flex items-center gap-1.5">
+								<kbd className="rounded border border-foreground/10 p-1">
+									<CornerDownLeft className="size-3" />
+								</kbd>{" "}
+								Play / open
+							</span>
+							<span className="inline-flex items-center gap-1.5">
+								<kbd className="rounded border border-foreground/10 px-1.5 py-1">
+									Shift ↵
+								</kbd>{" "}
+								Add to queue
+							</span>
+						</div>
+						{hasQuery ? (
+							<button
+								type="button"
+								disabled={isSearching || failed || !resultCount}
+								onClick={() => {
+									setShowAll(!showAll);
+									inputRef.current?.focus();
+								}}
+								className="inline-flex min-w-0 max-w-full items-center gap-2 rounded px-1 py-1 text-[var(--shell-active-foreground)] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--shell-active-foreground)] disabled:opacity-50"
+							>
+								<span className="truncate">
+									{showAll
+										? "Show top results"
+										: `See all results for “${query.trim()}”`}
+								</span>
+								<CornerDownLeft className="size-4 shrink-0" />
+							</button>
 						) : null}
 					</div>
 				</DialogPrimitive.Content>
@@ -427,7 +572,7 @@ export function LibrarySearchDialog({
 }
 
 function optionId(listboxId: string, key: string): string {
-	return `${listboxId}-${key.replace(/[^a-z0-9_-]/gi, "_")}`;
+	return `${listboxId}-${encodeURIComponent(key)}`;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {

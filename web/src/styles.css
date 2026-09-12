@@ -289,6 +289,22 @@ body::after {
     background: transparent;
   }
 
+  .library-search-card {
+    left: var(--library-search-center, 50%);
+    width: var(--library-search-width, min(52rem, calc(100vw - 2rem)));
+    transform-origin: center bottom;
+  }
+  @keyframes library-search-enter {
+    from { opacity: 0; transform: translateY(1rem) scaleY(0.94); }
+    to { opacity: 1; transform: translateY(0) scaleY(1); }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .library-search-card[data-state='open'] {
+      animation: library-search-enter 220ms cubic-bezier(0.22, 0.8, 0.24, 1);
+      transition: height 220ms cubic-bezier(0.22, 0.8, 0.24, 1);
+    }
+  }
+
   /* Full-screen Lyrics view rising from the player bar. */
   @keyframes lyrics-view-enter {
     from {

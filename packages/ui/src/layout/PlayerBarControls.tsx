@@ -67,7 +67,7 @@ export function PlaybackControls(props: PlaybackControlsProps) {
 	return (
 		<section
 			aria-label="Playback controls"
-			className="flex min-w-px max-w-[448px] flex-[1_0_0] flex-col items-center justify-center justify-self-center"
+			className="flex min-w-px max-w-[448px] translate-y-[5px] flex-[1_0_0] flex-col items-center justify-center justify-self-center"
 		>
 			<TransportControls {...props} />
 			<PlaybackProgress {...props} />
@@ -406,7 +406,11 @@ export function VolumeAndQueueControls({
 					"relative hidden shrink-0 sm:inline-flex",
 					isQueueOpen && ACTIVE_CONTROL_BUTTON_CLASS,
 				)}
-				onClick={onToggleQueue}
+				onClick={(event) => {
+					// Release pointer focus so Space returns to playback shortcuts.
+					if (event.detail > 0) event.currentTarget.blur();
+					onToggleQueue();
+				}}
 				aria-label="Toggle queue panel"
 				aria-expanded={isQueueOpen}
 			>
@@ -521,7 +525,7 @@ function VolumeControl({
 			<div
 				data-testid="volume-popover"
 				className={cn(
-					"pointer-events-none absolute bottom-full left-1/2 z-40 -translate-x-1/2 pb-3 opacity-0 transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100",
+					"pointer-events-none absolute bottom-full left-1/2 z-40 -translate-x-1/2 pb-3 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100",
 					touchOpen && "pointer-events-auto opacity-100",
 				)}
 			>

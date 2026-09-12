@@ -173,11 +173,8 @@ func inspectM4AMetadata(rawTags map[string]string, structuredCredits map[string]
 	if genres := splitGenreTagValues([]string{m4aTagValue(rawTags, "genre")}); len(genres) > 0 {
 		tags["GENRE"] = genres
 	}
-	if artists := structuredCredits["ARTISTS"]; len(artists) > 0 {
-		tags["ARTIST"] = artists
-	}
-	if albumArtists := structuredCredits["ALBUMARTISTS"]; len(albumArtists) > 0 {
-		tags["ALBUMARTIST"] = albumArtists
+	for key, credits := range structuredCredits {
+		tags[key] = credits
 	}
 	return normalizeMediaMetadata(tags, readReplayGainStringMetadata(rawTags))
 }

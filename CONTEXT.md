@@ -6,6 +6,14 @@ Navidrome Replacement is a self-hosted music app for browsing local library cont
 
 ### Library
 
+**Library Search**:
+A query across library Tracks, Albums, Artists, Genres, and Playlists. Every result must match at least one query word in its own title or name; remaining words may match its searchable credits or other related fields. Relationships alone never add results. Radio search is separate.
+_Avoid_: Radio search, global catalog search, per-page filter
+
+**Best Match**:
+The single library result highlighted above search groups because it strongly matches the query directly. It also appears first in its own category, counting toward that category's five-result limit. A result found only through typo correction is not a Best Match.
+_Avoid_: First Track, most popular result, related result
+
 **Personal Music Server**:
 A self-hosted Music Server operated for one person's library in the initial product. Future user profiles may isolate multiple personal libraries, but the initial product is not a shared or multi-tenant music host.
 _Avoid_: Public music server, multi-tenant library

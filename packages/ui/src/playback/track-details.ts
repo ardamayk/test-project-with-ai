@@ -1,4 +1,4 @@
-import type { Track } from "@repo/api-client";
+import type { ArtistCredit, Track } from "@repo/api-client";
 import { formatReplayGainAvailability } from "./format-replay-gain";
 
 const LEGACY_GENRE_DELIMITER_PATTERN = /[;/|,]+/;
@@ -14,6 +14,10 @@ export function buildTrackDetailRows(track: Track): TrackDetailRow[] {
 	return [
 		["Title", track.title],
 		["Artist", getTrackArtistName(track)],
+		[
+			"Album Artist",
+			(track.albumArtists ?? []).map((artist) => artist.name).join(", "),
+		],
 		["Album", track.albumTitle],
 		["Disc", track.discNo?.toString()],
 		["Track", track.trackNo?.toString()],
@@ -51,6 +55,33 @@ export function getTrackArtistName(
 	const credits = track.artists;
 	if (!credits || credits.length === 0) return track.artistName;
 	return credits.map((credit) => credit.name).join(", ");
+}
+
+/**
+ * Real (identity-backed) artist credits on a Track. Legacy string credits carry
+ * a `legacy-artist:` id and cannot be navigated to, so they never appear in
+ * "Go to artist" menus.
+ */
+export function getTrackArtistCredits(
+	track: Pick<Track, "artists">,
+): ArtistCredit[] {
+	return (track.artists ?? []).filter(
+		(artist) => artist.id && !artist.id.startsWith("legacy-artist:"),
+	);
+}
+
+/** Navigate to the Track library filtered to one artist credit. */
+export function goToArtistCreditsSearch(
+	navigate: (options: {
+		to: string;
+		search: Record<string, unknown>;
+	}) => Promise<void> | void,
+	artistId: string,
+): Promise<void> | void {
+	return navigate({
+		to: "/library/tracks",
+		search: { artistId },
+	});
 }
 
 export function getTrackGenreNames(

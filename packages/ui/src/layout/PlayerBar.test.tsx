@@ -28,7 +28,7 @@ const track = {
 	id: "track-1",
 	title: "Track 1",
 	artistName: "Artist",
-	artists: [],
+	artists: [{ id: "artist-id", name: "Artist", role: "main" }],
 	albumId: "album-1",
 	discNo: 1,
 	albumTitle: "Album 1",
@@ -246,7 +246,7 @@ describe("PlayerBar", () => {
 	it("renders the Figma player bar shell dimensions", () => {
 		renderPlayerBar();
 
-		expect(screen.getByRole("contentinfo").className).toContain("h-[80px]");
+		expect(screen.getByRole("contentinfo").className).toContain("h-[86px]");
 		expect(screen.getByRole("contentinfo").className).toContain("bg-player");
 	});
 
@@ -652,6 +652,53 @@ describe("PlayerBar", () => {
 		});
 	});
 
+	it("keeps Space controlling playback after pointer queue toggles", async () => {
+		const { engine } = renderPlayerBar();
+		await act(async () => {});
+		await act(async () => {
+			screen.getByRole("button", { name: "Start track" }).click();
+		});
+		const queueButton = screen.getByRole("button", {
+			name: "Toggle queue panel",
+		});
+		for (const expectedStatus of ["paused", "playing"]) {
+			queueButton.focus();
+			fireEvent.click(queueButton, { detail: 1 });
+			const isExpanded = queueButton.getAttribute("aria-expanded");
+			const event = new KeyboardEvent("keydown", {
+				key: " ",
+				bubbles: true,
+				cancelable: true,
+			});
+			await act(async () => {
+				document.activeElement?.dispatchEvent(event);
+			});
+			expect(event.defaultPrevented).toBe(true);
+			expect(engine.getState().status).toBe(expectedStatus);
+			expect(queueButton.getAttribute("aria-expanded")).toBe(isExpanded);
+		}
+	});
+
+	it("preserves queue button focus and native Space for keyboard activation", async () => {
+		renderPlayerBar();
+		await act(async () => {});
+		const queueButton = screen.getByRole("button", {
+			name: "Toggle queue panel",
+		});
+		queueButton.focus();
+		const isExpanded = queueButton.getAttribute("aria-expanded");
+		fireEvent.click(queueButton, { detail: 0 });
+		expect(document.activeElement).toBe(queueButton);
+		expect(queueButton.getAttribute("aria-expanded")).not.toBe(isExpanded);
+		const event = new KeyboardEvent("keydown", {
+			key: " ",
+			bubbles: true,
+			cancelable: true,
+		});
+		queueButton.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(false);
+	});
+
 	it.each([
 		{ length: 3, currentIndex: 1, badge: "1" },
 		{ length: 2, currentIndex: 1, badge: "0" },
@@ -899,9 +946,63 @@ describe("PlayerBar", () => {
 		await openActionsMenu();
 		fireEvent.click(screen.getByRole("menuitem", { name: "Go to artist" }));
 		expect(navigate).toHaveBeenCalledWith({
-			to: "/library/artists",
-			search: { q: "Artist" },
+			to: "/library/tracks",
+			search: { artistId: "artist-id" },
 		});
+	});
+
+	it("offers each Artist credit by name without choosing the combined display credit", async () => {
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			engine.play({
+				type: "track",
+				playbackUrl: "/stream/track-1",
+				track: {
+					...track,
+					artistName: "Artist & Guest / Band",
+					artists: [
+						...track.artists,
+						{ id: "guest-id", name: "Guest / Band", role: "main" },
+					],
+				},
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Track actions" }));
+		const artists = screen.getByRole("group", { name: "Go to artist" });
+		expect(
+			within(artists).getByRole("menuitem", { name: "Artist" }),
+		).toBeTruthy();
+		fireEvent.click(
+			within(artists).getByRole("menuitem", { name: "Guest / Band" }),
+		);
+		expect(navigate).toHaveBeenCalledWith({
+			to: "/library/tracks",
+			search: { artistId: "guest-id" },
+		});
+		expect(screen.queryByRole("group", { name: "Go to artist" })).toBeNull();
+	});
+
+	it.each([
+		{ artists: undefined },
+		{ artists: [] },
+		{ artists: [{ id: "", name: "Artist" }] },
+		{ artists: [{ id: "legacy-artist:Artist", name: "Artist" }] },
+	])("disables Go to artist without real credit IDs ($artists)", async ({
+		artists,
+	}) => {
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			engine.play({
+				type: "track",
+				playbackUrl: "/stream/track-1",
+				track: { ...track, artists } as typeof track,
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Track actions" }));
+		const action = screen.getByRole("menuitem", { name: "Go to artist" });
+		expect(action).toHaveProperty("disabled", true);
+		fireEvent.click(action);
+		expect(navigate).not.toHaveBeenCalled();
 	});
 
 	it("opens a hover submenu for add to playlist and toggles membership", async () => {
@@ -1006,6 +1107,34 @@ describe("PlayerBar", () => {
 		} finally {
 			track.format = format;
 		}
+	});
+
+	it.each([
+		"Album ensemble",
+		"Artist",
+	])("shows separate Artist and Album Artist details (%s)", async (albumArtist) => {
+		const { engine } = renderPlayerBar();
+		await act(async () =>
+			engine.play({
+				type: "track",
+				playbackUrl: "/stream/track-1",
+				track: {
+					...track,
+					albumArtists: [{ id: "album-artist", name: albumArtist }],
+				},
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Track actions" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Details" }));
+		const dialog = within(screen.getByRole("dialog", { name: "Track 1" }));
+		expect(dialog.getByText("Album Artist").parentElement?.textContent).toBe(
+			`Album Artist${albumArtist}`,
+		);
+		expect(
+			dialog
+				.getAllByText("Artist")
+				.some((node) => node.parentElement?.textContent === "ArtistArtist"),
+		).toBe(true);
 	});
 
 	it("opens a track info modal from the actions menu", async () => {

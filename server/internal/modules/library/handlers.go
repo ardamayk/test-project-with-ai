@@ -100,7 +100,7 @@ func (h *Handlers) GetAlbum(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) ListTracks(w http.ResponseWriter, r *http.Request) {
 	limit, offset := pagination(r)
 	q := r.URL.Query().Get("q")
-	result, err := h.service.ListTracks(r.Context(), limit, offset, q)
+	result, err := h.service.ListTracks(r.Context(), limit, offset, r.URL.Query().Get("artistId"), q)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return

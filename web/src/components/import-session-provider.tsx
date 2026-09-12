@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { ImportSessionContext } from "#/components/import-session-context";
 import { useReturnFocus } from "#/hooks/use-return-focus";
+import { invalidateLibraryCache } from "#/lib/invalidate-library-cache";
 import { ImportMusicDialog } from "#/routes/library/tracks/-import-music-dialog";
 
 export function ImportSessionProvider({ children }: { children: ReactNode }) {
@@ -28,7 +29,7 @@ function useImportSession() {
 	const returnFocus = useReturnFocus();
 	async function refresh() {
 		clearTrackWaveformCache();
-		await queryClient.invalidateQueries({ queryKey: ["library", "tracks"] });
+		await invalidateLibraryCache(queryClient);
 	}
 	function handleOpenChange(nextIsOpen: boolean) {
 		setIsOpen(nextIsOpen);

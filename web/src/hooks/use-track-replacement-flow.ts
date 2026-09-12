@@ -148,9 +148,11 @@ export function useTrackReplacementFlow(onReplaced?: (track: Track) => void) {
 		setStep("completed");
 		onReplaced?.(track);
 		try {
-			await playback.refreshQueue();
-			await invalidateLibraryCache(queryClient, {});
-			await invalidatePlaylistCache(queryClient);
+			await Promise.all([
+				invalidateLibraryCache(queryClient),
+				invalidatePlaylistCache(queryClient),
+				playback.refreshQueue(),
+			]);
 		} catch (cause) {
 			console.error("Refresh after Track Replacement failed", cause);
 		}

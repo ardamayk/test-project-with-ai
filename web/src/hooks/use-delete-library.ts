@@ -30,9 +30,12 @@ export function useDeleteTrack() {
 			confirmationToken: string;
 		}) => apiClient.deleteTrack(trackId, confirmationToken),
 		onSuccess: async (_result, { trackId }) => {
-			await syncPlaybackAfterDelete(playback, trackId);
+			// Cache first, then playback: sync must observe the post-deletion queue.
 			await invalidateLibraryCache(queryClient, { trackId });
-			await invalidatePlaylistCache(queryClient);
+			await Promise.all([
+				invalidatePlaylistCache(queryClient),
+				syncPlaybackAfterDelete(playback, trackId),
+			]);
 		},
 	});
 }
@@ -76,11 +79,6 @@ export function useDeleteAlbum() {
 		}) => apiClient.deleteAlbum(albumId, confirmationToken),
 		onSuccess: async (result, { albumId }) => {
 			const deletedIds = new Set(result.deleted.map((track) => track.trackId));
-			if (playback.currentTrack && deletedIds.has(playback.currentTrack.id)) {
-				await playback.clearQueue();
-			} else {
-				await playback.refreshQueue();
-			}
 			const albumGone = result.stoppedAt === null;
 			const firstDeleted = result.deleted[0];
 			await invalidateLibraryCache(
@@ -92,6 +90,11 @@ export function useDeleteAlbum() {
 						: {},
 			);
 			await invalidatePlaylistCache(queryClient);
+			if (playback.currentTrack && deletedIds.has(playback.currentTrack.id)) {
+				await playback.clearQueue();
+			} else {
+				await playback.refreshQueue();
+			}
 			if (albumGone) {
 				toast.success("All tracks deleted", {
 					description: describeAlbumDeletion(result),

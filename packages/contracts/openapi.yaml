@@ -95,7 +95,7 @@ paths:
           in: query
           schema:
             type: string
-          description: Search by name
+          description: Substring filter over active Album Artists only. Exact names sort first. Album counts include active Album Artist credits only.
       responses:
         "200":
           description: Artist list
@@ -230,6 +230,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - name: artistId
+          in: query
+          description: Exact Track or Album Artist credit filter, combined with q before counting and pagination.
+          schema:
+            type: string
+            format: uuid
         - name: q
           in: query
           schema:
@@ -292,6 +298,44 @@ paths:
           $ref: "#/components/responses/Conflict"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/library/search:
+    get:
+      tags: [library]
+      operationId: searchLibrary
+      summary: Library Search across Tracks, Albums, Artists, Genres, and Playlists
+      description: >-
+        Evaluates one coherent Library Search on the Music Server: every query
+        word must match and at least one word must contribute to the result's
+        own title/name. Related metadata may complete mixed queries but never
+        adds unrelated Albums or Artists. Bounded typo correction applies only
+        when no strong direct result exists. Groups hold at most five records
+        each unless all=true returns every ranked result. Ranking and Best Match
+        selection are unchanged; the Best Match also appears first in its group.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: The query text; empty and punctuation-only input is rejected
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: all
+          in: query
+          required: false
+          description: Return all ranked results instead of five per group; must be true or false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Ranked Library Search groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibrarySearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /api/v1/library/tracks/{trackId}/lyrics:
     get:
       tags: [library]
@@ -2556,6 +2600,11 @@ components:
           description: Ordered normalized Track Artist credits.
           items:
             $ref: "#/components/schemas/ArtistCredit"
+        albumArtists:
+          type: array
+          description: Ordered Album Artist credits, independent from Track Artists.
+          items:
+            $ref: "#/components/schemas/ArtistCredit"
         albumId:
           type: string
           format: uuid
@@ -2625,7 +2674,7 @@ components:
         revision:
           type: integer
           minimum: 1
-          description: Increments on every Track Replacement.
+          description: Increments on Track Replacement or Track credit repair.
         createdAt:
           type: string
           format: date-time
@@ -2662,6 +2711,75 @@ components:
             $ref: "#/components/schemas/Track"
         total:
           type: integer
+    LibrarySearchResultType:
+      type: string
+      enum: [track, album, artist, genre, playlist]
+    LibrarySearchMatch:
+      type: string
+      description: >-
+        `direct` records match without typo correction, with their own title/name
+        contributing, and are the only Best Match candidates. `corrected` records
+        match through bounded typo correction. `related` is retained for API v1
+        compatibility but is no longer emitted.
+      enum: [direct, related, corrected]
+    LibrarySearchAlbumReference:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    LibrarySearchResult:
+      type: object
+      required: [type, id, name, match]
+      properties:
+        type:
+          $ref: "#/components/schemas/LibrarySearchResultType"
+        id:
+          type: string
+        name:
+          type: string
+          description: The original display title or name
+        match:
+          $ref: "#/components/schemas/LibrarySearchMatch"
+        artists:
+          type: array
+          description: Track credits for a Track, Album Artist credits for an Album, in credit order
+          items:
+            $ref: "#/components/schemas/ArtistCredit"
+        album:
+          $ref: "#/components/schemas/LibrarySearchAlbumReference"
+    LibrarySearchResponse:
+      type: object
+      required: [tracks, albums, artists, genres, playlists]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+          description: Unique ranked matches across all groups before the cap, counting the Best Match only once; optional for older servers
+        bestMatch:
+          $ref: "#/components/schemas/LibrarySearchResult"
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        albums:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        artists:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        genres:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        playlists:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
     Playlist:
       type: object
       required: [id, name, isDefault, trackCount]

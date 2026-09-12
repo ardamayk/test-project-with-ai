@@ -68,6 +68,10 @@ export type AlbumList = Omit<WireAlbumList, 'items'> & { items: Album[] };
 export type AlbumDetail = Omit<WireAlbumDetail, keyof Album | 'tracks'> &
   Album & { tracks: Track[] };
 export type TrackList = Omit<WireTrackList, 'items'> & { items: Track[] };
+export type LibrarySearchResponse = Schemas['LibrarySearchResponse'];
+export type LibrarySearchResult = Schemas['LibrarySearchResult'];
+export type LibrarySearchResultType = Schemas['LibrarySearchResultType'];
+export type LibrarySearchMatch = Schemas['LibrarySearchMatch'];
 export type Playlist = Schemas['Playlist'];
 export type PlaylistList = Schemas['PlaylistList'];
 export type PlaylistDetail = Omit<WirePlaylistDetail, 'tracks'> & {
@@ -182,6 +186,7 @@ function normalizeTrack(track: WireTrack): Track {
   return {
     ...track,
     artists: track.artists ?? [legacyArtistCredit(track.artistName)],
+    albumArtists: track.albumArtists ?? [],
     discNo: track.discNo ?? 1,
     genres: track.genres ?? (track.genre ? [legacyGenre(track.genre)] : []),
   };
@@ -566,6 +571,11 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'DELETE',
         headers: { 'If-Match': revision },
       }).then(normalizeQueue),
+    /** One coherent Library Search; the server ranks, gates typo correction, and picks the Best Match. */
+    searchLibrary: (q: string, all = false) =>
+      request<LibrarySearchResponse>(
+        `/api/v1/library/search?${new URLSearchParams({ q }).toString()}${all ? '&all=true' : ''}`,
+      ),
     listPlaylists: () => request<PlaylistList>('/api/v1/playlists'),
     createPlaylist: (body: PlaylistCreate) =>
       request<Playlist>('/api/v1/playlists', {

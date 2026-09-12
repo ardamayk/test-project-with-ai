@@ -49,6 +49,7 @@ HTTP status codes follow standard semantics (400, 401, 403, 404, 408, 409, 410, 
 
 - Ingestion: Managed Import only (`/api/v1/imports/...`); the server never scans a server-side folder (ADR 0015, ADR 0016)
 - Browse: artists, albums, tracks list/detail endpoints under `/api/v1/library/`
+- Library Search: `GET /api/v1/library/search?q=` (`searchLibrary`) evaluates one coherent query across Tracks, Albums, Artists, Genres, and Playlists on the Music Server and returns an optional Best Match plus five capped groups; each result carries `match` (`direct`, `related`, `corrected`). Browse `q` filters remain the older substring behavior, not the ranking contract.
 - Supported formats: mp3, flac, ogg, m4a, opus, wav
 
 ## Playback (v1)
