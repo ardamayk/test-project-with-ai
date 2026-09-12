@@ -107,7 +107,7 @@ func TestModuleStartRecoversPendingCommitJournalInOneRestartPass(t *testing.T) {
 			}
 
 			libraryStore := library.NewStore(database)
-			tracks, err := libraryStore.ListTracks(context.Background(), 100, 0, "")
+			tracks, err := libraryStore.ListTracks(context.Background(), 100, 0, "", "")
 			if err != nil {
 				t.Fatalf("list Tracks after restart: %v", err)
 			}

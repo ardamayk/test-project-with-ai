@@ -186,6 +186,7 @@ function normalizeTrack(track: WireTrack): Track {
   return {
     ...track,
     artists: track.artists ?? [legacyArtistCredit(track.artistName)],
+    albumArtists: track.albumArtists ?? [],
     discNo: track.discNo ?? 1,
     genres: track.genres ?? (track.genre ? [legacyGenre(track.genre)] : []),
   };

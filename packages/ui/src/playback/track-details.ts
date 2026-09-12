@@ -14,6 +14,10 @@ export function buildTrackDetailRows(track: Track): TrackDetailRow[] {
 	return [
 		["Title", track.title],
 		["Artist", getTrackArtistName(track)],
+		[
+			"Album Artist",
+			(track.albumArtists ?? []).map((artist) => artist.name).join(", "),
+		],
 		["Album", track.albumTitle],
 		["Disc", track.discNo?.toString()],
 		["Track", track.trackNo?.toString()],

@@ -1,6 +1,12 @@
 import { ApiError } from "@repo/api-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	createMemoryHistory,
+	createRootRoute,
+	createRouter,
+	RouterProvider,
+} from "@tanstack/react-router";
+import {
 	act,
 	cleanup,
 	fireEvent,
@@ -12,6 +18,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImportSessionProvider } from "#/components/import-session-provider";
 import { TracksPage } from "./-tracks-page";
+import { Route } from "./index";
 
 const mocks = vi.hoisted(() => ({
 	getHealth: vi.fn(),
@@ -77,7 +84,8 @@ vi.mock("#/lib/api", () => ({
 	},
 }));
 
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@tanstack/react-router")>()),
 	Link: ({
 		to,
 		children,
@@ -645,6 +653,114 @@ describe("tracks route", () => {
 		expect(importButton.hasAttribute("disabled")).toBe(false);
 		fireEvent.click(importButton);
 		expect(screen.getByRole("heading", { name: "Import Music" })).toBeTruthy();
+	});
+
+	it("loads exact Artist tracks within the 200-track cap and reports loaded/total counts", async () => {
+		mocks.listTracks.mockResolvedValue({ items: libraryTracks, total: 237 });
+		renderWithQuery(<TracksPage artistId="guest-id" search="live" />);
+		await screen.findByText("Anti-Hero");
+		expect(mocks.listTracks).toHaveBeenLastCalledWith({
+			limit: 200,
+			artistId: "guest-id",
+			q: "live",
+		});
+		expect(screen.getByText("Showing 2 of 237 tracks")).toBeTruthy();
+	});
+
+	it("clears filters even when an Artist has no matching Tracks", async () => {
+		mocks.listTracks.mockResolvedValue({ items: [], total: 0 });
+		const onClearFilters = vi.fn();
+		renderWithQuery(
+			<TracksPage artistId="unknown" onClearFilters={onClearFilters} />,
+		);
+		expect(
+			await screen.findByText("No tracks match these filters."),
+		).toBeTruthy();
+		expect(screen.getByText("Showing 0 of 0 tracks")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+		expect(onClearFilters).toHaveBeenCalledOnce();
+	});
+
+	it("uses URL Artist identity, separates cached filters, and clears the URL back to all Tracks", async () => {
+		mocks.listTracks.mockImplementation(async (params) => ({
+			items: [
+				{
+					...libraryTracks[0],
+					title: params.artistId
+						? `Tracks for ${params.artistId}`
+						: "All tracks",
+				},
+			],
+			total: 1,
+		}));
+		const root = createRootRoute();
+		const tracksRoute = Route.update({
+			getParentRoute: () => root,
+			path: "/library/tracks/",
+			id: "/library/tracks/",
+		} as never);
+		const router = createRouter({
+			routeTree: root.addChildren([tracksRoute]),
+			history: createMemoryHistory({
+				initialEntries: ["/library/tracks?artistId=first&q=live"],
+			}),
+		});
+		renderWithQuery(<RouterProvider router={router} />);
+		await screen.findByText("Tracks for first");
+		expect(mocks.listTracks).toHaveBeenLastCalledWith({
+			limit: 200,
+			artistId: "first",
+			q: "live",
+		});
+		await act(async () =>
+			router.navigate({
+				to: "/library/tracks",
+				search: { artistId: "second", q: "live" },
+			}),
+		);
+		await screen.findByText("Tracks for second");
+		expect(screen.queryByText("Tracks for first")).toBeNull();
+		await act(async () =>
+			router.navigate({
+				to: "/library/tracks",
+				search: { artistId: "first", q: "studio" },
+			}),
+		);
+		await waitFor(() =>
+			expect(mocks.listTracks).toHaveBeenLastCalledWith({
+				limit: 200,
+				artistId: "first",
+				q: "studio",
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+		await screen.findByText("All tracks");
+		expect(router.state.location.search).toEqual({});
+		expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+	});
+
+	it("rejects structured Artist filters at the URL boundary before loading Tracks", async () => {
+		const root = createRootRoute();
+		const tracksRoute = Route.update({
+			getParentRoute: () => root,
+			path: "/library/tracks/",
+			id: "/library/tracks/",
+		} as never);
+		const router = createRouter({
+			routeTree: root.addChildren([tracksRoute]),
+			history: createMemoryHistory({
+				initialEntries: [
+					"/library/tracks?artistId=%5B%22first%22%2C%22second%22%5D",
+				],
+			}),
+			defaultErrorComponent: () => <p role="alert">Invalid track filters</p>,
+		});
+		renderWithQuery(<RouterProvider router={router} />);
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			"Invalid track filters",
+		);
+		expect(mocks.listTracks).not.toHaveBeenCalled();
 	});
 
 	it("renders the shared compact header and the track list", async () => {

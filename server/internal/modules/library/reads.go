@@ -134,6 +134,18 @@ func (s *Store) enrichTracks(ctx context.Context, tracks []Track) error {
 	if err != nil {
 		return fmt.Errorf("enrich Tracks with Artist credits: %w", err)
 	}
+	albumIDs := make([]string, 0, len(tracks))
+	seen := make(map[string]bool, len(tracks))
+	for _, track := range tracks {
+		if !seen[track.AlbumID] {
+			albumIDs = append(albumIDs, track.AlbumID)
+			seen[track.AlbumID] = true
+		}
+	}
+	albumArtists, err := s.readAlbumArtists(ctx, albumIDs)
+	if err != nil {
+		return fmt.Errorf("enrich Tracks with Album Artist credits: %w", err)
+	}
 	genres, err := s.readTrackGenres(ctx, trackIDs)
 	if err != nil {
 		return fmt.Errorf("enrich Tracks with Genres: %w", err)
@@ -143,6 +155,10 @@ func (s *Store) enrichTracks(ctx context.Context, tracks []Track) error {
 		track.Artists = artists[track.ID]
 		if len(track.Artists) == 0 {
 			track.Artists = []ArtistCredit{{Name: track.ArtistName}}
+		}
+		track.AlbumArtists = albumArtists[track.AlbumID]
+		if track.AlbumArtists == nil {
+			track.AlbumArtists = []ArtistCredit{}
 		}
 		track.Genres = genres[track.ID]
 		if track.Genres == nil {

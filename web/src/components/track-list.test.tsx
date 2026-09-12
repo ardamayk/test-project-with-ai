@@ -479,6 +479,38 @@ describe("TrackList", () => {
 		expect(screen.queryByText("Delete track")).toBeNull();
 	});
 
+	it.each([
+		"Album ensemble",
+		"Taylor Swift",
+	])("shows independent Album Artist details (%s)", (albumArtist) => {
+		render(
+			<TrackList
+				tracks={[
+					{
+						...sampleTrack,
+						albumArtists: [
+							{ id: "album-artist", name: albumArtist },
+							{ id: "second", name: "Guest / Band" },
+						],
+					},
+				]}
+			/>,
+		);
+		fireEvent.contextMenu(
+			screen.getByRole("row", { name: /Welcome to New York/ }),
+		);
+		fireEvent.click(screen.getByText("Details"));
+		const dialog = within(
+			screen.getByRole("dialog", { name: "Welcome to New York" }),
+		);
+		expect(dialog.getByText("Artist").parentElement?.textContent).toBe(
+			"ArtistTaylor Swift",
+		);
+		expect(dialog.getByText("Album Artist").parentElement?.textContent).toBe(
+			`Album Artist${albumArtist}, Guest / Band`,
+		);
+	});
+
 	it("renders metadata details and delete actions in the context menu", () => {
 		render(<TrackList tracks={[sampleTrack]} />);
 
@@ -493,6 +525,7 @@ describe("TrackList", () => {
 		expect(dialog.className).toContain("bg-popover");
 		expect(within(dialog).getByText("Title")).toBeTruthy();
 		expect(within(dialog).getByText("Artist")).toBeTruthy();
+		expect(within(dialog).queryByText("Album Artist")).toBeNull();
 		expect(within(dialog).getByText("Album")).toBeTruthy();
 		expect(within(dialog).getByText("Track")).toBeTruthy();
 		expect(within(dialog).getByText("Disc")).toBeTruthy();

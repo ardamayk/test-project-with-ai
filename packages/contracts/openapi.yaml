@@ -95,7 +95,7 @@ paths:
           in: query
           schema:
             type: string
-          description: Search by name
+          description: Substring filter over active Album Artists only. Exact names sort first. Album counts include active Album Artist credits only.
       responses:
         "200":
           description: Artist list
@@ -230,6 +230,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - name: artistId
+          in: query
+          description: Exact Track or Album Artist credit filter, combined with q before counting and pagination.
+          schema:
+            type: string
+            format: uuid
         - name: q
           in: query
           schema:
@@ -299,11 +305,11 @@ paths:
       summary: Library Search across Tracks, Albums, Artists, Genres, and Playlists
       description: >-
         Evaluates one coherent Library Search on the Music Server: every query
-        word must match, direct title/name relevance outranks credit-only
-        matches, bounded typo correction applies only when no strong direct
-        result exists, and related Albums and Artists of strongly matching
-        Tracks are added under explicit ranking rules. Groups hold at most five
-        records each; the Best Match, when eligible, is excluded from its group.
+        word must match and at least one word must contribute to the result's
+        own title/name. Related metadata may complete mixed queries but never
+        adds unrelated Albums or Artists. Bounded typo correction applies only
+        when no strong direct result exists. Groups hold at most five records
+        each; the Best Match, when eligible, also appears first in its group.
       parameters:
         - name: q
           in: query
@@ -2586,6 +2592,11 @@ components:
           description: Ordered normalized Track Artist credits.
           items:
             $ref: "#/components/schemas/ArtistCredit"
+        albumArtists:
+          type: array
+          description: Ordered Album Artist credits, independent from Track Artists.
+          items:
+            $ref: "#/components/schemas/ArtistCredit"
         albumId:
           type: string
           format: uuid
@@ -2655,7 +2666,7 @@ components:
         revision:
           type: integer
           minimum: 1
-          description: Increments on every Track Replacement.
+          description: Increments on Track Replacement or Track credit repair.
         createdAt:
           type: string
           format: date-time
@@ -2698,12 +2709,10 @@ components:
     LibrarySearchMatch:
       type: string
       description: >-
-        Why the record holds its position. `direct` records matched the query
-        through their own searchable fields without typo correction and are
-        the only Best Match candidates; `related` records are placed by their
-        relationship to a strongly matching Track (they may also match
-        directly, but not by their exact name); `corrected` records matched
-        only through bounded typo correction.
+        `direct` records match without typo correction, with their own title/name
+        contributing, and are the only Best Match candidates. `corrected` records
+        match through bounded typo correction. `related` is retained for API v1
+        compatibility but is no longer emitted.
       enum: [direct, related, corrected]
     LibrarySearchAlbumReference:
       type: object

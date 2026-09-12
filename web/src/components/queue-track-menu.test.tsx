@@ -29,24 +29,31 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => mocks.navigate,
 }));
 
-const item = {
+const item: QueueItem = {
 	id: "queue-second-copy",
+	trackId: "track-1",
+	position: 0,
 	track: {
 		id: "track-1",
 		title: "Track one",
 		artistName: "Artist one",
+		artists: [{ id: "artist-1", name: "Artist one" }],
 		albumId: "album-1",
+		discNo: 1,
+		durationMs: 120000,
+		format: "flac",
+		genres: [],
 	},
-} as QueueItem;
+};
 
-function renderMenu() {
+function renderMenu(menuItem = item) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
 	render(
 		<QueryClientProvider client={queryClient}>
 			<ul>
-				<QueueTrackMenu item={item}>
+				<QueueTrackMenu item={menuItem}>
 					{(trigger) => (
 						// biome-ignore lint/a11y/useSemanticElements: Reproduce the host's focusable queue row contract.
 						<li
@@ -176,13 +183,73 @@ describe("QueueTrackMenu", () => {
 			"Go to album",
 			{ to: "/library/$albumId", params: { albumId: "album-1" } },
 		],
-		["Go to artist", { to: "/library/artists", search: { q: "Artist one" } }],
+		[
+			"Go to artist",
+			{ to: "/library/tracks", search: { artistId: "artist-1" } },
+		],
 	])("navigates using %s", async (label, destination) => {
 		renderMenu();
 		openDropdown();
 		fireEvent.click(await screen.findByRole("menuitem", { name: label }));
 		expect(mocks.navigate).toHaveBeenCalledWith(destination);
 		expect(mocks.playRow).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		"dropdown",
+		"context",
+	])("chooses an exact credit from the %s artist menu", async (mode) => {
+		renderMenu({
+			...item,
+			track: {
+				...item.track,
+				artistName: "Artist one & Guest / Band",
+				artists: [
+					...item.track.artists,
+					{ id: "guest-id", name: "Guest / Band" },
+				],
+			},
+		});
+		if (mode === "dropdown") openDropdown();
+		else
+			fireEvent.contextMenu(screen.getByRole("button", { name: "Track one" }));
+		const trigger = await screen.findByRole("menuitem", {
+			name: "Go to artist",
+		});
+		trigger.focus();
+		fireEvent.keyDown(trigger, { key: "ArrowRight" });
+		expect(mocks.navigate).not.toHaveBeenCalled();
+		expect(
+			await screen.findByRole("menuitem", { name: "Artist one" }),
+		).toBeTruthy();
+		const guest = await screen.findByRole("menuitem", { name: "Guest / Band" });
+		guest.focus();
+		fireEvent.keyDown(guest, { key: "Enter" });
+		expect(mocks.navigate).toHaveBeenCalledWith({
+			to: "/library/tracks",
+			search: { artistId: "guest-id" },
+		});
+		expect(mocks.playRow).not.toHaveBeenCalled();
+	});
+
+	it.each(
+		[
+			undefined,
+			[],
+			[{ id: "", name: "Artist one" }],
+			[{ id: "legacy-artist:Artist one", name: "Artist one" }],
+		].map((artists) => ({ artists })),
+	)("disables artist navigation without real credit IDs ($artists)", async ({
+		artists,
+	}) => {
+		renderMenu({ ...item, track: { ...item.track, artists } } as QueueItem);
+		openDropdown();
+		const action = await screen.findByRole("menuitem", {
+			name: "Go to artist",
+		});
+		expect(action.getAttribute("aria-disabled")).toBe("true");
+		fireEvent.click(action);
+		expect(mocks.navigate).not.toHaveBeenCalled();
 	});
 
 	it("reports action failures", async () => {

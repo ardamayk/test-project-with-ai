@@ -24,8 +24,8 @@ func (s *Service) GetAlbum(ctx context.Context, albumID string) (AlbumDetail, er
 	return s.store.GetAlbum(ctx, albumID)
 }
 
-func (s *Service) ListTracks(ctx context.Context, limit, offset int, q string) (TrackList, error) {
-	return s.store.ListTracks(ctx, limit, offset, q)
+func (s *Service) ListTracks(ctx context.Context, limit, offset int, artistID, q string) (TrackList, error) {
+	return s.store.ListTracks(ctx, limit, offset, artistID, q)
 }
 
 func (s *Service) GetAlbumCover(ctx context.Context, albumID string) (string, []byte, error) {

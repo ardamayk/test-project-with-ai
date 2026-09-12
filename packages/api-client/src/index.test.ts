@@ -540,6 +540,7 @@ describe('createApiClient', () => {
     expect(album.releaseIdentifiers).toEqual([]);
     expect(album.tracks[0]).toMatchObject({
       artists: [{ id: 'legacy-artist:Track Artist', name: 'Track Artist' }],
+      albumArtists: [],
       discNo: 1,
       genres: [
         {

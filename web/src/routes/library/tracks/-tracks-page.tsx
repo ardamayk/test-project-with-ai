@@ -14,9 +14,18 @@ import {
 	useServerCapabilityState,
 } from "#/hooks/use-server-capability";
 import { apiClient } from "#/lib/api";
+import { libraryQueryKeys } from "#/lib/library-query-keys";
 
-export function TracksPage() {
-	const tracks = useTrackLibrary();
+export function TracksPage({
+	artistId = "",
+	search = "",
+	onClearFilters,
+}: {
+	artistId?: string;
+	search?: string;
+	onClearFilters?: () => void;
+} = {}) {
+	const tracks = useTrackLibrary(search, artistId);
 	const managedImport = useManagedImport();
 	const importCapability = useServerCapabilityState(MANAGED_IMPORT_CAPABILITY);
 
@@ -32,16 +41,33 @@ export function TracksPage() {
 			}
 		>
 			<CollectionPageContainer className="space-y-6">
-				<TrackResults {...tracks} />
+				{artistId || search ? (
+					<div className="flex items-center justify-between gap-3">
+						<p className="text-caption text-sm">
+							{tracks.tracks.data
+								? `Showing ${tracks.items.length} of ${tracks.tracks.data.total} tracks`
+								: "Filtered tracks"}
+						</p>
+						<Button variant="outline" onClick={onClearFilters}>
+							Clear filters
+						</Button>
+					</div>
+				) : null}
+				<TrackResults {...tracks} filtered={Boolean(artistId || search)} />
 			</CollectionPageContainer>
 		</PageShell>
 	);
 }
 
-function useTrackLibrary() {
+function useTrackLibrary(search: string, artistId: string) {
 	const tracks = useQuery({
-		queryKey: ["library", "tracks"],
-		queryFn: () => apiClient.listTracks({ limit: 200 }),
+		queryKey: libraryQueryKeys.tracks(search, artistId),
+		queryFn: () =>
+			apiClient.listTracks({
+				limit: 200,
+				q: search || undefined,
+				artistId: artistId || undefined,
+			}),
 	});
 	return { tracks, items: tracks.data?.items ?? [] };
 }
@@ -81,13 +107,21 @@ function TracksHeader({
 	);
 }
 
-function TrackResults({ tracks, items }: ReturnType<typeof useTrackLibrary>) {
+function TrackResults({
+	tracks,
+	items,
+	filtered,
+}: ReturnType<typeof useTrackLibrary> & { filtered: boolean }) {
 	if (tracks.isLoading && items.length === 0)
 		return <p className="text-foreground text-sm">Loading tracks…</p>;
 	if (tracks.isError && items.length === 0)
 		return <p className="text-destructive text-sm">Failed to load tracks</p>;
 	if (items.length === 0)
-		return <p className="text-foreground text-sm">No tracks yet.</p>;
+		return (
+			<p className="text-foreground text-sm">
+				{filtered ? "No tracks match these filters." : "No tracks yet."}
+			</p>
+		);
 	return (
 		<TrackList tracks={items} showFavorite showMeta compact numbering="list" />
 	);

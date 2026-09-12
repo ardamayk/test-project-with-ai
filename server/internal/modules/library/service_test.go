@@ -29,7 +29,7 @@ func TestServiceListTracksSearchesAlbumAndGenre(t *testing.T) {
 		Title: "Age of Consent", Artist: "New Order", Album: "Power Corruption and Lies", TrackNo: 1, DurationMs: 300_000, Genres: []string{"Rock"},
 	})
 
-	byAlbum, err := svc.ListTracks(context.Background(), 10, 0, "Low-Life")
+	byAlbum, err := svc.ListTracks(context.Background(), 10, 0, "", "Low-Life")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestServiceListTracksSearchesAlbumAndGenre(t *testing.T) {
 		t.Fatalf("album search items = %#v, want Blue Monday", byAlbum.Items)
 	}
 
-	byGenre, err := svc.ListTracks(context.Background(), 10, 0, "Synthpop")
+	byGenre, err := svc.ListTracks(context.Background(), 10, 0, "", "Synthpop")
 	if err != nil {
 		t.Fatal(err)
 	}

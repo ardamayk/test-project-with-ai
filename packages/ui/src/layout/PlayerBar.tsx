@@ -531,12 +531,14 @@ export function PlayerBar({
 		});
 	};
 
-	const handleGoToArtist = () => {
-		if (!currentTrack) return;
+	const artists = (currentTrack?.artists ?? []).filter(
+		(artist) => artist.id && !artist.id.startsWith("legacy-artist:"),
+	);
+	const handleGoToArtist = (artistId: string) => {
 		closeActionsMenu();
 		void navigate({
-			to: "/library/artists",
-			search: { q: currentTrack.artistName },
+			to: "/library/tracks",
+			search: { artistId },
 		});
 	};
 
@@ -756,9 +758,24 @@ export function PlayerBar({
 										Add to queue
 									</MenuButton>
 									<MenuButton onClick={handleGoToAlbum}>Go to album</MenuButton>
-									<MenuButton onClick={handleGoToArtist}>
-										Go to artist
-									</MenuButton>
+									{artists.length > 1 ? (
+										<MenuSection icon={null} label="Go to artist" value="">
+											{artists.map((artist) => (
+												<MenuChoice
+													key={artist.id}
+													label={artist.name}
+													onClick={() => handleGoToArtist(artist.id)}
+												/>
+											))}
+										</MenuSection>
+									) : (
+										<MenuButton
+											disabled={!artists.length}
+											onClick={() => handleGoToArtist(artists[0].id)}
+										>
+											Go to artist
+										</MenuButton>
+									)}
 									<MenuSection
 										icon={<Gauge className="size-3.5" />}
 										label="Speed"

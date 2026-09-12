@@ -189,7 +189,7 @@ export interface paths {
         };
         /**
          * Library Search across Tracks, Albums, Artists, Genres, and Playlists
-         * @description Evaluates one coherent Library Search on the Music Server: every query word must match, direct title/name relevance outranks credit-only matches, bounded typo correction applies only when no strong direct result exists, and related Albums and Artists of strongly matching Tracks are added under explicit ranking rules. Groups hold at most five records each; the Best Match, when eligible, is excluded from its group.
+         * @description Evaluates one coherent Library Search on the Music Server: every query word must match and at least one word must contribute to the result's own title/name. Related metadata may complete mixed queries but never adds unrelated Albums or Artists. Bounded typo correction applies only when no strong direct result exists. Groups hold at most five records each; the Best Match, when eligible, also appears first in its group.
          */
         get: operations["searchLibrary"];
         put?: never;
@@ -1346,6 +1346,8 @@ export interface components {
             artistName: string;
             /** @description Ordered normalized Track Artist credits. */
             artists?: components["schemas"]["ArtistCredit"][];
+            /** @description Ordered Album Artist credits, independent from Track Artists. */
+            albumArtists?: components["schemas"]["ArtistCredit"][];
             /** Format: uuid */
             albumId: string;
             albumTitle?: string;
@@ -1386,7 +1388,7 @@ export interface components {
             contentSha256?: string;
             /** @description Strict position-and-title identity within the Album. */
             identityKey?: string;
-            /** @description Increments on every Track Replacement. */
+            /** @description Increments on Track Replacement or Track credit repair. */
             revision?: number;
             /** Format: date-time */
             createdAt?: string;
@@ -1410,7 +1412,7 @@ export interface components {
         /** @enum {string} */
         LibrarySearchResultType: "track" | "album" | "artist" | "genre" | "playlist";
         /**
-         * @description Why the record holds its position. `direct` records matched the query through their own searchable fields without typo correction and are the only Best Match candidates; `related` records are placed by their relationship to a strongly matching Track (they may also match directly, but not by their exact name); `corrected` records matched only through bounded typo correction.
+         * @description `direct` records match without typo correction, with their own title/name contributing, and are the only Best Match candidates. `corrected` records match through bounded typo correction. `related` is retained for API v1 compatibility but is no longer emitted.
          * @enum {string}
          */
         LibrarySearchMatch: "direct" | "related" | "corrected";
@@ -1943,7 +1945,7 @@ export interface operations {
             query?: {
                 limit?: components["parameters"]["limit"];
                 offset?: components["parameters"]["offset"];
-                /** @description Search by name */
+                /** @description Substring filter over active Album Artists only. Exact names sort first. Album counts include active Album Artist credits only. */
                 q?: string;
             };
             header?: never;
@@ -2098,6 +2100,8 @@ export interface operations {
             query?: {
                 limit?: components["parameters"]["limit"];
                 offset?: components["parameters"]["offset"];
+                /** @description Exact Track or Album Artist credit filter, combined with q before counting and pagination. */
+                artistId?: string;
                 /** @description Search by title or artist */
                 q?: string;
             };

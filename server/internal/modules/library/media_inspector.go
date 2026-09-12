@@ -412,8 +412,8 @@ type normalizedMediaNames struct {
 
 func inspectVorbisNames(tags map[string][]string) (normalizedMediaNames, error) {
 	title, titleErr := requiredSingleTag(tags, "TITLE")
-	artists, artistsErr := requiredTags(tags, "ARTIST")
-	albumArtists, albumArtistsErr := requiredTags(tags, "ALBUMARTIST")
+	artists, artistsErr := requiredArtistCredits(tags, "ARTIST")
+	albumArtists, albumArtistsErr := requiredArtistCredits(tags, "ALBUMARTIST")
 	album, albumErr := requiredSingleTag(tags, "ALBUM")
 	genres := splitGenreTagValues(tags["GENRE"])
 	if genres == nil {
@@ -421,6 +421,13 @@ func inspectVorbisNames(tags map[string][]string) (normalizedMediaNames, error) 
 	}
 	return normalizedMediaNames{Title: title, Artists: artists, AlbumArtists: albumArtists, Album: album, Genres: genres},
 		errors.Join(titleErr, artistsErr, albumArtistsErr, albumErr)
+}
+
+func requiredArtistCredits(tags map[string][]string, key string) ([]string, error) {
+	if _, exists := tags[key+"S"]; exists {
+		return requiredTags(tags, key+"S")
+	}
+	return requiredTags(tags, key)
 }
 
 func collectVorbisTags(blocks []*flacmeta.Block) map[string][]string {

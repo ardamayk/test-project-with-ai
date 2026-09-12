@@ -14,9 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/ardam/navidrome-replacement/server/internal/testutil"
 	flacmeta "github.com/mewkiz/flac/meta"
 )
 
@@ -65,6 +67,254 @@ func TestMediaInspectorInspectsStrictFLACFixture(t *testing.T) {
 		t.Fatalf("file SHA-256 = %q", inspection.FileSHA256)
 	}
 	assertCompletedInspectionProgress(t, progress)
+}
+
+func TestMediaInspectorPrefersFLACPluralCredits(t *testing.T) {
+	path := writeFLACWithExtraVorbisTags(t, [][2]string{
+		{"ARTISTS", "Earth, Wind & Fire"}, {"artists", "AC/DC; Live"},
+		{"ALBUMARTISTS", "Album / One"}, {"albumartists", "Album & Two"},
+	})
+	inspection, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspection.Metadata.Artists, []string{"Earth, Wind & Fire", "AC/DC; Live"}) ||
+		!reflect.DeepEqual(inspection.Metadata.AlbumArtists, []string{"Album / One", "Album & Two"}) {
+		t.Fatalf("plural credits = %+v", inspection.Metadata)
+	}
+}
+
+func TestMediaInspectorArtistCreditPrecedence(t *testing.T) {
+	for _, format := range []string{"flac", "ogg", "opus", "mp3v2", "mp3v3", "mp3v4", "wav", "m4a"} {
+		for _, test := range []struct {
+			name         string
+			credits      [][2]string
+			artists      []string
+			albumArtists []string
+			invalidField string
+		}{
+			{name: "singular punctuation", credits: [][2]string{{"ARTIST", "Earth, Wind & Fire / Live; Guests"}, {"ALBUMARTIST", "AC/DC"}}, artists: []string{"Earth, Wind & Fire / Live; Guests"}, albumArtists: []string{"AC/DC"}},
+			{name: "plural track only", credits: [][2]string{{"ARTIST", "Display"}, {"ALBUMARTIST", "Album"}, {"ARTISTS", "Second"}, {"ARTISTS", "First"}}, artists: []string{"Second", "First"}, albumArtists: []string{"Album"}},
+			{name: "plural album only", credits: [][2]string{{"ARTIST", "Track"}, {"ALBUMARTIST", "Display"}, {"ALBUMARTISTS", "Second"}, {"ALBUMARTISTS", "First"}}, artists: []string{"Track"}, albumArtists: []string{"Second", "First"}},
+			{name: "plural without singular", credits: [][2]string{{"ARTISTS", "Earth, Wind & Fire"}, {"ARTISTS", "AC/DC; Live"}, {"ALBUMARTISTS", "Album / One"}, {"ALBUMARTISTS", "Album & Two"}}, artists: []string{"Earth, Wind & Fire", "AC/DC; Live"}, albumArtists: []string{"Album / One", "Album & Two"}},
+			{name: "empty plural track", credits: [][2]string{{"ARTIST", "Track"}, {"ALBUMARTIST", "Album"}, {"ARTISTS", ""}}, invalidField: "ARTISTS"},
+			{name: "empty plural album", credits: [][2]string{{"ARTIST", "Track"}, {"ALBUMARTIST", "Album"}, {"ALBUMARTISTS", ""}}, invalidField: "ALBUMARTISTS"},
+			{name: "invalid later plural track", credits: [][2]string{{"ARTIST", "Track"}, {"ALBUMARTIST", "Album"}, {"ARTISTS", "Valid"}, {"ARTISTS", "  "}}, invalidField: "ARTISTS"},
+			{name: "unsafe plural album", credits: [][2]string{{"ARTIST", "Track"}, {"ALBUMARTIST", "Album"}, {"ALBUMARTISTS", "Bad\u202e"}}, invalidField: "ALBUMARTISTS"},
+			{name: "oversized plural", credits: [][2]string{{"ARTIST", "Track"}, {"ALBUMARTIST", "Album"}, {"ARTISTS", strings.Repeat("x", 201)}}, invalidField: "ARTISTS"},
+			{name: "album never inferred", credits: [][2]string{{"ARTISTS", "Track"}}, invalidField: "ALBUMARTIST"},
+			{name: "track never inferred", credits: [][2]string{{"ALBUMARTISTS", "Album"}}, invalidField: "ARTIST"},
+		} {
+			t.Run(format+"/"+test.name, func(t *testing.T) {
+				path := writeArtistCreditFixture(t, format, test.credits)
+				inspection, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+				if test.invalidField != "" {
+					field := test.invalidField
+					if format == "m4a" && test.name == "oversized plural" {
+						field = "credits" // MP4 rejects oversized atoms before normalization.
+					}
+					assertInspectionError(t, err, library.INSPECTION_ERROR_INVALID_METADATA, field)
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(inspection.Metadata.Artists, test.artists) || !reflect.DeepEqual(inspection.Metadata.AlbumArtists, test.albumArtists) {
+					t.Fatalf("credits = %q / %q; want %q / %q", inspection.Metadata.Artists, inspection.Metadata.AlbumArtists, test.artists, test.albumArtists)
+				}
+			})
+		}
+	}
+}
+
+func TestMediaInspectorRejectsM4APluralAtomWithoutValues(t *testing.T) {
+	for _, key := range []string{"ARTISTS", "ALBUMARTISTS"} {
+		t.Run(key, func(t *testing.T) {
+			fixture := m4aArtistCreditFixture(t, [][2]string{{"ARTIST", "Track"}, {"ALBUMARTIST", "Album"}, {key, "Removed credit"}})
+			valueOffset := bytes.Index(fixture, []byte("Removed credit"))
+			if valueOffset < 12 || string(fixture[valueOffset-12:valueOffset-8]) != "data" {
+				t.Fatal("credit data atom missing")
+			}
+			copy(fixture[valueOffset-12:valueOffset-8], "free")
+			path := filepath.Join(t.TempDir(), "empty-credits.m4a")
+			if err := os.WriteFile(path, fixture, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := library.NewMediaInspector().Inspect(context.Background(), path, nil)
+			assertInspectionError(t, err, library.INSPECTION_ERROR_INVALID_METADATA, key)
+		})
+	}
+}
+
+func writeArtistCreditFixture(t *testing.T, format string, credits [][2]string) string {
+	t.Helper()
+	var fixture []byte
+	switch format {
+	case "flac", "ogg", "opus":
+		tags := append([][2]string{{"TITLE", "Credits"}, {"ALBUM", "Credits Album"}, {"TRACKNUMBER", "1"}}, credits...)
+		comments := appendVorbisComments(t, make([]byte, 8), tags)
+		if format == "flac" {
+			blocks, audio := splitFLACMetadata(t, readInspectionFixture(t))
+			for i := range blocks {
+				if blocks[i].blockType == byte(flacmeta.TypeVorbisComment) {
+					blocks[i].body = comments
+				}
+			}
+			fixture = encodeFLACFixture(t, blocks, audio)
+		} else {
+			fixture = replaceOGGCommentPacket(t, readOGGFixture(t, "strict-import."+format), comments)
+		}
+	case "wav":
+		wav := strictWAVFixture()
+		wav.id3Frames = append(wav.id3Frames[:1], wav.id3Frames[3:]...)
+		for _, credit := range credits {
+			id, value := "TXXX", credit[0]+"\x00"+credit[1]
+			if credit[0] == "ARTIST" {
+				id, value = "TPE1", credit[1]
+			} else if credit[0] == "ALBUMARTIST" {
+				id, value = "TPE2", credit[1]
+			}
+			wav.id3Frames = append(wav.id3Frames, textID3Frame(id, value))
+		}
+		fixture = encodeWAV(t, wav)
+	case "m4a":
+		fixture = m4aArtistCreditFixture(t, credits)
+	default:
+		version := format[len(format)-1] - '0'
+		artistID, albumID, customID := "TPE1", "TPE2", "TXXX"
+		if version == 2 {
+			artistID, albumID, customID = "TP1", "TP2", "TXX"
+		}
+		fixture = testutil.StrictMP3FixtureWithID3Version(version)
+		fixture = bytes.ReplaceAll(fixture, []byte(artistID), bytes.Repeat([]byte("X"), len(artistID)))
+		fixture = bytes.ReplaceAll(fixture, []byte(albumID), bytes.Repeat([]byte("X"), len(albumID)))
+		var frames []byte
+		for _, credit := range credits {
+			id, value := customID, credit[0]+"\x00"+credit[1]
+			if credit[0] == "ARTIST" {
+				id, value = artistID, credit[1]
+			} else if credit[0] == "ALBUMARTIST" {
+				id, value = albumID, credit[1]
+			}
+			frame := testutil.ID3TextFrame(version, id, value)
+			// Test UTF-8 payloads in every tag version; encoding acceptance is unchanged.
+			frame[len(frame)-len(value)-1] = 3
+			frames = append(frames, frame...)
+		}
+		offset := strictID3AudioOffset(t, fixture)
+		fixture = append(append(append([]byte(nil), fixture[:offset]...), frames...), fixture[offset:]...)
+		size := offset - 10 + len(frames)
+		copy(fixture[6:10], []byte{byte(size >> 21), byte(size >> 14 & 0x7f), byte(size >> 7 & 0x7f), byte(size & 0x7f)})
+	}
+	path := filepath.Join(t.TempDir(), "credits."+format)
+	if err := os.WriteFile(path, fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func m4aArtistCreditFixture(t *testing.T, credits [][2]string) []byte {
+	t.Helper()
+	fixture, err := os.ReadFile(filepath.Join("testdata", "strict-import-aac.m4a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	atom := func(name string, body []byte) []byte {
+		data := binary.BigEndian.AppendUint32(nil, uint32(len(body)+8))
+		return append(append(data, name...), body...)
+	}
+	var creditAtoms []byte
+	for _, credit := range credits {
+		data := atom("data", append([]byte{0, 0, 0, 1, 0, 0, 0, 0}, credit[1]...))
+		name := "----"
+		if credit[0] == "ARTIST" {
+			name = "\xa9ART"
+		} else if credit[0] == "ALBUMARTIST" {
+			name = "aART"
+		} else {
+			body := atom("mean", append(make([]byte, 4), "com.apple.iTunes"...))
+			body = append(body, atom("name", append(make([]byte, 4), credit[0]...))...)
+			data = append(body, data...)
+		}
+		creditAtoms = append(creditAtoms, atom(name, data)...)
+	}
+	var rewrite func([]byte) []byte
+	rewrite = func(input []byte) []byte {
+		var output []byte
+		for offset := 0; offset < len(input); {
+			size := int(binary.BigEndian.Uint32(input[offset:]))
+			name := string(input[offset+4 : offset+8])
+			body := input[offset+8 : offset+size]
+			switch name {
+			case "moov", "udta":
+				body = rewrite(body)
+			case "meta":
+				body = append(append([]byte(nil), body[:4]...), rewrite(body[4:])...)
+			case "ilst":
+				body = append(rewrite(body), creditAtoms...)
+			case "\xa9ART", "aART":
+				offset += size
+				continue
+			}
+			output = append(output, atom(name, body)...)
+			offset += size
+		}
+		return output
+	}
+	// Keep all media offsets unchanged: move moov after mdat, leave free space.
+	var output, metadata []byte
+	for offset := 0; offset < len(fixture); {
+		size := int(binary.BigEndian.Uint32(fixture[offset:]))
+		if string(fixture[offset+4:offset+8]) == "moov" {
+			metadata = rewrite(fixture[offset : offset+size])
+			output = append(output, atom("free", make([]byte, size-8))...)
+		} else {
+			output = append(output, fixture[offset:offset+size]...)
+		}
+		offset += size
+	}
+	return append(output, metadata...)
+}
+
+func replaceOGGCommentPacket(t *testing.T, fixture, comments []byte) []byte {
+	t.Helper()
+	for offset := 0; offset < len(fixture); {
+		segmentCount := int(fixture[offset+26])
+		laces := fixture[offset+27 : offset+27+segmentCount]
+		start, end := offset+27+segmentCount, offset+27+segmentCount
+		for _, size := range laces {
+			end += int(size)
+		}
+		prefix, suffix := []byte("OpusTags"), []byte(nil)
+		if bytes.HasPrefix(fixture[start:end], []byte("\x03vorbis")) {
+			prefix, suffix = []byte("\x03vorbis"), []byte{1}
+		}
+		if bytes.HasPrefix(fixture[start:end], prefix) {
+			packetEnd, packetSegments := start, 0
+			for _, size := range laces {
+				packetEnd += int(size)
+				packetSegments++
+				if size < 255 {
+					break
+				}
+			}
+			packet := append(append(prefix, comments...), suffix...)
+			newLaces := bytes.Repeat([]byte{255}, len(packet)/255)
+			newLaces = append(newLaces, byte(len(packet)%255))
+			newLaces = append(newLaces, laces[packetSegments:]...)
+			page := append([]byte(nil), fixture[offset:offset+27]...)
+			page[26] = byte(len(newLaces))
+			page = append(page, newLaces...)
+			page = append(page, packet...)
+			page = append(page, fixture[packetEnd:end]...)
+			result := append(append(append([]byte(nil), fixture[:offset]...), page...), fixture[end:]...)
+			updateOGGChecksums(t, result)
+			return result
+		}
+		offset = end
+	}
+	t.Fatal("fixture has no complete comment packet")
+	return nil
 }
 
 func TestMediaInspectorDetectsFLACIndependentlyOfExtension(t *testing.T) {

@@ -69,7 +69,7 @@ func TestRecoverCommitAtEveryDurablePhase(t *testing.T) {
 					t.Fatalf("pending Track artwork visible at phase %q: %v", phase, err)
 				}
 			}
-			tracks, listErr := libraryStore.ListTracks(context.Background(), 100, 0, "")
+			tracks, listErr := libraryStore.ListTracks(context.Background(), 100, 0, "", "")
 			if listErr != nil || tracks.Total != 0 || len(tracks.Items) != 0 {
 				t.Fatalf("pending Track listed at phase %q: tracks = %+v, error = %v", phase, tracks, listErr)
 			}
