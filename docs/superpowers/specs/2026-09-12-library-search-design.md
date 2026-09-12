@@ -1,6 +1,6 @@
 # Library Search Design
 
-Status: Accepted product design, including the two follow-up ranking refinements.
+Status: Accepted product design, including the follow-up ranking refinements and own-name/Best Match correction.
 Implementation is specified separately; this document does not claim shipped
 behavior or silently supersede existing ADRs.
 
@@ -10,7 +10,7 @@ behavior or silently supersede existing ADRs.
 
 Prioritize finding an intended Track, Album, or Artist quickly over broad discovery.
 Evaluate whether the intended result appears first and within the first five
-results. Broader related-result coverage is secondary. Evaluation targets and
+results. Relationship-only discovery is excluded. Evaluation targets and
 thresholds are specified below; individual evaluation queries remain to be built.
 
 ### Match precision and typo tolerance
@@ -21,9 +21,10 @@ when strong matches are absent.
 
 A strong direct match covers every query word as a complete word across
 searchable fields, allowing a word-prefix match for the final query word.
-An internal substring does not qualify. If at least one strong direct match
-exists, do not supplement results with typo-tolerant matches. Related results
-do not independently satisfy this fallback gate.
+At least one query word must contribute through the result's own title or name,
+including during typo fallback. An internal substring does not qualify. If at least one strong direct match
+exists, do not supplement results with typo-tolerant matches. Credit-only
+candidates cannot satisfy this fallback gate.
 
 When no strong direct matches exist, allow insertion, deletion, substitution,
 and adjacent-character transposition. Each operation counts as one edit.
@@ -50,8 +51,8 @@ Aliases, lyrics, and file paths are outside the initial search scope.
 
 ### Exact primary-name precedence
 
-A result whose own name exactly matches the query always ranks ahead of results
-matching only related fields. Popularity and listening history cannot override
+A result whose own name exactly matches the query always ranks ahead of weaker
+own-name matches. Candidates matching only related fields are excluded. Popularity and listening history cannot override
 this precedence. Prefer a match preserving the query's written form over one
 requiring accent or punctuation folding.
 
@@ -98,18 +99,14 @@ forms such as `2011 Remaster`. Query terms may occur anywhere. Version boosts
 must preserve exact primary-name precedence. Apply version preference as an
 ordering criterion within a match class, not an additive score that crosses classes.
 
-### Related results
+### Own-name eligibility
 
-Include related records even when their own searchable fields do not match the
-query. Within Album and Artist groups, order exact primary-name matches first,
-then records related to strongly matching Tracks, then weaker direct matches.
-Use only the first five strong matching Tracks whose titles match at least one
-query word as sources. Include only their directly associated Albums and Artists,
-without recursively expanding relationships. Deduplicate by record identity and
-rank each related record by its strongest source Track, without a boost for
-multiple matching Tracks. Typo-only Track matches do not generate related
-results. The previously agreed exclusion of Playlists
-solely because they contain a matching Track remains in effect.
+Every result must contribute at least one query word from its own title/name.
+Related fields may cover remaining words: title-plus-Artist queries, including
+`weknd blind`, remain valid. No Track expands nonmatching Albums or Artists.
+For example, `ar` may find Ariana Grande, not Bang Bang solely through its Ariana
+credit or Taylor Swift through a shared Album. Playlists still match only their
+own names, never their contents.
 
 ### Short queries
 
@@ -128,11 +125,10 @@ name, then applicable Artist and Album information, then stable record identity.
 
 Show one cross-type Best Match above the category groups, selected only from
 strong direct matches. Omit it when no eligible result exists. Related-only and
-typo-only matches are ineligible. Do not repeat the selected record in its group.
-
-Retain a maximum of five displayed results per category, in addition to Best
-Match. Direct and related results share the same five-result limit within each
-Album or Artist group.
+typo-only matches are ineligible. Repeat the selected record first in its own
+category, counting toward that category's maximum of five results. Its highlight
+and category row have distinct presentation keys and DOM IDs; only one is
+keyboard-selected, with both activating the same record identity.
 
 ### Prefix and typo interaction
 
@@ -150,7 +146,6 @@ across class boundaries:
 1. The full primary name matches the query.
 2. All query words match within the primary name.
 3. Query words match across primary and related fields.
-4. Query words match only related fields.
 
 Within a class, first prefer complete-word coverage over prefix-dependent coverage.
 During typo fallback, first prefer fewer total edits; for equal edit counts,
@@ -159,9 +154,8 @@ matches preserving the written form, then version preference, then the agreed
 deterministic tie-breakers. For example, `blue` ranks `Blue Moon` above
 `Bluebird` in the same class; one-edit matches rank above two-edit matches in
 the same class. These refinements do not override class boundaries. The strong-match gate
-still controls access to typo fallback. Album and Artist groups retain the
-previously agreed special placement of related results after exact primary-name
-matches and before weaker direct matches. Best Match uses eligible direct results.
+still controls access to typo fallback. Album and Artist groups follow the same
+ordering without relationship expansion. Best Match uses eligible direct results.
 
 ### Quality acceptance
 
@@ -198,7 +192,7 @@ subsequent engineering work; no current performance or quality results are claim
 ## Implementation spec breakdown
 
 1. [Normalized data and metadata lifecycle](2026-09-12-library-search-data-spec.md): derived search representations, supported fields, version recognition, and updates/backfill.
-2. [Matching, ranking, and related results](2026-09-12-library-search-ranking-spec.md): coherent search evaluation, the API contract, relevance classes, typo limits, and related-result selection. Depends on spec 1.
+2. [Matching and ranking](2026-09-12-library-search-ranking-spec.md): coherent search evaluation, the API contract, relevance classes, typo limits, and own-name eligibility. Depends on spec 1.
 3. [Result experience and measured acceptance](2026-09-12-library-search-experience-spec.md): dialog integration, user interactions, shared quality evaluation, and performance evidence. Depends on specs 1 and 2.
 
 The proposed acceptance boundaries reuse real SQLite-backed HTTP integration
@@ -214,7 +208,7 @@ timing suite. Test-boundary confirmation is pending before issue publication.
 | 4–5: primary-name precedence and combined queries | Ranking |
 | 6, 9, 25: normalization behavior and preparation time | Data |
 | 7, 10: version recognition and preference | Data; ranking |
-| 8, 11, 16: related results, order, and expansion limits | Ranking |
+| 8, 11, 16: related-result discovery superseded by own-name eligibility | Ranking |
 | 12–15, 20: strong matches, edit limits, word coverage, short queries, prefix interaction | Ranking |
 | 17: deterministic ties and zero personalization/popularity | Ranking |
 | 18–19: Best Match and group limits | Ranking contract; experience integration |

@@ -14,13 +14,11 @@ const (
 	CLASS_FULL_NAME       = 1 // the whole primary name matches the query
 	CLASS_PRIMARY_ONLY    = 2 // every query word matches within the primary name
 	CLASS_PRIMARY_RELATED = 3 // query words split between primary and related fields
-	CLASS_RELATED_ONLY    = 4 // query words match only related fields
 )
 
 const (
-	MAX_TOTAL_EDITS     = 2
-	MAX_RELATED_SOURCES = 5
-	GROUP_LIMIT         = 5
+	MAX_TOTAL_EDITS = 2
+	GROUP_LIMIT     = 5
 )
 
 type query struct {
@@ -33,8 +31,8 @@ type query struct {
 func newQuery(text searchdata.Text) query {
 	folded := strings.Fields(text.Folded)
 	q := query{variants: [][]string{folded}, faithful: splitFaithful(text.Faithful), versions: text.Versions}
-	if compact := strings.Fields(text.Compact); text.Compact != text.Folded {
-		q.variants = append(q.variants, compact)
+	if text.Compact != text.Folded {
+		q.variants = append(q.variants, strings.Fields(text.Compact))
 	}
 	q.single = len([]rune(text.Folded)) == 1
 	return q
@@ -82,7 +80,10 @@ func (m wordMatch) better(other wordMatch) bool {
 // completion and typo correction are never combined within a word.
 func matchWord(word string, text *preparedText, allowPrefix bool, limit int) wordMatch {
 	best := wordMatch{}
-	for _, words := range [][]string{text.foldedWords, text.compactWords} {
+	for variant, words := range [][]string{text.foldedWords, text.compactWords} {
+		if variant == 1 && text.Compact == text.Folded {
+			break
+		}
 		for _, candidate := range words {
 			if candidate == word {
 				return wordMatch{kind: matchFull}
@@ -103,32 +104,44 @@ func matchWord(word string, text *preparedText, allowPrefix bool, limit int) wor
 // editDistance is the optimal string alignment distance (insertion, deletion,
 // substitution, adjacent transposition), returning limit+1 once it is exceeded.
 func editDistance(a, b string, limit int) int {
+	if a == b {
+		return 0
+	}
+	if limit == 0 {
+		return 1
+	}
 	left, right := []rune(a), []rune(b)
 	if difference := len(left) - len(right); difference > limit || -difference > limit {
 		return limit + 1
 	}
-	rows := make([][]int, len(left)+1)
-	for i := range rows {
-		rows[i] = make([]int, len(right)+1)
-		rows[i][0] = i
+	// OSA needs only the previous two rows, including for transpositions.
+	width := len(right) + 1
+	// ponytail: words up to 63 runes stay on the stack; longer words use the same recurrence on the heap.
+	var storage [3 * 64]int
+	rows := storage[:]
+	if 3*width > len(rows) {
+		rows = make([]int, 3*width)
 	}
-	for j := range rows[0] {
-		rows[0][j] = j
+	previous, current, older := rows[:width], rows[width:2*width], rows[2*width:3*width]
+	for j := range previous {
+		previous[j] = j
 	}
 	for i := 1; i <= len(left); i++ {
+		current[0] = i
 		for j := 1; j <= len(right); j++ {
 			cost := 1
 			if left[i-1] == right[j-1] {
 				cost = 0
 			}
-			value := min(rows[i-1][j]+1, rows[i][j-1]+1, rows[i-1][j-1]+cost)
+			value := min(previous[j]+1, current[j-1]+1, previous[j-1]+cost)
 			if i > 1 && j > 1 && left[i-1] == right[j-2] && left[i-2] == right[j-1] {
-				value = min(value, rows[i-2][j-2]+1)
+				value = min(value, older[j-2]+1)
 			}
-			rows[i][j] = value
+			current[j] = value
 		}
+		older, previous, current = previous, current, older
 	}
-	return rows[len(left)][len(right)]
+	return previous[len(right)]
 }
 
 type candidate struct {
@@ -174,6 +187,9 @@ func evaluate(item *entity, q query, fuzzy bool) (candidate, bool) {
 			best, found = result, true
 		}
 	}
+	if found {
+		best.secondary = secondaryText(item)
+	}
 	return best, found
 }
 
@@ -184,7 +200,7 @@ func evaluateVariant(item *entity, words []string, q query, fuzzy bool) (candida
 			limits[i] = maxEdits(word)
 		}
 	}
-	result := candidate{entity: item, name: item.primary.Folded, secondary: secondaryText(item)}
+	result := candidate{entity: item, name: item.primary.Folded}
 	if q.single {
 		if !slices.Equal(words, item.primary.foldedWords) && !slices.Equal(words, item.primary.compactWords) {
 			return candidate{}, false
@@ -222,7 +238,7 @@ func evaluateVariant(item *entity, words []string, q query, fuzzy bool) (candida
 	case inPrimary > 0:
 		result.class = CLASS_PRIMARY_RELATED
 	default:
-		result.class = CLASS_RELATED_ONLY
+		return candidate{}, false
 	}
 	result.edits = total
 	for _, m := range chosen {
@@ -248,6 +264,19 @@ func choose(primary, related []wordMatch, minimizeEdits bool) (chosen []wordMatc
 		}
 		total += chosen[i].edits
 	}
+	if minimizeEdits && inPrimary == 0 {
+		// Keep the cheapest title/name contribution; related-only is ineligible.
+		best := -1
+		for i, m := range primary {
+			if m.kind != matchNone && (best == -1 || m.edits-chosen[i].edits < primary[best].edits-chosen[best].edits) {
+				best = i
+			}
+		}
+		if best != -1 {
+			total += primary[best].edits - chosen[best].edits
+			chosen[best], inPrimary = primary[best], 1
+		}
+	}
 	return chosen, inPrimary, total
 }
 
@@ -255,7 +284,10 @@ func choose(primary, related []wordMatch, minimizeEdits bool) (chosen []wordMatc
 // for word, within the per-word and total edit limits.
 func alignedEdits(words []string, text *preparedText, limits []int) (int, bool) {
 	best, found := 0, false
-	for _, primary := range [][]string{text.foldedWords, text.compactWords} {
+	for variant, primary := range [][]string{text.foldedWords, text.compactWords} {
+		if variant == 1 && text.Compact == text.Folded {
+			break
+		}
 		if len(primary) != len(words) {
 			continue
 		}
@@ -354,9 +386,11 @@ type rankedResults struct {
 // no strong direct result exists in any of the five types.
 func rank(index *Index, q query) rankedResults {
 	if strong := evaluateAll(index, q, false); len(strong) > 0 {
-		return assembleStrong(index, strong)
+		results := assemble(strong, apigen.Direct)
+		results.bestMatch = &listedEntry{entity: strong[0].entity, match: apigen.Direct}
+		return results
 	}
-	return assembleCorrected(evaluateAll(index, q, true))
+	return assemble(evaluateAll(index, q, true), apigen.Corrected)
 }
 
 func evaluateAll(index *Index, q query, fuzzy bool) []candidate {
@@ -370,93 +404,11 @@ func evaluateAll(index *Index, q query, fuzzy bool) []candidate {
 	return candidates
 }
 
-func assembleStrong(index *Index, candidates []candidate) rankedResults {
-	best := listedEntry{entity: candidates[0].entity, match: apigen.Direct}
-	byKind := map[string][]candidate{}
-	for _, item := range candidates {
-		byKind[item.entity.kind] = append(byKind[item.entity.kind], item)
-	}
-	related := relatedRecords(index, byKind[KIND_TRACK])
-	groups := map[string][]listedEntry{}
-	for _, kind := range resultKinds {
-		groups[kind] = limitGroup(orderGroup(byKind[kind], related[kind]), best.entity)
-	}
-	return rankedResults{bestMatch: &best, groups: groups}
-}
-
-// relatedRecords expands the first five strong Tracks whose titles cover a
-// query word into their own Album and their Track and Album Artist credits,
-// once, deduplicated by identity and ordered by their strongest source Track.
-func relatedRecords(index *Index, tracks []candidate) map[string][]*entity {
-	related := map[string][]*entity{}
-	seen := map[entityKey]bool{}
-	sources := 0
-	for _, track := range tracks {
-		if track.class > CLASS_PRIMARY_RELATED {
-			continue
-		}
-		if sources++; sources > MAX_RELATED_SOURCES {
-			break
-		}
-		for _, field := range track.entity.related {
-			kind, expandable := relatedKinds[field.name]
-			if !expandable {
-				continue
-			}
-			key := entityKey{kind, field.relatedID}
-			if item := index.lookup(kind, field.relatedID); item != nil && !seen[key] {
-				seen[key] = true
-				related[kind] = append(related[kind], item)
-			}
-		}
-	}
-	return related
-}
-
-// orderGroup places exact primary-name matches first, then related records,
-// then weaker direct matches; each record appears once at its higher position.
-func orderGroup(direct []candidate, related []*entity) []listedEntry {
-	var group []listedEntry
-	listed := map[string]bool{}
-	add := func(item *entity, match apigen.LibrarySearchMatch) {
-		if !listed[item.id] {
-			listed[item.id] = true
-			group = append(group, listedEntry{entity: item, match: match})
-		}
-	}
-	for _, item := range direct {
-		if item.class == CLASS_FULL_NAME {
-			add(item.entity, apigen.Direct)
-		}
-	}
-	for _, item := range related {
-		add(item, apigen.Related)
-	}
-	for _, item := range direct {
-		add(item.entity, apigen.Direct)
-	}
-	return group
-}
-
-func limitGroup(group []listedEntry, exclude *entity) []listedEntry {
-	limited := make([]listedEntry, 0, GROUP_LIMIT)
-	for _, entry := range group {
-		if entry.entity == exclude {
-			continue
-		}
-		if len(limited) == GROUP_LIMIT {
-			break
-		}
-		limited = append(limited, entry)
-	}
-	return limited
-}
-
-func assembleCorrected(candidates []candidate) rankedResults {
+func assemble(candidates []candidate, match apigen.LibrarySearchMatch) rankedResults {
 	groups := map[string][]listedEntry{}
 	for _, item := range candidates {
 		if len(groups[item.entity.kind]) < GROUP_LIMIT {
-			groups[item.entity.kind] = append(groups[item.entity.kind], listedEntry{entity: item.entity, match: apigen.Corrected})
+			groups[item.entity.kind] = append(groups[item.entity.kind], listedEntry{entity: item.entity, match: match})
 		}
 	}
 	return rankedResults{groups: groups}

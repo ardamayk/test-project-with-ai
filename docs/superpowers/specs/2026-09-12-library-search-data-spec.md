@@ -28,7 +28,7 @@ rules for queries. Keep existing and newly imported content equally searchable.
 9. As a listener, I want ordinary word boundaries preserved, so that `a b` is not treated as `ab` just by deleting spaces.
 10. As a listener, I want non-Latin names and digits preserved, so that my library is not restricted to English text.
 11. As a listener, I want original names shown in results, so that search preparation does not rewrite my collection.
-12. As a listener, I want Tracks searchable by their title, credits, Album, and Genres, so that I can use the information I remember.
+12. As a listener, I want title words combined with credits, Album, and Genres to find Tracks, so that I can use the information I remember without credit-only results.
 13. As a listener, I want Album Artists distinguished from Track Artists, so that searches respect my library's actual credits.
 14. As a listener, I want live, remix, and other recognized editions distinguishable, so that I can search for the version I intend.
 15. As a listener, I want `Live Forever` treated as an ordinary title, so that a version keyword does not misclassify the recording.
@@ -54,6 +54,10 @@ rules for queries. Keep existing and newly imported content equally searchable.
 | Artist | Name | None |
 | Genre | Name | None |
 | Playlist | Name | None |
+
+The ranking contract requires at least one query word to contribute through the
+primary field. Secondary fields supplement it; relationships alone never add
+results. Data preparation retains all fields for combined queries.
 
 - Treat case and redundant whitespace as equivalent. Retain accent-preserving and tolerant alternatives, including Turkish-letter folding. Preserve evidence needed to prefer the representation closer to the query's letters and punctuation.
 - Support the positive punctuation examples in the user stories without globally joining whitespace-separated words. Preserve non-Latin letters and digits. No translation or cross-script transliteration is required.

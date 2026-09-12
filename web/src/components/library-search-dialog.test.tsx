@@ -1,3 +1,4 @@
+import type { LibrarySearchResponse } from "@repo/api-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	act,
@@ -10,23 +11,18 @@ import {
 } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invalidatePlaylistCache } from "#/lib/playlist-query-cache";
 import { LibrarySearchDialog } from "./library-search-dialog";
 
 const mocks = vi.hoisted(() => ({
-	listTracks: vi.fn(),
-	listAlbums: vi.fn(),
-	listArtists: vi.fn(),
-	listPlaylists: vi.fn(),
+	searchLibrary: vi.fn(),
 	navigate: vi.fn(),
 	playTrack: vi.fn(),
 }));
 
 vi.mock("#/lib/api", () => ({
 	apiClient: {
-		listTracks: mocks.listTracks,
-		listAlbums: mocks.listAlbums,
-		listArtists: mocks.listArtists,
-		listPlaylists: mocks.listPlaylists,
+		searchLibrary: mocks.searchLibrary,
 	},
 }));
 vi.mock("@tanstack/react-router", () => ({
@@ -37,16 +33,38 @@ vi.mock("@repo/ui", () => ({
 }));
 
 const nemo = {
+	type: "track" as const,
 	id: "track-nemo",
-	title: "Nemo",
-	artistName: "Nightwish",
+	name: "Nemo",
+	match: "direct" as const,
 	artists: [{ id: "artist-1", name: "Nightwish", role: "main" }],
-	albumId: "album-decades",
-	albumTitle: "Decades",
-	durationMs: 276_000,
-	discNo: 1,
-	trackNo: 2,
-	genres: [{ id: "g-metal", name: "Symphonic Metal" }],
+	album: { id: "album-decades", name: "Decades" },
+};
+const empty: LibrarySearchResponse = {
+	tracks: [],
+	albums: [],
+	artists: [],
+	genres: [],
+	playlists: [],
+};
+const results: LibrarySearchResponse = {
+	...empty,
+	bestMatch: nemo,
+	albums: [
+		{
+			type: "album",
+			id: "album-decades",
+			name: "Decades",
+			match: "related",
+			artists: nemo.artists,
+		},
+	],
+	artists: [
+		{ type: "artist", id: "artist-1", name: "Nightwish", match: "related" },
+	],
+	playlists: [
+		{ type: "playlist", id: "pl-1", name: "Nemo mix", match: "direct" },
+	],
 };
 
 function renderDialog(onOpenChange = vi.fn()) {
@@ -54,6 +72,7 @@ function renderDialog(onOpenChange = vi.fn()) {
 		defaultOptions: { queries: { retry: false } },
 	});
 	return {
+		client,
 		onOpenChange,
 		...render(
 			<QueryClientProvider client={client}>
@@ -66,34 +85,7 @@ function renderDialog(onOpenChange = vi.fn()) {
 describe("LibrarySearchDialog", () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
-		mocks.listTracks.mockImplementation(async (params?: { q?: string }) =>
-			params?.q
-				? { items: [nemo] }
-				: // The genre source: every track, no query.
-					{ items: [nemo, { ...nemo, id: "track-2", title: "Sleeping Sun" }] },
-		);
-		mocks.listAlbums.mockResolvedValue({
-			items: [
-				{
-					id: "album-decades",
-					title: "Decades",
-					artistName: "Nightwish",
-					albumArtists: [{ id: "artist-1", name: "Nightwish", role: "main" }],
-					genreItems: [],
-					releaseIdentifiers: [],
-					trackCount: 12,
-				},
-			],
-		});
-		mocks.listArtists.mockResolvedValue({
-			items: [{ id: "artist-1", name: "Nightwish", albumCount: 3 }],
-		});
-		mocks.listPlaylists.mockResolvedValue({
-			items: [
-				{ id: "pl-1", name: "Nemo mix", isDefault: false, trackCount: 4 },
-				{ id: "pl-2", name: "Chill", isDefault: false, trackCount: 9 },
-			],
-		});
+		mocks.searchLibrary.mockResolvedValue(results);
 	});
 
 	afterEach(() => {
@@ -102,7 +94,7 @@ describe("LibrarySearchDialog", () => {
 		vi.useRealTimers();
 	});
 
-	it("groups matches under From Your Library by kind, tracks first", async () => {
+	it("shows Best Match before ordered nonempty categories", async () => {
 		renderDialog();
 		fireEvent.change(screen.getByRole("combobox"), {
 			target: { value: "ne" },
@@ -111,37 +103,52 @@ describe("LibrarySearchDialog", () => {
 		const section = await screen.findByRole("region", {
 			name: "From Your Library",
 		});
-		// Every source has answered once the playlist match is on screen.
+		// The coherent response preserves server ordering.
 		await within(section).findByText("Nemo mix");
 		const labels = within(section)
-			.getAllByText(/^(Track|Album|Artist|Genre|Playlist)$/)
+			.getAllByText(/^(Best Match|Track|Album|Artist|Genre|Playlist)$/)
 			.map((node) => node.textContent);
-		expect(labels).toEqual(["Track", "Album", "Artist", "Playlist"]);
+		expect(labels).toEqual(["Best Match", "Album", "Artist", "Playlist"]);
 		expect(within(section).getByText("Nemo")).toBeTruthy();
 		expect(within(section).getByText("Decades")).toBeTruthy();
 		expect(within(section).getByText("Nemo mix")).toBeTruthy();
 		expect(within(section).queryByText("Chill")).toBeNull();
-		expect(mocks.listTracks).toHaveBeenCalledWith({ limit: 5, q: "ne" });
+		expect(mocks.searchLibrary).toHaveBeenCalledWith("ne");
 	});
 
-	it("lists the album a matching track belongs to even when no album title matches", async () => {
-		mocks.listAlbums.mockResolvedValue({ items: [] });
+	it("does not invent related Albums or Artists from a matching Track", async () => {
+		mocks.searchLibrary.mockResolvedValue({
+			...empty,
+			bestMatch: nemo,
+			tracks: [nemo],
+		});
 		renderDialog();
 		fireEvent.change(screen.getByRole("combobox"), {
 			target: { value: "nemo" },
 		});
-		await screen.findByText("Nemo");
-		expect(await screen.findByText("Decades")).toBeTruthy();
-		expect(screen.getByText("Album")).toBeTruthy();
+		await screen.findByRole("group", { name: "Track" });
+		expect(screen.queryByRole("group", { name: "Album" })).toBeNull();
+		expect(screen.queryByRole("group", { name: "Artist" })).toBeNull();
 	});
 
-	it("finds genres from track metadata", async () => {
+	it("shows server Genre results without scanning Tracks", async () => {
+		mocks.searchLibrary.mockResolvedValue({
+			...empty,
+			genres: [
+				{
+					type: "genre",
+					id: "g-metal",
+					name: "Symphonic Metal",
+					match: "direct",
+				},
+			],
+		});
 		renderDialog();
 		fireEvent.change(screen.getByRole("combobox"), {
 			target: { value: "symph" },
 		});
 		expect(await screen.findByText("Symphonic Metal")).toBeTruthy();
-		expect(screen.getByText("2 tracks")).toBeTruthy();
+		expect(screen.getByText("Genre")).toBeTruthy();
 	});
 
 	it("plays a track on Enter and opens an album from its row", async () => {
@@ -149,7 +156,7 @@ describe("LibrarySearchDialog", () => {
 		const input = screen.getByRole("combobox");
 		fireEvent.change(input, { target: { value: "ne" } });
 		await screen.findByText("Nemo");
-		await screen.findByText("Decades");
+		await screen.findByRole("option", { name: /^Decades/ });
 
 		fireEvent.keyDown(input, { key: "Enter" });
 		expect(mocks.playTrack).toHaveBeenCalledWith("track-nemo");
@@ -171,7 +178,7 @@ describe("LibrarySearchDialog", () => {
 		const input = screen.getByRole("combobox");
 		fireEvent.change(input, { target: { value: "ne" } });
 		await screen.findByText("Nemo");
-		await screen.findByText("Decades");
+		await screen.findByRole("option", { name: /^Decades/ });
 
 		const optionFor = (title: string) =>
 			screen.getByText(title, { selector: "span" }).closest("button");
@@ -185,10 +192,7 @@ describe("LibrarySearchDialog", () => {
 	});
 
 	it("tells the user when nothing matches", async () => {
-		mocks.listTracks.mockResolvedValue({ items: [] });
-		mocks.listAlbums.mockResolvedValue({ items: [] });
-		mocks.listArtists.mockResolvedValue({ items: [] });
-		mocks.listPlaylists.mockResolvedValue({ items: [] });
+		mocks.searchLibrary.mockResolvedValue(empty);
 		renderDialog();
 		fireEvent.change(screen.getByRole("combobox"), {
 			target: { value: "zzz" },
@@ -196,11 +200,10 @@ describe("LibrarySearchDialog", () => {
 		expect(await screen.findByText(/matches “zzz”/)).toBeTruthy();
 	});
 
-	it("shows failures instead of empty results and retries failed sources", async () => {
-		mocks.listTracks.mockRejectedValue(new Error("Track search unavailable"));
-		mocks.listAlbums.mockResolvedValue({ items: [] });
-		mocks.listArtists.mockResolvedValue({ items: [] });
-		mocks.listPlaylists.mockResolvedValue({ items: [] });
+	it("shows failures instead of empty results and retries the search", async () => {
+		mocks.searchLibrary.mockRejectedValue(
+			new Error("Track search unavailable"),
+		);
 		renderDialog();
 		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
 		expect(await screen.findByRole("alert")).toHaveProperty(
@@ -208,32 +211,16 @@ describe("LibrarySearchDialog", () => {
 			"Search results could not be loaded.Retry",
 		);
 		expect(screen.queryByText(/Nothing in your library/)).toBeNull();
-		const albumCalls = mocks.listAlbums.mock.calls.length;
-		mocks.listTracks.mockResolvedValue({ items: [nemo] });
+		mocks.searchLibrary.mockResolvedValue(results);
 		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 		await screen.findByText("Nemo");
 		await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-		expect(mocks.listAlbums).toHaveBeenCalledTimes(albumCalls);
-	});
-
-	it("keeps successful matches visible when another source fails", async () => {
-		mocks.listArtists.mockRejectedValue(new Error("Artist search unavailable"));
-		renderDialog();
-		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
-		await screen.findByText("Nemo");
-		expect(
-			await screen.findByText("Some search results could not be loaded."),
-		).toBeTruthy();
-		expect(screen.queryByText(/Nothing in your library/)).toBeNull();
 	});
 
 	it("hides stale options and blocks Enter until the edited query settles", async () => {
-		mocks.listTracks.mockImplementation(async (params?: { q?: string }) => ({
-			items: params?.q === "ne" ? [nemo] : [],
-		}));
-		mocks.listAlbums.mockResolvedValue({ items: [] });
-		mocks.listArtists.mockResolvedValue({ items: [] });
-		mocks.listPlaylists.mockResolvedValue({ items: [] });
+		mocks.searchLibrary.mockImplementation(async (q: string) =>
+			q === "ne" ? results : empty,
+		);
 		renderDialog();
 		const input = screen.getByRole("combobox");
 		fireEvent.change(input, { target: { value: "ne" } });
@@ -243,6 +230,179 @@ describe("LibrarySearchDialog", () => {
 		fireEvent.keyDown(input, { key: "Enter" });
 		expect(mocks.playTrack).not.toHaveBeenCalled();
 		expect(await screen.findByText(/matches “zzz”/)).toBeTruthy();
+	});
+
+	it.each([
+		"track",
+		"album",
+		"artist",
+		"genre",
+		"playlist",
+	] as const)("highlights a server-selected %s and keeps its category occurrence within five rows", async (type) => {
+		const best = {
+			type,
+			id: "best",
+			name: "Exact name",
+			match: "direct" as const,
+		};
+		const rows = Array.from({ length: 7 }, (_, i) => ({
+			...best,
+			id: `row-${i}`,
+			name: `Other ${i}`,
+		}));
+		mocks.searchLibrary.mockResolvedValue({
+			...empty,
+			bestMatch: best,
+			[`${type}s`]: [best, ...rows],
+		});
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), {
+			target: { value: "Exact name" },
+		});
+		const highlight = await screen.findByRole("group", { name: "Best Match" });
+		expect(
+			within(highlight).getByRole("option", { name: "Exact name" }),
+		).toBeTruthy();
+		const occurrences = screen.getAllByRole("option", { name: "Exact name" });
+		expect(occurrences).toHaveLength(2);
+		const options = screen.getAllByRole("option");
+		expect(options).toHaveLength(6);
+		expect(new Set(options.map((option) => option.id)).size).toBe(6);
+		expect(options[1]).toBe(occurrences[1]);
+		expect(screen.queryByText("Other 4")).toBeNull();
+		const input = screen.getByRole("combobox");
+		expect(input.getAttribute("aria-activedescendant")).toBe(occurrences[0].id);
+		fireEvent.keyDown(input, { key: "ArrowDown" });
+		expect(input.getAttribute("aria-activedescendant")).toBe(occurrences[1].id);
+		expect(screen.getAllByRole("option", { selected: true })).toEqual([
+			occurrences[1],
+		]);
+	});
+
+	it.each([
+		"corrected",
+		"related",
+	] as const)("does not invent Best Match for %s results", async (match) => {
+		mocks.searchLibrary.mockResolvedValue({
+			...empty,
+			tracks: [{ ...nemo, match }],
+		});
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), {
+			target: { value: "nmeo" },
+		});
+		await screen.findByText("Nemo");
+		expect(screen.queryByRole("group", { name: "Best Match" })).toBeNull();
+	});
+
+	it.each([
+		["artist", { to: "/library/tracks", search: { artistId: "selected" } }],
+		["genre", { to: "/library/genres/$genre", params: { genre: "İzmir" } }],
+		[
+			"playlist",
+			{ to: "/playlists/$playlistId", params: { playlistId: "selected" } },
+		],
+	] as const)("navigates the selected %s using original metadata", async (type, destination) => {
+		mocks.searchLibrary.mockResolvedValue({
+			...empty,
+			bestMatch: { type, id: "selected", name: "İzmir", match: "direct" },
+		});
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), {
+			target: { value: "izmir" },
+		});
+		fireEvent.click(await screen.findByRole("option", { name: "İzmir" }));
+		expect(mocks.navigate).toHaveBeenCalledWith(destination);
+	});
+
+	it("waits 200 ms, ignores punctuation, and searches one-character names", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: false });
+		renderDialog();
+		const input = screen.getByRole("combobox");
+		fireEvent.change(input, { target: { value: "... / —" } });
+		await act(() => vi.advanceTimersByTimeAsync(250));
+		expect(mocks.searchLibrary).not.toHaveBeenCalled();
+		fireEvent.change(input, { target: { value: "U" } });
+		expect(screen.getByText("Searching…")).toBeTruthy();
+		await act(() => vi.advanceTimersByTimeAsync(199));
+		expect(mocks.searchLibrary).not.toHaveBeenCalled();
+		await act(() => vi.advanceTimersByTimeAsync(1));
+		expect(mocks.searchLibrary).toHaveBeenCalledWith("U");
+	});
+
+	it("ignores a late older response and activates only the current result", async () => {
+		let resolveOld!: (value: LibrarySearchResponse) => void;
+		mocks.searchLibrary.mockImplementation((q: string) =>
+			q === "old"
+				? new Promise<LibrarySearchResponse>((resolve) => {
+						resolveOld = resolve;
+					})
+				: Promise.resolve(results),
+		);
+		renderDialog();
+		const input = screen.getByRole("combobox");
+		fireEvent.change(input, { target: { value: "old" } });
+		await act(() => vi.advanceTimersByTimeAsync(210));
+		expect(screen.getByText("Searching…")).toBeTruthy();
+		fireEvent.change(input, { target: { value: "nemo" } });
+		await screen.findByText("Nemo");
+		await act(async () =>
+			resolveOld({
+				...empty,
+				bestMatch: { ...nemo, id: "old", name: "Old result" },
+			}),
+		);
+		expect(screen.queryByText("Old result")).toBeNull();
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(mocks.playTrack).toHaveBeenCalledWith("track-nemo");
+	});
+
+	it("preserves selected identity when current-query results reorder", async () => {
+		const second = { ...nemo, id: "second", name: "Second" };
+		mocks.searchLibrary.mockResolvedValue({ ...empty, tracks: [nemo, second] });
+		const { client } = renderDialog();
+		const input = screen.getByRole("combobox");
+		fireEvent.change(input, { target: { value: "ne" } });
+		await screen.findByText("Nemo");
+		fireEvent.keyDown(input, { key: "ArrowDown" });
+		mocks.searchLibrary.mockResolvedValue({ ...empty, tracks: [second, nemo] });
+		await act(async () => {
+			await client.invalidateQueries({ queryKey: ["library", "search"] });
+		});
+		expect(
+			screen
+				.getByRole("option", { name: /^Second/ })
+				.getAttribute("aria-selected"),
+		).toBe("true");
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(mocks.playTrack).toHaveBeenCalledWith("second");
+	});
+
+	it("keeps visible current-query data and offers retry after a refresh failure", async () => {
+		const { client } = renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		await screen.findByText("Nemo");
+		mocks.searchLibrary.mockRejectedValue(new Error("Unavailable"));
+		await act(async () => {
+			await client.invalidateQueries({ queryKey: ["library", "search"] });
+		});
+		expect(await screen.findByRole("alert")).toHaveProperty(
+			"textContent",
+			"Search results could not be refreshed.Retry",
+		);
+		expect(screen.getByText("Nemo")).toBeTruthy();
+		expect(screen.queryByText(/Nothing in your library/)).toBeNull();
+	});
+
+	it("refreshes cached search results after a Playlist mutation", async () => {
+		const { client } = renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		await screen.findByText("Nemo mix");
+		mocks.searchLibrary.mockResolvedValue({ ...results, playlists: [] });
+		await act(async () => {
+			await invalidatePlaylistCache(client, "pl-1");
+		});
+		await waitFor(() => expect(screen.queryByText("Nemo mix")).toBeNull());
 	});
 
 	it("starts empty after a rapid close and reopen", async () => {
@@ -271,7 +431,7 @@ describe("LibrarySearchDialog", () => {
 		fireEvent.change(input, { target: { value: "ne" } });
 		await screen.findByText("Nemo mix");
 		const listbox = screen.getByRole("listbox");
-		const album = screen.getByRole("option", { name: /Decades/ });
+		const album = screen.getByRole("option", { name: /^Decades/ });
 		const track = screen.getByRole("option", { name: /^Nemo\s*Nightwish/ });
 		vi.spyOn(listbox, "getBoundingClientRect").mockReturnValue({
 			top: 100,

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/ardam/navidrome-replacement/server/internal/api/gen"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/ardam/navidrome-replacement/server/internal/modules/managedimport"
@@ -16,14 +18,19 @@ import (
 func TestSearchDataFollowsHTTPImportReplacementAndDeletion(t *testing.T) {
 	database := testutil.OpenMigratedDB(t)
 	router := newTrackReplacementRouter(t, database, t.TempDir())
+	assertSearchTrack(t, router, "beyonce inspection", "")
 	original := replaceFixtureTag(t, readStrictFLACFixture(t), "ARTIST=Test Artist", "ARTIST=Beyoncé")
 	trackID := importOneFLAC(t, router, original, "original.flac")
 	assertPreparedField(t, database, trackID, "track_artist", "Beyoncé", "beyonce")
+	assertSearchTrack(t, router, "beyonce inspection", trackID)
+	assertSearchTrack(t, router, "sebnem inspection", "")
 	assertStreamedBytes(t, router, trackID, original)
 	replacement := replaceFixtureTag(t, original, "ARTIST=Beyoncé", "ARTIST=Şebnem")
 	job := createTrackReplacementJob(t, router, trackID)
 	preview := uploadFLACToJob(t, router, job.ID, replacement, "replacement.flac")
 	assertPreparedField(t, database, trackID, "track_artist", "Beyoncé", "beyonce")
+	assertSearchTrack(t, router, "beyonce inspection", trackID)
+	assertSearchTrack(t, router, "sebnem inspection", "")
 	if preview.Replacement == nil {
 		t.Fatal("missing replacement preview")
 	}
@@ -32,12 +39,15 @@ func TestSearchDataFollowsHTTPImportReplacementAndDeletion(t *testing.T) {
 		t.Fatalf("replacement: %d %s", confirmed.Code, confirmed.Body)
 	}
 	assertPreparedField(t, database, trackID, "track_artist", "Şebnem", "sebnem")
+	assertSearchTrack(t, router, "sebnem inspection", trackID)
+	assertSearchTrack(t, router, "beyonce inspection", "")
 	tracks := listTracks(t, router)
 	if len(tracks.Items) != 1 || tracks.Items[0].ID != trackID || len(tracks.Items[0].Artists) != 1 || tracks.Items[0].Artists[0].Name != "Şebnem" {
 		t.Fatalf("source metadata: %+v", tracks)
 	}
 	assertStreamedBytes(t, router, trackID, replacement)
 	deleteSearchTrack(t, router, trackID)
+	assertSearchTrack(t, router, "sebnem inspection", "")
 	if _, err := searchdata.NewStore(database).GetDocument(context.Background(), "track", trackID, "user-1"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("deleted search record: %v", err)
 	}
@@ -99,4 +109,32 @@ func TestSearchPreparationFailureRejectsHTTPReplacement(t *testing.T) {
 	}
 	assertPreparedField(t, database, trackID, "track_artist", "Test Artist", "test artist")
 	assertStreamedBytes(t, router, trackID, original)
+	assertSearchTrack(t, router, "Test Artist inspection", trackID)
+	assertSearchTrack(t, router, "sebnem inspection", "")
+}
+
+func assertSearchTrack(t *testing.T, router http.Handler, query, trackID string) {
+	t.Helper()
+	response := testutil.ServeRequest(t, router, http.MethodGet, "/api/v1/library/search?q="+url.QueryEscape(query), nil, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("search %q: %d %s", query, response.Code, response.Body)
+	}
+	var result gen.LibrarySearchResponse
+	testutil.DecodeJSON(t, response, &result)
+	tracks := result.Tracks
+	if result.BestMatch != nil && result.BestMatch.Type == "track" {
+		tracks = append(tracks, *result.BestMatch)
+	}
+	if trackID == "" {
+		if len(tracks) != 0 {
+			t.Fatalf("search %q unexpectedly returned Tracks: %+v", query, tracks)
+		}
+		return
+	}
+	for _, track := range tracks {
+		if track.Id == trackID {
+			return
+		}
+	}
+	t.Fatalf("search %q missing Track %s: %+v", query, trackID, result)
 }

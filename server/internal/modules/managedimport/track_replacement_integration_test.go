@@ -13,6 +13,7 @@ import (
 
 	"github.com/ardam/navidrome-replacement/server/internal/config"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/librarysearch"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/managedimport"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/testutil"
@@ -302,6 +303,7 @@ func newTrackReplacementRouter(t *testing.T, database *sql.DB, managedStoragePat
 	router := chi.NewRouter()
 	importModule.RegisterRoutes(router)
 	libraryModule.RegisterRoutes(router)
+	librarysearch.NewModule(database).RegisterRoutes(router)
 	playbackModule.RegisterRoutes(router)
 	return router
 }

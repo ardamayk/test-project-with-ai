@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/ardam/navidrome-replacement/server/internal/searchdata"
@@ -64,24 +65,55 @@ const (
 
 var resultKinds = []string{KIND_TRACK, KIND_ALBUM, KIND_ARTIST, KIND_GENRE, KIND_PLAYLIST}
 
-// relatedKinds maps a Track's relationship fields to the kind they reference;
-// Genres are searchable by their own name only and are never expanded.
+// relatedKinds identifies credit fields used to break otherwise equal name matches.
 var relatedKinds = map[string]string{"album": KIND_ALBUM, "track_artist": KIND_ARTIST, "album_artist": KIND_ARTIST}
 
-func (index *Index) lookup(kind, id string) *entity {
-	return index.byKey[entityKey{kind, id}]
+type IndexLoader struct {
+	database *sql.DB
+	mu       sync.Mutex
+	index    *Index
+	revision int64
+	userID   string
 }
-
-type IndexLoader struct{ database *sql.DB }
 
 func NewIndexLoader(database *sql.DB) *IndexLoader { return &IndexLoader{database: database} }
 
 func (loader *IndexLoader) Load(ctx context.Context, userID string) (*Index, error) {
-	texts, err := loader.loadTexts(ctx)
+	loader.mu.Lock()
+	defer loader.mu.Unlock()
+	// Read the revision and all fields from one SQLite snapshot; never publish
+	// mixed pre/post-commit metadata or serve cached data after a storage failure.
+	tx, err := loader.database.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	rows, err := loader.database.QueryContext(ctx, `
+	defer tx.Rollback()
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM library_search_revision WHERE singleton=1`).Scan(&revision); err != nil {
+		return nil, err
+	}
+	if loader.index != nil && loader.revision == revision && loader.userID == userID {
+		return loader.index, nil
+	}
+	index, err := loadIndex(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	// ponytail: one active user's immutable snapshot; use bounded per-user
+	// snapshots if multi-user search becomes a supported workload.
+	loader.index, loader.revision, loader.userID = index, revision, userID
+	return index, nil
+}
+
+func loadIndex(ctx context.Context, tx *sql.Tx, userID string) (*Index, error) {
+	texts, err := loadTexts(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `
  SELECT source.kind, source.id, source.field, source.related_kind, source.related_id
  FROM library_search_field_sources source
  JOIN library_search_entities entity ON entity.kind = source.kind AND entity.id = source.id
@@ -138,8 +170,8 @@ func splitFaithful(faithful string) []string {
 	return out
 }
 
-func (loader *IndexLoader) loadTexts(ctx context.Context) (map[entityKey]*preparedText, error) {
-	rows, err := loader.database.QueryContext(ctx, `SELECT kind, id, text_json FROM library_search_texts`)
+func loadTexts(ctx context.Context, tx *sql.Tx) (map[entityKey]*preparedText, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT kind, id, text_json FROM library_search_texts`)
 	if err != nil {
 		return nil, fmt.Errorf("read Library Search texts: %w", err)
 	}

@@ -81,6 +81,10 @@ func assertBestMatch(t *testing.T, result apigen.LibrarySearchResponse, kind api
 	if result.BestMatch.Type != kind || result.BestMatch.Id != id || result.BestMatch.Match != apigen.Direct {
 		t.Fatalf("best match = %+v, want direct %s %q", *result.BestMatch, kind, id)
 	}
+	group := qualityGroups(result)[string(kind)]
+	if len(group) == 0 || len(group) > 5 || group[0].Id != id || group[0].Match != apigen.Direct {
+		t.Fatalf("Best Match must lead its capped category: %+v", group)
+	}
 }
 
 func TestRankingCasesFromTheSharedFixture(t *testing.T) {
@@ -109,17 +113,14 @@ func TestResultsCarryDisplayMetadataAndMatchLabels(t *testing.T) {
 		result.BestMatch.Artists == nil || len(*result.BestMatch.Artists) != 1 || (*result.BestMatch.Artists)[0].Name != "The Weeknd" {
 		t.Fatalf("display metadata = %+v", *result.BestMatch)
 	}
-	if matches(result.Albums)[0] != "related" || matches(result.Artists)[0] != "related" {
-		t.Fatalf("related records must be labeled related: %v %v", result.Albums, result.Artists)
-	}
+	assertIDs(t, "no Album expansion", result.Albums)
+	assertIDs(t, "no Artist expansion", result.Artists)
 	result = search(t, handler, "blue")
-	if result.Albums[0].Match != apigen.Related {
-		t.Fatalf("Lemonade Blue is placed by its Tracks ahead of its own weaker direct match: %+v", result.Albums)
+	if result.Albums[0].Match != apigen.Direct {
+		t.Fatalf("Lemonade Blue must match its own title directly: %+v", result.Albums)
 	}
 	result = search(t, handler, "the weeknd")
-	if matches(result.Albums)[0] != "direct" {
-		t.Fatalf("credit-only Album must be a weak direct match, got %v", result.Albums)
-	}
+	assertIDs(t, "credit-only Album excluded", result.Albums)
 }
 
 func TestCorrectedResultsAreLabeled(t *testing.T) {
@@ -161,11 +162,14 @@ func TestSharedNormalizationFixturesFindTheirRecords(t *testing.T) {
 	}
 }
 
-func TestRelatedRecordsPrecedeWeakerDirectMatches(t *testing.T) {
+func TestArtistResultsRequireTheirOwnNames(t *testing.T) {
 	handler, _ := newSearchServer(t)
 	result := search(t, handler, "lights")
-	if got := matches(result.Artists); got[0] != "related" || got[1] != "direct" {
-		t.Fatalf("artist labels = %v", got)
+	assertIDs(t, "Artist name matches", result.Artists, "lights", "northern-lights")
+	for _, artist := range result.Artists {
+		if artist.Match != apigen.Direct {
+			t.Fatalf("Artist must match directly: %+v", artist)
+		}
 	}
 }
 

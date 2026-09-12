@@ -6,16 +6,21 @@ status: accepted
 
 The Albums, Artists and Tracks pages each had a search field in their header, every one scoped to its own page. They are gone; the Top Nav's "Search" entry (also Ctrl/⌘+K, or "/" outside a text field) opens a single dialog that searches Tracks, Albums, Artists, Genres and Playlists at once. Radio keeps its own station search: it filters a saved-station list and the Radio Discover catalog, which are not part of the library.
 
-## Grouped results, tracks first
+## Best Match, then grouped results
 
-Results sit under one "From Your Library" heading, grouped by kind in the order Track, Album, Artist, Genre, Playlist, with at most five per group and only non-empty groups shown. Choosing a track plays it; an album, artist, genre or playlist opens its page. Artists have no detail page, so an artist result opens the Artists page with `?q=<name>`, which that route already accepted; the page keeps honouring the URL parameter but no longer renders a field to change it.
+The Library Search experience specification of 2026-09-12 supersedes the original tracks-first highlight and client-side matching decisions below; unrelated dialog and navigation decisions remain unchanged.
+
+Results sit under one "From Your Library" heading. One eligible Best Match appears first, followed by groups in the order Track, Album, Artist, Genre, Playlist. Only strong direct results qualify for Best Match; typo-only results do not. The highlighted record also appears first in its category and counts toward that category's five-result limit. Its two presentations use distinct row keys and DOM IDs; keyboard selection marks only one presentation, while activation uses the same real record identity.
+
+Choosing a Track plays it; an Album, Genre or Playlist retains its existing navigation. Artists have no detail page: an Artist result opens `/library/tracks?artistId=<id>`, matching either Track or Album credits by identity. Search includes all visible credited Artists, including Track-only contributors; it is not restricted to the Album Artists browse list.
 
 ## Where the matches come from
 
-Tracks, albums and artists use the server's `q` parameter. Two things the server cannot do are done in the client:
+The generated API client's `/api/v1/library/search` response is the authority for all five types, Best Match, ordering and deduplication. Normalization and ranking belong to the Music Server, not client-side name filters, prelimited browse pages or a full-library Genre scan.
 
-- An album whose title does not match but that holds a matching track is listed under Album as well (searching "Nemo" also surfaces "Decades"); track results carry their album id and title, so no extra request is needed.
-- Genres and playlists have no server-side search. Genres are derived from track metadata with the same `collectGenres` helper and query key the Genres page uses; playlists come from the cached playlist list. Both are filtered by name in the client.
+Every result must contribute at least one query word from its own title or name. Remaining words may match its searchable related fields, preserving title-plus-Artist queries and bounded typo correction. No Track expands nonmatching Albums or Artists: `ar` may find Ariana Grande, but not Bang Bang solely through its Ariana credit or Taylor Swift through a shared Album. Original names and relevant credits remain visible; scores and index details do not.
+
+Empty or punctuation-only input sends no search request. Loading, no matches and failure are distinct; failure offers retry. Results and activation must belong to the current query, and relevant library mutations invalidate cached Library Search results.
 
 ## The dialog
 

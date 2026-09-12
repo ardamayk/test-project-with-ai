@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { calculateQueueDrawerWidth } from "./use-queue-drawer-width";
+import {
+	calculateLibrarySearchBounds,
+	calculateQueueDrawerWidth,
+} from "./use-queue-drawer-width";
+
+it("places Search between third card centers of the full eight-column grid", () => {
+	// Eight cards occupy 2084px; the 118px residual stays on the right.
+	expect(calculateLibrarySearchBounds(2250, 24, 16)).toEqual({
+		width: 786,
+		center: 1066,
+	});
+	expect(calculateLibrarySearchBounds(375, 24, 16)).toEqual({
+		width: 343,
+		center: 187.5,
+	});
+});
 
 describe("calculateQueueDrawerWidth", () => {
 	it("leaves six fixed cards and a 24px margin in the original wide-shell layout", () => {

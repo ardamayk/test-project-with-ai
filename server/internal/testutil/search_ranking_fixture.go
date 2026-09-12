@@ -84,31 +84,31 @@ func SeedLibrarySearchFixture(t *testing.T, database *sql.DB) {
 }
 
 // LibrarySearchRankingCases lists queries whose complete outcome over the shared
-// fixture is fixed by the accepted design: Best Match, then the five groups in
-// order (with the Best Match already excluded from its group).
+// fixture is fixed by the accepted design: own-name contribution required,
+// Best Match first in its category and counted within five results.
 func LibrarySearchRankingCases() []LibrarySearchRankingCase {
 	return []LibrarySearchRankingCase{
-		// Full names win across types; a strong Track expands its Album and credited Artists.
-		{Query: "Blinding Lights", BestMatchKind: "track", BestMatchID: "blinding-lights", Tracks: []string{"blinding-lights-live"}, Albums: []string{"after-hours"}, Artists: []string{"weeknd"}},
-		{Query: "the weeknd", BestMatchKind: "artist", BestMatchID: "weeknd", Tracks: []string{"blinding-lights", "rain", "save-your-tears", "someday", "sunflour"}, Albums: []string{"after-hours"}},
+		// Own names must contribute; credits alone never return Tracks or Albums.
+		{Query: "Blinding Lights", BestMatchKind: "track", BestMatchID: "blinding-lights", Tracks: []string{"blinding-lights", "blinding-lights-live"}},
+		{Query: "the weeknd", BestMatchKind: "artist", BestMatchID: "weeknd", Artists: []string{"weeknd"}},
 		// Combined fields in any word order.
-		{Query: "weeknd blinding lights", BestMatchKind: "track", BestMatchID: "blinding-lights", Tracks: []string{"blinding-lights-live"}, Artists: []string{"weeknd"}, Albums: []string{"after-hours"}},
-		{Query: "lights blinding weeknd", BestMatchKind: "track", BestMatchID: "blinding-lights", Tracks: []string{"blinding-lights-live"}, Artists: []string{"weeknd"}, Albums: []string{"after-hours"}},
-		// Final-word prefix; full words before prefixes; plain titles before versions; Album-title-only matches last, capped at five.
-		{Query: "blue", BestMatchKind: "track", BestMatchID: "blue-live-sky", Tracks: []string{"blue-song", "blue-moon-live", "bluebird", "ab-song", "dont-stop"}, Albums: []string{"blue-album"}, Artists: []string{"beyonce-accent"}, Genres: []string{"blues"}, Playlists: []string{"blue-vibes"}},
-		{Query: "blue m", BestMatchKind: "track", BestMatchID: "blue-moon-live", Albums: []string{"blue-album"}, Artists: []string{"beyonce-accent"}},
+		{Query: "weeknd blinding lights", BestMatchKind: "track", BestMatchID: "blinding-lights", Tracks: []string{"blinding-lights", "blinding-lights-live"}},
+		{Query: "lights blinding weeknd", BestMatchKind: "track", BestMatchID: "blinding-lights", Tracks: []string{"blinding-lights", "blinding-lights-live"}},
+		// Full words before prefixes; plain titles before versions; no Album-title-only Tracks.
+		{Query: "blue", BestMatchKind: "track", BestMatchID: "blue-live-sky", Tracks: []string{"blue-live-sky", "blue-song", "blue-moon-live", "bluebird"}, Albums: []string{"blue-album"}, Genres: []string{"blues"}, Playlists: []string{"blue-vibes"}},
+		{Query: "blue m", BestMatchKind: "track", BestMatchID: "blue-moon-live", Tracks: []string{"blue-moon-live"}},
 		// A requested allowlisted version is preferred within the class.
-		{Query: "blue live", BestMatchKind: "track", BestMatchID: "blue-moon-live", Tracks: []string{"blue-live-sky"}, Albums: []string{"blue-album"}, Artists: []string{"beyonce-accent"}},
-		// One-character queries match exact names only; two characters enable prefixes.
-		{Query: "u", BestMatchKind: "track", BestMatchID: "u", Albums: []string{"after-hours"}, Artists: []string{"weeknd"}},
-		{Query: "un", BestMatchKind: "track", BestMatchID: "under-pressure", Albums: []string{"after-hours"}, Artists: []string{"weeknd"}},
+		{Query: "blue live", BestMatchKind: "track", BestMatchID: "blue-moon-live", Tracks: []string{"blue-moon-live", "blue-live-sky"}},
+		// One-character exact names and two-character prefixes never expand relationships.
+		{Query: "u", BestMatchKind: "track", BestMatchID: "u", Tracks: []string{"u"}},
+		{Query: "un", BestMatchKind: "track", BestMatchID: "under-pressure", Tracks: []string{"under-pressure"}},
 		// Typo correction only without strong results; corrected Tracks expand nothing.
 		{Query: "blidning lights", Tracks: []string{"blinding-lights", "blinding-lights-live"}},
 		{Query: "weknd blind", Tracks: []string{"blinding-lights", "blinding-lights-live"}},
 		{Query: "blidning lihgts", Tracks: []string{"blinding-lights", "blinding-lights-live"}},
 		// A strong result in one type disables correction in every type.
-		{Query: "someday", BestMatchKind: "track", BestMatchID: "someday", Albums: []string{"after-hours"}, Artists: []string{"weeknd"}},
-		{Query: "sxmeday", Tracks: []string{"someday", "sameday-track"}, Albums: []string{"sameday-album"}, Artists: []string{"sameday"}},
+		{Query: "someday", BestMatchKind: "track", BestMatchID: "someday", Tracks: []string{"someday"}},
+		{Query: "sxmeday", Tracks: []string{"someday"}, Albums: []string{"sameday-album"}, Artists: []string{"sameday"}},
 		// Edit limits at every word-length threshold and the total budget.
 		{Query: "ran"}, {Query: "rian", Tracks: []string{"rain"}},
 		{Query: "somedya", Tracks: []string{"someday"}}, {Query: "smoedya"},
@@ -116,20 +116,20 @@ func LibrarySearchRankingCases() []LibrarySearchRankingCase {
 		{Query: "blidnign ligths"}, {Query: "blid"},
 		// Fewer edits precede more edits within a class, ahead of alphabetical order.
 		{Query: "sunflowar", Tracks: []string{"sunflower", "sunflour"}},
-		// Written form: faithful spellings first, then folded alternatives (Tracks credited via Album Artist are class 4).
-		{Query: "beyonce", BestMatchKind: "artist", BestMatchID: "beyonce-plain", Tracks: []string{"halo", "ab-song", "blue-live-sky", "blue-song", "bluebird"}, Albums: []string{"blue-album"}, Artists: []string{"beyonce-accent"}},
-		{Query: "Beyoncé", BestMatchKind: "artist", BestMatchID: "beyonce-accent", Tracks: []string{"ab-song", "blue-live-sky", "blue-song", "bluebird", "dont-stop"}, Albums: []string{"blue-album"}, Artists: []string{"beyonce-plain"}},
+		// Written form: faithful spellings first, then folded alternatives.
+		{Query: "beyonce", BestMatchKind: "artist", BestMatchID: "beyonce-plain", Artists: []string{"beyonce-plain", "beyonce-accent"}},
+		{Query: "Beyoncé", BestMatchKind: "artist", BestMatchID: "beyonce-accent", Artists: []string{"beyonce-accent", "beyonce-plain"}},
 		{Query: "a b"},
-		// Exact names precede related records, which precede weaker direct matches.
-		{Query: "lights", BestMatchKind: "artist", BestMatchID: "lights", Tracks: []string{"blinding-lights", "blinding-lights-live", "sky-dance", "toes"}, Albums: []string{"after-hours", "aurora", "siberia"}, Artists: []string{"weeknd", "northern-lights"}},
-		// Five source Tracks, deduplicated by their strongest source, one hop only.
-		{Query: "echo", BestMatchKind: "track", BestMatchID: "echo-five", Tracks: []string{"echo-four", "echo-one", "echo-seven", "echo-six", "echo-three"}, Albums: []string{"album-five", "album-four", "album-one", "album-six"}, Artists: []string{"artist-five", "artist-four", "artist-one", "artist-six"}},
+		// Every Artist matches its own name, not another Track's relationships.
+		{Query: "lights", BestMatchKind: "artist", BestMatchID: "lights", Tracks: []string{"blinding-lights", "blinding-lights-live"}, Artists: []string{"lights", "northern-lights"}},
+		// Best Match consumes the first of five slots, not a sixth result.
+		{Query: "echo", BestMatchKind: "track", BestMatchID: "echo-five", Tracks: []string{"echo-five", "echo-four", "echo-one", "echo-seven", "echo-six"}},
 		// Deterministic ties: Artist/Album text, then stable identity.
-		{Query: "twin", BestMatchKind: "track", BestMatchID: "twin-a", Tracks: []string{"twin-b"}, Albums: []string{"album-one", "album-two"}, Artists: []string{"artist-one", "artist-two"}},
-		{Query: "same coin", BestMatchKind: "track", BestMatchID: "same-coin-a", Tracks: []string{"same-coin-b"}, Albums: []string{"album-one"}, Artists: []string{"artist-one"}},
-		// Track credits alone make an Artist searchable; Genres and Playlists match by their own names.
-		{Query: "guest hop", BestMatchKind: "artist", BestMatchID: "guest-hop", Tracks: []string{"other-thing"}},
-		{Query: "pop", BestMatchKind: "genre", BestMatchID: "pop", Tracks: []string{"blinding-lights", "blinding-lights-live"}},
-		{Query: "blue vibes", BestMatchKind: "playlist", BestMatchID: "blue-vibes"},
+		{Query: "twin", BestMatchKind: "track", BestMatchID: "twin-a", Tracks: []string{"twin-a", "twin-b"}},
+		{Query: "same coin", BestMatchKind: "track", BestMatchID: "same-coin-a", Tracks: []string{"same-coin-a", "same-coin-b"}},
+		// Track-only credits keep Artists searchable; Genres and Playlists match their names.
+		{Query: "guest hop", BestMatchKind: "artist", BestMatchID: "guest-hop", Artists: []string{"guest-hop"}},
+		{Query: "pop", BestMatchKind: "genre", BestMatchID: "pop", Genres: []string{"pop"}},
+		{Query: "blue vibes", BestMatchKind: "playlist", BestMatchID: "blue-vibes", Playlists: []string{"blue-vibes"}},
 	}
 }

@@ -34,7 +34,7 @@ export function AppShell({
 	onSearch?: () => void;
 }) {
 	const shellRef = useRef<HTMLDivElement>(null);
-	const queueDrawerWidth = useQueueDrawerWidth(shellRef);
+	const metrics = useQueueDrawerWidth(shellRef);
 	const { preferences } = useLayout();
 	const queuePanel = getQueuePanel(preferences.layout.sidebarPosition);
 	const queueOpen = !preferences.layout.collapsed[queuePanel];
@@ -45,10 +45,9 @@ export function AppShell({
 				ref={shellRef}
 				style={
 					{
-						"--queue-drawer-width":
-							queueDrawerWidth === undefined
-								? undefined
-								: `${queueDrawerWidth}px`,
+						"--queue-drawer-width": metrics && `${metrics.queueWidth}px`,
+						"--library-search-width": metrics && `${metrics.searchWidth}px`,
+						"--library-search-center": metrics && `${metrics.searchCenter}px`,
 					} as CSSProperties
 				}
 				data-app-shell
