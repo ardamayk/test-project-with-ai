@@ -96,7 +96,7 @@ func TestArtistCreditRepairApplyPreservesLibraryAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	backup := filepath.Join(t.TempDir(), "backup.sqlite")
-	if err := report.Apply(context.Background(), backup); err != nil {
+	if err = report.Apply(context.Background(), backup); err != nil {
 		t.Fatal(err)
 	}
 	if !report.Applied || report.BackupPath != backup {
@@ -204,7 +204,7 @@ func TestArtistCreditRepairRejectsUnsafeApplyWithoutWriting(t *testing.T) {
 			case "SQL rollback":
 				repairExec(t, database, "CREATE TRIGGER fail_credit_repair BEFORE UPDATE OF artist_id ON albums BEGIN SELECT RAISE(ABORT,'fixture write failure'); END")
 			}
-			if err := report.Apply(context.Background(), backup); err == nil {
+			if applyErr := report.Apply(context.Background(), backup); applyErr == nil {
 				t.Fatal("unsafe repair succeeded")
 			}
 			if report.Applied {
@@ -260,7 +260,7 @@ func TestArtistCreditRepairAlbumConflictsLeaveTrackRepairIndependent(t *testing.
 			if len(report.Skipped)+len(report.Conflicts) == 0 {
 				t.Fatalf("missing conflict report: %+v", report)
 			}
-			if err := report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err != nil {
+			if err = report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err != nil {
 				t.Fatal(err)
 			}
 			for _, track := range listTracks(t, router).Items {
@@ -303,7 +303,7 @@ func TestArtistCreditRepairRestoresOrderedCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err != nil {
+	if err = report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err != nil {
 		t.Fatal(err)
 	}
 	router := newManagedImportTestRouterWithDatabase(t, database, root)
@@ -333,7 +333,7 @@ func TestArtistCreditRepairRequiresVerifiedBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err == nil || !strings.Contains(err.Error(), "backup foreign key check failed") {
+	if err = report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err == nil || !strings.Contains(err.Error(), "backup foreign key check failed") {
 		t.Fatalf("unverified backup accepted: %v", err)
 	}
 	if got := listTracks(t, newManagedImportTestRouterWithDatabase(t, database, root)).Items[0].Artists[0].Name; got != "Old combined credit" {
@@ -349,7 +349,7 @@ func TestArtistCreditRepairPreservesEditionIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err != nil {
+	if err = report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err != nil {
 		t.Fatal(err)
 	}
 	// A normal import remains a distinct Album: the repaired edition never loses its suffix.
@@ -470,7 +470,7 @@ func TestArtistCreditRepairMissingRootDoesNotCreateDirectories(t *testing.T) {
 	if err == nil {
 		t.Fatal("missing root accepted")
 	}
-	if err := report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err == nil {
+	if err = report.Apply(context.Background(), filepath.Join(t.TempDir(), "backup.sqlite")); err == nil {
 		t.Fatal("failed preview accepted for apply")
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {

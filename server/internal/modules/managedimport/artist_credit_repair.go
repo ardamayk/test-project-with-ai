@@ -124,15 +124,15 @@ func readCreditRepairSnapshot(ctx context.Context, queryer historyQueryer) (snap
 	for rows.Next() {
 		var track repairTrack
 		var credits string
-		if err := rows.Scan(&track.ID, &track.AlbumID, &track.ArtistName, &track.Path, &track.Revision, &track.Size, &track.Hidden, &track.SourceID, &track.SourceKind, &track.SourcePath, &track.Hash, &track.SourceRevision, &track.SourceSize, &credits); err != nil {
+		if err = rows.Scan(&track.ID, &track.AlbumID, &track.ArtistName, &track.Path, &track.Revision, &track.Size, &track.Hidden, &track.SourceID, &track.SourceKind, &track.SourcePath, &track.Hash, &track.SourceRevision, &track.SourceSize, &credits); err != nil {
 			return snapshot, err
 		}
-		if err := json.Unmarshal([]byte(credits), &track.Credits); err != nil {
+		if err = json.Unmarshal([]byte(credits), &track.Credits); err != nil {
 			return snapshot, err
 		}
 		snapshot.Tracks = append(snapshot.Tracks, track)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 		return snapshot, err
 	}
 	rows, err = queryer.QueryContext(ctx, `SELECT b.id,b.title,b.artist_id,COALESCE(b.identity_key,''),b.revision,
@@ -146,10 +146,10 @@ func readCreditRepairSnapshot(ctx context.Context, queryer historyQueryer) (snap
 	for rows.Next() {
 		var album repairAlbum
 		var credits string
-		if err := rows.Scan(&album.ID, &album.Title, &album.ArtistID, &album.Key, &album.Revision, &credits); err != nil {
+		if err = rows.Scan(&album.ID, &album.Title, &album.ArtistID, &album.Key, &album.Revision, &credits); err != nil {
 			return snapshot, err
 		}
-		if err := json.Unmarshal([]byte(credits), &album.Credits); err != nil {
+		if err = json.Unmarshal([]byte(credits), &album.Credits); err != nil {
 			return snapshot, err
 		}
 		snapshot.Albums = append(snapshot.Albums, album)
@@ -193,21 +193,21 @@ func PreviewArtistCreditRepair(ctx context.Context, databasePath, managedRoot st
 		return report, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, rollbackTransaction(transaction, "artist credit preview")) }()
-	if err := rejectPendingCreditRepair(ctx, transaction); err != nil {
+	if err = rejectPendingCreditRepair(ctx, transaction); err != nil {
 		return report, err
 	}
 	report.snapshot, err = readCreditRepairSnapshot(ctx, transaction)
 	if err != nil {
 		return report, err
 	}
-	if err := transaction.Commit(); err != nil {
+	if err = transaction.Commit(); err != nil {
 		return report, err
 	}
 	storage := NewStorage(report.managedRoot, StorageLimits{FileBytes: 1, BatchBytes: 1})
 	inspector := library.NewMediaInspector()
 	inspected := map[string]library.NormalizedMediaMetadata{}
 	for _, track := range report.snapshot.Tracks {
-		if err := ctx.Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			return report, err
 		}
 		metadata, err := inspectCreditRepairTrack(ctx, storage, inspector, track)
@@ -265,7 +265,7 @@ func PreviewArtistCreditRepair(ctx context.Context, databasePath, managedRoot st
 
 func inspectCreditRepairTrack(ctx context.Context, storage *Storage, inspector library.MediaInspector, track repairTrack) (library.NormalizedMediaMetadata, error) {
 	if track.Hidden {
-		return library.NormalizedMediaMetadata{}, errors.New("Track is not visible")
+		return library.NormalizedMediaMetadata{}, errors.New("track is not visible")
 	}
 	if track.SourceKind != "managed" || track.Path != track.SourcePath || track.Size != track.SourceSize {
 		return library.NormalizedMediaMetadata{}, errors.New("authoritative managed source differs from Track")
@@ -307,7 +307,7 @@ func (report *ArtistCreditRepairReport) Apply(ctx context.Context, backupPath st
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, database.Close()) }()
-	if err := rejectPendingCreditRepair(ctx, database); err != nil {
+	if err = rejectPendingCreditRepair(ctx, database); err != nil {
 		return err
 	}
 	if strings.TrimSpace(backupPath) == "" {
@@ -317,7 +317,7 @@ func (report *ArtistCreditRepairReport) Apply(ctx context.Context, backupPath st
 	if err != nil {
 		return errors.New("backup path is required")
 	}
-	if err := backupCreditRepair(ctx, database, backupPath); err != nil {
+	if err = backupCreditRepair(ctx, database, backupPath); err != nil {
 		return fmt.Errorf("backup failed; no repair applied: %w", err)
 	}
 	report.BackupPath = backupPath
@@ -329,12 +329,12 @@ func (report *ArtistCreditRepairReport) Apply(ctx context.Context, backupPath st
 				continue
 			}
 		}
-		if err := ctx.Err(); err != nil {
-			return err
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
 		}
-		_, size, err := storage.ResolveManagedFile(track.SourcePath, track.Hash)
-		if err != nil {
-			return fmt.Errorf("stale repair source %s: %w", track.ID, err)
+		_, size, resolveErr := storage.ResolveManagedFile(track.SourcePath, track.Hash)
+		if resolveErr != nil {
+			return fmt.Errorf("stale repair source %s: %w", track.ID, resolveErr)
 		}
 		if size != track.SourceSize {
 			return fmt.Errorf("stale repair source %s: size changed", track.ID)
@@ -345,7 +345,7 @@ func (report *ArtistCreditRepairReport) Apply(ctx context.Context, backupPath st
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, rollbackTransaction(transaction, "artist credit repair")) }()
-	if err := rejectPendingCreditRepair(ctx, transaction); err != nil {
+	if err = rejectPendingCreditRepair(ctx, transaction); err != nil {
 		return err
 	}
 	current, err := readCreditRepairSnapshot(ctx, transaction)
@@ -441,10 +441,10 @@ func backupCreditRepair(ctx context.Context, database *sql.DB, path string) (ret
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
-	if _, err := database.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+	if _, err = database.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
 		return err
 	}
-	if err := file.Sync(); err != nil {
+	if err = file.Sync(); err != nil {
 		return err
 	}
 	backup, err := openCreditRepairDatabase(ctx, path, false)
@@ -453,7 +453,7 @@ func backupCreditRepair(ctx context.Context, database *sql.DB, path string) (ret
 	}
 	defer func() { returnErr = errors.Join(returnErr, backup.Close()) }()
 	var integrity string
-	if err := backup.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity); err != nil {
+	if err = backup.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity); err != nil {
 		return err
 	}
 	if integrity != "ok" {

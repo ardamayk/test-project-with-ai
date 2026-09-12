@@ -169,9 +169,10 @@ func writeArtistCreditFixture(t *testing.T, format string, credits [][2]string) 
 		wav.id3Frames = append(wav.id3Frames[:1], wav.id3Frames[3:]...)
 		for _, credit := range credits {
 			id, value := "TXXX", credit[0]+"\x00"+credit[1]
-			if credit[0] == "ARTIST" {
+			switch credit[0] {
+			case "ARTIST":
 				id, value = "TPE1", credit[1]
-			} else if credit[0] == "ALBUMARTIST" {
+			case "ALBUMARTIST":
 				id, value = "TPE2", credit[1]
 			}
 			wav.id3Frames = append(wav.id3Frames, textID3Frame(id, value))
@@ -191,9 +192,10 @@ func writeArtistCreditFixture(t *testing.T, format string, credits [][2]string) 
 		var frames []byte
 		for _, credit := range credits {
 			id, value := customID, credit[0]+"\x00"+credit[1]
-			if credit[0] == "ARTIST" {
+			switch credit[0] {
+			case "ARTIST":
 				id, value = artistID, credit[1]
-			} else if credit[0] == "ALBUMARTIST" {
+			case "ALBUMARTIST":
 				id, value = albumID, credit[1]
 			}
 			frame := testutil.ID3TextFrame(version, id, value)
@@ -227,11 +229,12 @@ func m4aArtistCreditFixture(t *testing.T, credits [][2]string) []byte {
 	for _, credit := range credits {
 		data := atom("data", append([]byte{0, 0, 0, 1, 0, 0, 0, 0}, credit[1]...))
 		name := "----"
-		if credit[0] == "ARTIST" {
+		switch credit[0] {
+		case "ARTIST":
 			name = "\xa9ART"
-		} else if credit[0] == "ALBUMARTIST" {
+		case "ALBUMARTIST":
 			name = "aART"
-		} else {
+		default:
 			body := atom("mean", append(make([]byte, 4), "com.apple.iTunes"...))
 			body = append(body, atom("name", append(make([]byte, 4), credit[0]...))...)
 			data = append(body, data...)

@@ -63,8 +63,6 @@ const (
 	KIND_PLAYLIST = "playlist"
 )
 
-var resultKinds = []string{KIND_TRACK, KIND_ALBUM, KIND_ARTIST, KIND_GENRE, KIND_PLAYLIST}
-
 // relatedKinds identifies credit fields used to break otherwise equal name matches.
 var relatedKinds = map[string]string{"album": KIND_ALBUM, "track_artist": KIND_ARTIST, "album_artist": KIND_ARTIST}
 
@@ -87,9 +85,9 @@ func (loader *IndexLoader) Load(ctx context.Context, userID string) (*Index, err
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT revision FROM library_search_revision WHERE singleton=1`).Scan(&revision); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT revision FROM library_search_revision WHERE singleton=1`).Scan(&revision); err != nil {
 		return nil, err
 	}
 	if loader.index != nil && loader.revision == revision && loader.userID == userID {
