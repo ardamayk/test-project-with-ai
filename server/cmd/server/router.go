@@ -10,6 +10,7 @@ import (
 	"github.com/ardam/navidrome-replacement/server/internal/modules"
 	docsmodule "github.com/ardam/navidrome-replacement/server/internal/modules/docs"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/library"
+	"github.com/ardam/navidrome-replacement/server/internal/modules/librarysearch"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/managedimport"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playback"
 	"github.com/ardam/navidrome-replacement/server/internal/modules/playlists"
@@ -35,6 +36,7 @@ func newAssembledServer(cfg config.Config, sqlDB *sql.DB, report dependencies.Re
 	prefStore := preferences.NewStore(sqlDB)
 	prefModule := preferences.NewModule(prefStore)
 	libModule := library.NewModule(sqlDB)
+	searchModule := librarysearch.NewModule(sqlDB)
 	libModule.EnableWaveforms(report.Has(dependencies.FFMPEG))
 	trackAccess := libModule.TrackAccess()
 	queueEvents := playback.NewQueueEventBroker()
@@ -45,7 +47,7 @@ func newAssembledServer(cfg config.Config, sqlDB *sql.DB, report dependencies.Re
 	docsModule := docsmodule.NewModule()
 	apiHandler := api.NewHandler(cfg, report)
 
-	registry := modules.NewRegistry(libModule, importModule, playModule, playlistModule, radioModule, prefModule, docsModule)
+	registry := modules.NewRegistry(libModule, searchModule, importModule, playModule, playlistModule, radioModule, prefModule, docsModule)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

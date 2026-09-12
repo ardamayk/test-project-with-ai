@@ -292,6 +292,36 @@ paths:
           $ref: "#/components/responses/Conflict"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/library/search:
+    get:
+      tags: [library]
+      operationId: searchLibrary
+      summary: Library Search across Tracks, Albums, Artists, Genres, and Playlists
+      description: >-
+        Evaluates one coherent Library Search on the Music Server: every query
+        word must match, direct title/name relevance outranks credit-only
+        matches, bounded typo correction applies only when no strong direct
+        result exists, and related Albums and Artists of strongly matching
+        Tracks are added under explicit ranking rules. Groups hold at most five
+        records each; the Best Match, when eligible, is excluded from its group.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: The query text; empty and punctuation-only input is rejected
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      responses:
+        "200":
+          description: Ranked Library Search groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibrarySearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /api/v1/library/tracks/{trackId}/lyrics:
     get:
       tags: [library]
@@ -2662,6 +2692,73 @@ components:
             $ref: "#/components/schemas/Track"
         total:
           type: integer
+    LibrarySearchResultType:
+      type: string
+      enum: [track, album, artist, genre, playlist]
+    LibrarySearchMatch:
+      type: string
+      description: >-
+        Why the record holds its position. `direct` records matched the query
+        through their own searchable fields without typo correction and are
+        the only Best Match candidates; `related` records are placed by their
+        relationship to a strongly matching Track (they may also match
+        directly, but not by their exact name); `corrected` records matched
+        only through bounded typo correction.
+      enum: [direct, related, corrected]
+    LibrarySearchAlbumReference:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    LibrarySearchResult:
+      type: object
+      required: [type, id, name, match]
+      properties:
+        type:
+          $ref: "#/components/schemas/LibrarySearchResultType"
+        id:
+          type: string
+        name:
+          type: string
+          description: The original display title or name
+        match:
+          $ref: "#/components/schemas/LibrarySearchMatch"
+        artists:
+          type: array
+          description: Track credits for a Track, Album Artist credits for an Album, in credit order
+          items:
+            $ref: "#/components/schemas/ArtistCredit"
+        album:
+          $ref: "#/components/schemas/LibrarySearchAlbumReference"
+    LibrarySearchResponse:
+      type: object
+      required: [tracks, albums, artists, genres, playlists]
+      properties:
+        bestMatch:
+          $ref: "#/components/schemas/LibrarySearchResult"
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        albums:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        artists:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        genres:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
+        playlists:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibrarySearchResult"
     Playlist:
       type: object
       required: [id, name, isDefault, trackCount]

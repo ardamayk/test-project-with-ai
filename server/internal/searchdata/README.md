@@ -35,9 +35,9 @@ connection with the registered functions; missing functions fail writes rather
 than silently leaving stale data.
 
 The shared `testutil.LibrarySearchNormalizationCases` fixtures supply positive
-normalization and negative word-boundary examples for the future ranking HTTP
-suite. Data tests use this package's public interface and real migrated SQLite;
+normalization and negative word-boundary examples for the `librarysearch`
+module's ranking HTTP suite. Data tests use this package's public interface and real migrated SQLite;
 HTTP tests cover Managed Import, replacement, deletion, byte preservation, and
-failed preparation. End-to-end write-to-search ranking assertions remain with the
-companion spec that introduces the search HTTP read boundary. No search latency
+failed preparation. End-to-end write-to-search ranking assertions live with the
+`librarysearch` module, which owns the search HTTP read boundary. No search latency
 or ranking-quality result is claimed by this implementation.

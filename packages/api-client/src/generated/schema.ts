@@ -180,6 +180,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library Search across Tracks, Albums, Artists, Genres, and Playlists
+         * @description Evaluates one coherent Library Search on the Music Server: every query word must match, direct title/name relevance outranks credit-only matches, bounded typo correction applies only when no strong direct result exists, and related Albums and Artists of strongly matching Tracks are added under explicit ranking rules. Groups hold at most five records each; the Best Match, when eligible, is excluded from its group.
+         */
+        get: operations["searchLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/tracks/{trackId}/lyrics": {
         parameters: {
             query?: never;
@@ -1387,6 +1407,35 @@ export interface components {
             items: components["schemas"]["Track"][];
             total: number;
         };
+        /** @enum {string} */
+        LibrarySearchResultType: "track" | "album" | "artist" | "genre" | "playlist";
+        /**
+         * @description Why the record holds its position. `direct` records matched the query through their own searchable fields without typo correction and are the only Best Match candidates; `related` records are placed by their relationship to a strongly matching Track (they may also match directly, but not by their exact name); `corrected` records matched only through bounded typo correction.
+         * @enum {string}
+         */
+        LibrarySearchMatch: "direct" | "related" | "corrected";
+        LibrarySearchAlbumReference: {
+            id: string;
+            name: string;
+        };
+        LibrarySearchResult: {
+            type: components["schemas"]["LibrarySearchResultType"];
+            id: string;
+            /** @description The original display title or name */
+            name: string;
+            match: components["schemas"]["LibrarySearchMatch"];
+            /** @description Track credits for a Track, Album Artist credits for an Album, in credit order */
+            artists?: components["schemas"]["ArtistCredit"][];
+            album?: components["schemas"]["LibrarySearchAlbumReference"];
+        };
+        LibrarySearchResponse: {
+            bestMatch?: components["schemas"]["LibrarySearchResult"];
+            tracks: components["schemas"]["LibrarySearchResult"][];
+            albums: components["schemas"]["LibrarySearchResult"][];
+            artists: components["schemas"]["LibrarySearchResult"][];
+            genres: components["schemas"]["LibrarySearchResult"][];
+            playlists: components["schemas"]["LibrarySearchResult"][];
+        };
         Playlist: {
             /** Format: uuid */
             id: string;
@@ -2123,6 +2172,30 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    searchLibrary: {
+        parameters: {
+            query: {
+                /** @description The query text; empty and punctuation-only input is rejected */
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked Library Search groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySearchResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
         };
     };
     getTrackLyrics: {
