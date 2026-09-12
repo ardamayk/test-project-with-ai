@@ -16,7 +16,7 @@ export const TOP_NAV_HEIGHT_CLASS = "h-16";
 const TOP_NAV_HEIGHT = "4rem";
 
 /** Height of the floating Player Bar; Toaster derives its offset from this. */
-export const PLAYER_BAR_HEIGHT_PX = 80;
+export const PLAYER_BAR_HEIGHT_PX = 86;
 /** Gap between the bottom edge and the Player Bar. */
 export const PLAYER_BAR_INSET_PX = 16;
 

@@ -10,7 +10,7 @@ The Albums, Artists and Tracks pages each had a search field in their header, ev
 
 The Library Search experience specification of 2026-09-12 supersedes the original tracks-first highlight and client-side matching decisions below; unrelated dialog and navigation decisions remain unchanged.
 
-Results sit under one "From Your Library" heading. One eligible Best Match appears first, followed by groups in the order Track, Album, Artist, Genre, Playlist. Only strong direct results qualify for Best Match; typo-only results do not. The highlighted record also appears first in its category and counts toward that category's five-result limit. Its two presentations use distinct row keys and DOM IDs; keyboard selection marks only one presentation, while activation uses the same real record identity.
+Results sit under one accessible "From Your Library" heading. One eligible Best Match appears first, followed by groups in the order Track, Album, Artist, Genre, Playlist. Only strong direct results qualify for Best Match; typo-only results do not. The highlighted record also appears first in its category and counts toward that category's five-result limit. Its two presentations use distinct row keys and DOM IDs; keyboard selection marks only one presentation, while activation uses the same real record identity.
 
 Choosing a Track plays it; an Album, Genre or Playlist retains its existing navigation. Artists have no detail page: an Artist result opens `/library/tracks?artistId=<id>`, matching either Track or Album credits by identity. Search includes all visible credited Artists, including Track-only contributors; it is not restricted to the Album Artists browse list.
 
@@ -25,3 +25,7 @@ Empty or punctuation-only input sends no search request. Loading, no matches and
 ## The dialog
 
 It is a Radix Dialog centred in the viewport with a transparent overlay: the page behind stays as it is instead of dimming to black. The input is a combobox over a listbox; the arrow keys move the active row and Enter activates it, Escape closes. Result rows are real buttons so they stay clickable and focusable without custom key handling. The shared `useDebouncedValue` hook (moved out of the Tracks page) holds requests back for 200 ms while typing.
+
+The 2026-09-13 refinement keeps the theme and Best Match behavior. Track and Album rows show Album covers, titles and credits use separate lines, and a theme-accent border marks keyboard selection. A separate Track action (also Shift+Enter from the input) appends to the existing `user` source, displayed as “Added by you”, without starting playback or closing search. Pending additions are guarded; success and failure use existing toast feedback.
+
+The header shows the server's total distinct matches before the five-per-category limit; Best Match is not counted twice. A fixed footer contains keyboard hints and expands all ranked results inside the same scrolling modal. Editing the query restores the five-per-category preview. Older servers without totals fall back to the distinct returned-result count.

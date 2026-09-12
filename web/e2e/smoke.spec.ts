@@ -169,7 +169,7 @@ test("library search follows the full album grid and animates result height", as
 				})
 				.toBeGreaterThan(24);
 		}
-		await expect(card).toHaveCSS("max-height", "490px");
+		await expect(card).toHaveCSS("max-height", "595px");
 		const input = page.getByRole("combobox");
 		await card.evaluate((element) =>
 			Promise.all(
@@ -203,9 +203,9 @@ test("library search follows the full album grid and animates result height", as
 		});
 		await expect
 			.poll(async () => (await card.boundingBox())?.height ?? 0)
-			.toBe(490);
+			.toBe(595);
 		expect(halfway).toBeGreaterThan(initialHeight);
-		expect(halfway).toBeLessThan(490);
+		expect(halfway).toBeLessThan(595);
 		await input.press("ArrowUp");
 		await expect
 			.poll(() =>

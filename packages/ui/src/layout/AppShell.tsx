@@ -13,9 +13,9 @@ import { WidgetDndProvider } from "./WidgetDock";
 
 export { PLAYER_BAR_HEIGHT_PX, PLAYER_BAR_INSET_PX } from "./shell-metrics";
 
-// Floating player bar: 80px bar + 16px bottom inset + 8px breathing room, so
+// Floating player bar: 86px bar + 16px bottom inset + 8px breathing room, so
 // scrolled content never ends hidden under the bar.
-const PLAYER_DOCK_CONTENT_PADDING = "pb-[104px]";
+const PLAYER_DOCK_CONTENT_PADDING = "pb-[110px]";
 
 /**
  * App Shell: Top Nav across the top, the page below it, the Player Bar

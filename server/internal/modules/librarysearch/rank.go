@@ -380,17 +380,18 @@ type listedEntry struct {
 type rankedResults struct {
 	bestMatch *listedEntry
 	groups    map[string][]listedEntry
+	total     int
 }
 
 // rank evaluates strong direct matches first; typo correction runs only when
 // no strong direct result exists in any of the five types.
-func rank(index *Index, q query) rankedResults {
+func rank(index *Index, q query, all bool) rankedResults {
 	if strong := evaluateAll(index, q, false); len(strong) > 0 {
-		results := assemble(strong, apigen.Direct)
+		results := assemble(strong, apigen.Direct, all)
 		results.bestMatch = &listedEntry{entity: strong[0].entity, match: apigen.Direct}
 		return results
 	}
-	return assemble(evaluateAll(index, q, true), apigen.Corrected)
+	return assemble(evaluateAll(index, q, true), apigen.Corrected, all)
 }
 
 func evaluateAll(index *Index, q query, fuzzy bool) []candidate {
@@ -404,12 +405,12 @@ func evaluateAll(index *Index, q query, fuzzy bool) []candidate {
 	return candidates
 }
 
-func assemble(candidates []candidate, match apigen.LibrarySearchMatch) rankedResults {
+func assemble(candidates []candidate, match apigen.LibrarySearchMatch, all bool) rankedResults {
 	groups := map[string][]listedEntry{}
 	for _, item := range candidates {
-		if len(groups[item.entity.kind]) < GROUP_LIMIT {
+		if all || len(groups[item.entity.kind]) < GROUP_LIMIT {
 			groups[item.entity.kind] = append(groups[item.entity.kind], listedEntry{entity: item.entity, match: match})
 		}
 	}
-	return rankedResults{groups: groups}
+	return rankedResults{groups: groups, total: len(candidates)}
 }

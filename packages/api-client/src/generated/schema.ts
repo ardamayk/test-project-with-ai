@@ -189,7 +189,7 @@ export interface paths {
         };
         /**
          * Library Search across Tracks, Albums, Artists, Genres, and Playlists
-         * @description Evaluates one coherent Library Search on the Music Server: every query word must match and at least one word must contribute to the result's own title/name. Related metadata may complete mixed queries but never adds unrelated Albums or Artists. Bounded typo correction applies only when no strong direct result exists. Groups hold at most five records each; the Best Match, when eligible, also appears first in its group.
+         * @description Evaluates one coherent Library Search on the Music Server: every query word must match and at least one word must contribute to the result's own title/name. Related metadata may complete mixed queries but never adds unrelated Albums or Artists. Bounded typo correction applies only when no strong direct result exists. Groups hold at most five records each unless all=true returns every ranked result. Ranking and Best Match selection are unchanged; the Best Match also appears first in its group.
          */
         get: operations["searchLibrary"];
         put?: never;
@@ -1431,6 +1431,8 @@ export interface components {
             album?: components["schemas"]["LibrarySearchAlbumReference"];
         };
         LibrarySearchResponse: {
+            /** @description Unique ranked matches across all groups before the cap, counting the Best Match only once; optional for older servers */
+            total?: number;
             bestMatch?: components["schemas"]["LibrarySearchResult"];
             tracks: components["schemas"]["LibrarySearchResult"][];
             albums: components["schemas"]["LibrarySearchResult"][];
@@ -2183,6 +2185,8 @@ export interface operations {
             query: {
                 /** @description The query text; empty and punctuation-only input is rejected */
                 q: string;
+                /** @description Return all ranked results instead of five per group; must be true or false */
+                all?: boolean;
             };
             header?: never;
             path?: never;

@@ -572,9 +572,9 @@ export function createApiClient(config: ApiClientConfig) {
         headers: { 'If-Match': revision },
       }).then(normalizeQueue),
     /** One coherent Library Search; the server ranks, gates typo correction, and picks the Best Match. */
-    searchLibrary: (q: string) =>
+    searchLibrary: (q: string, all = false) =>
       request<LibrarySearchResponse>(
-        `/api/v1/library/search?${new URLSearchParams({ q }).toString()}`,
+        `/api/v1/library/search?${new URLSearchParams({ q }).toString()}${all ? '&all=true' : ''}`,
       ),
     listPlaylists: () => request<PlaylistList>('/api/v1/playlists'),
     createPlaylist: (body: PlaylistCreate) =>

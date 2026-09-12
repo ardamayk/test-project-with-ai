@@ -47,6 +47,14 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "bad_request", "query has no searchable letters or digits")
 		return
 	}
+	all := false
+	if values, present := r.URL.Query()["all"]; present {
+		if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+			respond.Error(w, http.StatusBadRequest, "bad_request", "query parameter all must be true or false")
+			return
+		}
+		all = values[0] == "true"
+	}
 	index, err := h.loader.Load(r.Context(), userID)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -56,11 +64,12 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, "internal_error", "Library Search is unavailable")
 		return
 	}
-	respond.JSON(w, http.StatusOK, toResponse(rank(index, query)))
+	respond.JSON(w, http.StatusOK, toResponse(rank(index, query, all)))
 }
 
 func toResponse(ranked rankedResults) apigen.LibrarySearchResponse {
 	response := apigen.LibrarySearchResponse{
+		Total:     &ranked.total,
 		Tracks:    toResults(ranked.groups[KIND_TRACK]),
 		Albums:    toResults(ranked.groups[KIND_ALBUM]),
 		Artists:   toResults(ranked.groups[KIND_ARTIST]),

@@ -309,7 +309,8 @@ paths:
         own title/name. Related metadata may complete mixed queries but never
         adds unrelated Albums or Artists. Bounded typo correction applies only
         when no strong direct result exists. Groups hold at most five records
-        each; the Best Match, when eligible, also appears first in its group.
+        each unless all=true returns every ranked result. Ranking and Best Match
+        selection are unchanged; the Best Match also appears first in its group.
       parameters:
         - name: q
           in: query
@@ -319,6 +320,13 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+        - name: all
+          in: query
+          required: false
+          description: Return all ranked results instead of five per group; must be true or false
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Ranked Library Search groups
@@ -2746,6 +2754,10 @@ components:
       type: object
       required: [tracks, albums, artists, genres, playlists]
       properties:
+        total:
+          type: integer
+          minimum: 0
+          description: Unique ranked matches across all groups before the cap, counting the Best Match only once; optional for older servers
         bestMatch:
           $ref: "#/components/schemas/LibrarySearchResult"
         tracks:

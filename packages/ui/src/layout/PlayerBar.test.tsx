@@ -246,7 +246,7 @@ describe("PlayerBar", () => {
 	it("renders the Figma player bar shell dimensions", () => {
 		renderPlayerBar();
 
-		expect(screen.getByRole("contentinfo").className).toContain("h-[80px]");
+		expect(screen.getByRole("contentinfo").className).toContain("h-[86px]");
 		expect(screen.getByRole("contentinfo").className).toContain("bg-player");
 	});
 

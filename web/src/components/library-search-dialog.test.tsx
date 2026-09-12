@@ -18,18 +18,27 @@ const mocks = vi.hoisted(() => ({
 	searchLibrary: vi.fn(),
 	navigate: vi.fn(),
 	playTrack: vi.fn(),
+	addToQueue: vi.fn(),
+	toastSuccess: vi.fn(),
+	toastError: vi.fn(),
 }));
 
 vi.mock("#/lib/api", () => ({
 	apiClient: {
 		searchLibrary: mocks.searchLibrary,
+		getAlbumCoverUrl: (id: string) => `/api/v1/library/albums/${id}/cover`,
 	},
 }));
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => mocks.navigate,
 }));
-vi.mock("@repo/ui", () => ({
-	usePlayback: () => ({ playTrack: mocks.playTrack }),
+vi.mock("@repo/ui", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@repo/ui")>()),
+	usePlayback: () => ({
+		playTrack: mocks.playTrack,
+		addToQueue: mocks.addToQueue,
+	}),
+	toast: { success: mocks.toastSuccess, error: mocks.toastError },
 }));
 
 const nemo = {
@@ -86,6 +95,7 @@ describe("LibrarySearchDialog", () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		mocks.searchLibrary.mockResolvedValue(results);
+		mocks.addToQueue.mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -189,6 +199,120 @@ describe("LibrarySearchDialog", () => {
 		expect(mocks.navigate).toHaveBeenCalledWith(
 			expect.objectContaining({ to: "/library/$albumId" }),
 		);
+	});
+
+	it("shows covers, a unique total and a footer outside the scrolling list", async () => {
+		mocks.searchLibrary.mockResolvedValue({
+			...results,
+			tracks: [nemo],
+			total: 42,
+		});
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		const count = await screen.findByRole("status");
+		expect(count.textContent).toBe("42 results");
+		const track = within(
+			screen.getByRole("group", { name: "Track" }),
+		).getByRole("option");
+		expect(track.querySelector("img")?.getAttribute("src")).toBe(
+			"/api/v1/library/albums/album-decades/cover",
+		);
+		const footer = screen.getByRole("button", { name: /See all results/ });
+		expect(screen.getByRole("listbox").contains(footer)).toBe(false);
+		expect(
+			screen.getByRole("option", { selected: true }).parentElement?.className,
+		).toContain("border-[var(--shell-active-foreground)]");
+	});
+
+	it("counts Best Match once on older servers without totals", async () => {
+		mocks.searchLibrary.mockResolvedValue({
+			...empty,
+			bestMatch: nemo,
+			tracks: [nemo],
+		});
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		expect((await screen.findByRole("status")).textContent).toBe("1 result");
+	});
+
+	it("adds a track without playing or closing, blocks duplicate pending adds", async () => {
+		let finish!: () => void;
+		mocks.addToQueue.mockImplementationOnce(
+			() =>
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				}),
+		);
+		const { onOpenChange } = renderDialog();
+		const input = screen.getByRole("combobox");
+		fireEvent.change(input, { target: { value: "ne" } });
+		const add = await screen.findByRole("button", {
+			name: "Add Nemo to queue",
+		});
+		expect(add.closest("[role=option]")).toBeNull();
+		fireEvent.click(add);
+		fireEvent.click(add);
+		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+		expect(mocks.addToQueue).toHaveBeenCalledExactlyOnceWith("track-nemo");
+		expect(add.getAttribute("aria-disabled")).toBe("true");
+		expect(mocks.playTrack).not.toHaveBeenCalled();
+		expect(onOpenChange).not.toHaveBeenCalled();
+		await act(async () => finish());
+		expect(mocks.toastSuccess).toHaveBeenCalledWith("Added “Nemo” to queue");
+		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+		await waitFor(() => expect(mocks.addToQueue).toHaveBeenCalledTimes(2));
+	});
+
+	it("reports queue errors and allows retry", async () => {
+		mocks.addToQueue.mockRejectedValueOnce(new Error("Queue unavailable"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		renderDialog();
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "ne" } });
+		const add = await screen.findByRole("button", {
+			name: "Add Nemo to queue",
+		});
+		fireEvent.click(add);
+		await waitFor(() =>
+			expect(mocks.toastError).toHaveBeenCalledWith(
+				"Failed to add track to queue",
+			),
+		);
+		expect(add.getAttribute("aria-disabled")).toBe("false");
+		fireEvent.click(add);
+		await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+		warn.mockRestore();
+	});
+
+	it("expands all results and resets the limit when the query changes", async () => {
+		const tracks = Array.from({ length: 8 }, (_, i) => ({
+			...nemo,
+			id: `track-${i}`,
+			name: `Track ${i}`,
+		}));
+		mocks.searchLibrary.mockImplementation(
+			async (_q: string, all?: boolean) => ({
+				...empty,
+				total: 8,
+				tracks: all ? tracks : tracks.slice(0, 5),
+			}),
+		);
+		renderDialog();
+		const input = screen.getByRole("combobox");
+		fireEvent.change(input, { target: { value: "track" } });
+		await screen.findByText("Track 0");
+		expect(screen.getAllByRole("option")).toHaveLength(5);
+		fireEvent.click(screen.getByRole("button", { name: /See all results/ }));
+		await screen.findByText("Track 7");
+		expect(mocks.searchLibrary).toHaveBeenCalledWith("track", true);
+		expect(screen.getAllByRole("option")).toHaveLength(8);
+		expect(document.activeElement).toBe(input);
+		fireEvent.change(input, { target: { value: "next" } });
+		await waitFor(() =>
+			expect(mocks.searchLibrary).toHaveBeenLastCalledWith("next"),
+		);
+		expect(
+			screen.queryByRole("button", { name: "Show top results" }),
+		).toBeNull();
 	});
 
 	it("tells the user when nothing matches", async () => {

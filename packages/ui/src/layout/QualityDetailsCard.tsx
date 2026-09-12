@@ -107,7 +107,7 @@ export function QualityDetailsCard({
 				role="tooltip"
 				data-testid="quality-details"
 				className={cn(
-					"pointer-events-none absolute right-0 bottom-full z-40 mb-2 w-64 rounded-md border border-border bg-popover p-3 text-popover-foreground text-xs opacity-0 shadow-lg transition-opacity duration-150",
+					"pointer-events-none absolute right-0 bottom-full z-40 mb-2 w-64 rounded-md border border-border bg-popover p-3 text-popover-foreground text-xs opacity-0 shadow-lg",
 					!suppressed &&
 						"group-focus-within/quality:opacity-100 group-hover/quality:opacity-100",
 				)}

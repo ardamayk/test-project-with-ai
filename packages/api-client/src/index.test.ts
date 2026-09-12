@@ -80,6 +80,42 @@ describe('Managed Import media contracts', () => {
 });
 
 describe('createApiClient', () => {
+  it('keeps Library Search total optional and expands only on request', async () => {
+    type SearchResponse = components['schemas']['LibrarySearchResponse'];
+    expectTypeOf<SearchResponse['total']>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<
+      operations['searchLibrary']['parameters']['query']['all']
+    >().toEqualTypeOf<boolean | undefined>();
+    const legacy: SearchResponse = {
+      tracks: [],
+      albums: [],
+      artists: [],
+      genres: [],
+      playlists: [],
+    };
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(legacy))
+      .mockResolvedValueOnce(Response.json({ ...legacy, total: 0 }))
+      .mockResolvedValueOnce(Response.json({ ...legacy, total: 0 }));
+    const client = createApiClient({ baseUrl: 'http://music.test', transport });
+
+    await expect(client.searchLibrary('AC/DC & blue')).resolves.toEqual(legacy);
+    await expect(client.searchLibrary('AC/DC & blue', false)).resolves.toEqual({
+      ...legacy,
+      total: 0,
+    });
+    await expect(client.searchLibrary('AC/DC & blue', true)).resolves.toEqual({
+      ...legacy,
+      total: 0,
+    });
+    expect(transport.mock.calls.map(([input]) => input)).toEqual([
+      'http://music.test/api/v1/library/search?q=AC%2FDC+%26+blue',
+      'http://music.test/api/v1/library/search?q=AC%2FDC+%26+blue',
+      'http://music.test/api/v1/library/search?q=AC%2FDC+%26+blue&all=true',
+    ]);
+  });
+
   it('revalidates previously fresh waveform responses after Track Replacement', async () => {
     const transport = vi
       .fn<typeof fetch>()
