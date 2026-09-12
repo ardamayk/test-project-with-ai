@@ -1,4 +1,6 @@
 import {
+	getTrackArtistCredits,
+	goToArtistCreditsSearch,
 	type QueueRowMenuProps,
 	toast,
 	usePlayback,
@@ -132,12 +134,10 @@ function QueueMenuActions({
 			}
 		})();
 	};
-	const artists = (item.track.artists ?? []).filter(
-		(artist) => artist.id && !artist.id.startsWith("legacy-artist:"),
-	);
+	const artists = getTrackArtistCredits(item.track);
 	const goToArtist = (artistId: string) =>
 		runAction("Failed to open artist", () =>
-			navigate({ to: "/library/tracks", search: { artistId } }),
+			Promise.resolve(goToArtistCreditsSearch(navigate, artistId)),
 		);
 	const Menu = mode === "context" ? ContextMenuPrimitive : DropdownMenu;
 	const Item = mode === "context" ? ContextMenuItem : DropdownMenu.Item;

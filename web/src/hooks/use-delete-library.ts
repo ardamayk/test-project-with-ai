@@ -30,8 +30,9 @@ export function useDeleteTrack() {
 			confirmationToken: string;
 		}) => apiClient.deleteTrack(trackId, confirmationToken),
 		onSuccess: async (_result, { trackId }) => {
+			// Cache first, then playback: sync must observe the post-deletion queue.
+			await invalidateLibraryCache(queryClient, { trackId });
 			await Promise.all([
-				invalidateLibraryCache(queryClient, { trackId }),
 				invalidatePlaylistCache(queryClient),
 				syncPlaybackAfterDelete(playback, trackId),
 			]);

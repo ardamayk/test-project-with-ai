@@ -34,6 +34,8 @@ import {
 	buildTrackDetailRows,
 	formatBitDepth,
 	formatSampleRate,
+	getTrackArtistCredits,
+	goToArtistCreditsSearch,
 } from "../playback/track-details";
 import { useCoverAccent } from "../playback/use-cover-accent";
 import { useMute } from "../playback/use-mute";
@@ -531,15 +533,10 @@ export function PlayerBar({
 		});
 	};
 
-	const artists = (currentTrack?.artists ?? []).filter(
-		(artist) => artist.id && !artist.id.startsWith("legacy-artist:"),
-	);
+	const artists = getTrackArtistCredits(currentTrack ?? { artists: [] });
 	const handleGoToArtist = (artistId: string) => {
 		closeActionsMenu();
-		void navigate({
-			to: "/library/tracks",
-			search: { artistId },
-		});
+		void goToArtistCreditsSearch(navigate, artistId);
 	};
 
 	const handlePlayNext = () => {

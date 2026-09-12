@@ -20,7 +20,8 @@ const mocks = vi.hoisted(() => ({
 	toastSuccess: vi.fn(),
 	playRow: vi.fn(),
 }));
-vi.mock("@repo/ui", () => ({
+vi.mock("@repo/ui", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@repo/ui")>()),
 	usePlayback: () => mocks,
 	usePlaylistLibrary: () => mocks,
 	toast: { error: mocks.toastError, success: mocks.toastSuccess },

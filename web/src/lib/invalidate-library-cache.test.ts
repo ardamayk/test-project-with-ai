@@ -50,7 +50,11 @@ describe("invalidateLibraryCache", () => {
 		).toBeUndefined();
 		expect(invalidateSpy).toHaveBeenCalledWith({
 			queryKey: ["library"],
-			refetchType: "all",
+		});
+		// Inactive search entries only go stale; they must not be refetched.
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: ["library", "search"],
+			refetchType: "none",
 		});
 	});
 

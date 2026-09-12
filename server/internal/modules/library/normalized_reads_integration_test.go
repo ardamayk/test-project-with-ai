@@ -240,6 +240,21 @@ func TestHandlersListArtistsExactNamePrecedesMoreThanOnePageOfPrefixMatches(t *t
 	if first := artists.Items[0]; first.ID != "album-guest" || first.Name != "Radiohead" || first.AlbumCount != 1 {
 		t.Fatalf("first Artist = %#v, want exact Radiohead with one Album", first)
 	}
+
+	// Exact-name precedence ignores ASCII case, matching the case-insensitive filter.
+	caseRequest := httptest.NewRequest(http.MethodGet, "/api/v1/library/artists?q=radiohead&limit=100", nil)
+	caseResponse := httptest.NewRecorder()
+	handlers.ListArtists(caseResponse, caseRequest)
+	if caseResponse.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", caseResponse.Code, caseResponse.Body.String())
+	}
+	var caseArtists ArtistList
+	if err := json.NewDecoder(caseResponse.Body).Decode(&caseArtists); err != nil {
+		t.Fatal(err)
+	}
+	if first := caseArtists.Items[0]; first.ID != "album-guest" || first.Name != "Radiohead" {
+		t.Fatalf("first Artist = %#v, want exact Radiohead to lead for q=radiohead", first)
+	}
 }
 
 func TestHandlersListArtistsRequiresActiveAlbumCreditEvenForExactName(t *testing.T) {

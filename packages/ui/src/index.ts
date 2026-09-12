@@ -68,8 +68,10 @@ export {
 } from "./playback/telemetry";
 export {
 	buildTrackDetailRows,
+	getTrackArtistCredits,
 	getTrackArtistName,
 	getTrackGenreNames,
+	goToArtistCreditsSearch,
 	type TrackDetailRow,
 } from "./playback/track-details";
 export { type AbRepeat, useAbRepeat } from "./playback/use-ab-repeat";

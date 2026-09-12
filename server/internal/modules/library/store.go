@@ -140,7 +140,8 @@ func (s *Store) ListArtists(ctx context.Context, limit, offset int, q string) (A
 	if q != "" {
 		filter += " AND a.name LIKE ?"
 		queryArgs = append(queryArgs, "%"+q+"%")
-		orderBy = "(a.name = ?) DESC, a.name_sort, a.id"
+		// LIKE is case-insensitive for ASCII, so exact-name precedence must be too.
+		orderBy = "(a.name = ? COLLATE NOCASE) DESC, a.name_sort, a.id"
 	}
 
 	var total int
